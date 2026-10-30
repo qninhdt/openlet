@@ -1,0 +1,1 @@
+{"CORSRules":[{"ID":"openlet-browser-smoke","AllowedOrigins":["http://127.0.0.1:8765"],"AllowedMethods":["PUT","GET","HEAD"],"AllowedHeaders":["content-md5","if-none-match","content-type","range"],"ExposeHeaders":["ETag","Content-Range","Accept-Ranges","Content-Length","Content-Disposition"],"MaxAgeSeconds":300}]}

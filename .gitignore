@@ -1,0 +1,10 @@
+/.local/
+**/target/
+**/bin/
+*.dump
+*.pem
+__pycache__/
+.venv/
+.pytest_cache/
+.ruff_cache/
+/.en[v]

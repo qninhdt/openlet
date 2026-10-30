@@ -1,0 +1,12 @@
+.git
+.local
+.en[v]
+.en[v].*
+**/target
+**/bin
+plans
+docs
+**/__pycache__
+**/.venv
+**/.pytest_cache
+**/.ruff_cache

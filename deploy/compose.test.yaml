@@ -1,0 +1,46 @@
+services:
+  postgres:
+    command: [postgres, -c, max_connections=200, -c, shared_preload_libraries=pg_stat_statements, -c, compute_query_id=on, -c, log_lock_waits=on]
+  storage:
+    image: chrislusf/seaweedfs:4.19@sha256:90e181977effc58a303a1b21a0d581314e142b09543a712ff739c79ed78f42cf
+    command: [server, -dir=/data, -ip=storage, -ip.bind=0.0.0.0, -s3, -s3.config=/etc/s3.json, -master.volumeSizeLimitMB=64, -volume.max=8, -volume.minFreeSpace=512MiB]
+    volumes:
+      - storage-data:/data
+      - ${OPENLET_STATE_DIR:-../.local}/seaweedfs.json:/etc/s3.json:ro
+    networks: [backend]
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, 'http://127.0.0.1:8888/']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  letfs:
+    environment:
+      S3_ENDPOINT: http://issuer:8333
+      S3_SIGNING_ENDPOINT: ${OPENLET_TEST_S3_SIGNING_ENDPOINT:-http://issuer:8333}
+      DOWNLOAD_URL_TTL_SECONDS: 300
+      S3_REGION: us-east-1
+      S3_BUCKET: openlet-test
+      ALLOW_LOCAL_S3: 'true'
+      MAX_COPY_NODES: '64'
+    depends_on: [storage]
+  user:
+    environment:
+      CLERK_API_URL: http://issuer:8080/v1
+      ALLOW_TEST_HTTP: 'true'
+  issuer:
+    build: {context: .., dockerfile: tests/e2e/Dockerfile}
+    entrypoint: [/issuer]
+    ports: ["127.0.0.1:${OPENLET_TEST_S3_PORT:-8333}:8333"]
+    networks: [backend, outbound]
+    secrets: [clerk_secret_key]
+  tester:
+    user: "${OPENLET_TEST_UID:-1000}:${OPENLET_TEST_GID:-1000}"
+    build: {context: .., dockerfile: tests/e2e/Dockerfile}
+    secrets: [workspace_service_token, workspace_database_url, letfs_database_url]
+    environment: {OPENLET_HISTORY_DIR: /histories, OPENLET_CONTRACT_DIR: /histories/contracts}
+    volumes: ["${OPENLET_STATE_DIR:-../.local}/histories:/histories"]
+    networks: [backend]
+    profiles: [test]
+
+volumes:
+  storage-data: {}
