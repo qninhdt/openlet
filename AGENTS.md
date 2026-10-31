@@ -2,6 +2,12 @@
 
 Apply these defaults to the task at hand. Follow applicable repository and subtree instructions, established contracts, and configured tooling. Resolve conflicts explicitly; do not silently copy a local convention that introduces a known correctness or security defect.
 
+## Communicate directly
+
+- Answer the current question directly and stop once it is answered; do not append recaps, self-evaluations, or routine status and verification footers.
+- Do not invent misconceptions to correct or introduce contrasts and alternatives the user did not raise.
+- Mention limitations, skipped checks, and risks only when they materially affect the requested result or the user's decision; place them beside the affected claim.
+
 ## Understand before changing
 
 - Establish the expected behavior, current behavior, acceptance criteria, and relevant constraints. Resolve consequential ambiguity before committing to a design; make routine, reversible choices from repository evidence.
