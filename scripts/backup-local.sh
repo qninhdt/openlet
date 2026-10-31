@@ -54,9 +54,9 @@ import subprocess
 images={}
 for line in (folder/'config/container-images.jsonl').read_text().splitlines():
  container=json.loads(line)
- if container['Service'] in {'user','workspace','letfs','processor','issuer','envoy','postgres','storage','temporal','temporal-init','temporal-schema','temporal-backup'}:
+ if container['Service'] in {'user','workspace','letfs','processor','issuer','envoy','postgres','storage','temporal','temporal-init','temporal-schema','temporal-backup','qdrant'}:
   images[container['Service']]=subprocess.check_output(['docker','inspect',container['ID'],'--format','{{.Image}}'],text=True).strip()
-assert {'user','workspace','letfs','processor','envoy','issuer','postgres','storage','temporal'} <= images.keys(), 'Missing application/model image identity'
+assert {'user','workspace','letfs','processor','envoy','issuer','postgres','storage','temporal','qdrant'} <= images.keys(), 'Missing application/model/index image identity'
 (folder/'manifest.json').write_text(json.dumps({'format':2,'provider':'seaweedfs-4.19','source':sys.argv[2],'captured_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'writers':'stopped','images':images,'files':files},indent=2)+'\n')
 PY
 printf '%s\n' "$backup" > .local/test/last-snapshot

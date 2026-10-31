@@ -28,6 +28,7 @@ type uploadReceipt struct {
 	ETag       string `json:"etag"`
 }
 type fileInput struct {
+	Stage      string          `json:"stage,omitempty"`
 	Locator    *locator        `json:"locator,omitempty"`
 	Parent     *locator        `json:"parent,omitempty"`
 	Name       *string         `json:"name,omitempty"`
@@ -76,7 +77,7 @@ func (s *Server) fileAction(action string) http.HandlerFunc {
 			return
 		}
 		role := "editor"
-		if action == "stat" || action == "list" || action == "batch-stat" || action == "content" || action == "artifact-status" {
+		if action == "stat" || action == "list" || action == "batch-stat" || action == "content" || action == "processing-status" {
 			role = "viewer"
 		}
 		if action == "purge" {
@@ -249,10 +250,12 @@ func (s *Server) usage(w http.ResponseWriter, r *http.Request) {
 }
 func registerFiles(r chi.Router, s *Server) {
 	base := "/workspaces/{ws}/files"
-	for path, action := range map[string]string{"/stat": "stat", "/list": "list", "/content": "content", "/artifact-status": "artifact-status", "/trash": "trash-list"} {
+	r.Get(base+"/search", s.searchFiles)
+	r.Post(base+"/semantic-search", s.searchFiles)
+	for path, action := range map[string]string{"/stat": "stat", "/list": "list", "/content": "content", "/processing-status": "processing-status", "/trash": "trash-list"} {
 		r.Get(base+path, s.fileAction(action))
 	}
-	for path, action := range map[string]string{"/batch-stat": "batch-stat", "/directories": "directories", "/text": "text", "/rename": "rename", "/move": "move", "/copy": "copy", "/trash": "trash", "/trash/{entry}/restore": "restore"} {
+	for path, action := range map[string]string{"/processing-retry": "processing-retry", "/batch-stat": "batch-stat", "/directories": "directories", "/text": "text", "/rename": "rename", "/move": "move", "/copy": "copy", "/trash": "trash", "/trash/{entry}/restore": "restore"} {
 		r.Post(base+path, s.fileAction(action))
 	}
 	r.Post(base+"/exports", s.exportFiles)

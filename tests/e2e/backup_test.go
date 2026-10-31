@@ -49,9 +49,9 @@ func TestBackupSeed(t *testing.T) {
 	f.SourceNode, f.SourceHex = jsonMap(t, b)["node_id"].(string), hex.EncodeToString(document)
 	deadline := time.Now().Add(90 * time.Second)
 	for {
-		s, b = call(t, "GET", base+"/artifact-status?node_id="+f.SourceNode, nil, h)
+		s, b = call(t, "GET", base+"/processing-status?node_id="+f.SourceNode, nil, h)
 		requireStatus(t, s, 200, b)
-		state := jsonMap(t, b)["state"]
+		state := processingStage(t, jsonMap(t, b), "index")["state"]
 		if state == "succeeded" {
 			break
 		}
@@ -60,7 +60,7 @@ func TestBackupSeed(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	s, b = call(t, "GET", base+"/stat?path=/drive/report.docx/001-introduction.md", nil, h)
+	s, b = call(t, "GET", base+"/stat?path=/drive/report.docx/README.md", nil, h)
 	requireStatus(t, s, 200, b)
 	f.ArtifactNode = jsonMap(t, b)["id"].(string)
 	s, b = call(t, "GET", base+"/content?node_id="+f.ArtifactNode, nil, h)

@@ -11,13 +11,15 @@ The backend services implement onboarding, collaboration, generic file operation
 
 ## Configure and start
 
-Export Clerk/JWT and S3 settings using the non-secret examples in `.env.example` (Compose also reads that file when configured), then run:
+Export Clerk/JWT, S3 and OpenRouter settings using the non-secret examples in `.env.example` (Compose also reads that file when configured), then run:
 
 ```sh
 make up
 ```
 
 External issuer/JWKS URLs require HTTPS. The generator renders native Envoy and Temporal configuration and generates random credentials under ignored `.local/`. Its parent directory is private; individual mounted secret files are readable by the non-root containers. It preserves existing credentials across repeated setup. Never commit or publish that directory or rendered configuration. Changing credential files alone does not rotate an existing database role.
+
+`OPENROUTER_REASONING_EFFORT` optionally controls generation/vision reasoning: `none`, `minimal`, `low`, `medium`, `high`, or `xhigh`. Leave it empty to use the selected model's default; the selected model must support the requested effort. Set `none` for GPT-6 Luna generation without reasoning tokens.
 
 Only Envoy binds a host port, `127.0.0.1:8080`. Application, database, Temporal and admin-tool ports stay private. External access requires the deployment's trusted HTTPS termination. Temporal's no-authorizer setting is confined to the private backend network; do not publish its port.
 
@@ -42,7 +44,7 @@ make backup-restore-drill
 
 Service integration uses Testcontainers-Go and Testcontainers-Rust with fresh PostgreSQL databases, dynamic ports and automatic container cleanup. Select `SERVICE=user`, `workspace` or `letfs`; the default runs all three sequentially. Docker must be available. The letfs fixture also starts private test S3 and a Temporal dev server; it does not use external credentials. Migrations run through the production backup/migration script before exercising service behavior. The Compose test generator also fixes JWT identity to its internal issuer, ignoring exported development issuer/JWKS/audience values.
 
-The complete E2E suite (`make test-e2e TEST=all`) covers real Envoy/JWKS, controlled Clerk HTTP, all services, PostgreSQL, native Temporal workers and SeaweedFS S3. It includes authorization, invitation replay, ID/path equivalence, quota/restore races, upload/copy/lifecycle tests, query counts and worker/server restart. `TEST=foundation`, `identity-files`, `storage-copy`, `copy-races`, `lifecycle`, `processing`, `processing-recovery` or `zip-export` selects a narrower group. Histories and response shapes are captured under ignored `.local/test/histories/` for replay and contract checks. The suite stops its containers on exit and retains volumes/backups. Tests use barriers for concurrency, with polling deadlines only for observable readiness/completion.
+The complete E2E suite (`make test-e2e TEST=all`) covers real Envoy/JWKS, controlled Clerk HTTP, all services, PostgreSQL, native Temporal workers and SeaweedFS S3. It includes authorization, invitation replay, ID/path equivalence, quota/restore races, upload/copy/lifecycle tests, query counts and worker/server restart. `TEST=foundation`, `identity-files`, `storage-copy`, `copy-races`, `lifecycle`, `processing`, `processing-recovery`, `processing-search` or `zip-export` selects a narrower group. Histories and response shapes are captured under ignored `.local/test/histories/` for replay and contract checks. The suite stops its containers on exit and retains volumes/backups. Tests use barriers for concurrency, with polling deadlines only for observable readiness/completion.
 
 Service integration does not reserve port 8080. Port 8080 must be free before running the Compose E2E suite; stop the development stack with `make down` if needed. Do not change ports to hide an existing owner. Native `make verify` runs formatting, Go tests/vet, Rust tests/clippy and configuration checks. `SERVICE=user|workspace|letfs` restricts `make test-unit`; unknown service selectors fail. Set `GO` to the supported Go executable if it is outside `PATH`; formatting and workflow targets respect that selection too.
 
@@ -151,8 +153,7 @@ scratch limits from `deploy/compose.yaml`; no runtime model download is required
 The locked `docling[rapidocr]` dependency supplies the ONNX OCR runtime; the worker
 checks that it imports before connecting to Temporal and accepting activities.
 `PROCESSOR_IMAGE` selects a prebuilt image; use a registry digest and Compose
-`up --no-build` when deploying that image. The worker receives only its dedicated
-letfs token, scoped source/output APIs and temporary storage URLs.
+`up --no-build` when deploying that image. The worker receives its dedicated letfs token, scoped source/output APIs, temporary storage URLs and private OpenRouter/Qdrant credentials.
 
 For native parser verification, download models explicitly before the offline run:
 
@@ -168,6 +169,23 @@ make test-workflow TEST=process-file
 parser cases. `PROCESSING_MAX_OUTPUTS` and `PROCESSING_MAX_OUTPUT_BYTES` bound one
 job's published tree. Input/resource bounds are defined in the processor; output
 transport reuses the same configured inline/multipart limits as user uploads.
+
+The parser chooses one document-wide layout before exporting: a single root
+`README.md` for short or unstructured documents, Markdown sections for longer
+documents, or section folders when two substantial outline levels justify them.
+Every folder has a README. Structural names start as `1-untitled`; images and
+tables use independent `untitled-1.png` / `untitled-1.csv` counters in their semantic
+container. Counters pad only when their own count reaches ten. Excel always uses
+one folder per sheet; sheet README files retain outside-table cells and coordinates.
+PPTX currently uses one README with slide boundaries; advanced presentation layout,
+Excel formula evaluation and merged-cell interpretation are deferred.
+
+`MIN_LEAF_TOKENS` (default `256`) controls adjacent small-section merging;
+`SPLIT_TOKENS` (default `4096`) controls layout selection. The worker requires
+`0 < MIN_LEAF_TOKENS <= SPLIT_TOKENS`. Layout, sampling and chunking estimate
+tokens as `ceil(character_count / 4)`, following the common English-text heuristic.
+These budgets are approximate, particularly for multilingual text and code.
+No tokenizer data or download is required.
 
 PDF conversion uses one-page OCR/layout/table batches and a two-page stage queue
 within the existing worker memory limit. Extracted images are written once and
@@ -197,4 +215,23 @@ abort rules, and never age-expire `objects/`.
 make test-integration SERVICE=letfs TEST=zip-export
 make test-e2e TEST=zip-export
 make test-workflow TEST=export-archive
+```
+
+## AI enrichment and search
+
+Set `OPENROUTER_API_KEY` before `make configure`; the generator preserves it in the private secret directory and generates the internal Qdrant key. Generation/vision, embedding and reranker model IDs plus resource budgets are in [.env.example](../.env.example). OpenRouter defaults to its HTTPS API; `ALLOW_LOCAL_AI=true` is reserved for explicit local testing. Qdrant v1.20.0 runs on the private backend network with a persistent `qdrant-data` volume and no host port. The test overlay uses schema-faithful fake AI endpoints and the real Qdrant service.
+
+Keep embedding model, dimension and collection consistent. Select a new collection when changing the vector space, then use the admin backfill command. It processes one bounded page, prints counts and a resume cursor, and writes only with `--apply`:
+
+```sh
+docker compose -f deploy/compose.yaml exec -T letfs letfs --backfill-processing --mode missing --limit 100
+docker compose -f deploy/compose.yaml exec -T letfs letfs --backfill-processing --mode missing --limit 100 --apply
+docker compose -f deploy/compose.yaml exec -T letfs letfs --backfill-processing --mode rebuild-index --limit 100 --apply
+```
+
+Pass `--after UUID` to resume. Rebuild skips currently running workflows and retains committed enrichment; rerun from the beginning after those workflows close. It first commits index readiness as pending while retaining the previous collection. Index preparation confirms deletion of the old operation points before adopting the configured vector space; a cleanup failure retains the location for retry. Qdrant may be recreated and rebuilt from the authoritative DB/source/artifact tree. Basic search remains available during AI/index outages.
+
+```sh
+make test-integration SERVICE=letfs TEST=search
+make test-e2e TEST=processing-search
 ```

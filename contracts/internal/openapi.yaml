@@ -983,7 +983,10 @@
                 "uploads-finalize",
                 "uploads-abort",
                 "uploads-status",
-                "artifact-status"
+                "processing-status",
+                "processing-retry",
+                "search",
+                "semantic-search"
               ]
             }
           }
@@ -993,118 +996,131 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object",
-                "properties": {
-                  "scope": {
+                "oneOf": [
+                  {
                     "type": "object",
                     "properties": {
-                      "actor_id": {
-                        "type": "string",
-                        "format": "uuid"
+                      "scope": {
+                        "type": "object",
+                        "properties": {
+                          "actor_id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "mounts": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 32,
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "path": {
+                                  "type": "string"
+                                },
+                                "filesystem_id": {
+                                  "type": "string",
+                                  "format": "uuid"
+                                }
+                              },
+                              "required": [
+                                "path",
+                                "filesystem_id"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "actor_id",
+                          "mounts"
+                        ],
+                        "additionalProperties": false
                       },
-                      "mounts": {
-                        "type": "array",
-                        "minItems": 1,
-                        "maxItems": 32,
-                        "items": {
-                          "type": "object",
-                          "properties": {
-                            "path": {
-                              "type": "string"
-                            },
-                            "filesystem_id": {
-                              "type": "string",
-                              "format": "uuid"
+                      "input": {
+                        "type": "object",
+                        "properties": {
+                          "locator": {
+                            "$ref": "#/components/schemas/Locator"
+                          },
+                          "parent": {
+                            "$ref": "#/components/schemas/Locator"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "text": {
+                            "type": "string"
+                          },
+                          "revision": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)$"
+                          },
+                          "request_key": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "entry_id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "cursor": {
+                            "type": "string"
+                          },
+                          "limit": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 100
+                          },
+                          "locators": {
+                            "type": "array",
+                            "maxItems": 100,
+                            "items": {
+                              "$ref": "#/components/schemas/Locator"
                             }
                           },
-                          "required": [
-                            "path",
-                            "filesystem_id"
-                          ],
-                          "additionalProperties": false
-                        }
+                          "storage": {
+                            "enum": [
+                              "inline",
+                              "object"
+                            ]
+                          },
+                          "size_bytes": {
+                            "type": "string",
+                            "pattern": "^(0|[1-9][0-9]*)$"
+                          },
+                          "content_md5": {
+                            "type": "string",
+                            "minLength": 24,
+                            "maxLength": 24
+                          },
+                          "parts": {
+                            "type": "array",
+                            "maxItems": 10000,
+                            "items": {
+                              "$ref": "#/components/schemas/UploadReceipt"
+                            }
+                          },
+                          "stage": {
+                            "enum": [
+                              "enrichment",
+                              "index"
+                            ]
+                          }
+                        },
+                        "required": [],
+                        "additionalProperties": false
                       }
                     },
                     "required": [
-                      "actor_id",
-                      "mounts"
+                      "scope",
+                      "input"
                     ],
                     "additionalProperties": false
                   },
-                  "input": {
-                    "type": "object",
-                    "properties": {
-                      "locator": {
-                        "$ref": "#/components/schemas/Locator"
-                      },
-                      "parent": {
-                        "$ref": "#/components/schemas/Locator"
-                      },
-                      "name": {
-                        "type": "string"
-                      },
-                      "text": {
-                        "type": "string"
-                      },
-                      "revision": {
-                        "type": "string",
-                        "pattern": "^(0|[1-9][0-9]*)$"
-                      },
-                      "request_key": {
-                        "type": "string",
-                        "format": "uuid"
-                      },
-                      "entry_id": {
-                        "type": "string",
-                        "format": "uuid"
-                      },
-                      "cursor": {
-                        "type": "string"
-                      },
-                      "limit": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": 100
-                      },
-                      "locators": {
-                        "type": "array",
-                        "maxItems": 100,
-                        "items": {
-                          "$ref": "#/components/schemas/Locator"
-                        }
-                      },
-                      "storage": {
-                        "enum": [
-                          "inline",
-                          "object"
-                        ]
-                      },
-                      "size_bytes": {
-                        "type": "string",
-                        "pattern": "^(0|[1-9][0-9]*)$"
-                      },
-                      "content_md5": {
-                        "type": "string",
-                        "minLength": 24,
-                        "maxLength": 24
-                      },
-                      "parts": {
-                        "type": "array",
-                        "maxItems": 10000,
-                        "items": {
-                          "$ref": "#/components/schemas/UploadReceipt"
-                        }
-                      }
-                    },
-                    "required": [],
-                    "additionalProperties": false
+                  {
+                    "$ref": "#/components/schemas/SearchRequest"
                   }
-                },
-                "required": [
-                  "scope",
-                  "input"
-                ],
-                "additionalProperties": false
+                ]
               }
             }
           }
@@ -1143,7 +1159,7 @@
             }
           }
         },
-        "description": "Scoped file primitives. artifact-status returns ArtifactStatus; source files retain their payload and may contain generated read-only children."
+        "description": "Scoped file primitives. processing-status returns ProcessingStatus; source files retain their payload and may contain generated read-only children. Search returns SearchPage; processing-status and processing-retry return ProcessingStatus."
       }
     },
     "/internal/v1/filesystems/{fs}/uploads/{upload}/bytes": {
@@ -3363,6 +3379,1363 @@
           }
         }
       }
+    },
+    "/internal/v1/processing/{operation}/enrichment/prepare": {
+      "post": {
+        "operationId": "prepareEnrichment",
+        "security": [
+          {
+            "processorToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "operation",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Scoped operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnrichmentPrepare"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/processing/{operation}/enrichment/outputs": {
+      "post": {
+        "operationId": "prepareEnrichmentOutput",
+        "security": [
+          {
+            "processorToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "operation",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProcessingOutput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Scoped operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Upload"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/processing/{operation}/enrichment/complete": {
+      "post": {
+        "operationId": "completeEnrichment",
+        "security": [
+          {
+            "processorToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "operation",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnrichmentComplete"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Scoped operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProcessingResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/processing/{operation}/enrichment/fail": {
+      "post": {
+        "operationId": "abortEnrichment",
+        "security": [
+          {
+            "processorToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "operation",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "enum": [
+                      "PROCESSING_FAILED",
+                      "PROCESSING_CANCELLED",
+                      "DOCUMENT_INVALID",
+                      "RESOURCE_LIMIT",
+                      "QUOTA_EXCEEDED"
+                    ]
+                  }
+                },
+                "required": [
+                  "code"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Scoped operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "state": {
+                      "const": "failed"
+                    }
+                  },
+                  "required": [
+                    "state"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/processing/{operation}/enrichment/uploads/{upload}/bytes": {
+      "put": {
+        "operationId": "transferEnrichmentInlineBytes",
+        "security": [
+          {
+            "processorToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "operation",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "in": "path",
+            "name": "upload",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "contentMediaType": "application/octet-stream"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Scoped operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Upload"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/processing/{operation}/enrichment/uploads/{upload}/status": {
+      "post": {
+        "operationId": "getEnrichmentUpload",
+        "security": [
+          {
+            "processorToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "operation",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "in": "path",
+            "name": "upload",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Scoped operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Upload"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/processing/{operation}/enrichment/uploads/{upload}/parts": {
+      "post": {
+        "operationId": "signEnrichmentParts",
+        "security": [
+          {
+            "processorToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "operation",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "in": "path",
+            "name": "upload",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "parts": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 64,
+                    "items": {
+                      "$ref": "#/components/schemas/UploadPartRequest"
+                    }
+                  }
+                },
+                "required": [
+                  "parts"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Scoped operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadPartURLs"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/processing/{operation}/enrichment/uploads/{upload}/complete": {
+      "post": {
+        "operationId": "completeEnrichmentUpload",
+        "security": [
+          {
+            "processorToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "operation",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "in": "path",
+            "name": "upload",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "parts": {
+                    "type": [
+                      "array",
+                      "null"
+                    ],
+                    "items": {
+                      "$ref": "#/components/schemas/UploadReceipt"
+                    },
+                    "maxItems": 10000
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Scoped operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Upload"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/processing/{operation}/index/prepare": {
+      "post": {
+        "operationId": "indexPrepare",
+        "security": [
+          {
+            "processorToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "operation",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Scoped operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/processing/{operation}/index/complete": {
+      "post": {
+        "operationId": "indexComplete",
+        "security": [
+          {
+            "processorToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "operation",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Scoped operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProcessingResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/processing/{operation}/index/fail": {
+      "post": {
+        "operationId": "indexFail",
+        "security": [
+          {
+            "processorToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "operation",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "enum": [
+                      "PROCESSING_FAILED",
+                      "RESOURCE_LIMIT",
+                      "DEPENDENCY_UNAVAILABLE"
+                    ]
+                  }
+                },
+                "required": [
+                  "code"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Scoped operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Request refused or dependency unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -3833,6 +5206,39 @@
           "updated_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "media_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "context": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "processing": {
+            "$ref": "#/components/schemas/ProcessingStatus"
           }
         },
         "required": [
@@ -3844,10 +5250,14 @@
           "size_bytes",
           "revision",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "media_type",
+          "title",
+          "description",
+          "type"
         ],
         "additionalProperties": false,
-        "description": "A file owns its original payload and may contain generated read-only children. Its size and revision describe its own payload; child publication does not change them."
+        "description": "A file owns its original payload and may contain generated read-only children. Size describes its own payload. Revision changes with payload or metadata; parse publication alone leaves it unchanged. Context is omitted from list responses."
       },
       "Trash": {
         "type": "object",
@@ -4492,40 +5902,6 @@
         ],
         "additionalProperties": false
       },
-      "ArtifactStatus": {
-        "type": "object",
-        "properties": {
-          "operation_id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "source_id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "state": {
-            "enum": [
-              "pending",
-              "running",
-              "succeeded",
-              "failed"
-            ]
-          },
-          "error_code": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "operation_id",
-          "source_id",
-          "state",
-          "error_code"
-        ],
-        "additionalProperties": false
-      },
       "ProcessingResult": {
         "type": "object",
         "properties": {
@@ -4894,6 +6270,602 @@
         "required": [
           "scope"
         ]
+      },
+      "SemanticMetadata": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 600
+          },
+          "type": {
+            "type": "string",
+            "minLength": 1
+          },
+          "context": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 3000
+          }
+        },
+        "required": [
+          "title",
+          "description",
+          "type",
+          "context"
+        ],
+        "additionalProperties": false
+      },
+      "EnrichmentPrepare": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ProcessingResult"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "state": {
+                "const": "running"
+              },
+              "source_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "inline_limit_bytes": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "multipart_threshold_bytes": {
+                "type": "integer",
+                "minimum": 5242880
+              },
+              "max_outputs": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "max_output_bytes": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "nodes": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "parent_id": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "format": "uuid"
+                    },
+                    "path": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "enum": [
+                        "file",
+                        "directory"
+                      ]
+                    },
+                    "size_bytes": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9][0-9]*)$"
+                    },
+                    "media_type": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "content": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "transport": {
+                              "const": "inline"
+                            },
+                            "bytes_base64": {
+                              "type": "string",
+                              "contentEncoding": "base64"
+                            }
+                          },
+                          "required": [
+                            "transport",
+                            "bytes_base64"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "transport": {
+                              "const": "object"
+                            },
+                            "url": {
+                              "type": "string",
+                              "format": "uri"
+                            }
+                          },
+                          "required": [
+                            "transport",
+                            "url"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "parent_id",
+                    "path",
+                    "name",
+                    "kind",
+                    "size_bytes",
+                    "media_type"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "state",
+              "source_id",
+              "inline_limit_bytes",
+              "multipart_threshold_bytes",
+              "max_outputs",
+              "max_output_bytes",
+              "nodes"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "EnrichmentComplete": {
+        "type": "object",
+        "properties": {
+          "nodes": {
+            "type": "array",
+            "maxItems": 4097,
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "path": {
+                  "type": "string",
+                  "maxLength": 4096
+                },
+                "metadata": {
+                  "$ref": "#/components/schemas/SemanticMetadata"
+                },
+                "upload_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "format": "uuid"
+                }
+              },
+              "required": [
+                "id",
+                "path",
+                "metadata"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "nodes"
+        ],
+        "additionalProperties": false
+      },
+      "ProcessingStage": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "enum": [
+              "pending",
+              "running",
+              "succeeded",
+              "failed"
+            ]
+          },
+          "error_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "retryable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "state",
+          "error_code",
+          "retryable"
+        ],
+        "additionalProperties": false
+      },
+      "ProcessingStatus": {
+        "type": "object",
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "source_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "stages": {
+            "type": "object",
+            "properties": {
+              "parse": {
+                "$ref": "#/components/schemas/ProcessingStage"
+              },
+              "enrichment": {
+                "$ref": "#/components/schemas/ProcessingStage"
+              },
+              "index": {
+                "$ref": "#/components/schemas/ProcessingStage"
+              }
+            },
+            "required": [
+              "parse",
+              "enrichment",
+              "index"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "operation_id",
+          "source_id",
+          "stages"
+        ],
+        "additionalProperties": false
+      },
+      "SearchFilters": {
+        "type": "object",
+        "properties": {
+          "parent": {
+            "$ref": "#/components/schemas/Locator"
+          },
+          "type": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "media_type": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "created_after": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_before": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_after": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_before": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "SearchInput": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "filters": {
+            "$ref": "#/components/schemas/SearchFilters"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50
+          },
+          "cursor": {
+            "type": "string",
+            "maxLength": 16384
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "SearchMatch": {
+        "type": "object",
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "breadcrumb": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "node_id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "filename": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "node_id",
+                "filename"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "snippet": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "file_id",
+          "breadcrumb",
+          "snippet"
+        ],
+        "additionalProperties": false
+      },
+      "SearchItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "filesystem_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "file",
+              "directory"
+            ]
+          },
+          "size_bytes": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)$"
+          },
+          "revision": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)$"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "media_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "node_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "filename": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "matched": {
+            "$ref": "#/components/schemas/SearchMatch"
+          }
+        },
+        "required": [
+          "id",
+          "filesystem_id",
+          "parent_id",
+          "name",
+          "kind",
+          "size_bytes",
+          "revision",
+          "created_at",
+          "updated_at",
+          "media_type",
+          "title",
+          "description",
+          "type",
+          "node_id",
+          "filename",
+          "path"
+        ],
+        "additionalProperties": false,
+        "description": "A file owns its original payload and may contain generated read-only children. Size describes its own payload. Revision changes with payload or metadata; parse publication alone leaves it unchanged. Context is omitted from list responses."
+      },
+      "SearchPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchItem"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "degraded": {
+            "type": "boolean"
+          },
+          "degraded_reason": {
+            "enum": [
+              "RERANK_UNAVAILABLE",
+              null
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor",
+          "degraded"
+        ],
+        "additionalProperties": false
+      },
+      "SearchRequest": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "$ref": "#/components/schemas/Scope"
+          },
+          "input": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "filters": {
+                "$ref": "#/components/schemas/SearchFilters"
+              },
+              "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100
+              },
+              "cursor": {
+                "type": "string",
+                "maxLength": 16384
+              },
+              "sort": {
+                "enum": [
+                  "name",
+                  "created_at",
+                  "updated_at"
+                ]
+              },
+              "direction": {
+                "enum": [
+                  "asc",
+                  "desc"
+                ]
+              }
+            },
+            "required": [
+              "query"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "scope",
+          "input"
+        ],
+        "additionalProperties": false
+      },
+      "Scope": {
+        "type": "object",
+        "properties": {
+          "actor_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "mounts": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 32,
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "filesystem_id": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "required": [
+                "path",
+                "filesystem_id"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "actor_id",
+          "mounts"
+        ],
+        "additionalProperties": false
       }
     }
   }

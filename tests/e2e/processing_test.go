@@ -36,7 +36,7 @@ func TestProcessing(t *testing.T) {
 			s, b = call(t, "POST", base+"/uploads/"+prepared["id"].(string)+"/finalize", map[string]any{}, h)
 			requireStatus(t, s, 200, b)
 			node := jsonMap(t, b)["node_id"].(string)
-			statusURL := base + "/artifact-status?node_id=" + node
+			statusURL := base + "/processing-status?node_id=" + node
 			var operation string
 			deadline := time.Now().Add(150 * time.Second)
 			for {
@@ -44,10 +44,10 @@ func TestProcessing(t *testing.T) {
 				requireStatus(t, s, 200, b)
 				status := jsonMap(t, b)
 				operation = status["operation_id"].(string)
-				if status["state"] == "succeeded" {
+				if processingStage(t, status, "index")["state"] == "succeeded" {
 					break
 				}
-				if status["state"] == "failed" || time.Now().After(deadline) {
+				if processingStage(t, status, "parse")["state"] == "failed" || processingStage(t, status, "enrichment")["state"] == "failed" || processingStage(t, status, "index")["state"] == "failed" || time.Now().After(deadline) {
 					t.Fatalf("processing failed or timed out: %s", b)
 				}
 				time.Sleep(100 * time.Millisecond)
@@ -58,8 +58,8 @@ func TestProcessing(t *testing.T) {
 				t.Fatal("processing changed original bytes")
 			}
 			expected := map[string]string{
-				"pdf": "001-introduction.md", "docx": "001-introduction.md",
-				"pptx": "001-overview.md", "xlsx": "001-sales/cells-r8-c8.csv",
+				"pdf": "README.md", "docx": "README.md",
+				"pptx": "README.md", "xlsx": "1-untitled/README.md",
 			}[kind]
 			path := "/drive/" + name + "/" + expected
 			s, b = call(t, "GET", base+"/content?path="+url.QueryEscape(path), nil, h)
@@ -75,6 +75,24 @@ func TestProcessing(t *testing.T) {
 			s, b = call(t, "PUT", base+"/text", map[string]any{"locator": map[string]any{"node_id": child["id"]}, "text": "changed"}, writeHeaders)
 			requireStatus(t, s, 403, b)
 			saveHistory(t, "process-file/"+operation, "ProcessFile"+strings.ToUpper(kind[:1])+kind[1:])
+			if kind == "docx" {
+				s, b = call(t, "GET", base+"/stat?node_id="+node, nil, h)
+				requireStatus(t, s, 200, b)
+				copyHeaders := map[string]string{"Authorization": h["Authorization"], "If-Match": fmt.Sprintf("\"%v\"", jsonMap(t, b)["revision"]), "Idempotency-Key": "019ad06b-7d00-7000-9600-" + suffix}
+				s, b = call(t, "POST", base+"/copy", map[string]any{"locator": map[string]string{"node_id": node}, "parent": map[string]string{"node_id": root}, "name": "copied.docx"}, copyHeaders)
+				requireStatus(t, s, 202, b)
+				copied := waitFileOperation(t, jsonMap(t, b)["status_url"].(string), h)
+				copiedOp := waitSearchReady(t, base, copied, h)
+				var generation int
+				if err := serviceDB(t, "letfs").QueryRow(t.Context(), "SELECT attempt_generation FROM operations WHERE id=$1", copiedOp).Scan(&generation); err != nil || generation != 0 {
+					t.Fatal("copied artifact tree was reparsed", generation, err)
+				}
+				s, b = call(t, "GET", base+"/content?path=/drive/copied.docx/README.md", nil, h)
+				requireStatus(t, s, 200, b)
+				if !strings.Contains(string(b), "Hello document.") || !strings.Contains(string(b), "Done.") {
+					t.Fatal("copied tree lost content", string(b))
+				}
+			}
 			if kind == "pdf" {
 				saveHistory(t, "process-file/"+operation, "ProcessFile")
 			}
@@ -92,9 +110,9 @@ func TestProcessing(t *testing.T) {
 		id := jsonMap(t, b)["node_id"].(string)
 		deadline := time.Now().Add(90 * time.Second)
 		for {
-			s, b = call(t, "GET", base+"/artifact-status?node_id="+id, nil, h)
+			s, b = call(t, "GET", base+"/processing-status?node_id="+id, nil, h)
 			requireStatus(t, s, 200, b)
-			state := jsonMap(t, b)["state"]
+			state := processingStage(t, jsonMap(t, b), "index")["state"]
 			if state == "succeeded" {
 				break
 			}
@@ -103,18 +121,31 @@ func TestProcessing(t *testing.T) {
 			}
 			time.Sleep(100 * time.Millisecond)
 		}
-		s, b = call(t, "GET", base+"/content?path=/drive/image.docx/001-diagram.md", nil, h)
+		s, b = call(t, "GET", base+"/content?path=/drive/image.docx/README.md", nil, h)
 		requireStatus(t, s, 200, b)
 		markdown := string(b)
-		s, b = call(t, "GET", base+"/list?path=/drive/image.docx/images", nil, h)
+		if strings.HasPrefix(markdown, "---\n") {
+			parts := strings.SplitN(markdown, "\n---\n", 2)
+			if len(parts) != 2 {
+				t.Fatal("invalid README frontmatter")
+			}
+			markdown = parts[1]
+		}
+		s, b = call(t, "GET", base+"/list?path=/drive/image.docx", nil, h)
 		requireStatus(t, s, 200, b)
-		items := jsonMap(t, b)["items"].([]any)
+		all := jsonMap(t, b)["items"].([]any)
+		items := []any{}
+		for _, item := range all {
+			if strings.HasSuffix(item.(map[string]any)["name"].(string), ".png") {
+				items = append(items, item)
+			}
+		}
 		if len(items) != 1 {
 			t.Fatal("expected one extracted image", string(b))
 		}
 		entry := items[0].(map[string]any)
 		links := regexp.MustCompile(`!\[[^\]]*\]\(([^)]+)\)`).FindAllStringSubmatch(markdown, -1)
-		if len(links) != 1 || links[0][1] != "images/"+entry["name"].(string) {
+		if len(links) != 1 || links[0][1] != entry["name"].(string) {
 			t.Fatal("markdown image reference must resolve relative to its file", markdown)
 		}
 		s, b = call(t, "GET", base+"/content?path="+url.QueryEscape("/drive/image.docx/"+links[0][1]), nil, h)
@@ -155,8 +186,15 @@ func TestProcessing(t *testing.T) {
 			s, b = call(t, "POST", base+"/uploads/"+prepared["id"].(string)+"/finalize", nil, h)
 			requireStatus(t, s, 200, b)
 			id := jsonMap(t, b)["node_id"].(string)
-			s, b = call(t, "GET", base+"/artifact-status?node_id="+id, nil, h)
-			requireStatus(t, s, 404, b)
+			s, b = call(t, "GET", base+"/processing-status?node_id="+id, nil, h)
+			if name == "legacy.doc" {
+				requireStatus(t, s, 404, b)
+			} else {
+				requireStatus(t, s, 200, b)
+				if processingStage(t, jsonMap(t, b), "parse")["state"] != "succeeded" {
+					t.Fatal("direct source scheduled parsing", string(b))
+				}
+			}
 			s, b = call(t, "GET", base+"/content?node_id="+id, nil, h)
 			requireStatus(t, s, 200, b)
 			if !bytes.Equal(b, original) {
@@ -164,4 +202,17 @@ func TestProcessing(t *testing.T) {
 			}
 		})
 	}
+}
+
+func processingStage(t *testing.T, status map[string]any, stage string) map[string]any {
+	t.Helper()
+	stages, ok := status["stages"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing processing stages: %#v", status)
+	}
+	value, ok := stages[stage].(map[string]any)
+	if !ok {
+		t.Fatalf("missing processing stage %s: %#v", stage, status)
+	}
+	return value
 }

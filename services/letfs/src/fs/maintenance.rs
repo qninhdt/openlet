@@ -30,6 +30,10 @@ pub async fn discard_copies(app: &App) -> Result<u32, ApiError> {
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(180);
     let mut count = super::artifacts::discard_forests(app).await?;
     count += super::processing::maintain(app).await?;
+    match super::indexing::cleanup(app).await {
+        Ok(cleaned) => count += cleaned,
+        Err(_) => tracing::warn!("search index cleanup deferred"),
+    }
     count += super::exports::maintain(app).await?;
     for row in rows {
         if tokio::time::Instant::now() >= deadline {

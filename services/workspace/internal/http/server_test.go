@@ -74,7 +74,7 @@ func TestPaginationBoundaries(t *testing.T) {
 
 func TestRouterUnknownPathsStillAuthenticate(t *testing.T) {
 	s := Server{Config: config.Config{GatewayToken: strings.Repeat("x", 43)}}
-	for _, path := range []string{"/v1/me", "/v1/unknown", "/v1/onboarding", "/v1/workspaces/019ad06b-7d00-7000-8000-000000000001/files/artifact-status"} {
+	for _, path := range []string{"/v1/me", "/v1/unknown", "/v1/onboarding", "/v1/workspaces/019ad06b-7d00-7000-8000-000000000001/files/processing-status"} {
 		r := httptest.NewRequest("GET", path, nil)
 		w := httptest.NewRecorder()
 		s.Router().ServeHTTP(w, r)

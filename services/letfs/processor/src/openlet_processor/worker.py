@@ -11,9 +11,13 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 from openlet_processor.activity import Processor
+from openlet_processor.indexing import IndexSettings
+from openlet_processor.openrouter import AISettings, OpenRouter
+from openlet_processor.text_split import layout_limits
 
 
 async def main():
+    layout_limits()
     address = os.environ["TEMPORAL_ADDRESS"].removeprefix("http://")
     base_url = os.environ["LETFS_URL"]
     parsed = urlparse(base_url)
@@ -40,12 +44,18 @@ async def main():
         raise RuntimeError(
             "OCR runtime unavailable; install locked processor dependencies"
         ) from error
-    processor = Processor(base_url, token, models)
+    index_settings = IndexSettings.from_env()
+    ai = OpenRouter(AISettings.from_env())
+    processor = Processor(base_url, token, models, ai, index_settings)
     client = await Client.connect(address, namespace=os.environ["TEMPORAL_NAMESPACE"])
     worker = Worker(
         client,
         task_queue="openlet-letfs-processing",
-        activities=[processor.process_file],
+        activities=[
+            processor.process_file,
+            processor.enrich_file,
+            processor.index_file,
+        ],
         max_concurrent_activities=1,
         max_concurrent_activity_task_polls=1,
         graceful_shutdown_timeout=timedelta(seconds=20),
@@ -55,9 +65,12 @@ async def main():
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, stopped.set)
-    async with worker:
-        logging.getLogger(__name__).info("processing worker polling")
-        await stopped.wait()
+    try:
+        async with worker:
+            logging.getLogger(__name__).info("processing worker polling")
+            await stopped.wait()
+    finally:
+        await ai.close()
 
 
 if __name__ == "__main__":

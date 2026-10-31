@@ -1,12 +1,16 @@
 pub mod artifacts;
+pub mod backfill;
 pub mod copy;
 pub mod deletion;
+pub mod enrichment;
 pub mod exports;
+pub mod indexing;
 pub mod maintenance;
 pub mod nodes;
 pub mod paths;
 pub mod processing;
 pub mod ranges;
+pub mod search;
 pub mod trash;
 pub mod uploads;
 use crate::http::ApiError;

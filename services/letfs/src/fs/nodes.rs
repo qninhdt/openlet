@@ -20,8 +20,17 @@ pub struct Node {
     pub revision: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub media_type: Option<String>,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    #[serde(rename = "type")]
+    pub semantic_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
     #[serde(skip)]
     pub readonly: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub processing: Option<Value>,
 }
 impl Node {
     pub fn from_row(r: &PgRow) -> Self {
@@ -35,6 +44,12 @@ impl Node {
             revision: r.get::<i64, _>("revision").to_string(),
             created_at: r.get("created_at"),
             updated_at: r.get("updated_at"),
+            media_type: r.get("media_type"),
+            title: r.get("title"),
+            description: r.get("description"),
+            semantic_type: r.get("semantic_type"),
+            context: r.get("context"),
+            processing: None,
             readonly: match r.try_get("artifact_readonly") {
                 Ok(value) => value,
                 Err(sqlx::Error::ColumnNotFound(_)) => false,
@@ -77,6 +92,7 @@ pub struct Input {
     pub request_key: Option<Uuid>,
     pub entry_id: Option<Uuid>,
     pub cursor: Option<String>,
+    pub stage: Option<String>,
     pub limit: Option<usize>,
     pub locators: Option<Vec<Locator>>,
     pub storage: Option<super::uploads::StorageMode>,
@@ -269,6 +285,10 @@ pub async fn read(app: &App, fs: Uuid, action: &str, r: Request) -> Result<Value
     let l = needed(r.input.locator.as_ref())?;
     let n = s.resolve(&r.scope, l).await?;
     if action == "stat" {
+        let mut n = n;
+        if n.kind == "file" && !n.readonly {
+            n.processing = super::artifacts::status_for(&mut s, n.id).await?;
+        }
         return Ok(json!(n));
     }
     if action != "list" {
@@ -281,7 +301,8 @@ pub async fn read(app: &App, fs: Uuid, action: &str, r: Request) -> Result<Value
         rows.iter()
             .map(|r| {
                 let n = Node::from_row(r);
-                (n.id, n)
+                let id = n.id;
+                (id, Node { context: None, ..n })
             })
             .collect(),
         limit,
@@ -334,7 +355,13 @@ pub async fn create(app: &App, fs: Uuid, action: &str, r: Request) -> Result<Nod
     }
     bump(&mut s.tx, &[parent.id]).await?;
     let n = fetch(&mut s.tx, id).await?;
+    if kind == "file" {
+        super::artifacts::record_inline(&mut s, &n, r.scope.actor_id, bytes).await?;
+    }
     s.tx.commit().await?;
+    if kind == "file" {
+        super::artifacts::dispatch_pending(app, id).await;
+    }
     Ok(n)
 }
 pub async fn modify(app: &App, fs: Uuid, action: &str, r: Request) -> Result<Node, ApiError> {
@@ -404,7 +431,18 @@ pub async fn modify(app: &App, fs: Uuid, action: &str, r: Request) -> Result<Nod
     }
     bump(&mut s.tx, &[n.id]).await?;
     let out = fetch(&mut s.tx, n.id).await?;
+    if action == "replace-text" {
+        let bytes: Vec<u8> =
+            sqlx::query_scalar("SELECT inline_bytes FROM file_data WHERE node_id=$1")
+                .bind(n.id)
+                .fetch_one(&mut *s.tx)
+                .await?;
+        super::artifacts::record_inline(&mut s, &out, r.scope.actor_id, &bytes).await?;
+    }
     s.tx.commit().await?;
+    if action == "replace-text" {
+        super::artifacts::dispatch_pending(app, n.id).await;
+    }
     Ok(out)
 }
 #[cfg(test)]

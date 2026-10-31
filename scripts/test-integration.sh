@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 service=${1:-all}
 case "$service" in all|user|workspace|letfs) ;; *) echo 'SERVICE must be user, workspace, letfs or all' >&2; exit 2 ;; esac
-case "${2:-}" in ''|all) filter= ;; direct-storage|artifacts|zip-export) [[ $service == letfs ]] || { echo 'storage selectors require SERVICE=letfs' >&2; exit 2; }; filter=${2//-/_} ;;  *) echo 'Use SERVICE=user|workspace|letfs for integration; use make test-e2e TEST=... for full-stack scenarios' >&2; exit 2 ;; esac
+case "${2:-}" in ''|all) filter= ;; direct-storage|artifacts|zip-export|search) [[ $service == letfs ]] || { echo 'storage selectors require SERVICE=letfs' >&2; exit 2; }; filter=${2//-/_} ;;  *) echo 'Use SERVICE=user|workspace|letfs for integration; use make test-e2e TEST=... for full-stack scenarios' >&2; exit 2 ;; esac
 export CARGO_INCREMENTAL=0
 # Each Rust case owns PostgreSQL, S3 and Temporal; bound fixture processes independently of CPU count.
 export RUST_TEST_THREADS=${RUST_TEST_THREADS:-2}

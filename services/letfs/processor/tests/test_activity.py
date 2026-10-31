@@ -129,7 +129,7 @@ async def test_real_child_converts_local_file_with_minimal_environment(tmp_path)
     source = Path(__file__).parent / "fixtures/tiny.docx"
     models = Path(os.environ["DOCLING_MODELS_PATH"])
     await supervise(source, tmp_path, "docx", models, 10, 10000)
-    assert (tmp_path / "002-conclusion.md").read_text() == "## Conclusion\n\nDone."
+    assert "## Conclusion\n\nDone." in (tmp_path / "README.md").read_text()
 
 
 async def test_supervisor_reports_internal_failure_without_logging_document_text(
@@ -154,3 +154,35 @@ async def test_supervisor_reports_internal_failure_without_logging_document_text
     assert "RuntimeError" in caplog.text
     assert "peak_rss_kib=1234" in caplog.text
     assert "private document text" not in caplog.text
+
+
+@pytest.mark.parametrize("stage", ["enrich", "index"])
+@pytest.mark.parametrize("attempt,terminal", [(1, False), (3, False), (1, True)])
+async def test_semantic_stage_reports_failure_only_when_retries_end(
+    tmp_path, monkeypatch, stage, attempt, terminal
+):
+    from dataclasses import replace
+
+    environment = ActivityEnvironment()
+    environment.info = replace(environment.info, attempt=attempt)
+    processor = Processor("http://letfs", "token", tmp_path)
+    reported = []
+
+    async def fail(*args):
+        if terminal:
+            raise ResourceLimit("bounded evidence")
+        raise RuntimeError("transient provider failure")
+
+    async def request(api, path, body):
+        reported.append((path, body))
+        return {}
+
+    monkeypatch.setattr(processor, stage, fail)
+    monkeypatch.setattr(processor, "request", request)
+    with pytest.raises(ApplicationError):
+        await environment.run(
+            getattr(processor, stage + "_file"),
+            "019ad06b-7d00-7000-9500-000000000001",
+        )
+    assert bool(reported) == (attempt == 3 or terminal)
+    assert all(path.endswith("/fail") for path, _ in reported)

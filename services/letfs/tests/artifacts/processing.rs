@@ -207,7 +207,12 @@ async fn processing_publishes_all_outputs_once_without_per_file_admission() {
     )
     .await
     .unwrap();
-    assert_eq!(before, after);
+    assert_eq!(after["processing"]["stages"]["parse"]["state"], "succeeded");
+    let mut source_before = before;
+    let mut source_after = after;
+    source_before.as_object_mut().unwrap().remove("processing");
+    source_after.as_object_mut().unwrap().remove("processing");
+    assert_eq!(source_before, source_after);
     let child = nodes::read(
         &app,
         filesystem,
@@ -366,7 +371,7 @@ async fn processing_fences_stale_attempts_and_quota_failure_is_atomic() {
             request(filesystem, actor, json!({"locator":{"node_id":id}}))
         )
         .await
-        .unwrap()["error_code"],
+        .unwrap()["stages"]["parse"]["error_code"],
         "QUOTA_EXCEEDED"
     );
     let candidate =
@@ -384,4 +389,350 @@ async fn processing_fences_stale_attempts_and_quota_failure_is_atomic() {
         .await
         .unwrap()
     );
+}
+
+#[tokio::test]
+#[ignore = "requires Docker; run make test-integration SERVICE=letfs TEST=artifacts"]
+async fn enrichment_whole_tree_publication_is_atomic_and_idempotent() {
+    use base64::{Engine, prelude::BASE64_STANDARD};
+    use md5::{Digest, Md5};
+    let f = Fixture::new().await;
+    let bucket = Uuid::now_v7();
+    fs::ensure_bucket(
+        &f.app.pool,
+        fs::EnsureBucket {
+            id: bucket,
+            provision_key: bucket.to_string(),
+            limit_bytes: "1000000".into(),
+        },
+    )
+    .await
+    .unwrap();
+    for mode in ["inline", "object"] {
+        let (filesystem, source_id, actor, attempt) =
+            source(&f, bucket, &format!("{mode}.pdf")).await;
+        processing::prepare(&f.app, &attempt).await.unwrap();
+        let readme = output(
+            &f.app,
+            filesystem,
+            &attempt,
+            "README.md",
+            b"own content",
+            "inline",
+        )
+        .await;
+        processing::complete(
+            &f.app,
+            &attempt,
+            Complete {
+                uploads: vec![readme],
+                directories: vec![],
+            },
+        )
+        .await
+        .unwrap();
+        let before = usage(&f.app, bucket).await;
+        let prepared = fs::enrichment::prepare(&f.app, attempt.operation_id)
+            .await
+            .unwrap();
+        let nodes = prepared["nodes"].as_array().unwrap();
+        let child = nodes.iter().find(|n| n["path"] == "README.md").unwrap();
+        let child_id: Uuid = serde_json::from_value(child["id"].clone()).unwrap();
+        let bytes = b"---\nmetadata\n---\n\nown content";
+        let metadata = json!({"path":"README.md","storage":mode,"size_bytes":bytes.len().to_string(),"content_md5":if mode=="object" {Some(BASE64_STANDARD.encode(Md5::digest(bytes)))} else {None}});
+        let prepared = fs::enrichment::prepare_output(
+            &f.app,
+            attempt.operation_id,
+            serde_json::from_value(metadata).unwrap(),
+        )
+        .await
+        .unwrap();
+        let upload: Uuid = serde_json::from_value(prepared["id"].clone()).unwrap();
+        let access = fs::uploads::Access::Enrichment(attempt.operation_id);
+        if mode == "inline" {
+            fs::uploads::transfer(
+                &f.app,
+                filesystem,
+                upload,
+                access.clone(),
+                Body::from(bytes.to_vec()),
+            )
+            .await
+            .unwrap();
+        } else {
+            let mut put = reqwest::Client::new()
+                .put(prepared["transfer"]["url"].as_str().unwrap())
+                .body(bytes.to_vec());
+            for (key, value) in prepared["transfer"]["headers"].as_object().unwrap() {
+                put = put.header(key, value.as_str().unwrap());
+            }
+            assert!(put.send().await.unwrap().status().is_success());
+        }
+        fs::uploads::finalize(&f.app, filesystem, upload, access, None)
+            .await
+            .unwrap();
+        let manifest = || {
+            serde_json::from_value(json!({"nodes":[
+            {"id":source_id,"path":"","metadata":{"title":"Report","description":"A report.","type":"report","context":"Report context."}},
+            {"id":child_id,"path":"README.md","upload_id":upload,"metadata":{"title":"Report","description":"A report.","type":"report","context":"Report context."}}
+        ]})).unwrap()
+        };
+        // Quota rejection must leave parse publication and metadata untouched.
+        sqlx::query("UPDATE quota_buckets SET limit_bytes=used_bytes WHERE id=$1")
+            .bind(bucket)
+            .execute(&f.app.pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            fs::enrichment::complete(&f.app, attempt.operation_id, manifest())
+                .await
+                .unwrap_err()
+                .1,
+            "QUOTA_EXCEEDED"
+        );
+        let title: Option<String> = sqlx::query_scalar("SELECT title FROM nodes WHERE id=$1")
+            .bind(source_id)
+            .fetch_one(&f.app.pool)
+            .await
+            .unwrap();
+        assert!(title.is_none());
+        assert_eq!(usage(&f.app, bucket).await, before);
+        let state: String = sqlx::query_scalar("SELECT state FROM operations WHERE id=$1")
+            .bind(attempt.operation_id)
+            .fetch_one(&f.app.pool)
+            .await
+            .unwrap();
+        assert_eq!(state, "succeeded");
+        sqlx::query("UPDATE quota_buckets SET limit_bytes=1000000 WHERE id=$1")
+            .bind(bucket)
+            .execute(&f.app.pool)
+            .await
+            .unwrap();
+        let result = fs::enrichment::complete(&f.app, attempt.operation_id, manifest())
+            .await
+            .unwrap();
+        assert_eq!(
+            fs::enrichment::complete(&f.app, attempt.operation_id, manifest())
+                .await
+                .unwrap(),
+            result
+        );
+        assert_eq!(
+            usage(&f.app, bucket).await,
+            before + bytes.len() as i64 - 11
+        );
+        assert_eq!(
+            fs::enrichment::prepare(&f.app, attempt.operation_id)
+                .await
+                .unwrap()["state"],
+            "succeeded"
+        );
+        let original: Vec<u8> =
+            sqlx::query_scalar("SELECT inline_bytes FROM file_data WHERE node_id=$1")
+                .bind(source_id)
+                .fetch_one(&f.app.pool)
+                .await
+                .unwrap();
+        assert_eq!(original, b"original");
+        let status = nodes::read(
+            &f.app,
+            filesystem,
+            "stat",
+            request(filesystem, actor, json!({"locator":{"node_id":source_id}})),
+        )
+        .await
+        .unwrap();
+        assert_eq!(status["title"], "Report");
+        assert_eq!(status["context"], "Report context.");
+        let listing = nodes::read(
+            &f.app,
+            filesystem,
+            "list",
+            request(filesystem, actor, json!({"locator":{"node_id":source_id}})),
+        )
+        .await
+        .unwrap();
+        assert!(listing["items"][0].get("context").is_none());
+        assert_eq!(listing["items"][0]["title"], "Report");
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires Docker; run make test-integration SERVICE=letfs TEST=artifacts"]
+async fn enrichment_renames_one_tree_rejects_foreign_paths_and_obsolete_results() {
+    let f = Fixture::new().await;
+    let bucket = Uuid::now_v7();
+    fs::ensure_bucket(
+        &f.app.pool,
+        fs::EnsureBucket {
+            id: bucket,
+            provision_key: bucket.to_string(),
+            limit_bytes: "1000000".into(),
+        },
+    )
+    .await
+    .unwrap();
+    let (filesystem, source_id, actor, attempt) = source(&f, bucket, "tree.pdf").await;
+    processing::prepare(&f.app, &attempt).await.unwrap();
+    let files = [
+        ("README.md", b"root own".as_slice()),
+        ("1-untitled/README.md", b"group own".as_slice()),
+        (
+            "1-untitled/1-untitled.md",
+            b"leaf ![image](untitled-1.png)".as_slice(),
+        ),
+        ("1-untitled/untitled-1.png", b"image".as_slice()),
+    ];
+    let mut uploads = Vec::new();
+    for (path, bytes) in files {
+        uploads.push(output(&f.app, filesystem, &attempt, path, bytes, "inline").await);
+    }
+    processing::complete(
+        &f.app,
+        &attempt,
+        Complete {
+            uploads,
+            directories: vec!["1-untitled".into()],
+        },
+    )
+    .await
+    .unwrap();
+    let prepared = fs::enrichment::prepare(&f.app, attempt.operation_id)
+        .await
+        .unwrap();
+    let mut updates = Vec::new();
+    let mut leaf_id = Uuid::nil();
+    for node in prepared["nodes"].as_array().unwrap() {
+        let id: Uuid = serde_json::from_value(node["id"].clone()).unwrap();
+        let path = node["path"].as_str().unwrap();
+        let renamed = path
+            .replace("1-untitled/", "1-renamed/")
+            .replace("1-untitled.md", "1-leaf.md")
+            .replace("untitled-1.png", "figure.png");
+        let renamed = if path == "1-untitled" {
+            "1-renamed".to_owned()
+        } else {
+            renamed
+        };
+        let upload = if path.ends_with(".md") {
+            let bytes = if path.ends_with("1-untitled.md") {
+                b"leaf ![image](figure.png)".as_slice()
+            } else if path == "README.md" {
+                b"root own".as_slice()
+            } else {
+                b"group own".as_slice()
+            };
+            let metadata =
+                json!({"path":renamed,"storage":"inline","size_bytes":bytes.len().to_string()});
+            let out = fs::enrichment::prepare_output(
+                &f.app,
+                attempt.operation_id,
+                serde_json::from_value(metadata).unwrap(),
+            )
+            .await
+            .unwrap();
+            let upload: Uuid = serde_json::from_value(out["id"].clone()).unwrap();
+            let access = fs::uploads::Access::Enrichment(attempt.operation_id);
+            fs::uploads::transfer(
+                &f.app,
+                filesystem,
+                upload,
+                access.clone(),
+                Body::from(bytes.to_vec()),
+            )
+            .await
+            .unwrap();
+            fs::uploads::finalize(&f.app, filesystem, upload, access, None)
+                .await
+                .unwrap();
+            Some(upload)
+        } else {
+            None
+        };
+        if path.ends_with("1-untitled.md") {
+            leaf_id = id;
+        }
+        updates.push(json!({"id":id,"path":renamed,"upload_id":upload,"metadata":{"title":"Overview","description":"Own content.","type":"unknown","context":"Search context."}}));
+    }
+    let valid = json!({"nodes":updates});
+    let before = usage(&f.app, bucket).await;
+    let mut foreign = valid.clone();
+    foreign["nodes"][0]["id"] = json!(Uuid::now_v7());
+    assert!(
+        fs::enrichment::complete(
+            &f.app,
+            attempt.operation_id,
+            serde_json::from_value(foreign).unwrap()
+        )
+        .await
+        .is_err()
+    );
+    let mut reparent = valid.clone();
+    for node in reparent["nodes"].as_array_mut().unwrap() {
+        if node["id"] == json!(leaf_id) {
+            node["path"] = json!("1-leaf.md");
+        }
+    }
+    assert!(
+        fs::enrichment::complete(
+            &f.app,
+            attempt.operation_id,
+            serde_json::from_value(reparent).unwrap()
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(usage(&f.app, bucket).await, before);
+    fs::enrichment::complete(
+        &f.app,
+        attempt.operation_id,
+        serde_json::from_value(valid.clone()).unwrap(),
+    )
+    .await
+    .unwrap();
+    let leaf = nodes::read(
+        &f.app,
+        filesystem,
+        "stat",
+        request(
+            filesystem,
+            actor,
+            json!({"locator":{"path":"/drive/tree.pdf/1-renamed/1-leaf.md"}}),
+        ),
+    )
+    .await
+    .unwrap();
+    assert_eq!(leaf["id"], json!(leaf_id));
+    let bytes: Vec<u8> = sqlx::query_scalar("SELECT inline_bytes FROM file_data WHERE node_id=$1")
+        .bind(leaf_id)
+        .fetch_one(&f.app.pool)
+        .await
+        .unwrap();
+    assert_eq!(bytes, b"leaf ![image](figure.png)");
+    let source = nodes::read(
+        &f.app,
+        filesystem,
+        "stat",
+        request(filesystem, actor, json!({"locator":{"node_id":source_id}})),
+    )
+    .await
+    .unwrap();
+    nodes::modify(&f.app,filesystem,"replace-text",request(filesystem,actor,json!({"locator":{"node_id":source_id},"revision":source["revision"],"text":"replacement"}))).await.unwrap();
+    assert_eq!(
+        fs::enrichment::complete(
+            &f.app,
+            attempt.operation_id,
+            serde_json::from_value(valid).unwrap()
+        )
+        .await
+        .unwrap_err()
+        .1,
+        "SOURCE_REPLACED"
+    );
+    let title: Option<String> = sqlx::query_scalar("SELECT title FROM nodes WHERE id=$1")
+        .bind(source_id)
+        .fetch_one(&f.app.pool)
+        .await
+        .unwrap();
+    assert!(title.is_none());
 }

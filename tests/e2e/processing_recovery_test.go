@@ -69,14 +69,14 @@ func TestProcessingRecovery(t *testing.T) {
 	deadline = time.Now().Add(120 * time.Second)
 	var operation string
 	for {
-		s, b = call(t, "GET", base+"/artifact-status?node_id="+source, nil, h)
+		s, b = call(t, "GET", base+"/processing-status?node_id="+source, nil, h)
 		requireStatus(t, s, 200, b)
 		state := jsonMap(t, b)
 		operation = state["operation_id"].(string)
-		if state["state"] == "succeeded" {
+		if processingStage(t, state, "index")["state"] == "succeeded" {
 			break
 		}
-		if state["state"] == "failed" || time.Now().After(deadline) {
+		if processingStage(t, state, "parse")["state"] == "failed" || time.Now().After(deadline) {
 			t.Fatalf("retry did not publish: %s", b)
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -86,7 +86,7 @@ func TestProcessingRecovery(t *testing.T) {
 	if err = db.QueryRow(t.Context(), "SELECT attempt_generation FROM operations WHERE id=$1", operation).Scan(&generation); err != nil || generation < 2 {
 		t.Fatal("worker retry did not fence the first generation", generation, err)
 	}
-	if err = db.QueryRow(t.Context(), "SELECT count(*) FROM nodes WHERE parent_id=$1", source).Scan(&children); err != nil || children != 3 {
+	if err = db.QueryRow(t.Context(), "SELECT count(*) FROM nodes WHERE parent_id=$1", source).Scan(&children); err != nil || children != 2 {
 		t.Fatal("retry duplicated or lost children", children, err)
 	}
 	s, b = call(t, "GET", base+"/content?node_id="+source, nil, h)
@@ -94,9 +94,9 @@ func TestProcessingRecovery(t *testing.T) {
 	if !bytes.Equal(b, original) {
 		t.Fatal("retry changed the source")
 	}
-	s, b = call(t, "GET", base+"/content?path=/drive/retry.docx/001-introduction.md", nil, h)
+	s, b = call(t, "GET", base+"/content?path=/drive/retry.docx/README.md", nil, h)
 	requireStatus(t, s, 200, b)
-	if !strings.Contains(string(b), "Hello document.") {
+	if !strings.Contains(string(b), "Hello document.") || !strings.Contains(string(b), "Done.") {
 		t.Fatal("retry lost converted bytes")
 	}
 	saveHistory(t, "process-file/"+operation, "ProcessFileRecovery")
@@ -122,7 +122,7 @@ func TestProcessingExhausted(t *testing.T) {
 	s, b = call(t, "POST", base+"/uploads/"+prepared["id"].(string)+"/finalize", nil, h)
 	requireStatus(t, s, 200, b)
 	source := jsonMap(t, b)["node_id"].(string)
-	s, b = call(t, "GET", base+"/artifact-status?node_id="+source, nil, h)
+	s, b = call(t, "GET", base+"/processing-status?node_id="+source, nil, h)
 	requireStatus(t, s, 200, b)
 	op := jsonMap(t, b)["operation_id"].(string)
 	tc, err := temporalclient.Dial(temporalclient.Options{HostPort: "temporal:7233", Namespace: "openlet"})
@@ -150,16 +150,16 @@ func TestProcessingExhausted(t *testing.T) {
 		if err = run.Get(ctx, nil); err != nil {
 			t.Fatal(err)
 		}
-		s, b = call(t, "GET", base+"/artifact-status?node_id="+source, nil, h)
+		s, b = call(t, "GET", base+"/processing-status?node_id="+source, nil, h)
 		requireStatus(t, s, 200, b)
-		if jsonMap(t, b)["state"] == "failed" {
+		if processingStage(t, jsonMap(t, b), "parse")["state"] == "failed" {
 			break
 		}
 		if ctx.Err() != nil {
 			t.Fatal("closed workflow was not reconciled", ctx.Err())
 		}
 	}
-	if jsonMap(t, b)["error_code"] != "PROCESSING_FAILED" {
+	if processingStage(t, jsonMap(t, b), "parse")["error_code"] != "PROCESSING_FAILED" {
 		t.Fatal("wrong terminal status", string(b))
 	}
 	s, b = call(t, "GET", base+"/list?node_id="+source, nil, h)

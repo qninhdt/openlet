@@ -23,7 +23,7 @@ mkdir -m 700 -p .local/test/histories
 for scope in user workspace letfs; do "${dc[@]}" exec -T postgres sh /migrate.sh "$scope"; done
 "${dc[@]}" exec -T storage sh -c "echo 's3.bucket.create -name openlet-test' | timeout 30 weed shell -master=storage:9333 -filer=storage:8888" > .local/test/s3-init.log 2>&1
 rg -q '^created bucket openlet-test$' .local/test/s3-init.log
-"${dc[@]}" up -d --build issuer user workspace letfs envoy
+"${dc[@]}" up -d --build issuer user workspace letfs envoy qdrant
 "${dc[@]}" up -d --build processor
 "${dc[@]}" --profile test build tester
 "${dc[@]}" --profile test run --rm tester -test.v -test.run TestReadiness
@@ -45,7 +45,7 @@ PYTHON
 "${restored[@]}" ps --format json | python3 -c 'import json,sys; rows=[json.loads(line) for line in sys.stdin if line.strip()]; assert not [p for r in rows for p in (r.get("Publishers") or []) if p["PublishedPort"]]'
 if "${restored[@]}" ps --status running --services | rg -q '^(user|workspace|letfs|processor|envoy|issuer)$'; then echo 'Restore started application execution before explicit resume' >&2; exit 1; fi
 echo 'Paused isolated infrastructure verified; explicitly resuming application workers for read verification'
-"${restored[@]}" up -d issuer user workspace letfs processor envoy
+"${restored[@]}" up -d issuer user workspace letfs processor envoy qdrant
 "${restored[@]}" --profile test run --rm tester -test.v -test.run TestReadiness
 "${restored[@]}" --profile test run --rm -e OPENLET_BACKUP_FIXTURE=/histories/backup-fixture.json tester -test.v -test.run '^TestBackupRestore$'
 echo "Isolated metadata/object/Temporal restore passed: $project"

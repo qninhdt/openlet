@@ -267,8 +267,20 @@ async fn file_action(
     State(app): State<App>,
     axum::extract::Path((fs, action)): axum::extract::Path<(uuid::Uuid, String)>,
     headers: axum::http::HeaderMap,
-    Json(r): Json<fs::nodes::Request>,
+    Json(value): Json<serde_json::Value>,
 ) -> Result<Response, ApiError> {
+    if matches!(action.as_str(), "search" | "semantic-search") {
+        let request =
+            serde_json::from_value(value).map_err(|_| ApiError::bad("invalid search request"))?;
+        let result = if action == "search" {
+            fs::search::basic(&app, fs, request).await?
+        } else {
+            fs::search::semantic(&app, fs, request).await?
+        };
+        return Ok(Json(result).into_response());
+    }
+    let r: fs::nodes::Request =
+        serde_json::from_value(value).map_err(|_| ApiError::bad("invalid file request"))?;
     use fs::nodes;
     let mut status = StatusCode::OK;
     let value = match action.as_str() {
@@ -305,7 +317,12 @@ async fn file_action(
             .await?;
             return Ok(StatusCode::NO_CONTENT.into_response());
         }
-        "artifact-status" => fs::artifacts::status(&app, fs, r).await?,
+        "processing-retry" => {
+            let (code, value) = fs::artifacts::retry(&app, fs, r).await?;
+            status = code;
+            value
+        }
+        "processing-status" => fs::artifacts::status(&app, fs, r).await?,
         "stat" | "list" | "batch-stat" | "trash-list" => nodes::read(&app, fs, &action, r).await?,
         "directories" | "text" => {
             status = StatusCode::CREATED;

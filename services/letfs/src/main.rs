@@ -41,9 +41,6 @@ async fn run() -> Result<(), String> {
         .map_err(|_| "database connection failed")?;
     let temporal = letfs::temporal::client(&config).await?;
     let (storage, signer) = letfs::storage::build(&config)?;
-    let listener = tokio::net::TcpListener::bind(config.listen)
-        .await
-        .map_err(|_| "listen failed")?;
     let app = App {
         pool,
         storage,
@@ -51,6 +48,12 @@ async fn run() -> Result<(), String> {
         temporal: temporal.clone(),
         config: Arc::new(config),
     };
+    if std::env::args().nth(1).as_deref() == Some("--backfill-processing") {
+        return letfs::fs::backfill::run(&app, &std::env::args().skip(2).collect::<Vec<_>>()).await;
+    }
+    let listener = tokio::net::TcpListener::bind(app.config.listen)
+        .await
+        .map_err(|_| "listen failed")?;
     letfs::temporal::lifecycle_workflow::ensure_schedule(&app).await?;
     let runtime = temporalio_sdk::Runtime::from_current_tokio(Default::default())
         .map_err(|_| "Temporal runtime failed")?;

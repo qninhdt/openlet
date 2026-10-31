@@ -52,6 +52,9 @@ async fn process_file_history_replays() {
         "ProcessFileDocx",
         "ProcessFilePptx",
         "ProcessFileXlsx",
+        "ProcessFileDirect",
+        "ProcessFileRebuild",
+        "ProcessFileIndexFailed",
     ])
     .await;
 }
@@ -86,14 +89,44 @@ async fn replay_process_files(names: &[&str]) {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert_eq!(scheduled.len(), 1);
+        let expected = if *name == "ProcessFileExhausted" {
+            vec!["process_file"]
+        } else if name.contains("Direct") || *name == "ProcessFileIndexFailed" {
+            vec!["enrich_file", "index_file"]
+        } else if name.contains("Rebuild") {
+            vec!["index_file"]
+        } else {
+            vec!["process_file", "enrich_file", "index_file"]
+        };
         assert_eq!(
-            scheduled[0].activity_type.as_ref().unwrap().name,
-            "process_file"
+            scheduled
+                .iter()
+                .map(|a| a.activity_type.as_ref().unwrap().name.as_str())
+                .collect::<Vec<_>>(),
+            expected
         );
+        for activity in &scheduled {
+            assert_eq!(
+                activity.task_queue.as_ref().unwrap().name,
+                "openlet-letfs-processing"
+            );
+            assert_eq!(activity.retry_policy.as_ref().unwrap().maximum_attempts, 3);
+            assert_eq!(activity.heartbeat_timeout.as_ref().unwrap().seconds, 30);
+        }
+        let input = history
+            .events
+            .iter()
+            .find_map(|event| match &event.attributes {
+                Some(Attributes::WorkflowExecutionStartedEventAttributes(a)) => a.input.as_ref(),
+                _ => None,
+            })
+            .unwrap();
+        let input: letfs::temporal::process_file_workflow::Input =
+            serde_json::from_slice(&input.payloads[0].data).unwrap();
+        assert_eq!(input.parse_required, expected.contains(&"process_file"));
         assert_eq!(
-            scheduled[0].task_queue.as_ref().unwrap().name,
-            "openlet-letfs-processing"
+            input.enrichment_required,
+            expected.contains(&"enrich_file") || *name == "ProcessFileExhausted"
         );
         replayer
             .replay_workflow(temporalio_client::WorkflowHistory::from(history))

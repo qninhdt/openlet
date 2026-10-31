@@ -118,6 +118,14 @@ services:
       WORKSPACE_SERVICE_TOKEN_FILE: /run/secrets/workspace_service_token
       TEMPORAL_ADDRESS: http://temporal:7233
       PROCESSOR_SERVICE_TOKEN_FILE: /run/secrets/processor_service_token
+      OPENROUTER_URL: ${OPENROUTER_URL:-https://openrouter.ai/api/v1}
+      OPENROUTER_API_KEY_FILE: /run/secrets/openrouter_api_key
+      OPENROUTER_EMBEDDING_MODEL: ${OPENROUTER_EMBEDDING_MODEL:-openai/text-embedding-3-small}
+      OPENROUTER_RERANK_MODEL: ${OPENROUTER_RERANK_MODEL:-cohere/rerank-v3.5}
+      EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-1536}
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-files}
+      QDRANT_API_KEY_FILE: /run/secrets/qdrant_api_key
       PROCESSING_MAX_OUTPUTS: ${PROCESSING_MAX_OUTPUTS:-512}
       PROCESSING_MAX_OUTPUT_BYTES: ${PROCESSING_MAX_OUTPUT_BYTES:-268435456}
       TEMPORAL_NAMESPACE: openlet
@@ -145,7 +153,7 @@ services:
       S3_BUCKET: ${S3_BUCKET:-openlet}
       S3_ACCESS_KEY_ID_FILE: /run/secrets/s3_access_key_id
       S3_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_secret_access_key
-    secrets: [letfs_database_url, workspace_service_token, processor_service_token, s3_access_key_id, s3_secret_access_key]
+    secrets: [letfs_database_url, workspace_service_token, processor_service_token, openrouter_api_key, qdrant_api_key, s3_access_key_id, s3_secret_access_key]
     depends_on:
       temporal-init: {condition: service_completed_successfully}
     networks: [backend, outbound]
@@ -156,6 +164,16 @@ services:
       timeout: 5s
       retries: 20
 
+  qdrant:
+    image: qdrant/qdrant:v1.20.0@sha256:9bfc89f9914fc14876a88c05270685921a55b8877b254a98bcc1cc2f0a424cd2
+    restart: unless-stopped
+    entrypoint: [/bin/sh, -c]
+    command: ['export QDRANT__SERVICE__API_KEY="$$(cat /run/secrets/qdrant_api_key)"; exec ./entrypoint.sh']
+    secrets: [qdrant_api_key]
+    volumes: [qdrant-data:/qdrant/storage]
+    networks: [backend]
+    stop_grace_period: 30s
+
   processor:
     restart: unless-stopped
     image: ${PROCESSOR_IMAGE:-openlet-processor:local}
@@ -165,7 +183,24 @@ services:
       TEMPORAL_NAMESPACE: openlet
       LETFS_URL: http://letfs:8080
       PROCESSOR_SERVICE_TOKEN_FILE: /run/secrets/processor_service_token
-    secrets: [processor_service_token]
+      OPENROUTER_URL: ${OPENROUTER_URL:-https://openrouter.ai/api/v1}
+      OPENROUTER_API_KEY_FILE: /run/secrets/openrouter_api_key
+      OPENROUTER_EMBEDDING_MODEL: ${OPENROUTER_EMBEDDING_MODEL:-openai/text-embedding-3-small}
+      OPENROUTER_RERANK_MODEL: ${OPENROUTER_RERANK_MODEL:-cohere/rerank-v3.5}
+      EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-1536}
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-files}
+      QDRANT_API_KEY_FILE: /run/secrets/qdrant_api_key
+      OPENROUTER_GENERATION_MODEL: ${OPENROUTER_GENERATION_MODEL:-openai/gpt-4.1-mini}
+      OPENROUTER_REASONING_EFFORT: ${OPENROUTER_REASONING_EFFORT:-}
+      AI_EVIDENCE_TOKENS: ${AI_EVIDENCE_TOKENS:-4096}
+      AI_CONCURRENCY: ${AI_CONCURRENCY:-4}
+      EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-16}
+      CHUNK_TOKENS: ${CHUNK_TOKENS:-1024}
+      CHUNK_OVERLAP_TOKENS: ${CHUNK_OVERLAP_TOKENS:-128}
+      MIN_LEAF_TOKENS: ${MIN_LEAF_TOKENS:-256}
+      SPLIT_TOKENS: ${SPLIT_TOKENS:-4096}
+    secrets: [processor_service_token, openrouter_api_key, qdrant_api_key]
     depends_on:
       letfs: {condition: service_healthy}
     networks: [backend, outbound]
@@ -192,7 +227,10 @@ networks:
   outbound: {}
 volumes:
   postgres-data: {}
+  qdrant-data: {}
 secrets:
+  openrouter_api_key: {file: "${OPENLET_STATE_DIR:-../.local}/secrets/openrouter_api_key"}
+  qdrant_api_key: {file: "${OPENLET_STATE_DIR:-../.local}/secrets/qdrant_api_key"}
   s3_access_key_id: {file: "${OPENLET_STATE_DIR:-../.local}/secrets/s3_access_key_id"}
   s3_secret_access_key: {file: "${OPENLET_STATE_DIR:-../.local}/secrets/s3_secret_access_key"}
   clerk_secret_key: {file: "${OPENLET_STATE_DIR:-../.local}/secrets/clerk_secret_key"}

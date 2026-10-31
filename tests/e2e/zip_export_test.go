@@ -47,9 +47,9 @@ func TestZipExport(t *testing.T) {
 	}
 	deadline := time.Now().Add(90 * time.Second)
 	for {
-		status, body = call(t, "GET", base+"/artifact-status?node_id="+source, nil, headers)
+		status, body = call(t, "GET", base+"/processing-status?node_id="+source, nil, headers)
 		requireStatus(t, status, 200, body)
-		state := jsonMap(t, body)["state"]
+		state := processingStage(t, jsonMap(t, body), "enrichment")["state"]
 		if state == "succeeded" {
 			break
 		}
@@ -118,11 +118,11 @@ func TestZipExport(t *testing.T) {
 			items[entry.Name] = data
 		}
 		if artifacts {
-			if len(items) != 3 || !strings.Contains(string(items["001-introduction.md"]), "Hello document.") || !strings.Contains(string(items["002-conclusion.md"]), "Done.") {
+			if len(items) != 2 || !strings.Contains(string(items["README.md"]), "Hello document.") || !strings.Contains(string(items["README.md"]), "Done.") {
 				t.Fatal("incorrect artifact ZIP", items)
 			}
-			if _, ok := items["images/"]; !ok {
-				t.Fatal("lost empty artifact directory")
+			if !strings.Contains(string(items["untitled.csv"]), "Apple,3") {
+				t.Fatal("lost table CSV", items)
 			}
 			if jsonMap(t, mustExportStatus(t, location, headers))["name"] != "report.docx-artifacts.zip" {
 				t.Fatal("incorrect artifact filename")

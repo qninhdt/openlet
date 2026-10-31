@@ -154,13 +154,13 @@ func TestFilesystemCore(t *testing.T) {
 	s, b = call(t, "POST", base+"/uploads/"+prepared["id"].(string)+"/finalize", nil, h)
 	requireStatus(t, s, 200, b)
 	source := jsonMap(t, b)["node_id"].(string)
-	s, b = call(t, "GET", base+"/artifact-status?node_id="+source, nil, vh)
+	s, b = call(t, "GET", base+"/processing-status?node_id="+source, nil, vh)
 	requireStatus(t, s, 200, b)
 	if jsonMap(t, b)["source_id"] != source {
 		t.Fatal("processing status switched source")
 	}
-	s, b = call(t, "GET", base+"/artifact-status?node_id="+fmt.Sprint(copied), nil, vh)
-	requireStatus(t, s, 404, b)
+	s, b = call(t, "GET", base+"/processing-status?node_id="+fmt.Sprint(copied), nil, vh)
+	requireStatus(t, s, 200, b)
 	s, b = call(t, "GET", base+"/trash", nil, vh)
 	requireStatus(t, s, 403, b)
 	s, b = call(t, "POST", base+"/text", map[string]any{"parent": parent, "name": "denied", "text": "denied"}, vh)

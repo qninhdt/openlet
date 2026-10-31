@@ -18,6 +18,85 @@ pub struct Config {
     pub max_outstanding: i64,
     pub max_cleanup_backlog: i64,
     pub max_copy_nodes: i64,
+    pub search: SearchConfig,
+}
+
+#[derive(Clone)]
+pub struct SearchConfig {
+    pub openrouter_url: String,
+    pub openrouter_key: String,
+    pub embedding_model: String,
+    pub rerank_model: String,
+    pub vector_collection: String,
+    pub vector_dimension: i32,
+    pub qdrant_url: String,
+    pub qdrant_key: String,
+}
+impl Default for SearchConfig {
+    fn default() -> Self {
+        Self {
+            openrouter_url: "https://openrouter.ai/api/v1".into(),
+            openrouter_key: String::new(),
+            embedding_model: "openai/text-embedding-3-small".into(),
+            rerank_model: "cohere/rerank-v3.5".into(),
+            vector_collection: "files".into(),
+            vector_dimension: 1536,
+            qdrant_url: "http://qdrant:6333".into(),
+            qdrant_key: String::new(),
+        }
+    }
+}
+impl SearchConfig {
+    pub fn vector_space(&self) -> serde_json::Value {
+        serde_json::json!({
+            "model": self.embedding_model,
+            "collection": self.vector_collection,
+            "dimension": self.vector_dimension,
+        })
+    }
+    fn load() -> Result<Self, String> {
+        let defaults = Self::default();
+        let key = |name: &str| -> Result<String, String> {
+            let path =
+                env::var(format!("{name}_FILE")).map_err(|_| format!("{name}_FILE required"))?;
+            let value =
+                std::fs::read_to_string(path).map_err(|_| format!("cannot read {name}_FILE"))?;
+            let value = value.trim();
+            if value.is_empty() {
+                return Err(format!("{name} required"));
+            }
+            Ok(value.into())
+        };
+        let settings = Self {
+            openrouter_url: env::var("OPENROUTER_URL").unwrap_or(defaults.openrouter_url),
+            openrouter_key: key("OPENROUTER_API_KEY")?,
+            embedding_model: env::var("OPENROUTER_EMBEDDING_MODEL")
+                .unwrap_or(defaults.embedding_model),
+            rerank_model: env::var("OPENROUTER_RERANK_MODEL").unwrap_or(defaults.rerank_model),
+            vector_collection: env::var("QDRANT_COLLECTION").unwrap_or(defaults.vector_collection),
+            vector_dimension: positive("EMBEDDING_DIMENSION", defaults.vector_dimension as i64)?
+                .try_into()
+                .map_err(|_| "invalid EMBEDDING_DIMENSION")?,
+            qdrant_url: env::var("QDRANT_URL").unwrap_or(defaults.qdrant_url),
+            qdrant_key: key("QDRANT_API_KEY")?,
+        };
+        let local = env::var("ALLOW_LOCAL_AI").as_deref() == Ok("true");
+        validate_storage_endpoint(&settings.openrouter_url, local)?;
+        validate_storage_endpoint(&settings.qdrant_url, true)?;
+        if settings.embedding_model.trim().is_empty()
+            || settings.rerank_model.trim().is_empty()
+            || !(1..=65536).contains(&settings.vector_dimension)
+            || settings.vector_collection.is_empty()
+            || settings.vector_collection.len() > 100
+            || !settings
+                .vector_collection
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"_-".contains(&c))
+        {
+            return Err("invalid search configuration".into());
+        }
+        Ok(settings)
+    }
 }
 #[derive(Clone)]
 pub struct ExportConfig {
@@ -183,6 +262,7 @@ impl Config {
         };
         exports.validate()?;
         Ok(Self {
+            search: SearchConfig::load()?,
             listen: env::var("LISTEN_ADDR")
                 .unwrap_or_else(|_| "0.0.0.0:8080".into())
                 .parse()

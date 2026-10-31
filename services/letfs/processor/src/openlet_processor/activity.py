@@ -51,6 +51,9 @@ async def supervise(source, output, kind, models, max_outputs, max_bytes):
         "OMP_NUM_THREADS": "2",
         "OPENBLAS_NUM_THREADS": "2",
     }
+    for key in ("MIN_LEAF_TOKENS", "SPLIT_TOKENS"):
+        if key in os.environ:
+            environment[key] = os.environ[key]
     process = await asyncio.create_subprocess_exec(
         sys.executable,
         "-m",
@@ -113,10 +116,218 @@ async def heartbeat():
 
 
 class Processor:
-    def __init__(self, base_url: str, token: str, models: Path):
+    def __init__(
+        self, base_url: str, token: str, models: Path, ai=None, index_settings=None
+    ):
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.models = models
+        self.ai = ai
+        self.index_settings = index_settings
+
+    @activity.defn(name="enrich_file")
+    async def enrich_file(self, operation_id: str) -> str:
+        operation_id = str(UUID(operation_id))
+        path = f"/internal/v1/processing/{operation_id}/enrichment"
+        pulse = asyncio.create_task(heartbeat())
+        try:
+            async with (
+                httpx.AsyncClient(
+                    base_url=self.base_url,
+                    headers={"authorization": f"Bearer {self.token}"},
+                    timeout=30,
+                    follow_redirects=False,
+                ) as api,
+                httpx.AsyncClient(timeout=120, follow_redirects=False) as storage,
+            ):
+                try:
+                    async with asyncio.timeout(1700):
+                        await self.enrich(api, storage, path)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:
+                    code = (
+                        error.type
+                        if isinstance(error, ApplicationError)
+                        else "RESOURCE_LIMIT"
+                        if isinstance(error, ResourceLimit)
+                        else "PROCESSING_FAILED"
+                    )
+                    terminal = isinstance(error, ResourceLimit) or (
+                        isinstance(error, ApplicationError) and error.non_retryable
+                    )
+                    if terminal or activity.info().attempt >= 3:
+                        try:
+                            await self.request(api, path + "/fail", {"code": code})
+                        except Exception:
+                            LOG.warning("enrichment failure reconciliation deferred")
+                    raise ApplicationError(
+                        "semantic enrichment failed",
+                        type=code,
+                        non_retryable=isinstance(error, ResourceLimit)
+                        or (
+                            isinstance(error, ApplicationError) and error.non_retryable
+                        ),
+                    ) from None
+            return operation_id
+        finally:
+            pulse.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await pulse
+
+    async def content_bytes(self, storage, node):
+        size = int(node["size_bytes"])
+        if not 0 <= size <= MAX_INPUT_BYTES:
+            raise ResourceLimit("evidence bytes")
+        descriptor = node["content"]
+        if descriptor["transport"] == "inline":
+            data = base64.b64decode(descriptor["bytes_base64"], validate=True)
+        else:
+            data = bytearray()
+            async with storage.stream("GET", descriptor["url"]) as response:
+                if not response.is_success:
+                    raise ApplicationError(
+                        "evidence unavailable", type="DEPENDENCY_UNAVAILABLE"
+                    )
+                async for chunk in response.aiter_raw(1048576):
+                    data.extend(chunk)
+                    if len(data) > size:
+                        raise ResourceLimit("evidence bytes")
+            data = bytes(data)
+        if len(data) != size:
+            raise ApplicationError("evidence incomplete", type="DEPENDENCY_UNAVAILABLE")
+        return data
+
+    async def enrich(self, api, storage, path):
+        from openlet_processor.semantic import enrich_tree
+
+        prepared = await self.request(api, path + "/prepare", {})
+        if prepared["state"] == "succeeded":
+            return
+        nodes = prepared["nodes"]
+        contents = {}
+        total = 0
+        for node in nodes:
+            if "content" in node:
+                total += int(node["size_bytes"])
+                if total > prepared["max_output_bytes"] + MAX_INPUT_BYTES:
+                    raise ResourceLimit("evidence tree bytes")
+                contents[node["id"]] = await self.content_bytes(storage, node)
+        paths, metadata, rewritten = await enrich_tree(nodes, contents, self.ai)
+        with tempfile.TemporaryDirectory(prefix="openlet-enrich-") as scratch:
+            updates = []
+            for node in nodes:
+                upload = None
+                if node["id"] in rewritten:
+                    file = Path(scratch) / "README.md"
+                    file.write_bytes(rewritten[node["id"]])
+                    upload = await self.upload(
+                        api,
+                        storage,
+                        path,
+                        file,
+                        paths[node["id"]],
+                        prepared,
+                    )
+                updates.append(
+                    {
+                        "id": node["id"],
+                        "path": paths[node["id"]],
+                        "metadata": metadata[node["id"]].model_dump(by_alias=True),
+                        "upload_id": upload,
+                    }
+                )
+            await self.request(api, path + "/complete", {"nodes": updates})
+
+    @activity.defn(name="index_file")
+    async def index_file(self, operation_id: str) -> str:
+        operation_id = str(UUID(operation_id))
+        path = f"/internal/v1/processing/{operation_id}/index"
+        pulse = asyncio.create_task(heartbeat())
+        try:
+            async with (
+                httpx.AsyncClient(
+                    base_url=self.base_url,
+                    headers={"authorization": f"Bearer {self.token}"},
+                    timeout=30,
+                    follow_redirects=False,
+                ) as api,
+                httpx.AsyncClient(timeout=120, follow_redirects=False) as storage,
+            ):
+                try:
+                    async with asyncio.timeout(1700):
+                        await self.index(api, storage, path, operation_id)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:
+                    code = (
+                        error.type
+                        if isinstance(error, ApplicationError)
+                        else "RESOURCE_LIMIT"
+                        if isinstance(error, ResourceLimit)
+                        else "DEPENDENCY_UNAVAILABLE"
+                    )
+                    terminal = isinstance(error, ResourceLimit) or (
+                        isinstance(error, ApplicationError) and error.non_retryable
+                    )
+                    if terminal or activity.info().attempt >= 3:
+                        try:
+                            await self.request(api, path + "/fail", {"code": code})
+                        except Exception:
+                            LOG.warning("index failure reconciliation deferred")
+                    raise ApplicationError(
+                        "search indexing failed",
+                        type=code,
+                        non_retryable=isinstance(error, ResourceLimit)
+                        or (
+                            isinstance(error, ApplicationError) and error.non_retryable
+                        ),
+                    ) from None
+            return operation_id
+        finally:
+            pulse.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await pulse
+
+    async def index(self, api, storage, path, operation_id):
+        from openlet_processor.indexing import Qdrant, VectorSpace, index_tree
+
+        prepared = await self.request(api, path + "/prepare", {})
+        if prepared["state"] == "succeeded":
+            return
+        contents = {}
+        total = 0
+        for node in prepared["nodes"]:
+            mime = node["media_type"] or ""
+            if "content" not in node or mime == "text/csv" or mime.startswith("image/"):
+                continue
+            total += int(node["size_bytes"])
+            if total > prepared["max_output_bytes"] + MAX_INPUT_BYTES:
+                raise ResourceLimit("index tree bytes")
+            contents[node["id"]] = await self.content_bytes(storage, node)
+        settings = self.index_settings
+        if settings is None:
+            raise ValueError("index settings are missing")
+        async with httpx.AsyncClient(
+            base_url=settings.url,
+            headers={"api-key": settings.api_key},
+            timeout=120,
+            follow_redirects=False,
+        ) as client:
+            await index_tree(
+                prepared["nodes"],
+                contents,
+                self.ai,
+                Qdrant(client),
+                VectorSpace(**prepared["vector_space"]),
+                prepared["filesystem_id"],
+                prepared["source_id"],
+                operation_id,
+                batch_size=settings.batch_size,
+                chunk_tokens=settings.chunk_tokens,
+                overlap=settings.overlap,
+            )
+        await self.request(api, path + "/complete", {})
 
     @activity.defn(name="process_file")
     async def process_file(self, operation_id: str) -> str:

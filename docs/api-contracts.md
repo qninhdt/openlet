@@ -63,7 +63,7 @@ All suffixes below are under `/workspaces/{ws}/files`. Workspace authorizes and 
 |---|---|---|
 | GET `/stat` | Viewer | Metadata and revision ETag |
 | GET `/list` | Viewer | Keyset direct-child page for a directory or file |
-| GET `/artifact-status` | Viewer | Current source processing status; 404 when no intent exists |
+| GET `/processing-status` | Viewer | Current source processing status; 404 when no intent exists |
 | POST `/exports` | Viewer | UUID `Idempotency-Key`, bounded `locators` and optional `artifacts`; 202 after durable admission, 200 for an existing result |
 | GET `/exports/{export}` | Viewer | Initiator-bound archive state, name, decimal-string size and expiry |
 | GET `/exports/{export}/download` | Viewer | Ready result plus direct object download descriptor; reauthorizes each issuance |
@@ -86,11 +86,17 @@ All suffixes below are under `/workspaces/{ws}/files`. Workspace authorizes and 
 | POST `/uploads/{id}/finalize` | Editor | Idempotent publish from saved precondition |
 | DELETE `/uploads/{id}` | Editor | Abort unpublished upload |
 
-Normal APIs return 404 for trash/staging even by ID. No trash preview now. Files retain their original payload and may contain generated read-only children, such as `/drive/report.pdf/001-intro.md`. Listing/traversal/cwd accepts files and trailing container syntax; content reads reject a trailing `/` or `/.`. Root-relative `@<canonical UUID>` aliases remain live-node/filesystem scoped; nested matching names are ordinary names. Every artifact mutation/write destination is rejected with 403 `ARTIFACT_READ_ONLY`, including raw-ID access. Copying an artifact into an ordinary directory produces writable content.
+Normal APIs return 404 for trash/staging even by ID. No trash preview now. Files retain their original payload and may contain generated read-only children, such as `/drive/report.pdf/1-intro.md`. Listing/traversal/cwd accepts files and trailing container syntax; content reads reject a trailing `/` or `/.`. Root-relative `@<canonical UUID>` aliases remain live-node/filesystem scoped; nested matching names are ordinary names. Every artifact mutation/write destination is rejected with 403 `ARTIFACT_READ_ONLY`, including raw-ID access. Copying an artifact into an ordinary directory produces writable content.
 
 Upload requests bind initiator/workspace/filesystem and recheck membership each phase. Upload initialization and copy reject text bodies and batch locators. JSON text helpers enforce body, decoded-byte and maximum-file limits; larger text uses an explicitly chosen object upload. Download validates one range and rejects invalid/multiple ranges; attachment headers prevent treating uploaded HTML as application content.
 
-Processing status is `pending|running|succeeded|failed` with `operation_id`, `source_id` and nullable `error_code`. Eligible upload extensions are PDF/DOCX/XLSX/PPTX, case-insensitively. Replacing bytes supersedes prior intent even for equal bytes; rename/move does not. Trash permanently fails unfinished processing; restore does not restart it. Upload publication commits intent, then dispatches the Rust workflow and Python activity. Processing failure preserves the original file and exposes no partial artifacts.
+`GET /processing-status` returns `{operation_id,source_id,stages:{parse,enrichment,index}}`; each stage contains `state=pending|running|succeeded|failed`, nullable `error_code` and `retryable`. `POST /processing-retry` requires Editor and `{locator,stage:enrichment|index}`. It returns 202 while work remains and 200 when already complete; successful earlier stages are retained. Processing preserves original bytes and publishes each artifact-tree update atomically.
+
+`GET /search?query=...` finds live original filenames/titles directly in PostgreSQL. Optional parent uses `node_id` or `path`/`cwd_id`; filters use `type`, `media_type`, and created/updated after/before timestamps. Sort is `name|created_at|updated_at`, direction `asc|desc`, limit 1–100. Keyset cursors bind the filesystem, actor/scope, query, filters and sort.
+
+`POST /semantic-search` accepts `{query,filters,limit,cursor}` with limit 1–50. Dense and native BM25 prefetch fuse with RRF; DB live/current/ready checks and filters precede bounded reranking. A result is one original file with current metadata and `matched:{file_id,breadcrumb,snippet}`. Both searches return `{items,next_cursor,degraded}`. Reranker failure returns hybrid order with `degraded=true` and `degraded_reason=RERANK_UNAVAILABLE`; embedding or Qdrant failure returns 503 `DEPENDENCY_UNAVAILABLE`. Semantic cursors carry bounded offsets/seen source IDs, bind query/filter/vector-space context, and may drift as ranking changes. Work is bounded to three candidate pages per request, 10,000 candidate positions and 256 unique sources per cursor chain. Clients should follow `next_cursor` even when filtering produces an empty page.
+
+Client flows: show filename plus AI title/subtitle when available; track each processing stage; keep filename search usable while AI work is pending; open the matched breadcrumb from a semantic card; show a rerank degradation banner; offer retry for the reported failed stage. Lists omit embedding context and file bodies. README may be rendered as an overview through the ordinary content route. Artifact/chunk evidence is grouped into its original file card. Trash, replacement and authorization changes remove stale results through current DB validation.
 
 Conversion failures distinguish `RESOURCE_LIMIT` (including memory/image/output
 limits), `DOCUMENT_INVALID` (invalid input or rejected conversion) and

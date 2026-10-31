@@ -20,9 +20,17 @@ services:
       DOWNLOAD_URL_TTL_SECONDS: 300
       S3_REGION: us-east-1
       S3_BUCKET: openlet-test
+      OPENROUTER_URL: http://issuer:8080/api/v1
+      ALLOW_LOCAL_AI: 'true'
+      EMBEDDING_DIMENSION: '8'
       ALLOW_LOCAL_S3: 'true'
       MAX_COPY_NODES: '64'
     depends_on: [storage]
+  processor:
+    environment:
+      OPENROUTER_URL: http://issuer:8080/api/v1
+      ALLOW_LOCAL_AI: 'true'
+      EMBEDDING_DIMENSION: '8'
   user:
     environment:
       CLERK_API_URL: http://issuer:8080/v1

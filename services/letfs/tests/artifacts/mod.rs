@@ -107,7 +107,7 @@ async fn artifacts_copy_snapshot_and_large_forest_lifecycle() {
             request(filesystem, actor, json!({"locator":{"node_id":source}}))
         )
         .await
-        .unwrap()["error_code"],
+        .unwrap()["stages"]["parse"]["error_code"],
         "SOURCE_TRASHED"
     );
     nodes::modify(
@@ -183,9 +183,8 @@ async fn artifacts_copy_snapshot_and_large_forest_lifecycle() {
             request(filesystem, actor, json!({"locator":{"node_id":copied}}))
         )
         .await
-        .unwrap_err()
-        .0,
-        StatusCode::NOT_FOUND
+        .unwrap()["stages"]["parse"]["state"],
+        "succeeded"
     );
     let copy_parts = nodes::read(
         app,
@@ -439,6 +438,110 @@ async fn finish_deletion(app: &App, op: Uuid) {
 
 #[tokio::test]
 #[ignore = "requires Docker; run make test-integration SERVICE=letfs TEST=artifacts"]
+async fn artifacts_directory_copy_dispatches_every_logical_file_and_keeps_media_types() {
+    let fixture = Fixture::new().await;
+    let app = &fixture.app;
+    let bucket = Uuid::now_v7();
+    fs::ensure_bucket(
+        &app.pool,
+        fs::EnsureBucket {
+            id: bucket,
+            provision_key: bucket.to_string(),
+            limit_bytes: "1000000".into(),
+        },
+    )
+    .await
+    .unwrap();
+    let (filesystem, root) = fixture.filesystem(bucket).await;
+    let actor = Uuid::now_v7();
+    let folder = nodes::create(
+        app,
+        filesystem,
+        "directory",
+        request(
+            filesystem,
+            actor,
+            json!({"parent":{"node_id":root},"name":"originals"}),
+        ),
+    )
+    .await
+    .unwrap();
+    for (name, media_type) in [
+        ("notes.md", "text/markdown"),
+        ("data.json", "application/json"),
+        ("data.csv", "text/csv"),
+    ] {
+        let node = nodes::create(
+            app,
+            filesystem,
+            "text",
+            request(
+                filesystem,
+                actor,
+                json!({"parent":{"node_id":folder.id},"name":name,"text":"original content"}),
+            ),
+        )
+        .await
+        .unwrap();
+        let stat = nodes::read(
+            app,
+            filesystem,
+            "stat",
+            request(filesystem, actor, json!({"locator":{"node_id":node.id}})),
+        )
+        .await
+        .unwrap();
+        assert_eq!(stat["media_type"], media_type);
+    }
+    let stat = nodes::read(
+        app,
+        filesystem,
+        "stat",
+        request(filesystem, actor, json!({"locator":{"node_id":folder.id}})),
+    )
+    .await
+    .unwrap();
+    let copy = fs::copy::prepare(
+        app,
+        fs::copy::Start {
+            filesystem_id: filesystem,
+            request: request(
+                filesystem,
+                actor,
+                json!({
+                "locator":{"node_id":folder.id}, "revision":stat["revision"], "parent":{"node_id":root},
+                    "name":"copies", "request_key":Uuid::now_v7()
+                }),
+            ),
+        },
+    )
+    .await
+    .unwrap();
+    finish_copy(app, copy).await;
+    let operations = sqlx::query("SELECT o.workflow_started_at,o.state,n.media_type FROM operations o JOIN nodes n ON n.id=o.source_id JOIN operations c ON c.result_node_id=n.parent_id WHERE c.id=$1 AND o.kind='process-file'")
+        .bind(copy).fetch_all(&app.pool).await.unwrap();
+    assert_eq!(operations.len(), 3);
+    for operation in &operations {
+        assert!(
+            operation
+                .get::<Option<chrono::DateTime<chrono::Utc>>, _>("workflow_started_at")
+                .is_some()
+        );
+        assert_eq!(operation.get::<&str, _>("state"), "succeeded");
+        assert_ne!(operation.get::<&str, _>("media_type"), "text/plain");
+    }
+    let before = usage(app, bucket).await;
+    sqlx::query("UPDATE operations o SET workflow_started_at=NULL FROM nodes n WHERE n.id=o.source_id AND n.staging_operation_id=$1 AND o.kind='process-file'")
+        .bind(copy).execute(&app.pool).await.unwrap();
+    fs::copy::publish(app, copy).await.unwrap();
+    assert_eq!(usage(app, bucket).await, before);
+    let undispatched: i64 = sqlx::query_scalar("SELECT count(*) FROM operations o JOIN nodes n ON n.id=o.source_id WHERE n.staging_operation_id=$1 AND o.kind='process-file' AND o.workflow_started_at IS NULL")
+        .bind(copy).fetch_one(&app.pool).await.unwrap();
+    assert_eq!(undispatched, 0, "publication retry did not finish dispatch");
+}
+
+#[tokio::test]
+#[ignore = "requires Docker; run make test-integration SERVICE=letfs TEST=artifacts"]
 async fn artifacts_invalidation_preserves_accounting_and_trash_is_terminal() {
     let fixture = Fixture::new().await;
     let app = &fixture.app;
@@ -576,7 +679,7 @@ async fn artifacts_invalidation_preserves_accounting_and_trash_is_terminal() {
     .await
     .unwrap();
     assert_ne!(next["operation_id"], json!(publisher));
-    assert_eq!(next["state"], "running");
+    assert_eq!(next["stages"]["parse"]["state"], "running");
     assert_eq!(fs::artifacts::discard_forests(app).await.unwrap(), 1);
     assert_eq!(usage(app, bucket).await, 3);
     let count: i64 = sqlx::query_scalar("SELECT node_count FROM filesystems WHERE id=$1")
@@ -624,8 +727,8 @@ async fn artifacts_invalidation_preserves_accounting_and_trash_is_terminal() {
     )
     .await
     .unwrap();
-    assert_eq!(failed["state"], "failed");
-    assert_eq!(failed["error_code"], "SOURCE_TRASHED");
+    assert_eq!(failed["stages"]["parse"]["state"], "failed");
+    assert_eq!(failed["stages"]["parse"]["error_code"], "SOURCE_TRASHED");
     assert_eq!(failed["operation_id"], next["operation_id"]);
     nodes::modify(
         app,
@@ -646,9 +749,8 @@ async fn artifacts_invalidation_preserves_accounting_and_trash_is_terminal() {
             request(filesystem, actor, json!({"locator":{"node_id":source}}))
         )
         .await
-        .unwrap_err()
-        .0,
-        StatusCode::NOT_FOUND
+        .unwrap()["stages"]["parse"]["state"],
+        "succeeded"
     );
     assert_eq!(usage(app, bucket).await, 1);
 }
@@ -866,7 +968,7 @@ async fn artifacts_paths_and_readonly() {
     )
     .await
     .unwrap();
-    assert_eq!(status["state"], "running");
+    assert_eq!(status["stages"]["parse"]["state"], "running");
     for parent in [source, images] {
         assert!(
             nodes::create(

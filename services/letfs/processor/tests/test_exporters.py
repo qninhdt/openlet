@@ -25,7 +25,9 @@ def test_names_and_output_limits(tmp_path):
         check_outputs(tmp_path, 10, 10)
 
 
-def test_section_boundaries_preserve_picture_children(tmp_path):
+def test_section_boundaries_preserve_picture_children(tmp_path, monkeypatch):
+    monkeypatch.setenv("MIN_LEAF_TOKENS", "1")
+    monkeypatch.setenv("SPLIT_TOKENS", "1")
     from docling_core.types.doc import DocItemLabel, DoclingDocument
 
     document = DoclingDocument(name="nested-picture")
@@ -37,11 +39,10 @@ def test_section_boundaries_preserve_picture_children(tmp_path):
     document.add_heading("Second")
     document.add_text(label=DocItemLabel.TEXT, text="Closing paragraph.")
     markdown(document, tmp_path, "pdf")
-    assert (tmp_path / "images").is_dir()
-    first = (tmp_path / "001-first.md").read_text()
+    first = (tmp_path / "1-untitled.md").read_text()
     assert "Text inside picture." in first
     assert "Second" not in first
-    assert (tmp_path / "002-second.md").read_text() == (
+    assert (tmp_path / "2-untitled.md").read_text() == (
         "## Second\n\nClosing paragraph."
     )
 
@@ -57,6 +58,8 @@ def test_section_export_writes_each_picture_once(tmp_path, monkeypatch):
         document.add_picture(
             image=ImageRef.from_pil(Image.new("RGB", (8, 8), (number, 20, 30)), 72)
         )
+    monkeypatch.setenv("MIN_LEAF_TOKENS", "1")
+    monkeypatch.setenv("SPLIT_TOKENS", "1")
     original_save = Image.Image.save
     writes = []
 
@@ -67,7 +70,7 @@ def test_section_export_writes_each_picture_once(tmp_path, monkeypatch):
     monkeypatch.setattr(Image.Image, "save", save)
     markdown(document, tmp_path, "docx")
     assert len(writes) == 3
-    for number, path in enumerate(sorted(tmp_path.glob("*.md"))):
+    for number, path in enumerate(sorted(tmp_path.glob("*-untitled.md"))):
         text = path.read_text()
         assert f"Body {number}." in text
         targets = re.findall(r"!\[[^\]]*\]\(([^)]+)\)", text)
@@ -77,7 +80,8 @@ def test_section_export_writes_each_picture_once(tmp_path, monkeypatch):
 
 
 @pytest.mark.parser
-def test_word_content_controls_preserve_visible_table_and_body_text(tmp_path):
+@pytest.mark.parametrize("wrapper", ["sdt", "ins"])
+def test_word_wrapped_runs_preserve_visible_table_and_body_text(tmp_path, wrapper):
     from docx import Document
     from docx.oxml import OxmlElement
 
@@ -93,9 +97,10 @@ def test_word_content_controls_preserve_visible_table_and_body_text(tmp_path):
         run = target.runs[0]
         suffix = run.text[len(prefix) :]
         run.text = prefix
-        control = OxmlElement("w:sdt")
-        content = OxmlElement("w:sdtContent")
-        control.append(content)
+        control = OxmlElement(f"w:{wrapper}")
+        content = OxmlElement("w:sdtContent") if wrapper == "sdt" else control
+        if wrapper == "sdt":
+            control.append(content)
         target._p.replace(run._r, control)
         content.append(run._r)
         target.add_run(suffix)
@@ -106,7 +111,8 @@ def test_word_content_controls_preserve_visible_table_and_body_text(tmp_path):
     convert(source, output, "docx", Path("/unused-models"))
     text = "\n".join(path.read_text() for path in output.glob("*.md"))
     assert "Controlled body text." in text
-    assert "Global Design Challenge" in text
+    assert "Global Design Challenge" not in text
+    assert "Global Design Challenge" in (output / "untitled-1.csv").read_text()
 
 
 @pytest.mark.parser
@@ -156,8 +162,9 @@ def test_powerpoint_compatibility_preserves_text_math_and_fallback_picture(tmp_p
     output = tmp_path / "output"
     output.mkdir()
     convert(source, output, "pptx", Path("/unused-models"))
-    content = (output / "001-overview.md").read_text()
-    assert (output / "002-summary.md").read_text() == "# Summary\n\n- Done slides."
+    content = (output / "README.md").read_text()
+    assert "# Summary\n\n- Done slides." in content
+    assert "<!-- slide 2 -->" in content
     assert "Compatible body text" in content
     assert "$x$" in content
     targets = re.findall(r"!\[[^\]]*\]\(([^)]+)\)", content)
@@ -179,39 +186,37 @@ def test_real_parser_exports_preserve_content(kind, tmp_path, monkeypatch):
     )
     assert all(not p.endswith(".json") for p in files)
     if kind == "docx":
-        assert files == ["001-introduction.md", "002-conclusion.md"]
-        introduction = (tmp_path / files[0]).read_text()
-        assert introduction.startswith("Preamble\n\n## Introduction")
-        assert "Hello document." in introduction
-        assert (
-            "| Item" in introduction and "Apple" in introduction and "3" in introduction
-        )
-        assert "### Details\n\nNested detail." in introduction
-        assert (tmp_path / files[1]).read_text() == "## Conclusion\n\nDone."
+        assert files == ["README.md", "untitled-1.csv"]
+        content = (tmp_path / "README.md").read_text()
+        assert content.startswith("Preamble\n\n## Introduction")
+        assert "Hello document." in content
+        assert "### Details\n\nNested detail." in content
+        assert "## Conclusion\n\nDone." in content
+        assert "[Table](untitled-1.csv)" in content
+        assert "Apple" not in content
+        assert "Apple" in (tmp_path / "untitled-1.csv").read_text()
     elif kind == "pptx":
-        assert files == ["001-overview.md", "002-summary.md"]
-        assert (tmp_path / files[0]).read_text() == "# Overview\n\n- Hello slides."
-        assert (tmp_path / files[1]).read_text() == "# Summary\n\n- Done slides."
+        assert files == ["README.md"]
+        content = (tmp_path / "README.md").read_text()
+        assert "<!-- slide 1 -->\n\n# Overview\n\n- Hello slides." in content
+        assert "<!-- slide 2 -->\n\n# Summary\n\n- Done slides." in content
     elif kind == "xlsx":
         assert files == [
-            "001-sales/001.csv",
-            "001-sales/002.csv",
-            "001-sales/003.csv",
-            "001-sales/cells-r8-c8.csv",
+            "1-untitled/README.md",
+            "1-untitled/untitled-1.csv",
+            "2-untitled/README.md",
+            "README.md",
         ]
-        assert (tmp_path / "002-empty").is_dir()
-        expected = [
-            [["Item", "Count"], ["Apple", "3"]],
-            [["isolated"]],
-            [["formula"]],
-            [["=1+2"]],
-        ]
-        for filename, rows in zip(files, expected, strict=True):
-            with (tmp_path / filename).open(newline="") as file:
-                assert list(csv.reader(file)) == rows
+        content = (tmp_path / "1-untitled/README.md").read_text()
+        assert "isolated" in content and "formula" in content and "=1+2" in content
+        assert "Apple" not in content
+        assert "A1:B2" in content
+        assert (tmp_path / "2-untitled/README.md").read_text() == "# Empty"
+        with (tmp_path / "1-untitled/untitled-1.csv").open(newline="") as file:
+            assert list(csv.reader(file)) == [["Item", "Count"], ["Apple", "3"]]
     else:
-        assert len(files) == 1 and files[0].endswith(".md")
-        content = (tmp_path / files[0]).read_text()
+        assert files == ["README.md"]
+        content = (tmp_path / "README.md").read_text()
         assert "Introduction" in content and "Hello PDF." in content
 
 
@@ -222,9 +227,9 @@ def test_embedded_image_is_extracted_and_referenced(tmp_path, monkeypatch):
     monkeypatch.setenv("HF_HUB_OFFLINE", "1")
     models = Path(os.environ["DOCLING_MODELS_PATH"])
     convert(FIXTURES / "image.docx", tmp_path, "docx", models)
-    markdown = (tmp_path / "001-diagram.md").read_text()
+    markdown = (tmp_path / "README.md").read_text()
     assert "Embedded image remains available." in markdown
-    images = list((tmp_path / "images").glob("*.png"))
+    images = list(tmp_path.glob("untitled-*.png"))
     assert len(images) == 1
     targets = re.findall(r"!\[[^\]]*\]\(([^)]+)\)", markdown)
     assert len(targets) == 1
@@ -267,3 +272,27 @@ def test_scanned_pdf_exports_ocr_text(tmp_path, monkeypatch):
     convert(source, output, "pdf", Path(os.environ["DOCLING_MODELS_PATH"]))
     content = "\n".join(p.read_text() for p in output.glob("*.md")).lower()
     assert "openlet scanned document 4826" in content
+
+
+@pytest.mark.parser
+def test_excel_retains_outside_text_formula_and_image(tmp_path):
+    from openpyxl import Workbook
+    from openpyxl.drawing.image import Image
+
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "Instructions and data"
+    sheet["A1"] = "Read these instructions."
+    for row in [["Item", "Count"], ["Apple", 3]]:
+        sheet.append(row)
+    sheet["H8"] = "=1+2"
+    sheet.add_image(Image(FIXTURES / "image.png"), "J10")
+    source = tmp_path / "image.xlsx"
+    book.save(source)
+    output = tmp_path / "output"
+    output.mkdir()
+    convert(source, output, "xlsx", Path("/unused-models"))
+    assert (output / "1-untitled/untitled-1.png").is_file()
+    text = (output / "1-untitled/README.md").read_text()
+    assert "=1+2" in text
+    assert "![Image](untitled-1.png)" in text

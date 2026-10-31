@@ -11,8 +11,8 @@ case "${1:-}" in
   cargo test --manifest-path services/letfs/Cargo.toml --locked --test workflow-replay export_archive_history_replays -- --ignored
   exit ;;
  process-file)
-  for name in ProcessFilePdf ProcessFileDocx ProcessFilePptx ProcessFileXlsx; do
-   [[ -s "$OPENLET_HISTORY_DIR/$name.bin" ]] || { echo 'Run make test-e2e TEST=processing first' >&2; exit 2; }
+  for name in ProcessFilePdf ProcessFileDocx ProcessFilePptx ProcessFileXlsx ProcessFileDirect ProcessFileRebuild ProcessFileIndexFailed; do
+   [[ -s "$OPENLET_HISTORY_DIR/$name.bin" ]] || { echo 'Run make test-e2e TEST=processing and TEST=processing-search first' >&2; exit 2; }
   done
   cargo test --manifest-path services/letfs/Cargo.toml --locked --test workflow-replay process_file_history_replays -- --ignored
   exit ;;
@@ -24,7 +24,7 @@ case "${1:-}" in
 esac
 packages=(./services/user/internal/temporal ./services/workspace/internal/temporal)
 if [[ "$replay" == true ]]; then
-  for name in OnboardUser CreateWorkspace DeleteWorkspace CopyNode CopyNodeFailed CopyNodeRecovery PurgeTrash DeleteFilesystem StorageMaintenance ProcessFilePdf ProcessFileDocx ProcessFilePptx ProcessFileXlsx ProcessFileRecovery ProcessFileExhausted ExportArchive ExportArchiveRetry; do
+  for name in OnboardUser CreateWorkspace DeleteWorkspace CopyNode CopyNodeFailed CopyNodeRecovery PurgeTrash DeleteFilesystem StorageMaintenance ProcessFilePdf ProcessFileDocx ProcessFilePptx ProcessFileXlsx ProcessFileDirect ProcessFileRebuild ProcessFileIndexFailed ProcessFileRecovery ProcessFileExhausted ExportArchive ExportArchiveRetry; do
     [[ -s "$OPENLET_HISTORY_DIR/$name.json" && -s "$OPENLET_HISTORY_DIR/$name.bin" ]] || { echo 'Run make test-e2e TEST=all first to generate real histories' >&2; exit 2; }
   done
   "${GO:-go}" test -tags workflow,replay -count=1 -run "$pattern" "${packages[@]}"

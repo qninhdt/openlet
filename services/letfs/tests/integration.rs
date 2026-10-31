@@ -173,6 +173,7 @@ impl Fixture {
             max_outstanding: 16,
             max_cleanup_backlog: 10000,
             max_copy_nodes: 64,
+            search: Default::default(),
             storage: StorageConfig {
                 signing_endpoint: endpoint.clone(),
                 download_url_ttl_seconds: 300,
@@ -1295,3 +1296,5 @@ async fn direct_storage_commit_quota_and_abort() {
 }
 
 mod artifacts;
+
+mod search;

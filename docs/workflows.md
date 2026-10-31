@@ -1,6 +1,6 @@
 # Durable execution
 
-Service-owned workflows use pinned Go/Rust SDKs. Document conversion runs as one Python activity scheduled by letfs. Implementation reports and the active plan record verification evidence and remaining release checks.
+Service-owned workflows use pinned Go/Rust SDKs. File parsing, semantic enrichment and search indexing run as three whole-source Python activities scheduled by letfs. Implementation reports and the active plan record verification evidence and remaining release checks.
 
 ## Ownership and communication
 
@@ -25,7 +25,7 @@ Cross-service activities call internal HTTP. A service idempotently starts its o
 | `PurgeTrash` | letfs | Directory purge batches |
 | `DeleteFilesystem` | letfs | Remove live/trash/staging/upload state |
 | `StorageMaintenance` | letfs | Expire uploads, discard failed staging, reclaim objects |
-| `ProcessFile` | letfs | One Python `process_file` activity, on `openlet-letfs-processing` |
+| `ProcessFile` | letfs | `process_file -> enrich_file -> index_file`, on `openlet-letfs-processing` |
 | `ExportArchive` | letfs | One Rust `export_archive` activity, on the existing letfs queue |
 
 Direct operations: auth, profile/member/invitation mutations, path/stat/list, mkdir, rename/move, inline text edits, inline-file copy, upload transfer/finalize, trash/restore and file purge. Physical object cleanup follows logical deletion asynchronously.
@@ -68,13 +68,15 @@ Processing reconciliation runs within existing bounded maintenance work. It star
 
 ### ProcessFile
 
-Eligible PDF/DOCX/PPTX/XLSX upload publication commits a processing intent with immutable source identity. Post-commit dispatch uses `process-file/<operation-id>`; maintenance recovers a lost start. Source upload success is independent of processing success. The Rust workflow schedules exactly one Python activity, with three maximum attempts, heartbeat and execution deadlines. It contains no bytes, URLs, credentials or output lists.
+Eligible source publication commits one processing intent with immutable object-key or inline-byte identity. PDF/DOCX/PPTX/XLSX parse first; direct text/CSV/image sources skip parsing. Text create/replace and eligible copies also record fresh intents. Dispatch starts `process-file/<operation-id>` with `{operation_id,parse_required,enrichment_required}`; maintenance recovers a lost start. A running workflow is reused; a closed workflow permits a new run for a requested retry or rebuild.
 
-Python registers activities only. Its async parent owns scoped letfs HTTP/direct S3 transfers and supervises a local CPU conversion child. The worker has a separate token and no DB/S3 credentials. Models and dependencies are baked into the image; runtime uses offline models, CPU/memory/scratch bounds, one conversion per container and TERM-then-KILL cleanup.
+Each whole-source activity has three maximum attempts, heartbeat and execution deadlines. Workflow history holds only the typed flags and operation ID. The Python worker remains activity-only, on the existing queue and concurrency. Parsing supervises a bounded CPU child with baked offline models. Attempt generation/invocation checks preserve parser publication and accounting.
 
-Attempt generation plus invocation UUID fences stale requests. Same-attempt output paths reuse shared inline/single-PUT/multipart sessions. Outputs stay outside `nodes` until one source-identity/liveness/attempt/quota transaction publishes all children. A committed success reconciles without rerunning Docling. Overwrite and trash fence old work permanently; rename/move preserve source identity. Copy never starts processing.
+Enrichment reads the whole artifact inventory, samples text with character-based estimates, profiles CSV and uses vision for images. OpenRouter generation uses Instructor/Pydantic. Metadata flows leaf -> folder -> root. One atomic letfs transaction publishes metadata, final slugs, Markdown links/README bytes and quota changes; the first committed result wins. A source replacement invalidates the previous intent. Direct sources store metadata on their source node and keep original names/bytes without artifacts.
 
-PDF/DOCX export numbered main-section Markdown with tables inline, PPTX exports ordered slide Markdown, and XLSX exports sheet directories with table CSVs and positional CSVs for uncovered cells. Empty sheets remain directories. Images are optional extracted children. No indexes, manifests, duplicate document Markdown, legacy Office, standalone image processing or text chunking is emitted.
+Indexing uses full text for overlapping chunks, independently of the enrichment sample. Root/folder README files represent their parent; CSV/image use context overviews. Qdrant stores dense vectors and a native BM25 index. Deterministic IDs make whole-tree upserts repeatable. Readiness commits only after all writes and a live/current-source/vector-space recheck. A later-stage retry preserves successful earlier stages. Trash hides candidates through DB ancestry; ready indexes are reused on restore. Existing maintenance deletes obsolete operation points after workflow closure and a cleanup grace.
+
+The parser chooses one 0/1/2-level layout per document, with a README in every folder and media in its semantic container. Excel uses sheet folders with CSVs and outside-table prose in README. PPTX currently has one root README. Advanced PPTX layout, merged-cell interpretation, formula evaluation and filetype-specific text sampling remain deferred.
 
 ### ExportArchive
 

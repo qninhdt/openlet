@@ -52,7 +52,21 @@ pub async fn inline(app: &App, fs: Uuid, r: Request) -> Result<Value, ApiError> 
         .await?;
     sqlx::query("INSERT INTO operations(id,filesystem_id,actor_id,kind,request_key,fingerprint,state,result_node_id) VALUES($1,$2,$3,'copy',$4,$5,'succeeded',$6)").bind(Uuid::now_v7()).bind(fs).bind(r.scope.actor_id).bind(key).bind(fingerprint).bind(id).execute(&mut *s.tx).await?;
     bump(&mut s.tx, &[parent.id]).await?;
+    let n = fetch(&mut s.tx, id).await?;
+    let bytes: Vec<u8> = data.get("inline_bytes");
+    use sha2::{Digest, Sha256};
+    let digest = format!("{:x}", Sha256::digest(&bytes));
+    super::artifacts::record_intent(
+        &mut s,
+        &n,
+        r.scope.actor_id,
+        Uuid::now_v7(),
+        None,
+        Some(&digest),
+    )
+    .await?;
     s.tx.commit().await?;
+    super::artifacts::dispatch_pending(app, id).await;
     Ok(json!({"node_id":id,"state":"succeeded"}))
 }
 
@@ -363,7 +377,8 @@ pub async fn publish(app: &App, op: Uuid) -> Result<(), ApiError> {
         .fetch_one(&mut *s.tx)
         .await?;
     if row.get::<String, _>("state") == "succeeded" {
-        return Ok(());
+        s.tx.commit().await?;
+        return dispatch_processing(app, op).await;
     }
     if row.get::<String, _>("state") != "running" {
         return Err(ApiError::state("COPY_NOT_RUNNING"));
@@ -408,7 +423,48 @@ pub async fn publish(app: &App, op: Uuid) -> Result<(), ApiError> {
         .await?;
     bump(&mut s.tx, &[parent]).await?;
     sqlx::query("UPDATE operations SET state='succeeded',result_node_id=staging_root_id,updated_at=now() WHERE id=$1").bind(op).execute(&mut *s.tx).await?;
+    let roots:Vec<sqlx::postgres::PgRow>=sqlx::query("WITH RECURSIVE tree AS (SELECT id,parent_id FROM nodes WHERE id=$1 UNION ALL SELECT n.id,n.parent_id FROM nodes n JOIN tree t ON n.parent_id=t.id) SELECT n.*,d.object_key,d.inline_bytes FROM tree t JOIN nodes n ON n.id=t.id JOIN file_data d ON d.node_id=n.id WHERE NOT EXISTS(SELECT 1 FROM tree p JOIN file_data pd ON pd.node_id=p.id WHERE p.id=n.parent_id)").bind(root).fetch_all(&mut *s.tx).await?;
+    for source in roots {
+        use sha2::{Digest, Sha256};
+        let n = Node::from_row(&source);
+        let object: Option<String> = source.get("object_key");
+        let digest = source
+            .get::<Option<Vec<u8>>, _>("inline_bytes")
+            .map(|b| format!("{:x}", Sha256::digest(b)));
+        if let Some(intent) = super::artifacts::record_intent(
+            &mut s,
+            &n,
+            row.get("actor_id"),
+            Uuid::now_v7(),
+            object.as_deref(),
+            digest.as_deref(),
+        )
+        .await?
+            && super::artifacts::has_children(&mut s, n.id).await?
+        {
+            sqlx::query("UPDATE operations SET state='succeeded',result_node_id=$2 WHERE id=$1")
+                .bind(intent)
+                .bind(n.id)
+                .execute(&mut *s.tx)
+                .await?;
+        }
+    }
     s.tx.commit().await?;
+    dispatch_processing(app, op).await
+}
+
+async fn dispatch_processing(app: &App, copy: Uuid) -> Result<(), ApiError> {
+    use futures::{StreamExt, TryStreamExt};
+    let ids: Vec<Uuid> = sqlx::query_scalar("SELECT o.id FROM operations o JOIN nodes n ON n.id=o.source_id WHERE n.staging_operation_id=$1 AND o.kind='process-file' AND o.superseded_at IS NULL AND o.workflow_started_at IS NULL AND o.index_state!='succeeded' ORDER BY o.id")
+        .bind(copy).fetch_all(&app.pool).await?;
+    futures::stream::iter(
+        ids.into_iter().map(|op| async move {
+            crate::temporal::process_file_workflow::dispatch(app, op).await
+        }),
+    )
+    .buffer_unordered(8)
+    .try_collect::<Vec<_>>()
+    .await?;
     Ok(())
 }
 pub async fn mark_discarding(app: &App, op: Uuid, code: &str) -> Result<(), ApiError> {

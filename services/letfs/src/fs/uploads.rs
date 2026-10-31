@@ -21,6 +21,7 @@ use uuid::Uuid;
 pub enum Access {
     User(Uuid),
     Processor(super::processing::Attempt),
+    Enrichment(Uuid),
 }
 impl From<Uuid> for Access {
     fn from(actor: Uuid) -> Self {
@@ -147,6 +148,12 @@ async fn load(
     if let Access::Processor(attempt) = access {
         super::processing::validate(s, attempt).await?;
     }
+    if let Access::Enrichment(op) = access {
+        let operation = super::enrichment::validate(s, *op).await?;
+        if operation.get::<&str, _>("enrichment_state") == "succeeded" {
+            return Err(ApiError::state("ENRICHMENT_COMPLETE"));
+        }
+    }
     let row = sqlx::query("SELECT * FROM uploads WHERE id=$1 AND filesystem_id=$2 FOR UPDATE")
         .bind(id)
         .bind(s.fs)
@@ -164,6 +171,10 @@ async fn load(
             row.get::<Option<Uuid>, _>("processing_operation_id") == Some(attempt.operation_id)
                 && row.get::<Option<i32>, _>("processing_generation") == Some(attempt.generation)
                 && row.get::<Option<Uuid>, _>("processing_attempt_id") == Some(attempt.attempt_id)
+        }
+        Access::Enrichment(op) => {
+            row.get::<Option<Uuid>, _>("processing_operation_id") == Some(*op)
+                && row.get::<Option<&str>, _>("processing_stage") == Some("enrichment")
         }
     };
     if !permitted {
@@ -638,7 +649,7 @@ async fn publish(app: &App, fs: Uuid, id: Uuid, access: &Access) -> Result<Value
     if row.get::<&str, _>("transport") == "inline" && row.get::<&str, _>("state") != "uploaded" {
         return Err(ApiError::state("UPLOAD_NOT_READY"));
     }
-    if matches!(access, Access::Processor(_)) {
+    if matches!(access, Access::Processor(_) | Access::Enrichment(_)) {
         sqlx::query("UPDATE uploads SET state='uploaded',size_bytes=expected_size,updated_at=now() WHERE id=$1")
             .bind(id).execute(&mut *s.tx).await?;
         s.tx.commit().await?;

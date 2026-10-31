@@ -25,6 +25,7 @@ func main() {
 	mux := http.NewServeMux()
 	clerkRoutes(mux)
 	storageRoutes(mux)
+	aiRoutes(mux)
 	enc := base64.RawURLEncoding.EncodeToString
 	mux.HandleFunc("GET /.well-known/jwks.json", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []any{map[string]string{"kty": "RSA", "kid": "test", "use": "sig", "alg": "RS256", "n": enc(key.N.Bytes()), "e": enc(big.NewInt(int64(key.E)).Bytes())}}})

@@ -11,6 +11,6 @@ Status: backend implemented; local acceptance and real Clerk/R2 smoke checks pas
 - [Testing](testing.md): four test groups and concrete correctness gates.
 - [Production-pattern research](../plans/reports/research-261029-1220-production-patterns.md): upstream evidence versus Openlet adaptations.
 - [File-operation retry research](../plans/reports/research-261029-1344-file-operation-retries.md): conditional/state recovery versus stored response replay.
-- [Active implementation plan](../plans/261029-1624-artifact-file-processing/plan.md): direct storage, hybrid artifacts, processing, ZIP and recovery status.
+- [Active implementation plan](../plans/261031-0801-file-processing-ai-search/plan.md): artifact layouts, semantic enrichment, indexing and search status.
 
 These documents supersede the discarded plan's specifications. Historical research/journals retain context, not current architecture authority. Redis, shared content/refcounts, source snapshots/epochs, custom gateway/leases and SDK experiments are not MVP requirements.

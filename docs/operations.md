@@ -44,11 +44,13 @@ After a successful manual backup of `openlet-test`, resume that source test stac
 ```sh
 export OPENLET_STATE_DIR=../.local/test
 DC='docker compose -p openlet-test -f deploy/compose.yaml -f deploy/compose.test.yaml'
-$DC up -d storage issuer user workspace letfs processor envoy
+$DC up -d storage issuer user workspace letfs processor envoy qdrant
 $DC run --rm --no-deps --entrypoint temporal temporal-init --address temporal:7233 schedule toggle --namespace openlet --schedule-id openlet-storage-maintenance --unpause --reason operator-resume
 ```
 
-To inspect/resume an isolated target, use its `.local/openlet-restore-*/isolation.yaml` override and state directory with the same Compose project name. Start `issuer user workspace letfs processor envoy` only after infrastructure verification, then explicitly unpause the restored Schedule when maintenance is wanted. Keep the isolation override: it pins snapshot images and removes public ports. The automated drill resumes applications for read verification while leaving the Schedule paused.
+To inspect/resume an isolated target, use its `.local/openlet-restore-*/isolation.yaml` override and state directory with the same Compose project name. Start `issuer user workspace letfs processor envoy qdrant` only after infrastructure verification, then explicitly unpause the restored Schedule when maintenance is wanted. Keep the isolation override: it pins snapshot images and removes public ports. The automated drill resumes applications for read verification while leaving the Schedule paused.
+
+Qdrant points are derived and excluded from the coordinated snapshot. After resuming a restored target, use `letfs --backfill-processing --mode rebuild-index --apply` with that target's Compose configuration, repeating bounded pages with `--after` until complete, before using semantic search. This retains restored enrichment and rebuilds vectors from the restored source/artifact bytes; filename search and byte reads are available immediately.
 
 If capture or restore fails, the scripts leave the source data/volumes intact. A failed partial snapshot is not a recovery point; only a completed manifest is accepted for restore. Restore failure never promotes a target. Preserve the artifacts for diagnosis and use a new restore project name on retry.
 

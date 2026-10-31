@@ -43,7 +43,7 @@ pub async fn open(app: &App, op: Uuid, lifecycle: bool) -> Result<Session<'_>, A
         session(app, fs, true).await
     }
 }
-async fn operation(s: &mut Session<'_>, id: Uuid) -> Result<PgRow, ApiError> {
+pub(super) async fn operation(s: &mut Session<'_>, id: Uuid) -> Result<PgRow, ApiError> {
     let row = sqlx::query("SELECT * FROM operations WHERE id=$1 AND filesystem_id=$2 AND kind='process-file' FOR UPDATE")
         .bind(id).bind(s.fs).fetch_optional(&mut *s.tx).await?.ok_or_else(ApiError::not_found)?;
     if row
@@ -57,7 +57,7 @@ async fn operation(s: &mut Session<'_>, id: Uuid) -> Result<PgRow, ApiError> {
     }
     Ok(row)
 }
-async fn source(s: &mut Session<'_>, row: &PgRow) -> Result<(Node, PgRow), ApiError> {
+pub(super) async fn source(s: &mut Session<'_>, row: &PgRow) -> Result<(Node, PgRow), ApiError> {
     let scope = paths::Scope {
         actor_id: row.get("actor_id"),
         mounts: vec![paths::Mount {
@@ -98,7 +98,7 @@ pub async fn validate(s: &mut Session<'_>, attempt: &Attempt) -> Result<PgRow, A
     source(s, &row).await?;
     Ok(row)
 }
-async fn discard_uploads(s: &mut Session<'_>, op: Uuid) -> Result<(), ApiError> {
+pub(super) async fn discard_uploads(s: &mut Session<'_>, op: Uuid) -> Result<(), ApiError> {
     sqlx::query("INSERT INTO object_deletions(object_key,bucket_id,ambiguous_write,eligible_at) SELECT candidate_key,bucket_id,write_expires_at IS NOT NULL,greatest(now()+interval '15 minutes',transfer_deadline) FROM uploads WHERE processing_operation_id=$1 AND state!='finalized' AND candidate_key IS NOT NULL ON CONFLICT(object_key) DO UPDATE SET state='pending',ambiguous_write=object_deletions.ambiguous_write OR excluded.ambiguous_write,eligible_at=greatest(object_deletions.eligible_at,excluded.eligible_at)")
         .bind(op).execute(&mut *s.tx).await?;
     sqlx::query("UPDATE uploads SET state='aborted',inline_bytes=NULL,updated_at=now() WHERE processing_operation_id=$1 AND state IN ('created','transferring','uploaded')")
@@ -179,7 +179,7 @@ pub async fn prepare_output(
             &input,
         )
         .await?;
-        sqlx::query("UPDATE uploads SET processing_operation_id=$2,processing_generation=$3,processing_attempt_id=$4,relative_path=$5 WHERE id=$1")
+        sqlx::query("UPDATE uploads SET processing_operation_id=$2,processing_generation=$3,processing_attempt_id=$4,relative_path=$5,processing_stage='parse' WHERE id=$1")
             .bind(id).bind(attempt.operation_id).bind(attempt.generation).bind(attempt.attempt_id).bind(output.path).execute(&mut *s.tx).await?;
         id
     };
@@ -295,7 +295,7 @@ pub async fn maintain(app: &App) -> Result<u32, ApiError> {
         common::v1::WorkflowExecution, enums::v1::WorkflowExecutionStatus,
         workflowservice::v1::DescribeWorkflowExecutionRequest,
     };
-    let ids: Vec<Uuid> = sqlx::query_scalar("SELECT o.id FROM operations o WHERE o.kind='process-file' AND ((o.state='running' AND o.superseded_at IS NULL) OR EXISTS(SELECT 1 FROM uploads u WHERE u.processing_operation_id=o.id AND u.state IN ('created','transferring','uploaded'))) ORDER BY o.updated_at,o.id LIMIT 16")
+    let ids: Vec<Uuid> = sqlx::query_scalar("SELECT o.id FROM operations o WHERE o.kind='process-file' AND ((o.superseded_at IS NULL AND (o.state='running' OR (o.state='succeeded' AND (o.enrichment_state IN ('pending','running') OR (o.enrichment_state='succeeded' AND o.index_state IN ('pending','running')))))) OR EXISTS(SELECT 1 FROM uploads u WHERE u.processing_operation_id=o.id AND u.state IN ('created','transferring','uploaded'))) ORDER BY o.updated_at,o.id LIMIT 16")
         .fetch_all(&app.pool).await?;
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
     let mut count = 0;
@@ -335,16 +335,22 @@ pub async fn maintain(app: &App) -> Result<u32, ApiError> {
         let absent =
             matches!(&described,Ok(Err(e)) if e.code()==temporalio_client::tonic::Code::NotFound);
         let mut s = open(app, op, true).await?;
-        let row = sqlx::query("SELECT state,superseded_at FROM operations WHERE id=$1 FOR UPDATE")
+        let row = sqlx::query("SELECT state,enrichment_state,index_state,superseded_at FROM operations WHERE id=$1 FOR UPDATE")
             .bind(op)
             .fetch_one(&mut *s.tx)
             .await?;
-        let current = row.get::<&str, _>("state") == "running"
+        let current = (row.get::<&str, _>("state") == "running"
+            || (row.get::<&str, _>("state") == "succeeded"
+                && (matches!(
+                    row.get::<&str, _>("enrichment_state"),
+                    "pending" | "running"
+                ) || (row.get::<&str, _>("enrichment_state") == "succeeded"
+                    && matches!(row.get::<&str, _>("index_state"), "pending" | "running")))))
             && row
                 .get::<Option<chrono::DateTime<chrono::Utc>>, _>("superseded_at")
                 .is_none();
         if closed && current {
-            sqlx::query("UPDATE operations SET state='failed',error_code='PROCESSING_FAILED' WHERE id=$1 AND state='running'").bind(op).execute(&mut *s.tx).await?;
+            sqlx::query("UPDATE operations SET state=CASE WHEN state='running' THEN 'failed' ELSE state END,error_code=CASE WHEN state='running' THEN 'PROCESSING_FAILED' ELSE error_code END,enrichment_state=CASE WHEN state='succeeded' AND enrichment_state IN ('pending','running') THEN 'failed' ELSE enrichment_state END,enrichment_error=CASE WHEN state='succeeded' AND enrichment_state IN ('pending','running') THEN 'PROCESSING_FAILED' ELSE enrichment_error END,index_state=CASE WHEN enrichment_state='succeeded' AND index_state IN ('pending','running') THEN 'failed' ELSE index_state END,index_error=CASE WHEN enrichment_state='succeeded' AND index_state IN ('pending','running') THEN 'PROCESSING_FAILED' ELSE index_error END WHERE id=$1").bind(op).execute(&mut *s.tx).await?;
         }
         if !current || closed {
             discard_uploads(&mut s, op).await?;
@@ -360,6 +366,45 @@ pub async fn maintain(app: &App) -> Result<u32, ApiError> {
         count += 1;
     }
     Ok(count)
+}
+pub async fn workflow_running(app: &App, op: Uuid) -> Result<bool, ApiError> {
+    use temporalio_common::protos::temporal::api::{
+        common::v1::WorkflowExecution, enums::v1::WorkflowExecutionStatus,
+        workflowservice::v1::DescribeWorkflowExecutionRequest,
+    };
+    let response = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        app.temporal
+            .connection()
+            .workflow_service()
+            .describe_workflow_execution(temporalio_client::tonic::Request::new(
+                DescribeWorkflowExecutionRequest {
+                    namespace: app.config.temporal_namespace.clone(),
+                    execution: Some(WorkflowExecution {
+                        workflow_id: format!("process-file/{op}"),
+                        run_id: String::new(),
+                    }),
+                },
+            )),
+    )
+    .await
+    .map_err(|_| super::indexing::dependency())?;
+    match response {
+        Ok(value) => {
+            let info = value
+                .into_inner()
+                .workflow_execution_info
+                .ok_or_else(super::indexing::dependency)?;
+            let status = WorkflowExecutionStatus::try_from(info.status)
+                .map_err(|_| super::indexing::dependency())?;
+            if status == WorkflowExecutionStatus::Unspecified {
+                return Err(super::indexing::dependency());
+            }
+            Ok(status == WorkflowExecutionStatus::Running)
+        }
+        Err(e) if e.code() == temporalio_client::tonic::Code::NotFound => Ok(false),
+        Err(_) => Err(super::indexing::dependency()),
+    }
 }
 pub fn relative_path(path: &str) -> Result<(), ApiError> {
     if path.is_empty() || path.len() > 4096 || path.contains('\\') || path.split('/').count() > 128

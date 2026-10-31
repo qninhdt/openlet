@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 suite=${1:-all}
-case "$suite" in ''|all|foundation|compose-smoke|identity-workspace|filesystem-core|files|filesystem-scope|identity-files|object-storage|uploads|storage-copy|direct-storage|lifecycle|lifecycle-races|destructive-authorization|worker-restarts|copy-races|processing|processing-recovery|zip-export) ;; *) echo "unknown suite: $1" >&2; exit 2 ;; esac
+case "$suite" in ''|all|foundation|compose-smoke|identity-workspace|filesystem-core|files|filesystem-scope|identity-files|object-storage|uploads|storage-copy|direct-storage|lifecycle|lifecycle-races|destructive-authorization|worker-restarts|copy-races|processing|processing-recovery|processing-search|zip-export) ;; *) echo "unknown suite: $1" >&2; exit 2 ;; esac
 export OPENLET_STATE_DIR=../.local/test
 export OPENLET_TEST_UID="$(id -u)" OPENLET_TEST_GID="$(id -g)"
 mkdir -p .local/test/histories
@@ -19,8 +19,8 @@ done
 "${dc[@]}" up -d --wait storage
 "${dc[@]}" exec -T storage sh -c "echo 's3.bucket.create -name openlet-test' | timeout 30 weed shell -master=storage:9333 -filer=storage:8888" > .local/test/s3-init.log 2>&1
 if ! rg -q '^created bucket openlet-test$' .local/test/s3-init.log; then echo 'S3 test bucket initialization failed' >&2; exit 1; fi
-"${dc[@]}" up -d --build issuer user workspace letfs envoy
-if [[ "$suite" == all || "$suite" == processing || "$suite" == processing-recovery || "$suite" == zip-export ]]; then
+"${dc[@]}" up -d --build issuer user workspace letfs envoy qdrant
+if [[ "$suite" == all || "$suite" == processing || "$suite" == processing-recovery || "$suite" == processing-search || "$suite" == zip-export ]]; then
  "${dc[@]}" up -d --build processor
 fi
 "${dc[@]}" --profile test build tester
@@ -40,6 +40,9 @@ if [[ "$suite" == all || "$suite" == zip-export ]]; then
 fi
 if [[ "$suite" == all || "$suite" == processing ]]; then
  "${dc[@]}" --profile test run --rm tester -test.v -test.run '^TestProcessing$'
+fi
+if [[ "$suite" == all || "$suite" == processing-search ]]; then
+ "${dc[@]}" --profile test run --rm tester -test.v -test.run '^TestProcessingSearch$'
 fi
 if [[ "$suite" == all || "$suite" == processing-recovery ]]; then
  rm -f .local/test/histories/processing-recovery-ready .local/test/histories/processing-recovery-resume

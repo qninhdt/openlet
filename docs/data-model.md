@@ -30,11 +30,11 @@ Invitation tokens are 32 random bytes; store SHA-256 only and return the raw lin
 |---|---|
 | `quota_buckets` | ID, unique provision key, logical limit/used, lifecycle |
 | `filesystems` | ID, bucket FK, unique provision key, root ID, lifecycle, transactional node count and configured maximum |
-| `nodes` | ID, filesystem, parent, name, kind, logical size, revision, optional staging operation, timestamps |
+| `nodes` | ID, filesystem, parent, name, kind, logical size, revision, optional staging operation, timestamps, nullable media type/title/description/semantic type/context |
 | `file_data` | Node PK/FK, storage kind, inline bytes XOR immutable object key; directories have no row |
 | `trash_entries` | ID, filesystem, unique detached root, original parent/name, deletion actor/time, state |
 | `uploads` | ID, scope, initiating actor, destination/overwrite precondition, candidate key, transfer state/deadline, actual size/checksum, final result |
-| `operations` | Scope, kind, initiator, request identity/fingerprint, state/result, bounded progress; processing source identity, supersession and active attempt |
+| `operations` | Scope, kind, initiator, request identity/fingerprint, state/result, bounded progress; processing source identity, supersession, parser attempt, separate enrichment/index states and vector-space snapshot |
 | `copy_items` | Operation/source-node unique mapping, destination node, captured source revision/data key, frozen immediate file-child IDs, enumeration cursor, item state and registered target object key |
 | `deletion_items` | Operation/node unique traversal/checkpoint state for bounded postorder deletion |
 | `object_deletions` | Unique immutable object key (and version if applicable), bucket attribution, eligibility time, retry/completion state |
@@ -96,7 +96,7 @@ Ordinary `objects/` never receives an age-based expiry policy.
 
 ## Recursive copy: no whole-tree snapshot
 
-Copy/move is within one filesystem only. Reject copying a container into itself/descendant. A childless inline-file copy is one transaction. Object files, directories and files with children use a durable operation with detached destination, independent data and final quota admission. Copy captures each file's payload and immediate artifact-root IDs together, including an empty set; later artifact publication is excluded. Copy does not inherit processing intent. A copied-out artifact becomes writable when no file ancestor remains.
+Copy/move is within one filesystem only. Reject copying a container into itself/descendant. A childless inline-file copy is one transaction. Object files, directories and files with children use a durable operation with detached destination, independent data and final quota admission. Copy captures each file's payload and immediate artifact-root IDs together, including an empty set; later artifact publication is excluded. Copy creates a fresh destination processing intent; copied artifacts retain parse success and proceed through enrichment/indexing. A copied-out artifact becomes writable when no file ancestor remains.
 
 Replacement detaches old artifact roots into an existing deletion checkpoint operation. Maintenance drains these forests without a new cleanup workflow. Successful copy/processing publishers stay succeeded so charged descendant removal debits usage exactly once. Source revisions and payload timestamps do not change when artifacts are attached.
 
@@ -107,3 +107,11 @@ Directory copy does not promise one instant's tree: concurrently added entries m
 Enforce a finite configured per-copy node/byte and overall execution budget as well as per-batch budgets, failing and cleaning staging on exhaustion. Per-directory ID upper bounds alone do not stop continually nested new directories. Bytes need never exceed the captured maximum copy allowance (no larger than the bucket limit for an operation that could publish).
 
 When traversal is done, lock bucket/filesystem/operation, validate destination and operation state, admit aggregate logical bytes and attach the staging root in one transaction. Recheck destination ancestry against the source as well as name/liveness at publication; concurrent destination moves must not make a self/descendant copy valid. Concurrent finalizers observe a single published result. On failure mark discarding before cleanup; a retry after successful publication must return the published result and never discard it. Discarded staging is removed in batches with no quota debit; retain cleanup keys for late object writes. Unknown workflow status is not proof of abandonment.
+
+## Semantic metadata and search index
+
+Metadata belongs directly to `nodes`. Lists include title/description/type/media type; detail also includes context. Byte replacement clears obsolete metadata, while rename/move preserves it. Every artifact folder README holds its own metadata/content and direct children’s title/description/type. Enrichment publishes all generated names, links and Markdown replacements in one transaction with revisions and the byte delta.
+
+`operations.state` retains its charged parse-publication meaning. Separate enrichment/index state records success or a terminal stage error. The vector snapshot contains only embedding model, collection and dimension. Index rebuild commits pending readiness and cleanup while retaining that snapshot; preparation deletes the old points before replacing it. Lifecycle cleanup only removes obsolete or deleted-source operations. Direct sources set parse succeeded without creating child nodes.
+
+Qdrant is rebuildable derived state. Point IDs derive from operation/file/kind/ordinal. Payload contains exactly `filesystem_id`, `source_id`, `file_id`, `operation_id`, `text`. PostgreSQL owns current metadata, scope, liveness, filters and readiness. Search validates all candidates before reranking. Trash keeps points for restore; replaced/purged/deleted sources become invisible immediately and their obsolete operation points are reclaimed by maintenance.

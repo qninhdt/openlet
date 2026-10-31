@@ -18,6 +18,7 @@ SECRET_NAMES = (
     "user_service_token",
     "workspace_service_token",
     "processor_service_token",
+    "qdrant_api_key",
     "user_db_password",
     "workspace_db_password",
     "letfs_db_password",
@@ -182,7 +183,7 @@ def main():
         signing_endpoint=urlparse(os.environ.get("S3_SIGNING_ENDPOINT", os.environ.get("S3_ENDPOINT", "")))
         if signing_endpoint.scheme!="https" or not signing_endpoint.hostname or signing_endpoint.username or signing_endpoint.password or signing_endpoint.query or signing_endpoint.fragment:
             parser.error("S3_SIGNING_ENDPOINT requires HTTPS and no credentials, query or fragment")
-    for name,env_name in [("s3_access_key_id","S3_ACCESS_KEY_ID"),("s3_secret_access_key","S3_SECRET_ACCESS_KEY")]:
+    for name,env_name in [("s3_access_key_id","S3_ACCESS_KEY_ID"),("s3_secret_access_key","S3_SECRET_ACCESS_KEY"),("openrouter_api_key","OPENROUTER_API_KEY")]:
         path=secret_dir/name
         if args.test:
             if not path.exists(): write(path,secrets.token_urlsafe(32))
