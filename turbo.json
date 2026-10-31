@@ -1,0 +1,41 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "tasks": {
+    "build": {
+      "outputs": [],
+      "cache": false
+    },
+    "check": {
+      "outputs": [],
+      "cache": false
+    },
+    "test": {
+      "outputs": [],
+      "cache": false
+    },
+    "test:integration": {
+      "outputs": [],
+      "cache": false
+    },
+    "test:replay": {
+      "outputs": [],
+      "cache": false,
+      "passThroughEnv": [
+        "OPENLET_HISTORY_DIR"
+      ]
+    },
+    "test:parser": {
+      "outputs": [],
+      "cache": false,
+      "passThroughEnv": [
+        "DOCLING_MODELS_PATH",
+        "HF_HUB_OFFLINE",
+        "TRANSFORMERS_OFFLINE"
+      ]
+    },
+    "test:workflow": {
+      "outputs": [],
+      "cache": false
+    }
+  }
+}

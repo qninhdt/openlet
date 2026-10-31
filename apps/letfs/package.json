@@ -1,0 +1,11 @@
+{
+  "name": "@openlet/letfs",
+  "private": true,
+  "scripts": {
+    "build": "cargo build --locked --package letfs",
+    "check": "cargo fmt --all -- --check && cargo clippy --locked --package letfs --all-targets -- -D warnings",
+    "test": "cargo test --locked --package letfs --lib",
+    "test:integration": "cargo test --locked --package letfs --test integration --test telemetry -- --ignored --test-threads=1",
+    "test:replay": "cargo test --locked --package letfs --test workflow-replay -- --ignored --test-threads=1"
+  }
+}

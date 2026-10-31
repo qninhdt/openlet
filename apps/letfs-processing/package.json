@@ -1,0 +1,10 @@
+{
+  "name": "@openlet/letfs-processing",
+  "private": true,
+  "scripts": {
+    "build": "uv build --package openlet-processor",
+    "check": "uv run --locked --package openlet-processor ruff check . && uv run --locked --package openlet-processor ruff format --check .",
+    "test": "uv run --locked --package openlet-processor pytest tests -m 'not parser'",
+    "test:parser": "uv run --locked --package openlet-processor pytest tests -m parser"
+  }
+}

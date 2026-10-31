@@ -1,66 +1,65 @@
 # Durable execution
 
-Service-owned workflows use pinned Go/Rust SDKs. File parsing, semantic enrichment and search indexing run as three whole-source Python activities scheduled by letfs. Implementation reports and the active plan record verification evidence and remaining release checks.
+Service-owned workflows use pinned Go/Rust SDKs. File parsing, semantic enrichment and search indexing run as three whole-source Python activities scheduled by letfs. Implementation reports and the [completed plan](../plans/261031-1758-simplify-backend-refactor/plan.md) record verification evidence and remaining external release checks.
 
 ## Ownership and communication
 
 | Owner | Workflow/activity code | Application core |
 |---|---|---|
-| User | `services/user/internal/temporal/` | `internal/user/` |
-| Workspace | `services/workspace/internal/temporal/` | `internal/workspace/` |
-| letfs | `services/letfs/src/temporal/` | `src/fs/`, `src/storage/` |
+| Account | `apps/account/internal/temporal/` | `internal/user/` |
+| Workspace | `apps/workspace/internal/temporal/` | `internal/workspace/` |
+| letfs | `apps/letfs/src/temporal/` | `src/fs/`, `src/storage/` |
 
 Official Go/Rust SDK workers run inside the corresponding service. One private namespace per environment, explicit owner queues. Workflow code is deterministic and performs I/O only through activities. HTTP/activity adapters reuse application functions. No file bytes, credentials or growing traversal arrays in history.
 
-Cross-service activities call internal HTTP. A service idempotently starts its own operation and exposes scoped status; callers use short status activities and workflow timers. No direct Go-to-Rust Temporal activity/child dependency, custom bridge, sidecar or Nexus. Local children use explicit parent-close policies.
+Account onboarding awaits a Workspace child workflow on `openlet-workspace`. Its user lifecycle is admitted before dispatch; an owner-managed five-minute schedule recovers the commit/start gap and classifies terminal workflows. Workspace uses named remote Activities on `openlet-letfs` for storage ownership and awaits `DeleteFilesystem` children. Both Go owners reconcile bounded durable admissions at startup and every five minutes. HTTP remains the transport for providers and resource/byte access.
 
 ## Catalogue
 
 | Workflow | Owner | Durable work |
 |---|---|---|
-| `OnboardUser` | User | Internal identity, initial workspace/storage, Clerk claim |
+| `OnboardUser` | Account | Internal identity, initial workspace/storage, Clerk claim |
 | `CreateWorkspace` | Workspace | Workspace/Owner, storage provisioning, activation |
 | `DeleteWorkspace` | Workspace | Deny access, freeze bucket, remove every filesystem, finalize tombstone |
-| `CopyNode` | letfs | Object/directory staging, traversal, publication or discard |
-| `PurgeTrash` | letfs | Directory purge batches |
-| `DeleteFilesystem` | letfs | Remove live/trash/staging/upload state |
-| `StorageMaintenance` | letfs | Expire uploads, discard failed staging, reclaim objects |
-| `ProcessFile` | letfs | `process_file -> enrich_file -> index_file`, on `openlet-letfs-processing` |
-| `ExportArchive` | letfs | One Rust `export_archive` activity, on the existing letfs queue |
+| `CopyNode` | letfs | Bounded traversal and per-item visible commits with partial results |
+| `PurgeTrash` | letfs | Direct leaf batches for either node kind |
+| `DeleteFilesystem` | letfs | Remove live/trash/artifact/upload state |
+| `StorageMaintenance` | letfs | Expire uploads, recover admissions, drain detached forests and reclaim objects |
+| `ProcessFile` | letfs | `process_file` on `openlet-letfs-cpu`, then `enrich_file -> index_file` on `openlet-letfs-io` |
 
-Direct operations: auth, profile/member/invitation mutations, path/stat/list, mkdir, rename/move, inline text edits, inline-file copy, upload transfer/finalize, trash/restore and file purge. Physical object cleanup follows logical deletion asynchronously.
+Direct operations: auth, profile/member/invitation mutations, path/stat/list, mkdir, rename/move, inline text edits, upload transfer/finalize, trash/restore. Physical object cleanup follows logical deletion asynchronously.
 
 ## Activity sequences
 
 ### OnboardUser
 
-`EnsureUser` commits unique Clerk-subject identity and a stable initial-workspace provision key. `EnsureInitialWorkspace` calls the Workspace create API; `GetInitialWorkspaceStatus` plus workflow timers waits for activation. `PublishClerkUserID` merges only backend-owned metadata; `CompleteOnboarding` stores IDs and refresh instruction. A Clerk outage resumes publication, without deleting a ready account/workspace. Completed onboarding never recreates a deleted initial workspace.
+HTTP admission commits a user keyed by unique Clerk subject, then starts `onboard/<subject>`. `OnboardUser` awaits the `CreateWorkspace` child using stable `initial-workspace/<user-id>` identity. Workspace allocates its own ID; `SaveInitialWorkspace` records the returned mapping before `PublishClerkUserID` merges backend-owned metadata. `CompleteOnboarding` makes the user active. A Clerk outage retries publication; completed users never recreate a deleted initial workspace. Terminal failure remains visible on the user lifecycle. `ReconcileAccounts` checks bounded pending users at startup and every five minutes, starts missing executions with duplicate rejection and preserves active users.
 
 ### CreateWorkspace
 
-`EnsureWorkspaceAndOwner` creates provisioning workspace, member and admission together. `EnsureStorageBucket` and `EnsureDriveFilesystem` call real transactional letfs ensure APIs with stable keys. `ActivateWorkspace` records mapping/active state/result. Partial provisioning stays inaccessible. Lost responses do not allocate duplicates; transient errors do not delete existing resources.
+HTTP commits the provisioning Workspace, owner membership and `idempotency_keys` receipt atomically before dispatch. The Account child admits them in `EnsureWorkspace`. `ProvisionWorkspaceBucket` and `ProvisionWorkspaceFilesystem` are remote Activities on the Rust owner queue; Letfs generates all storage IDs. `ActivateWorkspace` commits the returned mapping. `ReleaseWorkspaceProvisioning` unpins the remote receipts only after that mapping is durable, then `CompleteWorkspaceCreation` completes the create receipt. Reconciliation also releases mapped, active resources with an incomplete receipt if the original execution closed in that gap. Receipts expire 24 hours after logical completion; unfinished remote provisioning remains pinned. Permanent provisioning failure is visible as Workspace `failed` with an error code; its owner can delete the failed resource and any partial storage. An owner-keyed frozen bucket tombstone fences late provisioning even when the original mapping was lost.
 
 ### DeleteWorkspace
 
-`BeginDeletion` rechecks Owner/revision under the Workspace lock and disables public access. `FreezeBucket` prevents new provisioning/growth. Keyset `ListBucketFilesystems`, `EnsureFilesystemDeletion` and status activities remove every filesystem with bounded concurrency. `CompleteBucketDeletion` requires no active filesystem/upload and zero charged usage. `CompleteWorkspaceDeletion` retains tombstone/status binding and removes active memberships/invitations. Physical cleanup records survive. Errors after admission do not reactivate the workspace.
+HTTP `BeginDeletion` checks Owner/revision under the Workspace lock and commits the deleting tombstone before dispatch. The remote `FreezeWorkspaceBucket` prevents new provisioning/growth. Keyset `ListWorkspaceFilesystems` includes all filesystems in the bucket; Workspace awaits a `DeleteFilesystem` child for each, with ABANDON parent-close policy. Traversal cursor stays in workflow input/history across Continue-As-New, after each child completes. `CompleteWorkspaceBucketDeletion` requires no active filesystem/upload and zero charged usage. `CompleteWorkspaceDeletion` removes invitations and nonowner memberships, retaining the owner-readable tombstone. Cancellation uses a disconnected workflow scope. Terminal failures preserve deleting state with an error code. Recovery rechecks that durable tombstone and an explicitly closed execution before resuming; deleted resources never restart. A recovery run uses distinct child execution IDs while retaining the same logical deletion key, and frozen-bucket enumeration skips already-deleted filesystems. Completing the bucket releases receipts from partial provisioning.
 
 ### CopyNode
 
-`PrepareCopy` validates scope/preconditions and creates detached staging. Repeated `CopyBatch` uses bounded item/byte/time budgets and durable source/destination mappings; S3 I/O stays outside DB locks. Frozen per-item revision/keys and result state protect response-loss retries. No tree snapshot, source-retention pins, full manifest or filesystem epoch.
+HTTP commits a scoped copy receipt and immutable admission before dispatch. `CopyItem` publishes one ordinary node after verified storage copy and atomic quota checks; deterministic destination IDs and captured parent/source revisions protect response-loss retries. `NextCopyItem` reads bounded high-water children; `FinishCopyFile` admits processing once after a logical file subtree completes. Artifact descendants stay read-only and do not receive independent processing intents.
 
-`PublishCopy` validates destination/job, admits aggregate quota and attaches the root atomically. A committed publication wins over response loss: retry returns it. On non-retryable source/name/quota failure, `MarkCopyDiscarding`, shared deletion batches and `CompleteCopyFailure` clean uncharged staging. Cleanup never discards published output. Cancellation uses SDK shielding so cleanup can finish; maintenance continues recorded discarding state.
+The workflow carries at most 128 frames, one selected item and cumulative counts across Continue-As-New every 100 steps. Node/byte/depth ceilings and a one-hour deadline bound work. A failure returns an explicit partial result and preserves committed nodes; no staging, rollback or item table exists. `CompleteCopy` starts the receipt's 24-hour TTL. The scoped monitor reads Temporal admission/progress, reauthorizes current membership and applies actor/current-owner access. Missing retained history returns 410.
 
 ### PurgeTrash
 
-`BeginPurge` claims the trash entry, excluding restore. Repeated `DeleteNodesBatch` persists bounded postorder traversal, metadata removal, quota debit for exactly the charged nodes removed in that batch and object-deletion records together. Never debit the entire subtree before deletion or repeat a batch debit after response loss. `CompletePurge` removes trash metadata and retains result. File purge uses the same transaction core directly.
+`BeginPurge` claims the trash entry, excluding restore. `DeleteNodesBatch` follows one bounded branch and removes at most 64 leaf siblings, with quota debit and object-deletion intent in the same transaction. Remaining nodes preserve progress after response loss; no deletion item or execution-state table is used. The trash entry disappears when its root is removed. Every purge uses this workflow. A purging entry fences restore and is sufficient for maintenance to recover a lost dispatch.
 
 ### DeleteFilesystem
 
-`BeginFilesystemDeletion` disables access and fences uploads/copy publication. Shared `DeleteNodesBatch` covers all roots, including trash and staging. `AbortFilesystemUploadsAndCopies` preserves immutable-key evidence and cooperates with late attempts. `CompleteFilesystemDeletion` requires no nodes, active uploads or charged bytes; retain tombstone/cleanup records. Do not delete only the live tree or cascade away bookkeeping.
+`BeginDeletion` disables access, aborts unattached open transfers and preserves immutable-key cleanup evidence under the filesystem lock. Shared `DeleteNodesBatch` queries at most 64 leaves across all roots, including trash and detached artifacts. Each batch removes metadata, debits actual usage and records cleanup atomically; the last batch retains a deleted filesystem tombstone with no nodes or charged bytes. Continue-As-New carries only immutable filesystem/entry identity after 200 batches. Lifecycle guards reject late copy/upload/publication attempts; no SQL traversal snapshot is required.
 
 ### StorageMaintenance
 
-A finite Schedule with overlap SKIP runs bounded `ExpireUploadsBatch`, `DiscardFailedCopiesBatch` and `DeleteObjectsBatch`. Expiry is terminal before cleanup. Keep records for ambiguous/late object writes and obey deadline/grace rules. Reclaim staging only after explicit discarding or confirmed terminal workflow status; unknown/unavailable history is not proof. CAS staging to discarding before cleanup so stale activities cannot publish.
+A finite five-minute Schedule with overlap SKIP runs bounded `ExpireUploadsBatch`, `ReconcileResourcesBatch` and `DeleteObjectsBatch`. Reconciliation drains detached artifact forests, recovers purging entries and incomplete copy admissions, and reconciles processing/index cleanup. A closed copy completes its receipt without deleting partial output. Unknown/unavailable history never proves abandonment. Copy writers register candidate evidence before I/O; unresolved write counts survive worker death. Cleanup rejects referenced keys, and an attempted deletion permanently fences that copy candidate from later publication/reuse. Unresolved late writes retain compact daily cleanup tombstones.
 
 Inspect S3 per-key errors and retry. Physical GC never debits logical usage again. Keep bucket attribution while cleanup exists. No automatic age-based trash purge or counter repair.
 
@@ -68,42 +67,22 @@ Processing reconciliation runs within existing bounded maintenance work. It star
 
 ### ProcessFile
 
-Eligible source publication commits one processing intent with immutable object-key or inline-byte identity. PDF/DOCX/PPTX/XLSX parse first; direct text/CSV/image sources skip parsing. Text create/replace and eligible copies also record fresh intents. Dispatch starts `process-file/<operation-id>` with `{operation_id,parse_required,enrichment_required}`; maintenance recovers a lost start. A running workflow is reused; a closed workflow permits a new run for a requested retry or rebuild.
+Eligible source publication commits a monotonic desired generation and immutable object-key or inline-byte identity on `files`. PDF/DOCX/PPTX/XLSX parse first; direct text/CSV/image sources skip parsing. Dispatch starts `process-file/<file-id>/<generation>` with `{source:{file_id,generation},parse_required,enrichment_required}`. Bounded maintenance recovers a lost start and records explicit failure after a closed workflow; unknown Temporal state never authorizes failure. Manual reprocessing commits its caller-scoped receipt and generation before dispatch.
 
-Each whole-source activity has three maximum attempts, heartbeat and execution deadlines. Workflow history holds only the typed flags and operation ID. The Python worker remains activity-only, on the existing queue and concurrency. Parsing supervises a bounded CPU child with baked offline models. Attempt generation/invocation checks preserve parser publication and accounting.
+Each parse/enrichment Activity gets a retry number and fresh attempt UUID. Its scoped HTTP context is `/internal/v1/processing/<file>/<generation>/<parse|enrichment>/<number>/<attempt>`. Higher accepted retries fence stale work and discard unattached outputs. Shared upload completion saves only transfer evidence. Parse publication verifies every selected finalized output, atomically attaches one `artifacts` directory and charges quota. Response-loss replay compares the immutable manifest hash and returns the committed result.
 
-Enrichment reads the whole artifact inventory, samples text with character-based estimates, profiles CSV and uses vision for images. OpenRouter generation uses Instructor/Pydantic. Metadata flows leaf -> folder -> root. One atomic letfs transaction publishes metadata, final slugs, Markdown links/README bytes and quota changes; the first committed result wins. A source replacement invalidates the previous intent. Direct sources store metadata on their source node and keep original names/bytes without artifacts.
+Enrichment classifies leaves, then directory README files from deepest to root, using their own text and completed child-file/README summaries. Directory nodes own no semantic or MIME fields; their names derive from README results. The publication transaction updates final names, Markdown links/README bytes, metadata and quota, then copies root README semantics to the original file. Direct sources keep their original names/bytes and create no artifacts. The single exact family:kind taxonomy is defined in the [internal contract](../contracts/internal/openapi.yaml).
 
-Indexing uses full text for overlapping chunks, independently of the enrichment sample. Root/folder README files represent their parent; CSV/image use context overviews. Qdrant stores dense vectors and a native BM25 index. Deterministic IDs make whole-tree upserts repeatable. Readiness commits only after all writes and a live/current-source/vector-space recheck. A later-stage retry preserves successful earlier stages. Trash hides candidates through DB ancestry; ready indexes are reused on restore. Existing maintenance deletes obsolete operation points after workflow closure and a cleanup grace.
+Indexing uses full text for overlapping chunks, independently of the enrichment sample. README files carry directory evidence; CSV/image files use context overviews. Qdrant stores dense vectors and native BM25. Immutable point IDs include source generation and full vector space. Readiness commits only after acknowledged writes and a live/current/published-generation/space recheck. Index-only rebuild IDs are `index-file/<file>/<generation>/<space-hash>`; maintenance distinguishes them from the base workflow and starts them without repeating parse/enrichment. Old producer cleanup is durable in `index_deletions` and cannot delete current serving identity.
 
-The parser chooses one 0/1/2-level layout per document, with a README in every folder and media in its semantic container. Excel uses sheet folders with CSVs and outside-table prose in README. PPTX currently has one root README. Advanced PPTX layout, merged-cell interpretation, formula evaluation and filetype-specific text sampling remain deferred.
-
-### ExportArchive
-
-Workspace authorizes selection/status/download against current membership. letfs
-binds the operation to filesystem, actor and request key, rechecks delegated scope
-and lifecycle, and reuses a committed result without rebuilding. The stable workflow
-ID is `export-archive/<filesystem>/<actor>/<request-key>`.
-
-One activity captures bounded metadata, streams ZIP64 through a bounded buffer to
-native multipart at `exports/<operation>/<attempt>.zip`, then revalidates the input
-tree and publishes the current attempt in one short transaction. Inline input is
-read in bounded batches; object input streams from its captured immutable key.
-Storage I/O runs outside DB locks. A changed source fails the current attempt and
-allows retry with newly enumerated inputs. Three bounded attempts rebuild the whole archive;
-there are no per-file activities, stored manifests or durable byte checkpoints.
-
-Existing maintenance reconciles terminal export workflows, aborts abandoned native
-multipart uploads and reclaims failed/expired objects. Unknown Temporal status does
-not fail active work. Attempt fencing and operation-row locking prevent stale or
-failed attempts from publishing. Download bytes go directly from S3 to the caller.
+The Python application has two explicit process roles: `python -m openlet_processor.worker cpu` registers parsing only and checks offline models/OCR; `python -m openlet_processor.worker io` registers enrichment/indexing only and does not require parser preflight. Both roles propagate Temporal/HTTP trace context and shut down in a bounded time.
 
 ## Admission, retry and change safety
 
-Use [API admission](api-contracts.md) for user-requested durable operations: Temporal start precedes their business mutation, and 202 follows durable caller-bound admission. Processing instead starts from an intent committed with a successful source upload. Plain stable workflow identity plus DB uniqueness/results survives duplicate starts/history expiry. No HMAC or generic idempotency framework. Trusted private backend access is mandatory; queues do not authenticate callers. Workspace admits an authorized scoped request; letfs processes it without evaluating workspace roles.
+Account/Workspace commit owner lifecycle or a create receipt before Temporal dispatch; a start outage leaves accepted work for their native reconciliation schedules. Letfs copy/upload admission commits scoped receipts before dispatch; processing starts from a file intent committed with source publication. Plain stable workflow identity plus DB uniqueness/results survives duplicate starts/history expiry. No HMAC or generic idempotency framework. Trusted private backend access is mandatory; queues do not authenticate callers. Workspace admits an authorized scoped request; letfs processes it without evaluating workspace roles.
 
 Bound each activity attempt and external call. Retry infrastructure errors with SDK backoff; quota/name/revision/source conflicts are non-retryable for that attempt. State guards fence timed-out attempts. Temporal is at-least-once execution, not exactly-once effects. Never hold DB locks during network I/O.
 
-Closed-before-admission retry uses the explicit running-conflict/closed-run policy in the API contract and is tested in every owning durable-start phase. Direct inline copy retains scoped creation identity/result transactionally, and upload finalize uses its saved upload state. Short trash/restore/file-purge transactions use original identity/revision and state reconciliation, without response receipts. Temporal history replay and retry-safe activity effects remain required.
+Starts use stable identities and reject closed duplicates. Copy receipts replay the original handle, and upload finalize returns its saved result. Trash uses the original node revision; restore/purge use current entry identity/state without response receipts.
 
-Keep traversal checkpoints in DB; Continue-As-New carries only operation ID/small cursor before history grows large. Recover destructive work with its existing identity/checkpoint. Operator termination does not erase business state. Workflow changes must preserve deterministic replay through SDK versioning/patching where needed; keep representative histories and replay tests. Test crash-after-commit, cancellation, retries and actual worker/server restart on real domain operations, not a disposable language-interoperability matrix.
+Copy checkpoints and counters live in bounded workflow history; deletion uses remaining nodes as its durable checkpoint. Operator termination retains committed business state. Keep representative fresh histories and replay tests for current workflow definitions; no production compatibility/version scaffolding is required. Verify commit acknowledgment loss, bounded history continuation and actual worker/server restart against real domain operations.

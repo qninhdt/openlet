@@ -1,7 +1,6 @@
 go 1.27.3
 
 use (
-	./services/user
-	./services/workspace
-	./tests/testinfra
+	./apps/account
+	./apps/workspace
 )

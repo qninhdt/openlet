@@ -4,8 +4,8 @@ The backend services implement onboarding, collaboration, generic file operation
 
 ## Requirements
 
-- Docker with Compose, Make and Python 3.10+ for container-based setup/tests. Install contract-check dependencies with `python3 -m pip install -r scripts/requirements-dev.txt`.
-- Go 1.27.3 and Rust 1.96.1 for native verification. Rust is pinned by `rust-toolchain.toml`; dependencies are locked per service.
+- Docker with Compose, Make and Python 3.10+ for the existing development setup. API E2E requires Node.js 24, pnpm 12.9.1 and the Linux `flock` utility; install its locked dependencies with `pnpm install --frozen-lockfile`.
+- Go 1.27.3 and Rust 1.96.1 for native verification. Rust is pinned by `rust-toolchain.toml`; dependencies are locked at the repository root.
 - Native Rust builds need a C/C++ toolchain, CMake, `protoc` and protobuf headers. Container builds install these dependencies.
 - Native processor checks need `uv` and Python 3.12 or 3.13; the worker image supplies its own locked Python environment.
 
@@ -23,41 +23,88 @@ External issuer/JWKS URLs require HTTPS. The generator renders native Envoy and 
 
 Only Envoy binds a host port, `127.0.0.1:8080`. Application, database, Temporal and admin-tool ports stay private. External access requires the deployment's trusted HTTPS termination. Temporal's no-authorizer setting is confined to the private backend network; do not publish its port.
 
-Compose supplies only the dependency URLs each service calls: `WORKSPACE_URL`
-for User, and `USER_URL`/`LETFS_URL` for Workspace. Native startup requires those
+Account uses Temporal for Workspace orchestration. Compose supplies
+`ACCOUNT_URL`/`LETFS_URL` for Workspace resource HTTP calls. Native startup requires those
 URLs; a service does not require its own URL or an unused downstream URL.
 
-`make up` waits for PostgreSQL, backs up and applies application migrations, builds services, and starts Temporal with separate persistence/visibility credentials and the `openlet` namespace. Initial Temporal schema setup also makes verified database dumps before changes. These pre-migration dumps are not a coordinated application/object recovery point; use the coordinated procedure in [operations](operations.md) for that purpose.
+`make up` builds the app-owned Dockerfiles and initializes a fresh deployment using native Goose application-migration jobs and upstream Temporal schema/namespace tools. Each application owns one baseline migration. There is no upgrade chain for the old schema: retain a verified backup before an intentional reset, and never apply the new baseline over existing development data. Startup does not automatically back up existing databases.
 
 Use `make down` to stop the stack while preserving its named volume. Do not remove volumes as routine rollback. To migrate an existing deployment, stop application/Temporal writers before applying a schema upgrade and retain the pre-change backups.
 
 ## Verification
 
+The API suite under `e2e/` was written from scratch; the previous Go harness,
+issuer, browser launcher and custom contract recorder are deleted.
+See [testing](testing.md) for scenarios and the [completed plan](../plans/261031-1758-simplify-backend-refactor/plan.md) for execution evidence.
+
 ```sh
-make verify
+pnpm install --frozen-lockfile
+pnpm check:e2e
+pnpm --dir e2e exec playwright test --project=api
+pnpm --dir e2e exec playwright test --project=api --grep 'gateway baseline'
+pnpm check
+pnpm test
 make test-integration
-make test-e2e TEST=all
 make test-workflow
-make test-recovery TEST=worker-restarts
-make backup-restore-drill
 ```
 
-Service integration uses Testcontainers-Go and Testcontainers-Rust with fresh PostgreSQL databases, dynamic ports and automatic container cleanup. Select `SERVICE=user`, `workspace` or `letfs`; the default runs all three sequentially. Docker must be available. The letfs fixture also starts private test S3 and a Temporal dev server; it does not use external credentials. Migrations run through the production backup/migration script before exercising service behavior. The Compose test generator also fixes JWT identity to its internal issuer, ignoring exported development issuer/JWKS/audience values.
+Playwright setup builds current sources and starts a dedicated Compose project from
+`infra/compose/e2e.yaml`. It owns real PostgreSQL, persistent Temporal, SeaweedFS,
+Qdrant and application containers. Newly written Clerk/model boundary doubles
+provide deterministic external responses; they do not replace application behavior.
 
-The complete E2E suite (`make test-e2e TEST=all`) covers real Envoy/JWKS, controlled Clerk HTTP, all services, PostgreSQL, native Temporal workers and SeaweedFS S3. It includes authorization, invitation replay, ID/path equivalence, quota/restore races, upload/copy/lifecycle tests, query counts and worker/server restart. `TEST=foundation`, `identity-files`, `storage-copy`, `copy-races`, `lifecycle`, `processing`, `processing-recovery`, `processing-search` or `zip-export` selects a narrower group. Histories and response shapes are captured under ignored `.local/test/histories/` for replay and contract checks. The suite stops its containers on exit and retains volumes/backups. Tests use barriers for concurrency, with polling deadlines only for observable readiness/completion.
+E2E binds gateway/control/storage ports 18200/18201/18202 on loopback, separate from
+development port 8080. An occupied port or concurrent project owner fails setup;
+the runner never kills another process or picks a different port. It refuses
+preexisting project resources for inspection/backup instead of deleting them.
+Generated configuration and redacted logs live under private `.local/api-e2e/`.
+Owned containers and volumes are removed after tests or partial setup failure.
 
-Service integration does not reserve port 8080. Port 8080 must be free before running the Compose E2E suite; stop the development stack with `make down` if needed. Do not change ports to hide an existing owner. Native `make verify` runs formatting, Go tests/vet, Rust tests/clippy and configuration checks. `SERVICE=user|workspace|letfs` restricts `make test-unit`; unknown service selectors fail. Set `GO` to the supported Go executable if it is outside `PATH`; formatting and workflow targets respect that selection too.
+Use native Playwright file/grep selection. An unknown selection must fail;
+a filtered baseline pass does not mean the full suite passes. The API project
+depends on the coordinated-recovery project, which runs first from clean state.
 
-The test issuer proves gateway behavior only. Envoy returns its native authentication errors (401, or 403 for a disallowed audience); application errors use the documented JSON envelope. Live Clerk configuration and the actual selected S3 provider are separate release checks described in [operations](operations.md). No test endpoint or issuer is included in the normal Compose stack.
+Native integration uses app-owned Testcontainers and the same baseline SQL. The shared testinfra module and standalone test/migration scripts are deleted. Put the supported Go executable on PATH before using native commands or Turbo.
+
+## OpenTelemetry
+
+Account and Workspace use native Gin handlers with `otelgin`, outbound `otelhttp`,
+pgx instrumentation and Temporal's Go interceptor. Letfs connects Axum/tracing to
+OpenTelemetry and the pinned Temporal Rust 1.1.0 native tracing plugin. That
+plugin remains experimental. Python instruments both HTTPX and HTTPX2 (used by
+OpenAI 3), plus Temporal Activities using its supported contrib integration.
+
+Every app writes JSON logs to stdout with `trace_id` and `span_id` when a span
+is active. W3C `traceparent`/`tracestate` propagate through HTTP and Temporal;
+arbitrary baggage is excluded. Signed URL queries, request bodies, SQL parameters
+and model prompts are excluded from application telemetry.
+
+An empty `OTEL_EXPORTER_OTLP_ENDPOINT` starts no exporter. To export to your own
+receiver, set that endpoint and `OTEL_EXPORTER_OTLP_PROTOCOL` to `grpc` (default)
+or `http/protobuf`; use an HTTP base URL for the latter, including `/v1/traces`
+only when setting a trace-specific endpoint natively. Compose forwards the common
+endpoint/protocol/headers, sampler settings, resource attributes and SDK-disable
+setting from `.env.example`. Signal-specific overrides work when supplied directly
+to an app process. No Collector, Grafana or Prometheus service is required or added.
+
+`OTEL_TRACES_SAMPLER` supports `always_on`, `always_off`, `traceidratio` and
+their `parentbased_` forms. Ratios use `OTEL_TRACES_SAMPLER_ARG` between 0 and 1.
+Use `OTEL_RESOURCE_ATTRIBUTES` for `deployment.environment.name` and other
+deployment attributes. Apps supply their build/version attribute. Native `OTEL_SERVICE_NAME` overrides the app default;
+do not give all services the same name. The processing worker also records its
+worker role. Export queues are bounded, export calls time out after three seconds,
+and providers are shut down after HTTP/worker drain. Unavailable receivers do not
+turn a business operation into a failure.
 
 ## Clerk onboarding
 
 Use a Clerk development instance. Set the Clerk session token custom claims to
 `{"openlet_user_id":"{{user.public_metadata.openlet_user_id}}"}` and configure its
 accepted audience to match `JWT_AUDIENCE`. The backend owns this public metadata
-field; clients cannot set it. On first login, call `POST /v1/onboarding` with the
-session bearer JWT and a UUID `Idempotency-Key`, then poll `GET /v1/onboarding`.
-Once succeeded, refresh the Clerk session token (Clerk SDK `getToken({skipCache:true})`)
+field; clients cannot set it. On first login, call `PUT /v1/me/onboarding` with the
+session bearer JWT, then poll `GET /v1/me/onboarding`. No request key is needed:
+Clerk identity admits one user. `workspace_id` is null until the Workspace child
+workflow returns its resource ID. Once status is `active`, refresh the Clerk session token (Clerk SDK `getToken({skipCache:true})`)
 and verify the refreshed claim before calling normal routes. Do not reuse the old
 bootstrap JWT. The backend updates only its field via Clerk's metadata merge endpoint.
 
@@ -70,7 +117,7 @@ an isolated controllable Clerk HTTP boundary, real Envoy verification and real w
 Workspace policy settings are `MAX_OWNED_WORKSPACES`, `MAX_MEMBERS`,
 `DEFAULT_QUOTA_BYTES` and `INVITE_TTL` (see service config defaults).
 Invitations return a token once; share it manually and submit it in JSON to
-`POST /v1/invitations/accept`. Acceptance requires a matching verified Clerk email.
+`POST /v1/memberships`. Acceptance requires a matching verified Clerk email.
 There is no email sender or frontend link route.
 
 ## Object storage
@@ -83,17 +130,12 @@ TLS certificate verification stays enabled. Configure incomplete multipart-uploa
 expiry in the provider and select its version-retention/restore policy before release.
 Logical deletion is separate from physical version cleanup on versioned providers.
 
-Only the isolated Compose test override starts SeaweedFS S3 internally, with pinned
-image, persistent test volume and generated test credentials. Its volume server
-keeps a 512 MiB free-disk floor instead of a percentage of the host disk; below
-that floor it refuses writes. The Compose test profile publishes only its test S3
-proxy at `127.0.0.1:8333` in addition to Envoy. For manual host-browser use, set
-`OPENLET_TEST_S3_SIGNING_ENDPOINT=http://127.0.0.1:8333` before starting that profile.
-Automated Docker testers use the default `http://issuer:8333` signing hostname;
-these are separate caller environments, so select the endpoint before issuing URLs.
-Native Testcontainers publishes an isolated dynamic S3 port to its host browser.
-Isolated restores reset both published ports. `ALLOW_LOCAL_S3=true` is confined to that override. External S3 is the
-normal route; local storage is not a runtime requirement.
+Only the isolated API E2E configuration starts SeaweedFS internally. Its
+presigned endpoint is reachable by the host at `http://127.0.0.1:18202`;
+internal control requests use the boundary proxy on the private network.
+Do not rewrite signed hostnames. Plaintext storage/provider exceptions are
+confined to the isolated E2E configuration. The local storage volume is owned
+by the test run; external S3 remains the normal development route.
 
 Clients choose `inline` or `object`; the backend does not classify bytes. Read
 `GET /v1/workspaces/{ws}/usage` for effective `upload_limits`. Defaults are
@@ -128,44 +170,33 @@ GET URLs default to five minutes and remain bearer capabilities until expiry.
 Configure exact-origin bucket CORS for PUT/GET/HEAD, required signed headers,
 and exposed ETag/range headers before browser use. `S3_SIGNING_ENDPOINT` may
 separate caller-reachable and internal control endpoints; never rewrite a signed
-hostname. [The browser smoke CORS fixture](../tests/storage/cors.json) permits only
-`http://127.0.0.1:8765`; replace it with the real UI origin for a deployment.
-Do not age-expire ordinary `objects/`. Configure native incomplete-multipart
-cleanup; abandoned remote creates can exist after a lost creation reply.
-
-For browser checks install `scripts/requirements-dev.txt` into your test Python
-environment and run `python -m playwright install chromium`. AWS CLI is required
-for the isolated test fixture's S3 CORS setup. `STORAGE_BROWSER_PYTHON` selects that
-Python executable. Run `make test-integration SERVICE=letfs TEST=direct-storage`;
-it includes real Chromium PUT/replay/Range/CORS checks. To include the same browser
-check in a native external-provider smoke, set `STORAGE_BROWSER_CHECK=true` when
-running `cargo run --manifest-path services/letfs/Cargo.toml -- --provider-smoke`
-with the normal private provider environment and configured smoke origin.
-
-`make test-e2e TEST=uploads` exercises real PostgreSQL and SeaweedFS S3
-through Envoy and both service facades, including multipart data and stale overwrite.
+hostname. Set the exact deployed UI origin when a frontend exists. The old standalone
+browser/CORS fixture and launcher have been removed; API checks do not prove
+browser CORS behavior. Do not age-expire ordinary `objects/`. Configure native
+incomplete-multipart cleanup; abandoned remote creates can exist after a lost reply.
 
 ## Document processing
 
-Compose builds an activity-only Python worker with pinned Docling dependencies and
-offline models. Each container runs one conversion at a time with CPU, memory and
-scratch limits from `deploy/compose.yaml`; no runtime model download is required.
-The locked `docling[rapidocr]` dependency supplies the ONNX OCR runtime; the worker
+Compose builds one Python image with pinned Docling dependencies and offline
+models. The CPU process runs one conversion at a time with CPU, memory and
+scratch limits from `infra/compose/dev.yaml`; no runtime model download is required.
+The locked `docling[rapidocr]` dependency supplies the ONNX OCR runtime; the CPU worker
 checks that it imports before connecting to Temporal and accepting activities.
 `PROCESSOR_IMAGE` selects a prebuilt image; use a registry digest and Compose
-`up --no-build` when deploying that image. The worker receives its dedicated letfs token, scoped source/output APIs, temporary storage URLs and private OpenRouter/Qdrant credentials.
+`up --no-build` when deploying that image. Compose starts `processor-cpu` and `processor-io` from the same image using the `cpu` and `io` worker arguments. CPU parsing polls `openlet-letfs-cpu`; enrichment/indexing polls `openlet-letfs-io`. The I/O process starts without model/OCR preflight. Both use the dedicated Letfs token and trace propagation; only I/O work uses OpenRouter/Qdrant credentials.
 
 For native parser verification, download models explicitly before the offline run:
 
 ```sh
-uv sync --project services/letfs/processor --locked
-uv run --project services/letfs/processor --locked python services/letfs/processor/prefetch-models.py "$PWD/.local/processor-models"
-DOCLING_MODELS_PATH="$PWD/.local/processor-models" uv run --project services/letfs/processor --locked pytest services/letfs/processor/tests
-make test-e2e TEST=processing
-make test-workflow TEST=process-file
+uv sync --locked --package openlet-processor
+uv run --locked --package openlet-processor python -m openlet_processor.prefetch_models "$PWD/.local/processor-models"
+DOCLING_MODELS_PATH="$PWD/.local/processor-models" uv run --locked --package openlet-processor pytest apps/letfs-processing/tests
 ```
 
-`make verify` includes processor lint, formatting and tests without model-dependent
+Run the API suite before native workflow replay; [testing](testing.md) documents
+history capture and conversion commands.
+
+`pnpm check` and `pnpm test` include processor lint, formatting and tests without model-dependent
 parser cases. `PROCESSING_MAX_OUTPUTS` and `PROCESSING_MAX_OUTPUT_BYTES` bound one
 job's published tree. Input/resource bounds are defined in the processor; output
 transport reuses the same configured inline/multipart limits as user uploads.
@@ -198,40 +229,28 @@ containing hundreds of individual ink pictures can exceed the configured
 Word table cells containing content controls use Docling's rich-cell parser so
 the controls' visible text is retained.
 
-### ZIP exports
+### ZIP downloads
 
-`EXPORT_*` values in [.env.example](../.env.example) configure root/entry/input/output
-bounds, global concurrency, runtime and retention. The Rust worker streams ZIP64
-to native multipart with a 64 KiB pipe and at most 8 MiB part buffers. Default
-retention is 24 hours. Export storage is temporary and separate from logical quota.
-
-Configure provider lifecycle only on `exports/`, with an age longer than maximum
-configured retention plus execution time. This deployment caps retention at seven
-days; its development R2 fallback expiry is eight days. Application maintenance
-handles logical expiry and normal cleanup. Preserve native incomplete-multipart
-abort rules, and never age-expire `objects/`.
+`ARCHIVE_*` values in [.env.example](../.env.example) bound entries, source/output bytes, per-process concurrency and runtime. Letfs streams ZIP64 directly over HTTP with a 64 KiB pipe and no temporary ZIP object. Runtime defaults to 1200 seconds and is capped at 1800; only the archive proxy/gateway routes have extended write/route deadlines. Other request timeouts remain bounded as before. Preserve provider incomplete-multipart abort rules for uploads and never age-expire `objects/`.
 
 ```sh
-make test-integration SERVICE=letfs TEST=zip-export
-make test-e2e TEST=zip-export
-make test-workflow TEST=export-archive
+cargo test --locked --package letfs --test integration artifacts::archive -- --ignored --test-threads=1
 ```
 
 ## AI enrichment and search
 
-Set `OPENROUTER_API_KEY` before `make configure`; the generator preserves it in the private secret directory and generates the internal Qdrant key. Generation/vision, embedding and reranker model IDs plus resource budgets are in [.env.example](../.env.example). OpenRouter defaults to its HTTPS API; `ALLOW_LOCAL_AI=true` is reserved for explicit local testing. Qdrant v1.20.0 runs on the private backend network with a persistent `qdrant-data` volume and no host port. The test overlay uses schema-faithful fake AI endpoints and the real Qdrant service.
+Set `OPENROUTER_API_KEY` before `make configure`; the generator preserves it in the private secret directory and generates the internal Qdrant key. Generation/vision, embedding and reranker model IDs plus resource budgets are in [.env.example](../.env.example). OpenRouter defaults to its HTTPS API; `ALLOW_LOCAL_AI=true` is reserved for explicit local testing. Qdrant v1.20.0 runs on the private backend network with a persistent `qdrant-data` volume and no host port. The API E2E environment uses controlled model endpoints and the real Qdrant service.
 
 Keep embedding model, dimension and collection consistent. Select a new collection when changing the vector space, then use the admin backfill command. It processes one bounded page, prints counts and a resume cursor, and writes only with `--apply`:
 
 ```sh
-docker compose -f deploy/compose.yaml exec -T letfs letfs --backfill-processing --mode missing --limit 100
-docker compose -f deploy/compose.yaml exec -T letfs letfs --backfill-processing --mode missing --limit 100 --apply
-docker compose -f deploy/compose.yaml exec -T letfs letfs --backfill-processing --mode rebuild-index --limit 100 --apply
+docker compose -f infra/compose/dev.yaml exec -T letfs letfs --backfill-processing --mode missing --limit 100
+docker compose -f infra/compose/dev.yaml exec -T letfs letfs --backfill-processing --mode missing --limit 100 --apply
+docker compose -f infra/compose/dev.yaml exec -T letfs letfs --backfill-processing --mode rebuild-index --limit 100 --apply
 ```
 
-Pass `--after UUID` to resume. Rebuild skips currently running workflows and retains committed enrichment; rerun from the beginning after those workflows close. It first commits index readiness as pending while retaining the previous collection. Index preparation confirms deletion of the old operation points before adopting the configured vector space; a cleanup failure retains the location for retry. Qdrant may be recreated and rebuilt from the authoritative DB/source/artifact tree. Basic search remains available during AI/index outages.
+Pass `--after UUID` to resume. Rebuild skips currently running workflows and retains committed enrichment; rerun from the beginning after those workflows close. It marks index readiness pending. Vector-space reconciliation records old generation/space cleanup intent before adopting the new model/collection/dimension, and dispatches index-only work. Search immediately rejects old-space results; bounded maintenance deletes obsolete points without touching current ones. Qdrant may be recreated and rebuilt from authoritative source/artifact content. Filename search remains available during AI/index outages.
 
 ```sh
-make test-integration SERVICE=letfs TEST=search
-make test-e2e TEST=processing-search
+cargo test --locked --package letfs --test integration search -- --ignored --test-threads=1
 ```

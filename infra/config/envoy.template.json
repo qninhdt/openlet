@@ -1,0 +1,359 @@
+{
+  "static_resources": {
+    "listeners": [
+      {
+        "name": "public",
+        "address": {
+          "socket_address": {
+            "address": "0.0.0.0",
+            "port_value": 8080
+          }
+        },
+        "filter_chains": [
+          {
+            "filters": [
+              {
+                "name": "envoy.filters.network.http_connection_manager",
+                "typed_config": {
+                  "@type": "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
+                  "stat_prefix": "openlet",
+                  "generate_request_id": true,
+                  "preserve_external_request_id": false,
+                  "request_headers_timeout": "10s",
+                  "stream_idle_timeout": "120s",
+                  "max_request_headers_kb": 32,
+                  "route_config": {
+                    "name": "public",
+                    "virtual_hosts": [
+                      {
+                        "name": "api",
+                        "domains": [
+                          "*"
+                        ],
+                        "request_headers_to_add": [
+                          {
+                            "header": {
+                              "key": "x-gateway-token",
+                              "value": "__GATEWAY_TOKEN__"
+                            },
+                            "append_action": "OVERWRITE_IF_EXISTS_OR_ADD"
+                          }
+                        ],
+                        "routes": [
+                          {
+                            "match": {
+                              "path": "/v1/me/onboarding"
+                            },
+                            "route": {
+                              "cluster": "account",
+                              "timeout": "120s"
+                            },
+                            "typed_per_filter_config": {
+                              "envoy.filters.http.rbac": {
+                                "@type": "type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBACPerRoute",
+                                "rbac": {
+                                  "rules": {
+                                    "action": "ALLOW",
+                                    "policies": {
+                                      "verified_identity": {
+                                        "permissions": [
+                                          {
+                                            "any": true
+                                          }
+                                        ],
+                                        "principals": [
+                                          {
+                                            "header": {
+                                              "name": "x-clerk-sub",
+                                              "string_match": {
+                                                "safe_regex": {
+                                                  "regex": ".+"
+                                                }
+                                              }
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          {
+                            "match": {
+                              "path": "/v1/me"
+                            },
+                            "route": {
+                              "cluster": "account",
+                              "timeout": "120s"
+                            }
+                          },
+                          {
+                            "match": {
+                              "safe_regex": {
+                                "regex": "/v1/workspaces/[^/]+/nodes/[^/]+/archive"
+                              }
+                            },
+                            "route": {
+                              "cluster": "workspace",
+                              "timeout": "1815s",
+                              "idle_timeout": "120s"
+                            }
+                          },
+                          {
+                            "match": {
+                              "safe_regex": {
+                                "regex": "/v1/workspaces(/.*)?"
+                              }
+                            },
+                            "route": {
+                              "cluster": "workspace",
+                              "timeout": "120s"
+                            }
+                          },
+                          {
+                            "match": {
+                              "path": "/v1/memberships"
+                            },
+                            "route": {
+                              "cluster": "workspace",
+                              "timeout": "120s"
+                            }
+                          },
+                          {
+                            "match": {
+                              "prefix": "/"
+                            },
+                            "direct_response": {
+                              "status": 404
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "http_filters": [
+                    {
+                      "name": "envoy.filters.http.header_mutation",
+                      "typed_config": {
+                        "@type": "type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutation",
+                        "mutations": {
+                          "request_mutations": [
+                            {
+                              "remove": "x-openlet-user-id"
+                            },
+                            {
+                              "remove": "x-clerk-sub"
+                            },
+                            {
+                              "remove": "x-gateway-token"
+                            },
+                            {
+                              "remove": "x-service-token"
+                            },
+                            {
+                              "remove": "x-internal-token"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "name": "envoy.filters.http.jwt_authn",
+                      "typed_config": {
+                        "@type": "type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.JwtAuthentication",
+                        "providers": {
+                          "clerk": {
+                            "issuer": "__JWT_ISSUER__",
+                            "require_expiration": true,
+                            "audiences": [
+                              "__JWT_AUDIENCE__"
+                            ],
+                            "remote_jwks": {
+                              "http_uri": {
+                                "uri": "http://jwks.invalid/__JWKS_URL__",
+                                "cluster": "jwks",
+                                "timeout": "3s"
+                              },
+                              "cache_duration": "300s"
+                            },
+                            "from_headers": [
+                              {
+                                "name": "Authorization",
+                                "value_prefix": "Bearer "
+                              }
+                            ],
+                            "forward": false,
+                            "payload_in_metadata": "verified",
+                            "claim_to_headers": [
+                              {
+                                "header_name": "x-clerk-sub",
+                                "claim_name": "sub"
+                              },
+                              {
+                                "header_name": "x-openlet-user-id",
+                                "claim_name": "openlet_user_id"
+                              }
+                            ]
+                          }
+                        },
+                        "rules": [
+                          {
+                            "match": {
+                              "prefix": "/"
+                            },
+                            "requires": {
+                              "provider_name": "clerk"
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "name": "envoy.filters.http.rbac",
+                      "typed_config": {
+                        "@type": "type.googleapis.com/envoy.extensions.filters.http.rbac.v3.RBAC",
+                        "rules": {
+                          "action": "ALLOW",
+                          "policies": {
+                            "verified_identity": {
+                              "permissions": [
+                                {
+                                  "any": true
+                                }
+                              ],
+                              "principals": [
+                                {
+                                  "header": {
+                                    "name": "x-openlet-user-id",
+                                    "string_match": {
+                                      "safe_regex": {
+                                        "regex": "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+                                      }
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "name": "envoy.filters.http.local_ratelimit",
+                      "typed_config": {
+                        "@type": "type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit",
+                        "stat_prefix": "local_rate_limit",
+                        "token_bucket": {
+                          "max_tokens": 200,
+                          "tokens_per_fill": 100,
+                          "fill_interval": "1s"
+                        },
+                        "filter_enabled": {
+                          "runtime_key": "local_rate_limit_enabled",
+                          "default_value": {
+                            "numerator": 100,
+                            "denominator": "HUNDRED"
+                          }
+                        },
+                        "filter_enforced": {
+                          "runtime_key": "local_rate_limit_enforced",
+                          "default_value": {
+                            "numerator": 100,
+                            "denominator": "HUNDRED"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "name": "envoy.filters.http.router",
+                      "typed_config": {
+                        "@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "clusters": [
+      {
+        "name": "account",
+        "type": "STRICT_DNS",
+        "connect_timeout": "3s",
+        "load_assignment": {
+          "cluster_name": "account",
+          "endpoints": [
+            {
+              "lb_endpoints": [
+                {
+                  "endpoint": {
+                    "address": {
+                      "socket_address": {
+                        "address": "account",
+                        "port_value": 8080
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "name": "workspace",
+        "type": "STRICT_DNS",
+        "connect_timeout": "3s",
+        "load_assignment": {
+          "cluster_name": "workspace",
+          "endpoints": [
+            {
+              "lb_endpoints": [
+                {
+                  "endpoint": {
+                    "address": {
+                      "socket_address": {
+                        "address": "workspace",
+                        "port_value": 8080
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "name": "jwks",
+        "type": "STRICT_DNS",
+        "dns_lookup_family": "V4_ONLY",
+        "connect_timeout": "3s",
+        "load_assignment": {
+          "cluster_name": "jwks",
+          "endpoints": [
+            {
+              "lb_endpoints": [
+                {
+                  "endpoint": {
+                    "address": {
+                      "socket_address": {
+                        "address": "jwks.invalid",
+                        "port_value": 80
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

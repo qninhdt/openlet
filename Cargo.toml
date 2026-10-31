@@ -1,0 +1,3 @@
+[workspace]
+members = ["apps/letfs"]
+resolver = "3"

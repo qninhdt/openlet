@@ -1,0 +1,17 @@
+{
+  "name": "openlet",
+  "private": true,
+  "packageManager": "pnpm@12.9.1",
+  "scripts": {
+    "e2e:api": "pnpm --dir e2e exec playwright test --project=api",
+    "check:e2e": "pnpm --dir e2e exec tsc",
+    "build": "turbo run build",
+    "check": "turbo run check && uv run --locked --package openlet-processor ruff check scripts && uv run --locked --package openlet-processor ruff format --check scripts",
+    "test": "turbo run test && uv run --locked --package openlet-processor pytest scripts -q",
+    "test:integration": "turbo run test:integration",
+    "test:replay": "turbo run test:replay"
+  },
+  "devDependencies": {
+    "turbo": "2.11.10"
+  }
+}

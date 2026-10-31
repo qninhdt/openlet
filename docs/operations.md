@@ -4,64 +4,69 @@ All application metadata and inline traffic enters Envoy at `127.0.0.1:8080`. Ke
 
 ## Health and limits
 
-`/live` tests the HTTP process. `/ready` checks PostgreSQL and Temporal. Native Compose health checks do not prove Clerk or the selected S3 provider is reachable. Inspect `docker compose -f deploy/compose.yaml ps` and service logs for startup failures.
+`/live` tests the HTTP process. `/ready` checks PostgreSQL and Temporal. Native Compose health checks do not prove Clerk or the selected S3 provider is reachable. Inspect `docker compose -f infra/compose/dev.yaml ps` and service logs for startup failures.
 
-User and Workspace use at most 16 database connections each; letfs uses 16. Temporal persistence and visibility pools each allow 10 connections per server component, with 2 idle. PostgreSQL allows 200 connections, including operator headroom. Revisit the combined budget before adding service replicas.
+Account and Workspace use at most 16 database connections each; letfs uses 16. Temporal persistence and visibility pools each allow 10 connections per server component, with 2 idle. PostgreSQL allows 200 connections, including operator headroom. Revisit the combined budget before adding service replicas.
 
 Envoy uses local rate limiting, bounded headers and a 120-second route/stream deadline. Go HTTP servers bound reads/writes to 125 seconds; internal S3 control I/O is bounded to 120 seconds. Object upload/download bytes transfer directly between caller and S3, outside those HTTP deadlines. Rust workers have fixed task slots, bounded pages and finite copy limits. Compose grants 155 seconds to Go shutdown (HTTP drain then worker drain) and 135 seconds to letfs (concurrent HTTP/worker drain). A hard kill relies on durable activity state and Temporal retry.
 
-The authoritative quota is logical bytes in letfs. Trash remains charged, published copies charge full bytes, and deleting a charged node releases its bytes in the same transaction. Physical cleanup can lag. File operation status includes bucket-wide pending cleanup count and the oldest pending timestamp. Cleanup logs contain outcome categories, without object keys or file contents. PostgreSQL lock-wait logging is enabled; test-only `pg_stat_statements` proves bounded query counts.
+The authoritative quota is logical bytes in letfs. Trash remains charged, committed copies charge full bytes, and deleting a charged node releases its bytes in the same transaction. Physical cleanup can lag. The Workspace storage resource includes bucket-wide cleanup count and the oldest pending timestamp. Cleanup logs contain outcome categories, without object keys or file contents. PostgreSQL lock-wait logging is enabled; test-only `pg_stat_statements` proves bounded query counts.
+
+## Local Docker build cache
+
+Application Dockerfiles cache Go modules/compiler output and Rust registry/Git/compiler
+output separately from source. The processor installs locked dependencies independently
+of its application wheel; model downloads depend on the prefetch script and pinned model
+definitions. Source changes reuse the large dependency/model layers. The new API E2E environment builds these current sources independently of development state.
+
+For one-off cleanup of unused build cache with current Docker Buildx:
+
+```sh
+docker buildx prune --builder default --max-used-space 20GB
+```
+
+This targets least-recently-used cache across projects using the default builder. It
+does not delete service images, containers, volumes or snapshots. Image-shared/in-use
+data may prevent reaching the target; evicted cache must be rebuilt when needed.
 
 ## Maintenance and recovery
 
-`openlet-storage-maintenance` is a native Temporal Schedule running every five minutes with overlap Skip. Each run makes finite expiry, staging-discard and object-deletion passes. It never ages user trash. Ambiguous writes retain their key evidence and get periodic deletion attempts even after NotFound. Configure incomplete-multipart cleanup and version retention with the chosen provider; key deletion alone does not remove historical object versions.
+`openlet-storage-maintenance` is a native Temporal Schedule running every five minutes with overlap Skip. Each run makes finite upload-expiry, resource/processing reconciliation, detached-forest and object/index cleanup passes. It never ages user trash. Ambiguous writes retain their key evidence and get periodic deletion attempts even after NotFound. Configure incomplete-multipart cleanup and version retention with the chosen provider; key deletion alone does not remove historical object versions.
 
-Do not reactivate deleting resources or repair counters manually. Retry an interrupted deletion with its original actor, scope, revision and request key. Owner-local endpoints restart a closed deletion from its retained PostgreSQL operation/checkpoints. Unknown workflow status does not authorize copy cleanup. A logically successful operation is not undone by a lost response.
+Do not reactivate deleting resources or repair counters manually. Workspace deletion retries use its original identity/revision; purge retries use its trash-entry identity. Durable deleting/purging resources and remaining nodes preserve progress, without operation/checkpoint tables. Current owner authorization still applies. Unknown workflow status does not authorize destructive cleanup. Lost responses do not undo committed effects; failed copies retain ordinary partial content.
 
-Before changing workflow code, run `make test-workflow` against histories generated by `make test-e2e TEST=all`. Go uses its SDK replayer; Rust uses its SDK replayer over protobuf histories. A JSON encoding difference between SDKs is avoided by keeping binary histories for Rust. These test fixtures contain generated identities only and remain under `.local/test/histories/`.
+Workflow replay remains app-owned. [Testing](testing.md) documents fresh histories
+captured by the rewritten API suite and their native replay commands.
 
-## Coordinated local backup and isolated restore
+## Coordinated backup and isolated restore
 
-The implemented scripts support the test-only **SeaweedFS 4.19** profile. They do not claim to back up an unspecified external S3 provider. The deployment provider must supply its exact retention/version/object preservation and restore procedure before production release.
+Permanent local recovery is implemented in `scripts/operations/recovery.py`.
+Its `backup`, `restore`, and `resume` commands require explicit `--compose`,
+`--project`, and `--state`; backup also requires `--output`, restore `--snapshot`.
+It checks resource ownership, fences writers, rejects unfinished storage
+capabilities, dumps all five databases, archives stopped managed SeaweedFS and
+Qdrant volumes, and records checksums. Restore refuses existing target resources
+or state and leaves application/workflow writers stopped until explicit resume.
+Resume builds application services from the current checkout, preventing a restored
+Compose project from reusing obsolete project-named images. Use the checkout and
+dependencies matching the snapshot's baseline schema. The API recovery journey
+verifies exact object bytes and resumption of an interrupted processing workflow;
+the [completed plan](../plans/261031-1758-simplify-backend-refactor/plan.md) records its execution evidence.
 
-The automated drill uses its own fresh `openlet-test-backup-*` source volumes; it preserves existing `openlet-test` data. Run `make backup-restore-drill` to seed inline/object files, processed children and a completed ZIP; close Envoy and the test-only direct S3 proxy; pause maintenance; stop workers, Temporal and storage; dump all five databases; archive the stopped SeaweedFS volume; and restore into a fresh `openlet-restore-*` project. Backup refuses unfinished uploads, storage operations or recorded incomplete multipart. Resume and finalize/abort/drain those first. The local stopped storage/proxy fences issued direct capabilities; this does not implement an external-provider capability drain.
-
-Restore initially starts only PostgreSQL, S3 and Temporal. It exposes no ports and starts no application/Python workers. Namespace inspection is read-only. The drill verifies this stopped-worker boundary and the paused Schedule before an explicit application resume. It then checks original/artifact/ZIP bytes, Range, quota and persisted history, and stops containers while retaining volumes and evidence.
-
-Manual local commands:
-
-```sh
-bash scripts/backup-local.sh openlet-test
-bash scripts/restore-local.sh .local/snapshots/SNAPSHOT openlet-restore-drill-name
-```
-
-Backup requires a running test stack and leaves writers stopped. The snapshot contains service credentials, a checksum manifest, five database dumps and object storage files. Dumps exclude the test-only `pg_stat_statements` extension; restore runs under each database owner without granting service superuser privileges. Protect it as sensitive data. Restore rejects existing target volumes/directories and mismatched checksums. Never use a live dump from each database independently as a coordinated backup. Never restore over the source volumes.
-
-Format-2 snapshots pin the exact local service images, including the processor image with its models. Restore refuses missing images instead of silently selecting a newer tag. Format-1 snapshots lack those identities; retain their matching historical restore tooling/images rather than treating them as format 2.
-
-After a successful manual backup of `openlet-test`, resume that source test stack and explicitly unpause maintenance:
-
-```sh
-export OPENLET_STATE_DIR=../.local/test
-DC='docker compose -p openlet-test -f deploy/compose.yaml -f deploy/compose.test.yaml'
-$DC up -d storage issuer user workspace letfs processor envoy qdrant
-$DC run --rm --no-deps --entrypoint temporal temporal-init --address temporal:7233 schedule toggle --namespace openlet --schedule-id openlet-storage-maintenance --unpause --reason operator-resume
-```
-
-To inspect/resume an isolated target, use its `.local/openlet-restore-*/isolation.yaml` override and state directory with the same Compose project name. Start `issuer user workspace letfs processor envoy qdrant` only after infrastructure verification, then explicitly unpause the restored Schedule when maintenance is wanted. Keep the isolation override: it pins snapshot images and removes public ports. The automated drill resumes applications for read verification while leaving the Schedule paused.
-
-Qdrant points are derived and excluded from the coordinated snapshot. After resuming a restored target, use `letfs --backfill-processing --mode rebuild-index --apply` with that target's Compose configuration, repeating bounded pages with `--after` until complete, before using semantic search. This retains restored enrichment and rebuilds vectors from the restored source/artifact bytes; filename search and byte reads are available immediately.
-
-If capture or restore fails, the scripts leave the source data/volumes intact. A failed partial snapshot is not a recovery point; only a completed manifest is accepted for restore. Restore failure never promotes a target. Preserve the artifacts for diagnosis and use a new restore project name on retry.
+Automatic object recovery currently supports managed local SeaweedFS only.
+An external S3 deployment is rejected before writers stop; its verified object
+snapshot procedure is still a release requirement. Do not reset existing
+development databases without a verified backup. E2E creates fresh owned volumes
+and never resets developer volumes.
 
 ## External release checks
 
-Clerk development and Cloudflare R2 are configured locally; both smoke targets passed. See the [external configuration evidence](../plans/reports/implementation-261029-1822-external-configuration.md). Provider-specific coordinated recovery remains unverified.
+Earlier Clerk development and Cloudflare R2 checks are [historical evidence](../plans/reports/implementation-261029-1822-external-configuration.md). The refactored source requires explicit live-provider verification before release. Provider-specific coordinated recovery remains unverified.
 
-- `make test-clerk`: verify real Clerk backend metadata, a refreshed development-session claim and `/v1/me` through Envoy. Configure `.local` and set `CLERK_SMOKE_SUBJECT` and `CLERK_SMOKE_JWT_FILE` after onboarding. This is read-only and rejects production Clerk keys.
+- Live Clerk smoke uses the opt-in Playwright external configuration documented in [testing](testing.md#environment-and-recovery-checks). It verifies backend metadata and a newly minted development-session JWT through Envoy; controlled fixture responses are not live-provider evidence.
 - `make test-provider`: verify actual HTTPS/private S3 put/copy/get/range/delete using dedicated `smoke/<uuid>/` keys. Supply normal S3 configuration and scoped development-bucket credentials. The smoke also checks signed conditional PUT, exact size/MD5, native multipart and signed GET/Range. Provider version-retention, multipart cleanup and full disaster recovery still require the provider-specific procedure.
 
-A missing configuration exits with NOT RUN; neither target silently passes. Controlled Clerk HTTP tests and SeaweedFS integration tests do not replace these checks.
+Missing provider configuration must be recorded as NOT RUN, never PASS. Controlled Clerk HTTP tests and SeaweedFS integration tests do not replace these checks.
 
 ### Local external-service configuration
 
@@ -81,17 +86,14 @@ Cloudflare CLI account selection before changes. The application token permits
 object access only in its development bucket. Administrative changes require the
 Cloudflare CLI identity. Managed and custom public domains must stay disabled.
 The provider's default incomplete-multipart abort rule remains seven days. The
-development bucket also expires only `exports/` after eight days, exceeding the
-application's maximum seven-day retention plus runtime. Ordinary `objects/` has
-no age expiry. The previous/current rule evidence is private under
+development bucket retains its historical eight-day `exports/` expiry rule; current ZIP streaming writes no objects under that prefix. Ordinary `objects/` has no age expiry. The previous/current rule evidence is private under
 `.local/provider/r2-lifecycle-before-export.json` and
 `.local/provider/r2-lifecycle-after-export.json`. Envoy's JWKS DNS uses IPv4 for
 the IPv4 Compose network.
 
 R2 credentials do not provide an object recovery point. Before release, establish
 and drill an independent object backup together with the five-database backup
-while application and maintenance writers are stopped. The SeaweedFS backup
-scripts cannot capture R2. Do not claim historical-object recovery or promote an
+while application and maintenance writers are stopped. A SeaweedFS volume backup cannot capture R2. Do not claim historical-object recovery or promote an
 external restore until the provider-specific procedure has been verified.
 
 ### Direct-transfer operations
@@ -104,17 +106,12 @@ through finite maintenance. Never apply ordinary object TTL deletion as a cleanu
 shortcut. Maximum GET lifetime is bounded below the existing fifteen-minute old-key
 cleanup delay; clients needing renewal must reauthorize the same logical revision.
 
-The development R2 browser smoke permits only `http://127.0.0.1:8765` with the
-headers in [the test CORS fixture](../tests/storage/cors.json). It does not enable
+The development R2 browser smoke permits only `http://127.0.0.1:8765` with its privately recorded CORS rule. It does not enable
 public bucket reads. The previous absent CORS configuration and applied rule are
 recorded privately under `.local/provider/r2-cors-before.json` and
 `.local/provider/r2-browser-cors.json`. Configure a real application origin before
 frontend integration. Provider endpoints remain in `.local/provider/r2.env`.
 
-Migration `0007_direct_storage.sql` refuses active uploads using the old proxy
-protocol. Close old admission, finalize/abort/drain existing sessions, and retain
-pre-migration dumps before applying it. Restoring old code while new direct sessions
-are active is unsafe; close admission, drain capabilities/remote outcomes and native
-multipart before rollback. Local coordinated backup now refuses unfinished storage work and preserves
-processing/export state. External R2 capability drain and recovery remain a
-separate production gate.
+Application migration history has been squashed into one baseline per database.
+There is no upgrade migration from the previous schema. Back up before an explicit
+reset; restore only into an isolated target and resume writers deliberately.

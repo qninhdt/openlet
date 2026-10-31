@@ -1,0 +1,61 @@
+name: Backend checks
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.work
+          cache-dependency-path: apps/*/go.sum
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.96.1
+          components: rustfmt, clippy
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: 0.10.7
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libprotobuf-dev cmake
+      - run: pnpm install --frozen-lockfile
+      - run: uv sync --locked --package openlet-processor
+      - run: pnpm check
+      - run: pnpm test
+      - run: pnpm exec turbo run test:workflow
+      - run: pnpm exec turbo run test:integration --concurrency=1
+
+  api:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: node --test --test-concurrency=1 e2e/setup/environment.test.ts e2e/setup/recovery.test.ts
+      - run: pnpm --dir e2e exec playwright test --project=api
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: api-diagnostics
+          include-hidden-files: true
+          path: |
+            .local/api-e2e/report/
+            .local/api-e2e/results/
+            .local/api-e2e/services.log
+          if-no-files-found: ignore
