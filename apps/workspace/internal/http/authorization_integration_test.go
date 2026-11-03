@@ -32,9 +32,9 @@ func TestIntegrationWorkspaceListScansDeniedCandidates(t *testing.T) {
 	actor := uuid.New()
 	var ids []uuid.UUID
 	for range 3 {
-		admitted, err := store.EnsureWorkspace(ctx, workspace.CreateInput{ActorID: actor, Key: uuid.New(), Name: "Page"}, "")
+		admitted, err := store.EnsureWorkspace(ctx, workspace.CreateInput{ActorID: actor, Key: uuid.New(), Name: "Page"})
 		require.NoError(t, err)
-		id := admitted.Workspace.ID
+		id := admitted.ID
 		require.NoError(t, store.Activate(ctx, workspace.Storage{WorkspaceID: id, BucketID: uuid.New(), FilesystemID: uuid.New(), RootID: uuid.New(), LimitBytes: "1024"}))
 		ids = append(ids, id)
 	}

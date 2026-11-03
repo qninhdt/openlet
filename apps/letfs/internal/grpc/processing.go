@@ -14,7 +14,7 @@ func (s *Filesystem) dispatchPending(ctx context.Context, file uuid.UUID) {
 	}
 	dispatch, err := s.Store.PendingProcessing(ctx, file)
 	if err == nil {
-		err = s.Jobs.StartProcessing(ctx, dispatch, s.Store.IndexSpace)
+		err = s.Jobs.StartProcessing(ctx, dispatch)
 	}
 	if err != nil {
 		slog.WarnContext(ctx, "processing dispatch deferred")
@@ -39,7 +39,7 @@ func (s *Filesystem) GetProcessing(ctx context.Context, input *letfsv1.GetProces
 		return nil, err
 	}
 	return &letfsv1.GetProcessingResponse{Processing: &letfsv1.Processing{FileId: value.FileID.String(), DesiredGeneration: value.DesiredGeneration,
-		PublishedGeneration: value.PublishedGeneration, IndexedGeneration: value.IndexedGeneration, PublicationStatus: value.PublicationStatus, IndexStatus: value.IndexStatus, ErrorCode: value.ErrorCode}}, nil
+		PublicationStatus: value.PublicationStatus, ErrorCode: value.ErrorCode}}, nil
 }
 
 func (s *Filesystem) ReprocessNode(ctx context.Context, input *letfsv1.ReprocessNodeRequest) (*letfsv1.ReprocessNodeResponse, error) {

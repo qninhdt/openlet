@@ -79,16 +79,23 @@ func OnboardUser(ctx workflow.Context, subject string) (result uuid.UUID, err er
 			_ = workflow.ExecuteActivity(disconnected, a.FailOnboarding, subject).Get(disconnected, nil)
 		}
 	}()
+	var workspaceID uuid.UUID
 	if admission.WorkspaceID == nil {
-		child := workflow.WithChildOptions(ctx, workflow.ChildWorkflowOptions{WorkflowID: "initial-workspace/" + admission.UserID.String(), TaskQueue: "openlet-workspace", WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE, WorkflowExecutionTimeout: 7 * 24 * time.Hour})
-		var workspaceID uuid.UUID
-		if err = workflow.ExecuteChildWorkflow(child, "CreateWorkspace", InitialWorkspace{ActorID: admission.UserID, Key: admission.UserID, Name: "My workspace"}).Get(child, &workspaceID); err != nil {
+		remote := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{TaskQueue: "openlet-workspace", StartToCloseTimeout: 30 * time.Second, RetryPolicy: &temporal.RetryPolicy{InitialInterval: time.Second, MaximumInterval: 30 * time.Second}})
+		if err = workflow.ExecuteActivity(remote, "EnsureWorkspace", InitialWorkspace{ActorID: admission.UserID, Key: admission.UserID, Name: "My workspace"}).Get(ctx, &workspaceID); err != nil {
 			return uuid.Nil, err
 		}
 		if err = workflow.ExecuteActivity(ctx, a.SaveInitialWorkspace, subject, workspaceID).Get(ctx, nil); err != nil {
 			return uuid.Nil, err
 		}
+	} else {
+		workspaceID = *admission.WorkspaceID
 	}
+	child := workflow.WithChildOptions(ctx, workflow.ChildWorkflowOptions{WorkflowID: "create-workspace/" + workspaceID.String(), TaskQueue: "openlet-workspace", WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE, WorkflowExecutionTimeout: 7 * 24 * time.Hour})
+	if err = workflow.ExecuteChildWorkflow(child, "CreateWorkspace", workspaceID).Get(child, nil); err != nil {
+		return uuid.Nil, err
+	}
+
 	if err = workflow.ExecuteActivity(ctx, a.SyncAccountRelationships, admission.UserID).Get(ctx, nil); err != nil {
 		return uuid.Nil, err
 	}

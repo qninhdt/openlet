@@ -9,7 +9,7 @@ import signal
 import sys
 import tempfile
 from pathlib import Path
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import httpx
 from openlet_api.letfs.v1 import letfs_pb2 as pb
@@ -117,12 +117,10 @@ async def heartbeat():
         await asyncio.sleep(5)
 
 
-def processing_attempt(source):
-    return pb.ProcessingAttempt(
+def processing_generation(source):
+    return pb.ProcessingGeneration(
         file_id=str(UUID(source["file_id"])),
         generation=source["generation"],
-        attempt_number=activity.info().attempt,
-        attempt_id=str(uuid4()),
     )
 
 
@@ -167,7 +165,7 @@ class Processor:
 
     @activity.defn(name="enrich_file")
     async def enrich_file(self, source: dict) -> dict:
-        attempt = processing_attempt(source)
+        generation = processing_generation(source)
         pulse = asyncio.create_task(heartbeat())
         try:
             async with (
@@ -176,7 +174,7 @@ class Processor:
             ):
                 try:
                     async with asyncio.timeout(1700):
-                        await self.enrich(api, storage, attempt)
+                        await self.enrich(api, storage, generation)
                 except asyncio.CancelledError:
                     raise
                 except Exception as error:
@@ -195,7 +193,7 @@ class Processor:
                             await api.call(
                                 "FailEnrichment",
                                 pb.FailEnrichmentRequest(
-                                    attempt=attempt, error_code=code
+                                    source=generation, error_code=code
                                 ),
                             )
                         except Exception:
@@ -237,11 +235,11 @@ class Processor:
             raise ApplicationError("evidence incomplete", type="DEPENDENCY_UNAVAILABLE")
         return data
 
-    async def enrich(self, api, storage, attempt):
+    async def enrich(self, api, storage, generation):
         from letfs_ingest.semantic import enrich_tree
 
         response = await api.call(
-            "PrepareEnrichment", pb.PrepareEnrichmentRequest(attempt=attempt)
+            "PrepareEnrichment", pb.PrepareEnrichmentRequest(source=generation)
         )
         if response.WhichOneof("result") == "complete":
             return
@@ -270,7 +268,7 @@ class Processor:
                     upload = await self.upload(
                         api,
                         storage,
-                        attempt,
+                        generation,
                         "enrichment",
                         file,
                         paths[node.id],
@@ -288,7 +286,7 @@ class Processor:
                 )
             await api.call(
                 "CompleteEnrichment",
-                pb.CompleteEnrichmentRequest(attempt=attempt, nodes=updates),
+                pb.CompleteEnrichmentRequest(source=generation, nodes=updates),
             )
 
     @activity.defn(name="index_file")
@@ -339,7 +337,6 @@ class Processor:
                                 pb.FailIndexRequest(
                                     source=generation,
                                     error_code=code,
-                                    vector_space=prepared.vector_space,
                                 ),
                             )
                         except Exception:
@@ -395,12 +392,12 @@ class Processor:
             )
         await api.call(
             "CompleteIndex",
-            pb.CompleteIndexRequest(source=generation, vector_space=space),
+            pb.CompleteIndexRequest(source=generation),
         )
 
     @activity.defn(name="process_file")
     async def process_file(self, source: dict) -> dict:
-        attempt = processing_attempt(source)
+        generation = processing_generation(source)
         pulse = asyncio.create_task(heartbeat())
         try:
             async with (
@@ -409,14 +406,14 @@ class Processor:
             ):
                 try:
                     async with asyncio.timeout(1700):
-                        await self.process(api, storage, attempt)
+                        await self.process(api, storage, generation)
                 except asyncio.CancelledError:
                     details = activity.cancellation_details()
                     if details and details.cancel_requested:
-                        await self.abort(api, attempt, "PROCESSING_CANCELLED")
+                        await self.abort(api, generation, "PROCESSING_CANCELLED")
                     raise
                 except ResourceLimit:
-                    await self.abort(api, attempt, "RESOURCE_LIMIT")
+                    await self.abort(api, generation, "RESOURCE_LIMIT")
                     raise ApplicationError(
                         "processing resource limit",
                         type="RESOURCE_LIMIT",
@@ -430,7 +427,7 @@ class Processor:
                             in {"RESOURCE_LIMIT", "QUOTA_EXCEEDED", "DOCUMENT_INVALID"}
                             else "PROCESSING_FAILED"
                         )
-                        await self.abort(api, attempt, code)
+                        await self.abort(api, generation, code)
                     raise
                 except Exception:
                     raise ApplicationError(
@@ -442,23 +439,22 @@ class Processor:
             with contextlib.suppress(asyncio.CancelledError):
                 await pulse
 
-    async def abort(self, api, attempt, code):
+    async def abort(self, api, generation, code):
         try:
             async with asyncio.timeout(5):
                 await api.call(
-                    "AbortParse", pb.AbortParseRequest(attempt=attempt, error_code=code)
+                    "AbortParse",
+                    pb.AbortParseRequest(source=generation, error_code=code),
                 )
         except (Exception, asyncio.CancelledError):
-            LOG.warning("attempt cleanup deferred to letfs maintenance")
+            LOG.warning("generation cleanup deferred to letfs maintenance")
 
-    async def process(self, api, storage, attempt):
+    async def process(self, api, storage, generation):
         response = await api.call(
             "PrepareParse",
             pb.PrepareParseRequest(
-                file_id=attempt.file_id,
-                generation=attempt.generation,
-                attempt_number=attempt.attempt_number,
-                attempt_id=attempt.attempt_id,
+                file_id=generation.file_id,
+                generation=generation.generation,
             ),
         )
         if response.WhichOneof("result") == "complete":
@@ -523,17 +519,17 @@ class Processor:
                 else:
                     uploads.append(
                         await self.upload(
-                            api, storage, attempt, "parse", file, name, prepared
+                            api, storage, generation, "parse", file, name, prepared
                         )
                     )
             await api.call(
                 "CompleteParse",
                 pb.CompleteParseRequest(
-                    attempt=attempt, uploads=uploads, directories=directories
+                    source=generation, uploads=uploads, directories=directories
                 ),
             )
 
-    async def upload(self, api, storage, attempt, stage, file, name, limits):
+    async def upload(self, api, storage, generation, stage, file, name, limits):
         size = file.stat().st_size
         inline = (
             file.suffix in {".md", ".csv", ".json", ".txt"}
@@ -555,16 +551,16 @@ class Processor:
         if stage == "parse":
             response = await api.call(
                 "PrepareParseOutput",
-                pb.PrepareParseOutputRequest(attempt=attempt, output=output),
+                pb.PrepareParseOutputRequest(source=generation, output=output),
             )
         else:
             response = await api.call(
                 "PrepareEnrichmentOutput",
-                pb.PrepareEnrichmentOutputRequest(attempt=attempt, output=output),
+                pb.PrepareEnrichmentOutputRequest(source=generation, output=output),
             )
         prepared = response.upload
         scope = pb.OutputUploadScope(
-            attempt=attempt, stage=stage, upload_id=prepared.id
+            source=generation, stage=stage, upload_id=prepared.id
         )
         if prepared.status in {"completing", "finalized"}:
             await api.call(

@@ -144,7 +144,7 @@ func (s *Store) claimObjectDeletion(ctx context.Context, key string, bucket uuid
 	if err = tx.QueryRow(ctx, `SELECT id FROM quota_buckets WHERE id=$1 FOR UPDATE`, bucket).Scan(&id); err != nil {
 		return false, databaseError(err)
 	}
-	changed, err := tx.Exec(ctx, `UPDATE object_deletions d SET state='deleting',attempts=attempts+1,eligible_at=now()+interval '15 minutes',updated_at=now()
+	changed, err := tx.Exec(ctx, `UPDATE object_deletions d SET state='deleting',eligible_at=now()+interval '15 minutes',updated_at=now()
  WHERE d.object_key=$1 AND d.eligible_at<=now() AND (d.state!='deleted' OR d.ambiguous_write OR d.open_writes>0)
  AND NOT EXISTS(SELECT 1 FROM files WHERE object_key=d.object_key)
  AND NOT EXISTS(SELECT 1 FROM uploads WHERE candidate_key=d.object_key AND state IN ('open','completing'))`, key)

@@ -2,18 +2,16 @@ package workspace
 
 import (
 	"context"
-	"encoding/json"
 	"github.com/google/uuid"
 )
 
 type Pending struct {
-	ID        uuid.UUID
-	Status    string
-	Provision Provision
+	ID     uuid.UUID
+	Status string
 }
 
 func (s *Store) Pending(ctx context.Context) ([]Pending, error) {
-	rows, err := s.DB.Query(ctx, `WITH pending AS (SELECT id FROM workspaces WHERE (status='provisioning' AND error_code IS NULL) OR status='deleting' ORDER BY updated_at,id LIMIT 100 FOR UPDATE SKIP LOCKED), rotated AS (UPDATE workspaces w SET updated_at=now() FROM pending p WHERE w.id=p.id RETURNING w.id,w.status,w.creation_workflow_id) SELECT r.id,r.status,r.creation_workflow_id,k.request_input FROM rotated r LEFT JOIN idempotency_keys k ON k.workspace_id=r.id AND k.completed_at IS NULL`)
+	rows, err := s.DB.Query(ctx, `WITH pending AS (SELECT id FROM workspaces WHERE (status='provisioning' AND error_code IS NULL) OR status='deleting' ORDER BY updated_at,id LIMIT 100 FOR UPDATE SKIP LOCKED), rotated AS (UPDATE workspaces w SET updated_at=now() FROM pending p WHERE w.id=p.id RETURNING w.id,w.status) SELECT id,status FROM rotated`)
 	if err != nil {
 		return nil, err
 	}
@@ -21,14 +19,8 @@ func (s *Store) Pending(ctx context.Context) ([]Pending, error) {
 	values := []Pending{}
 	for rows.Next() {
 		var value Pending
-		var input []byte
-		if err = rows.Scan(&value.ID, &value.Status, &value.Provision.WorkflowID, &input); err != nil {
+		if err = rows.Scan(&value.ID, &value.Status); err != nil {
 			return nil, err
-		}
-		if value.Status == "provisioning" {
-			if err = json.Unmarshal(input, &value.Provision.Input); err != nil {
-				return nil, err
-			}
 		}
 		values = append(values, value)
 	}
@@ -39,12 +31,12 @@ func (s *Store) FailDeletion(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 func (s *Store) PruneReceipts(ctx context.Context) error {
-	_, err := s.DB.Exec(ctx, `DELETE FROM idempotency_keys WHERE (actor_id,operation,request_key) IN (SELECT actor_id,operation,request_key FROM idempotency_keys WHERE expires_at<=now() ORDER BY expires_at LIMIT 100)`)
+	_, err := s.DB.Exec(ctx, `DELETE FROM idempotency_keys WHERE (actor_id,request_key) IN (SELECT actor_id,request_key FROM idempotency_keys WHERE expires_at<=now() ORDER BY expires_at LIMIT 100)`)
 	return err
 }
 
 func (s *Store) UnreleasedProvisioning(ctx context.Context) ([]Storage, error) {
-	rows, err := s.DB.Query(ctx, `WITH pending AS (SELECT w.id FROM workspaces w JOIN idempotency_keys k ON k.workspace_id=w.id WHERE w.status='active' AND k.completed_at IS NULL ORDER BY w.updated_at,w.id LIMIT 100 FOR UPDATE OF w SKIP LOCKED),rotated AS (UPDATE workspaces w SET updated_at=now() FROM pending p WHERE w.id=p.id RETURNING w.id,w.quota_bucket_id,w.filesystem_id,w.root_id,w.limit_bytes) SELECT id,quota_bucket_id,filesystem_id,root_id,limit_bytes::text FROM rotated`)
+	rows, err := s.DB.Query(ctx, `WITH pending AS (SELECT w.id FROM workspaces w JOIN idempotency_keys k ON k.workspace_id=w.id WHERE w.status='active' AND k.expires_at IS NULL ORDER BY w.updated_at,w.id LIMIT 100 FOR UPDATE OF w SKIP LOCKED),rotated AS (UPDATE workspaces w SET updated_at=now() FROM pending p WHERE w.id=p.id RETURNING w.id,w.quota_bucket_id,w.filesystem_id,w.root_id,w.limit_bytes) SELECT id,quota_bucket_id,filesystem_id,root_id,limit_bytes::text FROM rotated`)
 	if err != nil {
 		return nil, err
 	}

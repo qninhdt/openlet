@@ -4,7 +4,6 @@ package temporal
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
@@ -38,10 +37,8 @@ func provisionRoundtrip(ctx workflow.Context, bucket, fs, key uuid.UUID) (*letfs
 		BucketId: bucket.String(), FilesystemId: fs.String(), RootId: storage.RootId}).Get(ctx, nil); err != nil {
 		return created, err
 	}
-	var denied *sdktemporal.ApplicationError
-	err := workflow.ExecuteActivity(ctx, FreezeBucketActivity, "other-owner", &letfsv1.FreezeBucketRequest{BucketId: bucket.String(), IdempotencyKey: key.String()}).Get(ctx, nil)
-	if !errors.As(err, &denied) || !denied.NonRetryable() || denied.Type() != "NOT_FOUND" {
-		return created, sdktemporal.NewNonRetryableApplicationError("creator isolation failed", "TEST_FAILURE", nil)
+	if err := workflow.ExecuteActivity(ctx, FreezeBucketActivity, "other-owner", &letfsv1.FreezeBucketRequest{BucketId: bucket.String(), IdempotencyKey: key.String()}).Get(ctx, nil); err != nil {
+		return created, err
 	}
 	if err := workflow.ExecuteActivity(ctx, FreezeBucketActivity, "resource-owner", &letfsv1.FreezeBucketRequest{BucketId: bucket.String(), IdempotencyKey: key.String()}).Get(ctx, nil); err != nil {
 		return created, err
@@ -60,11 +57,11 @@ func provisionRoundtrip(ctx workflow.Context, bucket, fs, key uuid.UUID) (*letfs
 	if err := workflow.ExecuteChildWorkflow(child, DeleteFilesystemName, DeletionInput{FilesystemID: fs}).Get(ctx, nil); err != nil {
 		return created, err
 	}
-	err = workflow.ExecuteActivity(ctx, CompleteBucketDeletionActivity, "resource-owner", &letfsv1.CompleteBucketDeletionRequest{BucketId: bucket.String(), IdempotencyKey: key.String()}).Get(ctx, &created)
+	err := workflow.ExecuteActivity(ctx, CompleteBucketDeletionActivity, "resource-owner", &letfsv1.CompleteBucketDeletionRequest{BucketId: bucket.String(), IdempotencyKey: key.String()}).Get(ctx, &created)
 	return created, err
 }
 
-func TestIntegrationGenericProvisioningActivitiesKeepCreatorScope(t *testing.T) {
+func TestIntegrationGenericProvisioningActivities(t *testing.T) {
 	tc, _ := testfixture.Temporal(t)
 	db := testfixture.Postgres(t, "../../migrations/0001_initial.sql")
 	w := worker.New(tc, Queue, worker.Options{WorkerStopTimeout: time.Second})

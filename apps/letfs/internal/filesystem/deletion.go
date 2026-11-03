@@ -48,7 +48,7 @@ func (s *Store) PrepareTrashPurge(ctx context.Context, fs, id uuid.UUID) (*Trash
 }
 
 func (s *Store) PrepareFilesystemDeletion(ctx context.Context, fs uuid.UUID) error {
-	caller, err := service(ctx)
+	_, err := service(ctx)
 	if err != nil {
 		return err
 	}
@@ -57,7 +57,7 @@ func (s *Store) PrepareFilesystemDeletion(ctx context.Context, fs uuid.UUID) err
 		return err
 	}
 	defer session.tx.Rollback(ctx)
-	if _, err = bucketForUpdate(ctx, session.tx, caller, session.bucket); err != nil {
+	if _, err = bucketForUpdate(ctx, session.tx, session.bucket); err != nil {
 		return databaseError(err)
 	}
 	var state string
@@ -70,27 +70,26 @@ func (s *Store) PrepareFilesystemDeletion(ctx context.Context, fs uuid.UUID) err
 	if _, err = session.tx.Exec(ctx, `UPDATE filesystems SET state='deleting' WHERE id=$1`, fs); err != nil {
 		return databaseError(err)
 	}
-	if _, err = session.tx.Exec(ctx, `INSERT INTO index_deletions(file_id,generation,embedding_model,vector_collection,vector_dimension)
- SELECT f.node_id,f.desired_generation,f.embedding_model,f.vector_collection,f.vector_dimension FROM files f JOIN nodes n ON n.id=f.node_id
- WHERE n.filesystem_id=$1 AND f.embedding_model IS NOT NULL AND f.vector_collection IS NOT NULL AND f.vector_dimension IS NOT NULL ON CONFLICT DO NOTHING`, fs); err != nil {
+	if _, err = session.tx.Exec(ctx, `INSERT INTO index_deletions(file_id,generation)
+ SELECT f.node_id,f.desired_generation FROM files f JOIN nodes n ON n.id=f.node_id WHERE n.filesystem_id=$1 AND f.desired_generation>0 ON CONFLICT DO NOTHING`, fs); err != nil {
 		return databaseError(err)
 	}
-	if _, err = session.tx.Exec(ctx, `UPDATE idempotency_keys SET completed_at=now(),expires_at=now()+interval '24 hours'
- WHERE operation='copy-node' AND result->>'filesystem_id'=$1 AND completed_at IS NULL`, fs.String()); err != nil {
+	if _, err = session.tx.Exec(ctx, `UPDATE idempotency_keys SET expires_at=now()+interval '24 hours'
+ WHERE operation='copy-node' AND result->>'filesystem_id'=$1 AND expires_at IS NULL`, fs.String()); err != nil {
 		return databaseError(err)
 	}
 	if _, err = session.tx.Exec(ctx, `INSERT INTO object_deletions(object_key,bucket_id,ambiguous_write,eligible_at)
  SELECT candidate_key,bucket_id,true,greatest(now()+interval '15 minutes',transfer_deadline) FROM uploads
  WHERE filesystem_id=$1 AND result_node_id IS NULL AND candidate_key IS NOT NULL ON CONFLICT(object_key) DO UPDATE
- SET ambiguous_write=true,state='pending',eligible_at=greatest(object_deletions.eligible_at,excluded.eligible_at)`, fs); err != nil {
+ SET ambiguous_write=true,eligible_at=greatest(object_deletions.eligible_at,excluded.eligible_at)`, fs); err != nil {
 		return databaseError(err)
 	}
 	if _, err = session.tx.Exec(ctx, `UPDATE uploads SET state=CASE WHEN state IN ('open','completing') THEN 'aborted' ELSE state END,
  inline_bytes=NULL,updated_at=now() WHERE filesystem_id=$1 AND result_node_id IS NULL`, fs); err != nil {
 		return databaseError(err)
 	}
-	if _, err = session.tx.Exec(ctx, `UPDATE idempotency_keys r SET completed_at=now(),expires_at=now()+interval '24 hours' FROM uploads u
- WHERE u.filesystem_id=$1 AND u.state='aborted' AND r.operation='create-upload' AND r.result->>'id'=u.id::text AND r.completed_at IS NULL`, fs); err != nil {
+	if _, err = session.tx.Exec(ctx, `UPDATE idempotency_keys r SET expires_at=now()+interval '24 hours' FROM uploads u
+ WHERE u.filesystem_id=$1 AND u.state='aborted' AND r.operation='create-upload' AND r.result->>'id'=u.id::text AND r.expires_at IS NULL`, fs); err != nil {
 		return databaseError(err)
 	}
 	return databaseError(session.tx.Commit(ctx))
@@ -115,7 +114,7 @@ func (s *session) removeNodes(ctx context.Context, ids []uuid.UUID) error {
 		return databaseError(err)
 	}
 	for _, source := range sources {
-		if err = s.discardUploads(ctx, source, nil); err != nil {
+		if err = s.discardUploads(ctx, source); err != nil {
 			return err
 		}
 		if err = s.completeProcessingReceipt(ctx, source); err != nil {
@@ -124,7 +123,7 @@ func (s *session) removeNodes(ctx context.Context, ids []uuid.UUID) error {
 	}
 	if _, err = s.tx.Exec(ctx, `INSERT INTO object_deletions(object_key,bucket_id)
  SELECT f.object_key,$2 FROM files f JOIN nodes n ON n.id=f.node_id WHERE n.id=ANY($1) AND n.filesystem_id=$3 AND f.object_key IS NOT NULL
- ON CONFLICT(object_key) DO UPDATE SET state='pending',eligible_at=least(object_deletions.eligible_at,excluded.eligible_at)`, ids, s.bucket, s.fs); err != nil {
+ ON CONFLICT(object_key) DO UPDATE SET eligible_at=least(object_deletions.eligible_at,excluded.eligible_at)`, ids, s.bucket, s.fs); err != nil {
 		return databaseError(err)
 	}
 	if _, err = s.tx.Exec(ctx, `DELETE FROM trash_entries WHERE filesystem_id=$1 AND node_id=ANY($2)`, s.fs, ids); err != nil {

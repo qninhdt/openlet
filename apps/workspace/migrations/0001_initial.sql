@@ -2,17 +2,11 @@
 -- +goose StatementBegin
 CREATE TABLE public.idempotency_keys (
     actor_id uuid NOT NULL,
-    operation text NOT NULL CHECK (operation = 'create-workspace'),
     request_key uuid NOT NULL,
     request_hash text NOT NULL,
-    request_input jsonb NOT NULL,
     workspace_id uuid NOT NULL,
-    workflow_id text NOT NULL UNIQUE,
-    completed_at timestamptz,
     expires_at timestamptz,
-    PRIMARY KEY (actor_id, operation, request_key),
-    CHECK ((completed_at IS NULL) = (expires_at IS NULL)),
-    CHECK (expires_at IS NULL OR expires_at = completed_at + interval '24 hours')
+    PRIMARY KEY (actor_id, request_key)
 );
 
 CREATE TABLE public.workspace_invitations (
@@ -50,7 +44,6 @@ CREATE TABLE public.workspaces (
     limit_bytes bigint NOT NULL CHECK (limit_bytes >= 0),
     CHECK (status != 'active' OR (quota_bucket_id IS NOT NULL AND filesystem_id IS NOT NULL AND root_id IS NOT NULL)),
     revision bigint DEFAULT 1 NOT NULL,
-    creation_workflow_id text NOT NULL,
     error_code text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
@@ -71,8 +64,6 @@ ALTER TABLE ONLY public.workspace_members
 ALTER TABLE ONLY public.workspaces
     ADD CONSTRAINT workspaces_pkey PRIMARY KEY (id);
 
-ALTER TABLE ONLY public.workspaces
-    ADD CONSTRAINT workspaces_creation_workflow_id_key UNIQUE (creation_workflow_id);
 
 CREATE UNIQUE INDEX workspace_pending_invitation ON public.workspace_invitations(workspace_id,email) WHERE status='pending';
 

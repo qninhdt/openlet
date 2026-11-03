@@ -1136,7 +1136,7 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// Generation/attempt authority is validated against letfs records, independently of service authentication.
+// Generation authority is validated against letfs records, independently of service authentication.
 type IngestServiceClient interface {
 	PrepareParse(ctx context.Context, in *PrepareParseRequest, opts ...grpc.CallOption) (*PrepareParseResponse, error)
 	PrepareParseOutput(ctx context.Context, in *PrepareParseOutputRequest, opts ...grpc.CallOption) (*PrepareParseOutputResponse, error)
@@ -1317,7 +1317,7 @@ func (c *ingestServiceClient) WriteOutputBytes(ctx context.Context, in *WriteOut
 // All implementations must embed UnimplementedIngestServiceServer
 // for forward compatibility.
 //
-// Generation/attempt authority is validated against letfs records, independently of service authentication.
+// Generation authority is validated against letfs records, independently of service authentication.
 type IngestServiceServer interface {
 	PrepareParse(context.Context, *PrepareParseRequest) (*PrepareParseResponse, error)
 	PrepareParseOutput(context.Context, *PrepareParseOutputRequest) (*PrepareParseOutputResponse, error)

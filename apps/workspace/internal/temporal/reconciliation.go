@@ -20,7 +20,7 @@ func (a *Activities) ReconcileWorkspaceAdmissions(ctx context.Context) error {
 		return err
 	}
 	for _, value := range pending {
-		id := value.Provision.WorkflowID
+		id := "create-workspace/" + value.ID.String()
 		if value.Status == "deleting" {
 			if err = StartDelete(ctx, a.Temporal, a.Store, value.ID); err != nil {
 				return err
@@ -30,7 +30,7 @@ func (a *Activities) ReconcileWorkspaceAdmissions(ctx context.Context) error {
 		description, err := a.Temporal.DescribeWorkflowExecution(ctx, id, "")
 		var missing *serviceerror.NotFound
 		if errors.As(err, &missing) {
-			err = StartCreate(ctx, a.Temporal, value.Provision)
+			err = StartCreate(ctx, a.Temporal, value.ID)
 			if err != nil {
 				return err
 			}

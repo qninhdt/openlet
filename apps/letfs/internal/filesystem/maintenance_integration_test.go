@@ -106,7 +106,7 @@ func TestIntegrationMaintenanceProtectsReferencesAndRetainsAmbiguousCleanup(t *t
 	_, err = db.Exec(ctx, `INSERT INTO uploads(id,filesystem_id,bucket_id,actor_id,input,transport,expected_size,inline_bytes,state,expires_at)
  VALUES($1,$2,$3,$4,'{}','inline',7,'payload','completing',now()-interval '1 second')`, inline, fs, bucket, actor)
 	require.NoError(t, err)
-	_, err = db.Exec(ctx, `UPDATE uploads SET expires_at=now()-interval '1 second',write_expires_at=now()+interval '30 minutes',transfer_deadline=now()+interval '1 hour' WHERE id=$1`, open)
+	_, err = db.Exec(ctx, `UPDATE uploads SET expires_at=now()-interval '1 second',transfer_deadline=now()+interval '1 hour' WHERE id=$1`, open)
 	require.NoError(t, err)
 	count, err = s.ExpireUploads(ctx)
 	require.NoError(t, err)

@@ -1,10 +1,11 @@
 Project Openlet {
   database_type: 'PostgreSQL'
   Note: '''
-    Monolith view of the implemented Openlet application data model, 2026-11-02.
+    Monolith view of the implemented Openlet application data model, 2026-11-03.
+    Sources: apps/account/migrations/0001_initial.sql, apps/workspace/migrations/0001_initial.sql and apps/letfs/migrations/0001_initial.sql.
     Application tables share one namespace in this view. Workspace and Letfs receipt tables are named by owner.
     Blue references are logical application relationships; other references are physical foreign keys.
-    Partial-index predicates and descending index order are preserved in index notes. This diagram is not a migration script.
+    Partial-index predicates are preserved in index notes because DBML cannot express PostgreSQL WHERE predicates. This diagram is not a migration script.
     Qdrant stores derived vectors with payload filesystem_id, source_id, file_id, generation, embedding_model, vector_dimension and text. PostgreSQL owns metadata and visibility.
     S3 stores object payloads. ZIP downloads stream over HTTP without stored archives. SpiceDB stores derived authorization relationships and repository-defined role/action policy; canonical membership stays in application tables. Temporal persistence and migration-runner bookkeeping are infrastructure-managed and are outside the application ERD.
   '''
@@ -21,6 +22,14 @@ Table "users" {
   "initial_workspace_id" uuid [unique]
   "created_at" timestamptz [not null, default: `now()`]
   "updated_at" timestamptz [not null, default: `now()`]
+
+  Checks {
+    `status != 'active' OR initial_workspace_id IS NOT NULL`
+  }
+
+  Indexes {
+    (updated_at, id) [name: 'pending_onboarding', note: "Partial index predicate: status='provisioning'"]
+  }
 }
 
 Table "workspaces" {
@@ -34,10 +43,17 @@ Table "workspaces" {
   "root_id" uuid [unique]
   "limit_bytes" bigint [not null, check: `limit_bytes >= 0`]
   "revision" bigint [not null, check: `revision > 0`, default: 1]
-  "creation_workflow_id" text [unique, not null]
   "error_code" text
   "created_at" timestamptz [not null, default: `now()`]
   "updated_at" timestamptz [not null, default: `now()`]
+
+  Checks {
+    `status != 'active' OR (quota_bucket_id IS NOT NULL AND filesystem_id IS NOT NULL AND root_id IS NOT NULL)`
+  }
+
+  Indexes {
+    (updated_at, id) [name: 'workspace_pending_lifecycle', note: "Partial index predicate: status IN ('provisioning','deleting')"]
+  }
 }
 
 Table "workspace_members" {
@@ -56,32 +72,29 @@ Table "workspace_members" {
 }
 
 Table "workspace_idempotency_keys" {
-  Note: 'Caller-scoped creation receipt and immutable admission input; no execution state. Expires 24h after logical completion.'
+  Note: 'Caller-scoped creation receipt and resource identity. Expires 24h after logical completion.'
   "actor_id" uuid [not null]
-  "operation" text [not null]
   "request_key" uuid [not null]
   "request_hash" text [not null]
-  "request_input" jsonb [not null]
   "workspace_id" uuid [not null]
-  "workflow_id" text [unique, not null]
-  "completed_at" timestamptz
   "expires_at" timestamptz
   Indexes {
-    (actor_id, operation, request_key) [pk]
+    (actor_id, request_key) [pk]
+    expires_at [name: 'workspace_receipt_expiry', note: 'Partial index predicate: expires_at IS NOT NULL']
   }
 }
 
 Table "letfs_idempotency_keys" {
-  Note: 'Provisioning receipts committed with owner-generated resources. Null completion/expiry pins a result until its creating service releases the receipt.'
+  Note: 'Physical table: letfs.public.idempotency_keys. Scoped create/upload/copy/process and service provisioning receipts; result is operation-specific JSON. Incomplete receipts remain pinned; terminal completion starts a 24-hour expiry. Provisioning receipts are released after storage references are durable. scope is a user/service scope string, not a UUID foreign key.'
   "scope" text [not null]
   "operation" text [not null]
   "request_key" text [not null]
   "request_hash" text [not null]
   "result" jsonb [not null]
-  "completed_at" timestamptz
   "expires_at" timestamptz
   Indexes {
     (scope, operation, request_key) [pk]
+    expires_at [name: 'letfs_receipt_expiry', note: 'Partial index predicate: expires_at IS NOT NULL']
   }
 }
 
@@ -122,29 +135,18 @@ Table "files" {
   "inline_bytes" bytea
   "object_key" text [unique]
 
-  "desired_generation" bigint [not null, default: 0]
-  "processing_actor_id" uuid
+  "desired_generation" bigint [not null, default: 0, check: `desired_generation >= 0`]
   "processing_format" text
-  "processing_source_identity" text
-  "accepted_attempt" integer [not null, default: 0]
-  "accepted_attempt_id" uuid
-  "publication_status" text [not null, default: 'not_required']
-  "published_generation" bigint
-  "parse_manifest_hash" text
-  "publication_manifest_hash" text
-  "index_status" text [not null, default: 'not_required']
-  "indexed_generation" bigint
-  "embedding_model" text
-  "vector_collection" text
-  "vector_dimension" integer
+  "publication_status" text [not null, default: 'not_required', check: `publication_status IN ('not_required','pending','parsed','enriched','ready','failed','index_failed')`]
   "processing_error" text
   "processing_updated_at" timestamptz [not null, default: `now()`]
 
   Indexes {
-    (processing_updated_at, node_id) [name: 'processing_dispatch', note: 'Pending parse/semantic publication or pending index readiness only']
+    (processing_updated_at, node_id) [name: 'processing_dispatch', note: "Partial index predicate: publication_status IN ('pending','parsed','enriched')"]
   }
 
   Checks {
+    `publication_status='not_required' OR (desired_generation>0 AND processing_format IS NOT NULL)`
     `(((storage_kind = 'inline'::text) AND (inline_bytes IS NOT NULL) AND (object_key IS NULL)) OR ((storage_kind = 'object'::text) AND (inline_bytes IS NULL) AND (object_key IS NOT NULL)))` [name: 'files_payload_check']
     `(storage_kind = ANY (ARRAY['inline'::text, 'object'::text]))` [name: 'files_storage_kind_check']
   }
@@ -155,18 +157,14 @@ Table "filesystems" {
 
   "id" uuid [pk, not null]
   "bucket_id" uuid [not null]
-  "create_fingerprint" text [check: `length(create_fingerprint) = 64`]
   "root_id" uuid
   "state" text [not null, default: `'active'::text`]
   "node_count" bigint [not null, default: 1]
-  "max_nodes" bigint [not null]
   "created_at" timestamptz [not null, default: `now()`]
 
   Checks {
     `((state <> 'active'::text) OR (root_id IS NOT NULL))` [name: 'filesystem_live_root']
-    `((max_nodes > 0) AND (node_count <= max_nodes))` [name: 'filesystems_check']
     `(node_count >= 0)` [name: 'filesystems_node_count_check']
-    `(create_fingerprint IS NOT NULL OR state <> 'active')` [name: 'filesystem_create_identity']
     `(state = ANY (ARRAY['active'::text, 'deleting'::text, 'deleted'::text]))` [name: 'filesystems_state_check']
   }
 
@@ -210,8 +208,7 @@ Table "object_deletions" {
   "eligible_at" timestamptz [not null, default: `now()+'00:15:00'::interval`]
   "state" text [not null, default: `'pending'::text`]
   "ambiguous_write" boolean [not null, default: false]
-  "open_writes" bigint [not null, default: 0, note: 'Unresolved backend writes; nonnegative. Process death retains evidence.']
-  "attempts" bigint [not null, default: 0]
+  "open_writes" bigint [not null, default: 0, check: `open_writes >= 0`, note: 'Unresolved backend writes. Process death retains evidence.']
   "updated_at" timestamptz [not null, default: `now()`]
 
   Checks {
@@ -219,21 +216,18 @@ Table "object_deletions" {
   }
 
   Indexes {
-    (bucket_id, eligible_at) [type: btree, name: "object_deletions_backlog", note: 'Partial index predicate: (state <> \'deleted\'::text)']
+    (bucket_id, eligible_at) [type: btree, name: "object_deletions_backlog", note: 'Partial index predicate: state <> \'deleted\'::text OR ambiguous_write OR open_writes > 0']
     (eligible_at, object_key) [type: btree, name: "object_deletions_due"]
   }
 }
 
 Table "index_deletions" {
-  Note: 'Generation/vector-space cleanup intent survives file deletion; compact tombstones reconcile uncertain late remote writes.'
-  "file_id" uuid [not null]
+  Note: 'Generation cleanup intent survives file deletion; compact tombstones reconcile uncertain late remote writes.'
+  "file_id" uuid [not null, note: 'Historical source identity; cleanup survives deletion of the files/nodes row. The blue relationship is not an enforced FK.']
   "generation" bigint [not null, check: `generation > 0`]
-  "embedding_model" text [not null]
-  "vector_collection" text [not null]
-  "vector_dimension" integer [not null, check: `vector_dimension > 0`]
   "eligible_at" timestamptz [not null, default: `now()`]
   Indexes {
-    (file_id, generation, embedding_model, vector_collection, vector_dimension) [pk]
+    (file_id, generation) [pk]
     eligible_at [name: 'index_deletions_due']
   }
 }
@@ -242,8 +236,6 @@ Table "quota_buckets" {
   Note: 'Logical storage quota and usage accounting. A frozen bucket rejects growth while deletion drains its filesystems.'
 
   "id" uuid [pk, not null]
-  "creator_service" text
-  "create_fingerprint" text [check: `length(create_fingerprint) = 64`]
   "limit_bytes" bigint [not null]
   "used_bytes" bigint [not null, default: 0]
   "state" text [not null, default: `'active'::text`]
@@ -251,7 +243,6 @@ Table "quota_buckets" {
 
   Checks {
     `(limit_bytes >= 0)` [name: 'quota_buckets_limit_bytes_check']
-    `(creator_service IS NOT NULL AND (create_fingerprint IS NOT NULL OR state IN ('frozen','deleted')))` [name: 'quota_bucket_create_identity']
     `(state = ANY (ARRAY['active'::text, 'frozen'::text, 'deleted'::text]))` [name: 'quota_buckets_state_check']
     `(used_bytes >= 0)` [name: 'quota_buckets_used_bytes_check']
   }
@@ -263,7 +254,7 @@ Table "trash_entries" {
   "id" uuid [pk, not null]
   "filesystem_id" uuid [not null]
   "node_id" uuid [unique, not null]
-  "original_parent_id" uuid
+  "original_parent_id" uuid [note: 'Historical restore location; the parent can be deleted independently.']
   "original_name" text [not null]
   "actor_id" uuid [not null]
   "state" text [not null, default: `'trashed'::text`]
@@ -284,16 +275,14 @@ Table "uploads" {
   "id" uuid [pk, not null]
   "filesystem_id" uuid [not null]
   "bucket_id" uuid [not null]
-  "actor_id" uuid [not null]
+  "actor_id" uuid
   "input" jsonb [not null]
   "candidate_key" text [unique]
   "state" text [not null, default: `'open'::text`]
   "expires_at" timestamptz [not null, default: `now()+'01:00:00'::interval`]
   "transfer_deadline" timestamptz
-  "size_bytes" bigint
-  "sha256" text
   "inline_bytes" bytea
-  "result_node_id" uuid
+  "result_node_id" uuid [note: 'Published output identity; the node can later be deleted while this upload receipt remains.']
   "created_at" timestamptz [not null, default: `now()`]
   "updated_at" timestamptz [not null, default: `now()`]
   "transport" text [not null]
@@ -302,27 +291,22 @@ Table "uploads" {
   "multipart_id" text
   "part_size" bigint
   "completion_parts" jsonb
-  "write_expires_at" timestamptz
   "result" jsonb
-  "processing_file_id" uuid
+  "processing_file_id" uuid [note: 'Source file identity for parse/enrichment output; may outlive the source row.']
   "processing_generation" bigint
-  "processing_attempt" integer
-  "processing_attempt_id" uuid
   "relative_path" text
   "processing_stage" text
 
   Checks {
     `((expected_size IS NOT NULL) AND (expected_size >= 0))` [name: 'uploads_direct_metadata']
-    `(((transport = 'inline'::text) AND (candidate_key IS NULL) AND (multipart_id IS NULL) AND (part_size IS NULL) AND (content_md5 IS NULL) AND (write_expires_at IS NULL)) OR ((transport = 'single'::text) AND (candidate_key IS NOT NULL) AND (multipart_id IS NULL) AND (part_size IS NULL) AND (content_md5 IS NOT NULL)) OR ((transport = 'multipart'::text) AND (candidate_key IS NOT NULL) AND (part_size IS NOT NULL) AND (part_size >= 5242880) AND (content_md5 IS NULL)))` [name: 'uploads_object_identity']
-    `(processing_file_id IS NULL AND processing_generation IS NULL AND processing_attempt IS NULL AND processing_attempt_id IS NULL AND relative_path IS NULL AND processing_stage IS NULL) OR (processing_file_id IS NOT NULL AND processing_generation IS NOT NULL AND processing_generation > 0 AND relative_path IS NOT NULL AND processing_attempt IS NOT NULL AND processing_attempt BETWEEN 1 AND 3 AND processing_attempt_id IS NOT NULL AND processing_stage IS NOT NULL AND processing_stage IN ('parse','enrichment'))` [name: 'uploads_processing_owner']
-    `(size_bytes >= 0)` [name: 'uploads_size_bytes_check']
+    `(((transport = 'inline'::text) AND (candidate_key IS NULL) AND (multipart_id IS NULL) AND (part_size IS NULL) AND (content_md5 IS NULL) AND (transfer_deadline IS NULL)) OR ((transport = 'single'::text) AND (candidate_key IS NOT NULL) AND (multipart_id IS NULL) AND (part_size IS NULL) AND (content_md5 IS NOT NULL)) OR ((transport = 'multipart'::text) AND (candidate_key IS NOT NULL) AND (part_size IS NOT NULL) AND (part_size >= 5242880) AND (content_md5 IS NULL)))` [name: 'uploads_object_identity']
+    `(actor_id IS NOT NULL AND processing_file_id IS NULL AND processing_generation IS NULL AND relative_path IS NULL AND processing_stage IS NULL) OR (processing_file_id IS NOT NULL AND processing_generation IS NOT NULL AND processing_generation > 0 AND relative_path IS NOT NULL AND processing_stage IS NOT NULL AND processing_stage IN ('parse','enrichment'))` [name: 'uploads_processing_owner']
     `(state = ANY (ARRAY['open'::text, 'completing'::text, 'finalized'::text, 'aborted'::text]))` [name: 'uploads_state_check']
-    `state != 'finalized' OR (result IS NOT NULL AND size_bytes IS NOT NULL AND size_bytes = expected_size)` [name: 'uploads_finalized_result']
+    `state != 'finalized' OR result IS NOT NULL` [name: 'uploads_finalized_result']
     `(transport = ANY (ARRAY['inline'::text, 'single'::text, 'multipart'::text]))` [name: 'uploads_transport']
   }
 
   Indexes {
-    (processing_file_id, processing_generation, processing_stage, processing_attempt, relative_path) [unique, name: 'processing_output_path']
     (updated_at, id) [type: btree, name: "uploads_multipart_cleanup", note: 'Partial index predicate: ((state = ANY (ARRAY[\'aborted\'::text])) AND (multipart_id IS NOT NULL))']
     (bucket_id, state, expires_at) [type: btree, name: "uploads_outstanding", note: 'Partial index predicate: (state = ANY (ARRAY[\'open\'::text, \'completing\'::text]))']
   }
@@ -352,6 +336,12 @@ Ref logical_workspace_initiator: workspace_idempotency_keys.actor_id > users.id 
 Ref logical_storage_quota: workspaces.quota_bucket_id - quota_buckets.id [color: #5B8FF9]
 Ref logical_storage_filesystem: workspaces.filesystem_id - filesystems.id [color: #5B8FF9]
 Ref logical_storage_root: workspaces.root_id - nodes.id [color: #5B8FF9]
+Ref logical_upload_actor: uploads.actor_id > users.id [color: #5B8FF9]
+Ref logical_trash_actor: trash_entries.actor_id > users.id [color: #5B8FF9]
+Ref logical_upload_result: uploads.result_node_id > nodes.id [color: #5B8FF9]
+Ref logical_processing_source: uploads.processing_file_id > files.node_id [color: #5B8FF9]
+Ref logical_restore_parent: trash_entries.original_parent_id > nodes.id [color: #5B8FF9]
+Ref logical_index_cleanup_source: index_deletions.file_id > files.node_id [color: #5B8FF9]
 
 TableGroup Identity {
   users

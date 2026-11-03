@@ -24,14 +24,14 @@ func TestIntegrationEnrichmentDirectChildrenPublishAtomicallyAndPreserveSource(t
 	require.NoError(t, err)
 	_, err = db.Exec(t.Context(), `INSERT INTO nodes(id,filesystem_id,parent_id,name,kind,size_bytes) VALUES($1,$2,$3,'report.pdf','file',1)`, file, fs, created.RootID)
 	require.NoError(t, err)
-	_, err = db.Exec(t.Context(), `INSERT INTO files(node_id,storage_kind,inline_bytes,desired_generation,processing_actor_id,processing_format,processing_source_identity,publication_status,index_status)
- VALUES($1,'inline','x',1,$2,'pdf','inline:2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881','pending','pending')`, file, uuid.New())
+	_, err = db.Exec(t.Context(), `INSERT INTO files(node_id,storage_kind,inline_bytes,desired_generation,processing_format,publication_status)
+ VALUES($1,'inline','x',1,'pdf','pending')`, file)
 	require.NoError(t, err)
 	_, err = db.Exec(t.Context(), `UPDATE filesystems SET node_count=2 WHERE id=$1`, fs)
 	require.NoError(t, err)
 	_, err = db.Exec(t.Context(), `UPDATE quota_buckets SET used_bytes=1 WHERE id=$1`, bucket)
 	require.NoError(t, err)
-	a := ProcessingAttempt{Source: Generation{FileID: file, Generation: 1}, Number: 1, ID: uuid.New()}
+	a := Generation{FileID: file, Generation: 1}
 	_, err = s.PrepareParse(t.Context(), a)
 	require.NoError(t, err)
 	_, err = s.PrepareEnrichment(t.Context(), a)
@@ -48,7 +48,7 @@ func TestIntegrationEnrichmentDirectChildrenPublishAtomicallyAndPreserveSource(t
 			output, err = s.PrepareEnrichmentOutput(t.Context(), a, input)
 		}
 		require.NoError(t, err)
-		scope := OutputScope{Attempt: a, Stage: stage, UploadID: output.ID}
+		scope := OutputScope{Source: a, Stage: stage, UploadID: output.ID}
 		_, err = s.WriteOutputBytes(t.Context(), scope, content)
 		require.NoError(t, err)
 		_, err = s.CompleteOutputUpload(t.Context(), scope, nil)
@@ -114,7 +114,7 @@ func TestIntegrationEnrichmentDirectChildrenPublishAtomicallyAndPreserveSource(t
 	require.NoError(t, db.QueryRow(t.Context(), `SELECT inline_bytes,title,publication_status FROM files WHERE node_id=$1`, file).Scan(&content, &title, &publication))
 	require.Equal(t, []byte("x"), content)
 	require.Equal(t, "Summary", title)
-	require.Equal(t, "ready", publication)
+	require.Equal(t, "enriched", publication)
 	require.NoError(t, db.QueryRow(t.Context(), `SELECT name FROM nodes WHERE id=$1`, leaf).Scan(&name))
 	require.Equal(t, "renamed.md", name)
 	require.NoError(t, db.QueryRow(t.Context(), `SELECT inline_bytes FROM files WHERE node_id=$1`, readme).Scan(&content))
@@ -122,9 +122,6 @@ func TestIntegrationEnrichmentDirectChildrenPublishAtomicallyAndPreserveSource(t
 	complete, err := s.PrepareEnrichment(t.Context(), a)
 	require.NoError(t, err)
 	require.True(t, complete.Complete)
-	mismatch := EnrichmentManifest{Nodes: append([]EnrichmentUpdate(nil), updates...)}
-	mismatch.Nodes[0].Path = "report.pdf"
-	require.Equal(t, "IDEMPOTENCY_CONFLICT", reason(s.CompleteEnrichment(t.Context(), a, mismatch)))
 	require.NoError(t, s.FailEnrichment(t.Context(), a, "PROCESSING_FAILED"), "late failure cannot undo committed publication")
 	require.Equal(t, codes.InvalidArgument, status.Code(s.FailEnrichment(t.Context(), a, "secret provider text")))
 }
@@ -140,23 +137,16 @@ func TestIntegrationEnrichmentDirectSourceNeedsNoOutputAndFencesRetries(t *testi
 	require.NoError(t, err)
 	_, err = db.Exec(t.Context(), `INSERT INTO nodes(id,filesystem_id,parent_id,name,kind,size_bytes) VALUES($1,$2,$3,'notes.txt','file',1)`, file, fs, created.RootID)
 	require.NoError(t, err)
-	_, err = db.Exec(t.Context(), `INSERT INTO files(node_id,storage_kind,inline_bytes,desired_generation,processing_actor_id,processing_format,processing_source_identity,publication_status,index_status)
- VALUES($1,'inline','x',1,$2,'text','inline:2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881','parsed','pending')`, file, uuid.New())
+	_, err = db.Exec(t.Context(), `INSERT INTO files(node_id,storage_kind,inline_bytes,desired_generation,processing_format,publication_status)
+ VALUES($1,'inline','x',1,'text','parsed')`, file)
 	require.NoError(t, err)
-	a := ProcessingAttempt{Source: Generation{FileID: file, Generation: 1}, Number: 1, ID: uuid.New()}
+	a := Generation{FileID: file, Generation: 1}
 	prepared, err := s.PrepareEnrichment(t.Context(), a)
 	require.NoError(t, err)
 	require.Len(t, prepared.Nodes, 1)
 	require.Equal(t, []byte("x"), prepared.Nodes[0].Content.InlineContent)
-	next := a
-	next.Number = 2
-	next.ID = uuid.New()
-	_, err = s.PrepareEnrichment(t.Context(), next)
-	require.NoError(t, err)
-	require.Equal(t, "STALE_PROCESSING_ATTEMPT", reason(s.FailEnrichment(t.Context(), a, "PROCESSING_FAILED")))
 	manifest := EnrichmentManifest{Nodes: []EnrichmentUpdate{{ID: file, Metadata: &SemanticMetadata{Title: "Notes", Description: "Direct content.", SemanticType: "text:notes", Context: "Search evidence."}}}}
-	require.Equal(t, "STALE_PROCESSING_ATTEMPT", reason(s.CompleteEnrichment(t.Context(), a, manifest)))
-	require.NoError(t, s.CompleteEnrichment(t.Context(), next, manifest))
+	require.NoError(t, s.CompleteEnrichment(t.Context(), a, manifest))
 	var count int64
 	require.NoError(t, db.QueryRow(t.Context(), `SELECT count(*) FROM nodes WHERE parent_id=$1`, file).Scan(&count))
 	require.Zero(t, count)

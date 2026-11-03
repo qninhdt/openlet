@@ -237,7 +237,7 @@ func TestIntegrationCopyPublicationReconcilesRetriesAndRetainsPartialEffects(t *
 	var exists bool
 	require.NoError(t, db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM nodes WHERE id=$1)`, failed.Root.Destination).Scan(&exists))
 	require.False(t, exists)
-	_, err = db.Exec(ctx, `UPDATE object_deletions SET attempts=1 WHERE object_key=$1`, candidate)
+	_, err = db.Exec(ctx, `UPDATE object_deletions SET state='deleting' WHERE object_key=$1`, candidate)
 	require.NoError(t, err)
 	err = s.CommitCopyItem(ctx, failed, failed.Root)
 	require.Equal(t, "COPY_CANDIDATE_CLOSED", reason(err))

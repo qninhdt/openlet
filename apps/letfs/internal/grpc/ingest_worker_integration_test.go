@@ -4,9 +4,7 @@ package grpc
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -69,8 +67,8 @@ func TestIntegrationPythonActivitiesProcessEnrichIndexAndReplay(t *testing.T) {
 	require.NoError(t, err)
 	_, err = db.Exec(t.Context(), `INSERT INTO nodes(id,filesystem_id,parent_id,name,kind,size_bytes) VALUES($1,$2,$3,'report.docx','file',$4)`, file, fs, created.RootID, len(content))
 	require.NoError(t, err)
-	_, err = db.Exec(t.Context(), `INSERT INTO files(node_id,storage_kind,inline_bytes,desired_generation,processing_actor_id,processing_format,processing_source_identity,publication_status,index_status)
- VALUES($1,'inline',$2,1,$3,'docx',$4,'pending','pending')`, file, content, uuid.New(), fmt.Sprintf("inline:%x", sha256.Sum256(content)))
+	_, err = db.Exec(t.Context(), `INSERT INTO files(node_id,storage_kind,inline_bytes,desired_generation,processing_format,publication_status)
+ VALUES($1,'inline',$2,1,'docx','pending')`, file, content)
 	require.NoError(t, err)
 	_, err = db.Exec(t.Context(), `UPDATE filesystems SET node_count=2 WHERE id=$1`, fs)
 	require.NoError(t, err)
@@ -188,13 +186,9 @@ func TestIntegrationPythonActivitiesProcessEnrichIndexAndReplay(t *testing.T) {
 	var result filesystem.Generation
 	require.NoError(t, run.Get(ctx, &result))
 	require.Equal(t, filesystem.Generation{FileID: file, Generation: 1}, result)
-	var publication, index string
-	var published, indexed int64
-	require.NoError(t, db.QueryRow(ctx, `SELECT publication_status,index_status,published_generation,indexed_generation FROM files WHERE node_id=$1`, file).Scan(&publication, &index, &published, &indexed))
+	var publication string
+	require.NoError(t, db.QueryRow(ctx, `SELECT publication_status FROM files WHERE node_id=$1`, file).Scan(&publication))
 	require.Equal(t, "ready", publication)
-	require.Equal(t, "ready", index)
-	require.EqualValues(t, 1, published)
-	require.EqualValues(t, 1, indexed)
 	var key string
 	require.NoError(t, db.QueryRow(ctx, `SELECT f.object_key FROM files f JOIN nodes n ON n.id=f.node_id WHERE n.parent_id=$1 AND f.media_type='image/png'`, file).Scan(&key))
 	image, err := objects.Open(ctx, key)

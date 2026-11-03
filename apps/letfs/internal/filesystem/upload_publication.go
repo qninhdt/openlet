@@ -60,7 +60,7 @@ func (s *Store) completeUpload(ctx context.Context, fs, id uuid.UUID, access upl
 		return UploadPublication{}, rpc.Fault(codes.InvalidArgument, "VALIDATION", "only multipart accepts receipts")
 	}
 	if upload.State == "finalized" {
-		if access.attempt != nil {
+		if access.source != nil {
 			return UploadPublication{}, nil
 		}
 		if upload.Publication == nil {
@@ -159,7 +159,7 @@ func (s *Store) publishUpload(ctx context.Context, fs, id uuid.UUID, access uplo
 		return UploadPublication{}, err
 	}
 	if upload.State == "finalized" {
-		if access.attempt != nil {
+		if access.source != nil {
 			return UploadPublication{}, nil
 		}
 		if upload.Publication == nil {
@@ -170,7 +170,7 @@ func (s *Store) publishUpload(ctx context.Context, fs, id uuid.UUID, access uplo
 	if err = upload.active(); err != nil {
 		return UploadPublication{}, err
 	}
-	if access.attempt != nil {
+	if access.source != nil {
 		if upload.Transport == "inline" && upload.content == nil {
 			return UploadPublication{}, uploadState("UPLOAD_NOT_READY")
 		}
@@ -182,7 +182,7 @@ func (s *Store) publishUpload(ctx context.Context, fs, id uuid.UUID, access uplo
 		if err != nil {
 			return UploadPublication{}, err
 		}
-		_, err = session.tx.Exec(ctx, `UPDATE uploads SET state='finalized',size_bytes=expected_size,result=$2,updated_at=now() WHERE id=$1`, id, result)
+		_, err = session.tx.Exec(ctx, `UPDATE uploads SET state='finalized',result=$2,updated_at=now() WHERE id=$1`, id, result)
 		if err != nil {
 			return UploadPublication{}, databaseError(err)
 		}
@@ -238,7 +238,7 @@ func (s *Store) publishUpload(ctx context.Context, fs, id uuid.UUID, access uplo
 	if err != nil {
 		return UploadPublication{}, err
 	}
-	if err = session.recordIntent(ctx, node, access.actor, "object:"+*upload.key); err != nil {
+	if err = session.recordIntent(ctx, node); err != nil {
 		return UploadPublication{}, err
 	}
 	result := UploadPublication{NodeID: nodeID, Status: "finalized", Revision: node.Revision}
@@ -249,7 +249,7 @@ func (s *Store) publishUpload(ctx context.Context, fs, id uuid.UUID, access uplo
 	if err = session.completeUploadReceipt(ctx, id); err != nil {
 		return UploadPublication{}, err
 	}
-	_, err = session.tx.Exec(ctx, `UPDATE uploads SET state='finalized',result_node_id=$2,result=$3,size_bytes=expected_size,inline_bytes=NULL,updated_at=now() WHERE id=$1`, id, nodeID, encoded)
+	_, err = session.tx.Exec(ctx, `UPDATE uploads SET state='finalized',result_node_id=$2,result=$3,inline_bytes=NULL,updated_at=now() WHERE id=$1`, id, nodeID, encoded)
 	if err != nil {
 		return UploadPublication{}, databaseError(err)
 	}
@@ -257,14 +257,14 @@ func (s *Store) publishUpload(ctx context.Context, fs, id uuid.UUID, access uplo
 }
 
 func (s *session) completeUploadReceipt(ctx context.Context, id uuid.UUID) error {
-	_, err := s.tx.Exec(ctx, `UPDATE idempotency_keys SET completed_at=now(),expires_at=now()+interval '24 hours' WHERE operation='create-upload' AND result->>'id'=$1 AND completed_at IS NULL`, id.String())
+	_, err := s.tx.Exec(ctx, `UPDATE idempotency_keys SET expires_at=now()+interval '24 hours' WHERE operation='create-upload' AND result->>'id'=$1 AND expires_at IS NULL`, id.String())
 	return databaseError(err)
 }
 
 func (s *session) queueCandidate(ctx context.Context, id uuid.UUID) error {
 	_, err := s.tx.Exec(ctx, `INSERT INTO object_deletions(object_key,bucket_id,ambiguous_write,eligible_at)
- SELECT candidate_key,bucket_id,write_expires_at IS NOT NULL,greatest(now()+interval '15 minutes',transfer_deadline) FROM uploads WHERE id=$1 AND candidate_key IS NOT NULL
- ON CONFLICT(object_key) DO UPDATE SET state='pending',ambiguous_write=object_deletions.ambiguous_write OR excluded.ambiguous_write,eligible_at=greatest(object_deletions.eligible_at,excluded.eligible_at)`, id)
+ SELECT candidate_key,bucket_id,transfer_deadline IS NOT NULL,greatest(now()+interval '15 minutes',transfer_deadline) FROM uploads WHERE id=$1 AND candidate_key IS NOT NULL
+ ON CONFLICT(object_key) DO UPDATE SET ambiguous_write=object_deletions.ambiguous_write OR excluded.ambiguous_write,eligible_at=greatest(object_deletions.eligible_at,excluded.eligible_at)`, id)
 	return databaseError(err)
 }
 

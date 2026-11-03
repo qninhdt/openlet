@@ -145,33 +145,30 @@ func (s *session) enrichmentState(ctx context.Context, source Generation) (proce
 	if _, err = s.processingSource(ctx, p); err != nil {
 		return p, err
 	}
-	if p.publication != "parsed" && p.publication != "ready" {
+	if p.publication != "parsed" && p.publication != "enriched" && p.publication != "ready" && p.publication != "index_failed" {
 		return p, uploadState("PARSE_NOT_COMPLETE")
 	}
 	return p, nil
 }
 
-func (s *Store) PrepareEnrichment(ctx context.Context, a ProcessingAttempt) (EnrichmentPreparation, error) {
+func (s *Store) PrepareEnrichment(ctx context.Context, a Generation) (EnrichmentPreparation, error) {
 	if err := a.validate(); err != nil {
 		return EnrichmentPreparation{}, err
 	}
-	session, err := s.processingSession(ctx, a.Source, false)
+	session, err := s.processingSession(ctx, a, false)
 	if err != nil {
 		return EnrichmentPreparation{}, err
 	}
 	defer session.tx.Rollback(ctx)
-	p, err := session.enrichmentState(ctx, a.Source)
+	p, err := session.enrichmentState(ctx, a)
 	if err != nil {
 		return EnrichmentPreparation{}, err
 	}
-	result := EnrichmentPreparation{SourceID: a.Source.FileID, Complete: p.publication == "ready"}
+	result := EnrichmentPreparation{SourceID: a.FileID, Complete: p.publication != "parsed"}
 	if result.Complete {
 		return result, nil
 	}
-	if err = session.acceptProcessing(ctx, p, a, "enrichment"); err != nil {
-		return result, err
-	}
-	result.Nodes, err = session.inventory(ctx, a.Source.FileID, s.ProcessingMaxOutputs)
+	result.Nodes, err = session.inventory(ctx, a.FileID, s.ProcessingMaxOutputs)
 	if err != nil {
 		return result, err
 	}
@@ -181,7 +178,7 @@ func (s *Store) PrepareEnrichment(ctx context.Context, a ProcessingAttempt) (Enr
 	return result, s.signInventory(ctx, result.Nodes)
 }
 
-func (s *Store) PrepareEnrichmentOutput(ctx context.Context, a ProcessingAttempt, output ProcessingOutput) (Upload, error) {
+func (s *Store) PrepareEnrichmentOutput(ctx context.Context, a Generation, output ProcessingOutput) (Upload, error) {
 	return s.prepareProcessingOutput(ctx, a, "enrichment", output)
 }
 
@@ -252,42 +249,30 @@ func validateEnrichment(nodes []ProcessingNode, manifest EnrichmentManifest, sou
 	return updates, nil
 }
 
-func (s *Store) CompleteEnrichment(ctx context.Context, a ProcessingAttempt, manifest EnrichmentManifest) error {
+func (s *Store) CompleteEnrichment(ctx context.Context, a Generation, manifest EnrichmentManifest) error {
 	if err := a.validate(); err != nil {
 		return err
 	}
 	if int64(len(manifest.Nodes)) > s.ProcessingMaxOutputs+1 {
 		return uploadState("RESOURCE_LIMIT")
 	}
-	manifest.Nodes = slices.Clone(manifest.Nodes)
-	slices.SortFunc(manifest.Nodes, func(a, b EnrichmentUpdate) int { return strings.Compare(a.ID.String(), b.ID.String()) })
-	hash, err := fingerprint(manifest)
-	if err != nil {
-		return err
-	}
-	session, err := s.processingSession(ctx, a.Source, false)
+	session, err := s.processingSession(ctx, a, false)
 	if err != nil {
 		return err
 	}
 	defer session.tx.Rollback(ctx)
-	p, err := session.enrichmentState(ctx, a.Source)
+	p, err := session.enrichmentState(ctx, a)
 	if err != nil {
 		return err
 	}
-	if p.publication == "ready" {
-		if p.publicationManifest == nil || *p.publicationManifest != hash {
-			return uploadState("IDEMPOTENCY_CONFLICT")
-		}
+	if p.publication != "parsed" {
 		return nil
 	}
-	if err = p.checkAttempt(a); err != nil {
-		return err
-	}
-	nodes, err := session.inventory(ctx, a.Source.FileID, s.ProcessingMaxOutputs)
+	nodes, err := session.inventory(ctx, a.FileID, s.ProcessingMaxOutputs)
 	if err != nil {
 		return err
 	}
-	updates, err := validateEnrichment(nodes, manifest, a.Source.FileID)
+	updates, err := validateEnrichment(nodes, manifest, a.FileID)
 	if err != nil {
 		return err
 	}
@@ -300,11 +285,11 @@ func (s *Store) CompleteEnrichment(ctx context.Context, a ProcessingAttempt, man
 			continue
 		}
 		id := *update.UploadID
-		if node.ID == a.Source.FileID || node.Kind != "file" || selected[id] {
+		if node.ID == a.FileID || node.Kind != "file" || selected[id] {
 			return enrichmentValidation("invalid enrichment upload selection")
 		}
 		selected[id] = true
-		upload, err := session.loadUpload(ctx, id, uploadAccess{attempt: &a, stage: "enrichment"})
+		upload, err := session.loadUpload(ctx, id, uploadAccess{source: &a, stage: "enrichment"})
 		if err != nil {
 			return err
 		}
@@ -334,14 +319,14 @@ func (s *Store) CompleteEnrichment(ctx context.Context, a ProcessingAttempt, man
 		ids = append(ids, id)
 	}
 	// Release all sibling names before applying swaps and overlapping slugs.
-	_, err = session.tx.Exec(ctx, `UPDATE nodes SET name='.enrichment-'||id::text WHERE id=ANY($1) AND id!=$2`, ids, a.Source.FileID)
+	_, err = session.tx.Exec(ctx, `UPDATE nodes SET name='.enrichment-'||id::text WHERE id=ANY($1) AND id!=$2`, ids, a.FileID)
 	if err != nil {
 		return databaseError(err)
 	}
 	for _, node := range nodes {
 		update := updates[node.ID]
 		name := node.Name
-		if node.ID != a.Source.FileID {
+		if node.ID != a.FileID {
 			name = path.Base(update.Path)
 		}
 		_, err = session.tx.Exec(ctx, `UPDATE nodes SET name=$2,revision=revision+1,updated_at=now() WHERE id=$1`, node.ID, name)
@@ -380,7 +365,7 @@ func (s *Store) CompleteEnrichment(ctx context.Context, a ProcessingAttempt, man
 	if len(nodes) > 1 {
 		var readme *SemanticMetadata
 		for _, node := range nodes {
-			if node.ParentID != nil && *node.ParentID == a.Source.FileID && node.Name == "README.md" && node.Kind == "file" {
+			if node.ParentID != nil && *node.ParentID == a.FileID && node.Name == "README.md" && node.Kind == "file" {
 				readme = updates[node.ID].Metadata
 				break
 			}
@@ -388,22 +373,22 @@ func (s *Store) CompleteEnrichment(ctx context.Context, a ProcessingAttempt, man
 		if readme == nil {
 			return uploadState("OUTPUTS_INCOMPLETE")
 		}
-		_, err = session.tx.Exec(ctx, `UPDATE files SET title=$2,description=$3,semantic_type=$4,context=$5 WHERE node_id=$1`, a.Source.FileID, readme.Title, readme.Description, readme.SemanticType, readme.Context)
+		_, err = session.tx.Exec(ctx, `UPDATE files SET title=$2,description=$3,semantic_type=$4,context=$5 WHERE node_id=$1`, a.FileID, readme.Title, readme.Description, readme.SemanticType, readme.Context)
 		if err != nil {
 			return databaseError(err)
 		}
 	}
-	if err = session.discardUploads(ctx, a.Source, nil); err != nil {
+	if err = session.discardUploads(ctx, a); err != nil {
 		return err
 	}
-	_, err = session.tx.Exec(ctx, `UPDATE files SET publication_status='ready',published_generation=desired_generation,publication_manifest_hash=$2,processing_error=NULL,processing_updated_at=now() WHERE node_id=$1`, a.Source.FileID, hash)
+	_, err = session.tx.Exec(ctx, `UPDATE files SET publication_status='enriched',processing_error=NULL,processing_updated_at=now() WHERE node_id=$1`, a.FileID)
 	if err != nil {
 		return databaseError(err)
 	}
 	return databaseError(session.tx.Commit(ctx))
 }
 
-func (s *Store) FailEnrichment(ctx context.Context, a ProcessingAttempt, code string) error {
+func (s *Store) FailEnrichment(ctx context.Context, a Generation, code string) error {
 	if err := a.validate(); err != nil {
 		return err
 	}
@@ -412,7 +397,7 @@ func (s *Store) FailEnrichment(ctx context.Context, a ProcessingAttempt, code st
 	default:
 		return enrichmentValidation("invalid enrichment failure")
 	}
-	session, err := s.processingSession(ctx, a.Source, true)
+	session, err := s.processingSession(ctx, a, true)
 	if err != nil {
 		return err
 	}
@@ -421,10 +406,10 @@ func (s *Store) FailEnrichment(ctx context.Context, a ProcessingAttempt, code st
 	if err != nil {
 		return err
 	}
-	if p.publication == "ready" {
+	if p.publication != "parsed" {
 		return nil
 	}
-	if err = session.failProcessing(ctx, a.Source, code); err != nil {
+	if err = session.failProcessing(ctx, a, code); err != nil {
 		return err
 	}
 	return databaseError(session.tx.Commit(ctx))

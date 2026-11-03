@@ -2,15 +2,11 @@ package filesystem
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"google.golang.org/grpc/codes"
 	"openlet/apps/letfs/internal/storage"
 	"openlet/packages/go/rpc"
@@ -24,23 +20,23 @@ type ProcessingOutput struct {
 }
 
 type OutputScope struct {
-	Attempt  ProcessingAttempt
+	Source   Generation
 	Stage    string
 	UploadID uuid.UUID
 }
 
 func (s OutputScope) access() (uploadAccess, error) {
-	if err := s.Attempt.validate(); err != nil {
+	if err := s.Source.validate(); err != nil {
 		return uploadAccess{}, err
 	}
 	if s.UploadID == uuid.Nil || (s.Stage != "parse" && s.Stage != "enrichment") {
 		return uploadAccess{}, rpc.Fault(codes.InvalidArgument, "VALIDATION", "invalid output scope")
 	}
-	return uploadAccess{attempt: &s.Attempt, stage: s.Stage}, nil
+	return uploadAccess{source: &s.Source, stage: s.Stage}, nil
 }
 
-func (s *session) validateProcessing(ctx context.Context, a ProcessingAttempt, stage string) (processingState, error) {
-	p, err := s.currentProcessing(ctx, a.Source)
+func (s *session) validateProcessing(ctx context.Context, a Generation, stage string) (processingState, error) {
+	p, err := s.currentProcessing(ctx, a)
 	if err != nil {
 		return p, err
 	}
@@ -49,15 +45,9 @@ func (s *session) validateProcessing(ctx context.Context, a ProcessingAttempt, s
 	}
 	switch stage {
 	case "parse":
-		if p.publication == "pending" {
-			err = p.checkAttempt(a)
-		}
 	case "enrichment":
-		if p.publication != "parsed" && p.publication != "ready" {
+		if p.publication != "parsed" && p.publication != "enriched" && p.publication != "ready" && p.publication != "index_failed" {
 			return p, uploadState("PARSE_NOT_COMPLETE")
-		}
-		if p.publication != "ready" {
-			err = p.checkAttempt(a)
 		}
 	default:
 		return p, rpc.Fault(codes.InvalidArgument, "VALIDATION", "invalid processing stage")
@@ -77,15 +67,15 @@ func relativeArtifactPath(path string) error {
 	return nil
 }
 
-func (s *Store) PrepareParseOutput(ctx context.Context, a ProcessingAttempt, output ProcessingOutput) (Upload, error) {
+func (s *Store) PrepareParseOutput(ctx context.Context, a Generation, output ProcessingOutput) (Upload, error) {
 	return s.prepareProcessingOutput(ctx, a, "parse", output)
 }
 
-func (s *Store) prepareProcessingOutput(ctx context.Context, a ProcessingAttempt, stage string, output ProcessingOutput) (Upload, error) {
+func (s *Store) prepareProcessingOutput(ctx context.Context, a Generation, stage string, output ProcessingOutput) (Upload, error) {
 	if err := a.validate(); err != nil {
 		return Upload{}, err
 	}
-	session, err := s.processingSession(ctx, a.Source, false)
+	session, err := s.processingSession(ctx, a, false)
 	if err != nil {
 		return Upload{}, err
 	}
@@ -94,20 +84,20 @@ func (s *Store) prepareProcessingOutput(ctx context.Context, a ProcessingAttempt
 	if err != nil {
 		return Upload{}, err
 	}
-	if stage == "parse" && p.publication != "pending" || stage == "enrichment" && p.publication == "ready" {
+	if stage == "parse" && p.publication != "pending" || stage == "enrichment" && p.publication != "parsed" {
 		return Upload{}, uploadState("PROCESSING_NOT_ACTIVE")
 	}
-	id, err := session.insertProcessingOutput(ctx, s, a, stage, p, output)
+	id, err := session.insertProcessingOutput(ctx, s, a, stage, output)
 	if err != nil {
 		return Upload{}, err
 	}
 	if err = session.tx.Commit(ctx); err != nil {
 		return Upload{}, databaseError(err)
 	}
-	return s.prepareUpload(ctx, session.fs, id, uploadAccess{attempt: &a, stage: stage})
+	return s.prepareUpload(ctx, session.fs, id, uploadAccess{source: &a, stage: stage})
 }
 
-func (s *session) insertProcessingOutput(ctx context.Context, store *Store, a ProcessingAttempt, stage string, p processingState, output ProcessingOutput) (uuid.UUID, error) {
+func (s *session) insertProcessingOutput(ctx context.Context, store *Store, a Generation, stage string, output ProcessingOutput) (uuid.UUID, error) {
 	if err := relativeArtifactPath(output.Path); err != nil {
 		return uuid.Nil, err
 	}
@@ -118,37 +108,8 @@ func (s *session) insertProcessingOutput(ctx context.Context, store *Store, a Pr
 	if err != nil {
 		return uuid.Nil, err
 	}
-	var id uuid.UUID
-	var saved []byte
-	err = s.tx.QueryRow(ctx, `SELECT id,input FROM uploads WHERE processing_file_id=$1 AND processing_generation=$2 AND processing_attempt=$3 AND processing_stage=$4 AND relative_path=$5`, a.Source.FileID, a.Source.Generation, a.Number, stage, output.Path).Scan(&id, &saved)
-	if err == nil {
-		var old ProcessingOutput
-		if json.Unmarshal(saved, &old) != nil {
-			return uuid.Nil, uploadState("INVALID_UPLOAD_STATE")
-		}
-		oldHash, e := fingerprint(old)
-		if e != nil {
-			return uuid.Nil, e
-		}
-		newHash, e := fingerprint(output)
-		if e != nil {
-			return uuid.Nil, e
-		}
-		if oldHash != newHash {
-			return uuid.Nil, uploadState("IDEMPOTENCY_CONFLICT")
-		}
-		return id, nil
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, databaseError(err)
-	}
-	var count, total int64
-	err = s.tx.QueryRow(ctx, `SELECT count(*),coalesce(sum(expected_size),0)::bigint FROM uploads WHERE processing_file_id=$1 AND processing_generation=$2 AND processing_attempt=$3 AND processing_stage=$4`, a.Source.FileID, a.Source.Generation, a.Number, stage).Scan(&count, &total)
-	if err != nil {
-		return uuid.Nil, databaseError(err)
-	}
 	size := *output.SizeBytes
-	if count >= store.ProcessingMaxOutputs || size > store.ProcessingMaxOutputBytes-total {
+	if size > store.ProcessingMaxOutputBytes {
 		return uuid.Nil, uploadState("RESOURCE_LIMIT")
 	}
 	if size > store.MaxFileBytes {
@@ -188,17 +149,14 @@ func (s *session) insertProcessingOutput(ctx context.Context, store *Store, a Pr
 	default:
 		return uuid.Nil, rpc.Fault(codes.InvalidArgument, "VALIDATION", "invalid output storage")
 	}
-	if p.actor == nil {
-		return uuid.Nil, uploadState("INVALID_SOURCE_IDENTITY")
-	}
-	id = uuid.Must(uuid.NewV7())
+	id := uuid.Must(uuid.NewV7())
 	if transport != "inline" {
 		key := "objects/" + s.bucket.String() + "/" + id.String()
 		candidate = &key
 	}
-	_, err = s.tx.Exec(ctx, `INSERT INTO uploads(id,filesystem_id,bucket_id,actor_id,input,candidate_key,transport,expected_size,content_md5,part_size,
- processing_file_id,processing_generation,processing_attempt,processing_attempt_id,relative_path,processing_stage)
- VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`, id, s.fs, s.bucket, *p.actor, encoded, candidate, transport, size, output.ContentMD5, partSize, a.Source.FileID, a.Source.Generation, a.Number, a.ID, output.Path, stage)
+	_, err = s.tx.Exec(ctx, `INSERT INTO uploads(id,filesystem_id,bucket_id,input,candidate_key,transport,expected_size,content_md5,part_size,
+ processing_file_id,processing_generation,relative_path,processing_stage)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, id, s.fs, s.bucket, encoded, candidate, transport, size, output.ContentMD5, partSize, a.FileID, a.Generation, output.Path, stage)
 	return id, databaseError(err)
 }
 
@@ -207,7 +165,7 @@ func (s *Store) GetOutputUpload(ctx context.Context, scope OutputScope) (Upload,
 	if err != nil {
 		return Upload{}, err
 	}
-	session, err := s.processingSession(ctx, scope.Attempt.Source, false)
+	session, err := s.processingSession(ctx, scope.Source, false)
 	if err != nil {
 		return Upload{}, err
 	}
@@ -220,7 +178,7 @@ func (s *Store) GetOutputUploadParts(ctx context.Context, scope OutputScope, num
 	if err != nil {
 		return nil, err
 	}
-	session, err := s.processingSession(ctx, scope.Attempt.Source, false)
+	session, err := s.processingSession(ctx, scope.Source, false)
 	if err != nil {
 		return nil, err
 	}
@@ -236,7 +194,7 @@ func (s *Store) CompleteOutputUpload(ctx context.Context, scope OutputScope, par
 	if err != nil {
 		return Upload{}, err
 	}
-	session, err := s.processingSession(ctx, scope.Attempt.Source, false)
+	session, err := s.processingSession(ctx, scope.Source, false)
 	if err != nil {
 		return Upload{}, err
 	}
@@ -258,7 +216,7 @@ func (s *Store) WriteOutputBytes(ctx context.Context, scope OutputScope, content
 	if int64(len(content)) > s.InlineLimit {
 		return Upload{}, rpc.Fault(codes.ResourceExhausted, "REQUEST_LIMIT", "inline bytes exceed limit")
 	}
-	session, err := s.processingSession(ctx, scope.Attempt.Source, false)
+	session, err := s.processingSession(ctx, scope.Source, false)
 	if err != nil {
 		return Upload{}, err
 	}
@@ -273,11 +231,6 @@ func (s *Store) WriteOutputBytes(ctx context.Context, scope OutputScope, content
 	if int64(len(content)) != upload.SizeBytes {
 		return Upload{}, rpc.Fault(codes.InvalidArgument, "VALIDATION", "inline size differs from prepared size")
 	}
-	digest := sha256.Sum256(content)
-	hash := hex.EncodeToString(digest[:])
-	if upload.sha256 != nil && *upload.sha256 != hash {
-		return Upload{}, uploadState("IDEMPOTENCY_CONFLICT")
-	}
 	if upload.State == "finalized" {
 		return upload, nil
 	}
@@ -287,7 +240,7 @@ func (s *Store) WriteOutputBytes(ctx context.Context, scope OutputScope, content
 	if content == nil {
 		content = []byte{}
 	}
-	_, err = session.tx.Exec(ctx, `UPDATE uploads SET size_bytes=$2,sha256=$3,inline_bytes=$4,updated_at=now() WHERE id=$1`, scope.UploadID, upload.SizeBytes, hash, content)
+	_, err = session.tx.Exec(ctx, `UPDATE uploads SET inline_bytes=$2,updated_at=now() WHERE id=$1`, scope.UploadID, content)
 	if err != nil {
 		return Upload{}, databaseError(err)
 	}

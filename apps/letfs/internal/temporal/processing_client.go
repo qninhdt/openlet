@@ -39,24 +39,13 @@ func (j *Jobs) WorkflowStatus(ctx context.Context, id string, since *time.Time) 
 	return &running, nil
 }
 
-func (j *Jobs) StartProcessing(ctx context.Context, dispatch filesystem.ProcessingDispatch, space filesystem.VectorSpace) error {
-	if dispatch.IndexStatus != "pending" || dispatch.Publication != "pending" && dispatch.Publication != "parsed" && dispatch.Publication != "ready" {
+func (j *Jobs) StartProcessing(ctx context.Context, dispatch filesystem.ProcessingDispatch) error {
+	if dispatch.Publication != "pending" && dispatch.Publication != "parsed" && dispatch.Publication != "enriched" {
 		return nil
 	}
 	id := dispatch.Source.WorkflowID()
 	reuse := enums.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE
-	if dispatch.Publication == "ready" {
-		running, err := j.WorkflowStatus(ctx, id, nil)
-		if err != nil {
-			return err
-		}
-		if running != nil && *running {
-			return nil
-		}
-		id, err = dispatch.Source.IndexWorkflowID(space)
-		if err != nil {
-			return err
-		}
+	if dispatch.Publication == "enriched" {
 		reuse = enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE
 	}
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
@@ -64,7 +53,7 @@ func (j *Jobs) StartProcessing(ctx context.Context, dispatch filesystem.Processi
 	_, err := j.Client.ExecuteWorkflow(ctx, client.StartWorkflowOptions{ID: id, TaskQueue: Queue,
 		WorkflowIDConflictPolicy: enums.WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING, WorkflowIDReusePolicy: reuse,
 		WorkflowExecutionTimeout: 22500 * time.Second,
-	}, ProcessFileName, ProcessFileInput{Source: dispatch.Source, ParseRequired: dispatch.Publication == "pending", EnrichmentRequired: dispatch.Publication != "ready"})
+	}, ProcessFileName, ProcessFileInput{Source: dispatch.Source, ParseRequired: dispatch.Publication == "pending", EnrichmentRequired: dispatch.Publication != "enriched"})
 	var duplicate *serviceerror.WorkflowExecutionAlreadyStarted
 	if errors.As(err, &duplicate) {
 		return nil

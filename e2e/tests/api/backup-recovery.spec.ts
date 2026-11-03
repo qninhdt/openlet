@@ -125,8 +125,8 @@ test('coordinated recovery restores isolated metadata, exact bytes and an interr
       const response = await restoredApi!.get(`${base}/nodes/${document.node_id}/processing`);
       expect(response.status()).toBe(200);
       const processing = await response.json();
-      return [processing.publication_status, processing.index_status];
-    }, { timeout: 150_000 }).toEqual(['ready', 'ready']);
+      return processing.publication_status;
+    }, { timeout: 150_000 }).toBe('ready');
     const search = await restoredApi.post(`${base}/search`, { data: { query: 'ORBITAL-RECOVERY-7421' } });
     expect(search.status()).toBe(200);
     expect((await search.json()).items.map((item: { node_id: string }) => item.node_id)).toContain(document.node_id);

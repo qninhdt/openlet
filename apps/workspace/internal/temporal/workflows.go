@@ -6,7 +6,6 @@ import (
 	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/google/uuid"
 	"go.temporal.io/api/enums/v1"
-	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
@@ -36,9 +35,14 @@ func businessError(err error) error {
 	}
 	return err
 }
-func (a *Activities) EnsureWorkspace(ctx context.Context, in workspace.CreateInput) (workspace.Provision, error) {
-	value, err := a.Store.EnsureWorkspace(ctx, in, activity.GetInfo(ctx).WorkflowExecution.ID)
-	return value, businessError(err)
+func (a *Activities) EnsureWorkspace(ctx context.Context, in workspace.CreateInput) (uuid.UUID, error) {
+	value, err := a.Store.EnsureWorkspace(ctx, in)
+	return value.ID, businessError(err)
+}
+func (a *Activities) GetWorkspace(ctx context.Context, id uuid.UUID) (workspace.Workspace, error) {
+	var value workspace.Workspace
+	err := a.Store.DB.QueryRow(ctx, `SELECT id,status,quota_bucket_id,filesystem_id,root_id,limit_bytes::text FROM workspaces WHERE id=$1`, id).Scan(&value.ID, &value.Status, &value.BucketID, &value.FilesystemID, &value.RootID, &value.LimitBytes)
+	return value, err
 }
 func (a *Activities) ActivateWorkspace(ctx context.Context, mapping workspace.Storage) error {
 	return businessError(a.Store.Activate(ctx, mapping))
@@ -62,14 +66,13 @@ func (a *Activities) FailWorkspace(ctx context.Context, id uuid.UUID) error {
 	}
 	return a.SyncWorkspaceRelationships(ctx, id)
 }
-func CreateWorkspace(ctx workflow.Context, in workspace.CreateInput) (result uuid.UUID, err error) {
+func CreateWorkspace(ctx workflow.Context, id uuid.UUID) (result uuid.UUID, err error) {
 	ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{StartToCloseTimeout: 30 * time.Second, RetryPolicy: &temporal.RetryPolicy{InitialInterval: time.Second, MaximumInterval: 30 * time.Second}})
 	var a *Activities
-	var admission workspace.Provision
-	if err = workflow.ExecuteActivity(ctx, a.EnsureWorkspace, in).Get(ctx, &admission); err != nil {
+	var value workspace.Workspace
+	if err = workflow.ExecuteActivity(ctx, a.GetWorkspace, id).Get(ctx, &value); err != nil {
 		return uuid.Nil, err
 	}
-	value := admission.Workspace
 	if value.Status == "deleted" || value.Status == "deleting" || value.Status == "failed" {
 		return value.ID, temporal.NewNonRetryableApplicationError("workspace no longer provisioning", "STATE_CONFLICT", nil)
 	}
@@ -127,7 +130,7 @@ func CreateWorkspace(ctx workflow.Context, in workspace.CreateInput) (result uui
 	err = workflow.ExecuteActivity(ctx, a.CompleteWorkspaceCreation, value.ID).Get(ctx, nil)
 	return value.ID, err
 }
-func StartCreate(ctx context.Context, tc client.Client, in workspace.Provision) error {
-	_, err := tc.ExecuteWorkflow(ctx, client.StartWorkflowOptions{ID: in.WorkflowID, TaskQueue: Queue, WorkflowIDConflictPolicy: enums.WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING, WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE, WorkflowExecutionTimeout: 7 * 24 * time.Hour}, CreateWorkspace, in.Input)
+func StartCreate(ctx context.Context, tc client.Client, id uuid.UUID) error {
+	_, err := tc.ExecuteWorkflow(ctx, client.StartWorkflowOptions{ID: "create-workspace/" + id.String(), TaskQueue: Queue, WorkflowIDConflictPolicy: enums.WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING, WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE, WorkflowExecutionTimeout: 7 * 24 * time.Hour}, CreateWorkspace, id)
 	return err
 }

@@ -4278,37 +4278,16 @@
             "type": "string",
             "pattern": "^(0|[1-9][0-9]*)$"
           },
-          "published_generation": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "pattern": "^[1-9][0-9]*$"
-          },
-          "indexed_generation": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "pattern": "^[1-9][0-9]*$"
-          },
           "publication_status": {
             "type": "string",
             "enum": [
               "not_required",
               "pending",
               "parsed",
+              "enriched",
               "ready",
-              "failed"
-            ]
-          },
-          "index_status": {
-            "type": "string",
-            "enum": [
-              "not_required",
-              "pending",
-              "ready",
-              "failed"
+              "failed",
+              "index_failed"
             ]
           },
           "error_code": {
@@ -4321,10 +4300,7 @@
         "required": [
           "file_id",
           "desired_generation",
-          "published_generation",
-          "indexed_generation",
           "publication_status",
-          "index_status",
           "error_code"
         ],
         "additionalProperties": false

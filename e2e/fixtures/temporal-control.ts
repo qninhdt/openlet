@@ -38,10 +38,10 @@ export async function terminateWorkspaceDeletion(workspaceId: string) {
   await temporal(['workflow', 'terminate', '--workflow-id', `delete-workspace/${workspaceId}`, '--reason', 'API recovery verification']);
 }
 
-export async function recordLifecycleHistories(subject: string, userId: string, workspaceId: string) {
+export async function recordLifecycleHistories(subject: string, workspaceId: string) {
   const workflows: Record<string, string> = {
     OnboardUser: `onboard/${subject}`,
-    CreateWorkspace: `initial-workspace/${userId}`,
+    CreateWorkspace: `create-workspace/${workspaceId}`,
     DeleteWorkspace: `delete-workspace/${workspaceId}`,
   };
   for (const name of ['OnboardUser', 'CreateWorkspace', 'DeleteWorkspace', 'DeleteFilesystem']) {

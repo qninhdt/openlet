@@ -15,12 +15,10 @@ test('real document parsing publishes README semantics and current searchable co
     const response = await session.api.get(`${base}/nodes/${source.id}/processing`);
     expect(response.status()).toBe(200);
     const status = await response.json();
-    if (status.publication_status === 'failed' || status.index_status === 'failed') throw new Error(`Document processing failed: ${status.error_code}`);
-    return [status.publication_status, status.index_status];
-  }, { timeout: 150_000 }).toEqual(['ready', 'ready']);
+    if (status.publication_status === 'failed' || status.publication_status === 'index_failed') throw new Error(`Document processing failed: ${status.error_code}`);
+    return status.publication_status;
+  }, { timeout: 150_000 }).toBe('ready');
   const state = await (await session.api.get(`${base}/nodes/${source.id}/processing`)).json();
-  expect(state.published_generation).toBe(state.desired_generation);
-  expect(state.indexed_generation).toBe(state.desired_generation);
   expect(state).not.toHaveProperty('artifact_root_id');
   const children = await (await session.api.get(`${base}/nodes`, { params: { parent_id: source.id } })).json();
   expect(children.items.some((node: { name: string }) => node.name === 'artifacts')).toBe(false);
@@ -42,7 +40,7 @@ test('real document parsing publishes README semantics and current searchable co
 test('manual reprocessing retries admit one generation and preserve filename search during model failure', async ({ session, controls }) => {
   const base = `/v1/filesystems/${session.filesystemId}`;
   const source = await inline(session, 'retry-notes.txt', Buffer.from('Recovery notes describe durable publication and storage retry.'), session.rootId, 'text/plain');
-  await expect.poll(async () => (await (await session.api.get(`${base}/nodes/${source.id}/processing`)).json()).index_status).toBe('ready');
+  await expect.poll(async () => (await (await session.api.get(`${base}/nodes/${source.id}/processing`)).json()).publication_status).toBe('ready');
   const before = await (await session.api.get(`${base}/nodes/${source.id}/processing`)).json();
   await recordWorkflowHistory('ProcessFileDirect', `process-file/${source.id}/${before.desired_generation}`);
   expect((await controls.put('/control/failures', { data: { generation: 100 } })).status()).toBe(200);

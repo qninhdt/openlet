@@ -59,11 +59,11 @@ func (s *Store) hydrateSearch(ctx context.Context, fs uuid.UUID, mounts []Mount,
  UNION ALL SELECT a.idx,a.source_id,a.generation,n.id,n.parent_id,a.depth+1,jsonb_build_array(jsonb_build_object('node_id',n.id,'filename',n.name))||a.breadcrumb
  FROM ancestors a JOIN nodes n ON n.id=a.parent_id WHERE n.filesystem_id=$1 AND a.id!=a.source_id AND a.depth<128)
  SELECT a.idx,%s,false,l.path,a.breadcrumb FROM ancestors a JOIN live l ON l.id=a.source_id JOIN nodes n ON n.id=l.id JOIN files f ON f.node_id=n.id
- WHERE a.id=a.source_id AND n.kind='file' AND f.desired_generation=a.generation AND f.published_generation=a.generation AND f.indexed_generation=a.generation
- AND f.publication_status='ready' AND f.index_status='ready' AND f.embedding_model=$11 AND f.vector_collection=$12 AND f.vector_dimension=$13 %s`,
+ WHERE a.id=a.source_id AND n.kind='file' AND f.desired_generation=a.generation
+ AND f.publication_status='ready' %s`,
 		searchLive, strings.Replace(nodeColumns, "f.context", "NULL::text", 1), searchFiltersSQL)
 	f := input.Filters
-	rows, err := session.tx.Query(ctx, query, fs, root, path, f.SemanticType, f.MediaType, f.CreatedAfter, f.CreatedBefore, f.UpdatedAfter, f.UpdatedBefore, data, s.IndexSpace.Model, s.IndexSpace.Collection, s.IndexSpace.Dimension)
+	rows, err := session.tx.Query(ctx, query, fs, root, path, f.SemanticType, f.MediaType, f.CreatedAfter, f.CreatedBefore, f.UpdatedAfter, f.UpdatedBefore, data)
 	if err != nil {
 		return nil, databaseError(err)
 	}

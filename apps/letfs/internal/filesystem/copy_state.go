@@ -56,7 +56,7 @@ func (s *session) copySource(ctx context.Context, item CopyItem, exact bool) (No
 func (s *session) copyActive(ctx context.Context, admission CopyAdmission) error {
 	var active bool
 	err := s.tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM idempotency_keys WHERE operation='copy-node'
- AND scope=$1 AND result->>'id'=$2 AND completed_at IS NULL)`, "filesystem/"+admission.FilesystemID.String()+"/actor/"+admission.ActorID.String(), admission.ID.String()).Scan(&active)
+ AND scope=$1 AND result->>'id'=$2 AND expires_at IS NULL)`, "filesystem/"+admission.FilesystemID.String()+"/actor/"+admission.ActorID.String(), admission.ID.String()).Scan(&active)
 	if err != nil {
 		return databaseError(err)
 	}
@@ -112,7 +112,7 @@ func (s *session) copyCommitted(ctx context.Context, admission CopyAdmission, it
 }
 func (s *session) releaseCopyCandidate(ctx context.Context, key string) error {
 	_, err := s.tx.Exec(ctx, `DELETE FROM object_deletions d WHERE object_key=$1 AND open_writes=0 AND NOT ambiguous_write
- AND attempts=0 AND EXISTS(SELECT 1 FROM files f WHERE f.object_key=d.object_key)`, key)
+ AND state='pending' AND EXISTS(SELECT 1 FROM files f WHERE f.object_key=d.object_key)`, key)
 	return databaseError(err)
 }
 
@@ -144,8 +144,8 @@ func (s *Store) CommitCopyItem(ctx context.Context, admission CopyAdmission, ite
 		value := fmt.Sprintf("objects/%s/%s", session.bucket, item.Destination)
 		key = &value
 		changed, err := session.tx.Exec(ctx, `INSERT INTO object_deletions(object_key,bucket_id,open_writes) VALUES($1,$2,1)
- ON CONFLICT(object_key) DO UPDATE SET open_writes=object_deletions.open_writes+1,state='pending',eligible_at=now()+interval '15 minutes'
- WHERE object_deletions.attempts=0`, key, session.bucket)
+ ON CONFLICT(object_key) DO UPDATE SET open_writes=object_deletions.open_writes+1,eligible_at=now()+interval '15 minutes'
+ WHERE object_deletions.state='pending'`, key, session.bucket)
 		if err != nil {
 			return databaseError(err)
 		}
@@ -180,7 +180,7 @@ func (s *Store) CommitCopyItem(ctx context.Context, admission CopyAdmission, ite
 			if !active {
 				return false, rpc.Fault(codes.Aborted, "FILESYSTEM_DELETING", "filesystem is deleting")
 			}
-			if err := session.tx.QueryRow(ctx, `SELECT attempts>0 FROM object_deletions WHERE object_key=$1`, key).Scan(&attempted); err != nil {
+			if err := session.tx.QueryRow(ctx, `SELECT state!='pending' FROM object_deletions WHERE object_key=$1`, key).Scan(&attempted); err != nil {
 				return false, databaseError(err)
 			}
 			if attempted {
@@ -298,8 +298,8 @@ func (s *Store) CompleteCopy(ctx context.Context, admission CopyAdmission) error
 		return err
 	}
 	defer session.tx.Rollback(ctx)
-	_, err = session.tx.Exec(ctx, `UPDATE idempotency_keys SET completed_at=now(),expires_at=now()+interval '24 hours'
- WHERE operation='copy-node' AND result->>'id'=$1 AND completed_at IS NULL`, admission.ID.String())
+	_, err = session.tx.Exec(ctx, `UPDATE idempotency_keys SET expires_at=now()+interval '24 hours'
+ WHERE operation='copy-node' AND result->>'id'=$1 AND expires_at IS NULL`, admission.ID.String())
 	if err != nil {
 		return databaseError(err)
 	}
@@ -325,19 +325,7 @@ func (s *Store) FinishCopyFile(ctx context.Context, admission CopyAdmission, fra
 		return databaseError(err)
 	}
 	if !initialized {
-		var object *string
-		var content []byte
-		if err = session.tx.QueryRow(ctx, `SELECT object_key,inline_bytes FROM files WHERE node_id=$1`, node.ID).Scan(&object, &content); err != nil {
-			return databaseError(err)
-		}
-		var contentIdentity string
-		if object != nil {
-			contentIdentity = "object:" + *object
-		} else {
-			digest := sha256.Sum256(content)
-			contentIdentity = "inline:" + hex.EncodeToString(digest[:])
-		}
-		if err = session.recordIntent(ctx, node, admission.ActorID, contentIdentity); err != nil {
+		if err = session.recordIntent(ctx, node); err != nil {
 			return err
 		}
 		if format, _ := processingFormat(node.Name); format != "" {

@@ -35,7 +35,7 @@ func TestIntegrationPythonGeneratedClientPublishesParseViaGoRPC(t *testing.T) {
 	require.NoError(t, err)
 	_, err = db.Exec(t.Context(), `INSERT INTO nodes(id,filesystem_id,parent_id,name,kind) VALUES($1,$2,$3,'report.pdf','file')`, file, fs, created.RootID)
 	require.NoError(t, err)
-	_, err = db.Exec(t.Context(), `INSERT INTO files(node_id,storage_kind,inline_bytes,desired_generation,processing_actor_id,processing_format,processing_source_identity,publication_status,index_status) VALUES($1,'inline','',1,$2,'pdf','inline:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855','pending','pending')`, file, uuid.New())
+	_, err = db.Exec(t.Context(), `INSERT INTO files(node_id,storage_kind,inline_bytes,desired_generation,processing_format,publication_status) VALUES($1,'inline','',1,'pdf','pending')`, file)
 	require.NoError(t, err)
 	_, err = db.Exec(t.Context(), `UPDATE filesystems SET node_count=2 WHERE id=$1`, fs)
 	require.NoError(t, err)
@@ -107,7 +107,7 @@ async def main():
     address = os.environ["OPENLET_TEST_RPC"]
     token = os.environ["OPENLET_TEST_INGEST_TOKEN"]
     file = os.environ["OPENLET_TEST_FILE"]
-    request = pb.PrepareParseRequest(file_id=file, generation=1, attempt_number=1, attempt_id=str(uuid4()))
+    request = pb.PrepareParseRequest(file_id=file, generation=1)
     async with IngestRPC(address, "wrong-token-but-valid-shape-123456789", allow_plaintext=True) as api:
         try:
             await api.call("PrepareParse", request)
@@ -120,20 +120,20 @@ async def main():
         assert prepared.WhichOneof("result") == "input"
         assert prepared.input.WhichOneof("source") == "inline_content"
         assert prepared.input.inline_content == b""
-        attempt = pb.ProcessingAttempt(file_id=file, generation=1, attempt_number=1, attempt_id=request.attempt_id)
+        attempt = pb.ProcessingGeneration(file_id=file, generation=1)
         content = b"# Report\n"
-        upload = await api.call("PrepareParseOutput", pb.PrepareParseOutputRequest(attempt=attempt, output=pb.OutputDescription(path="README.md", storage="inline", size_bytes=len(content))))
-        scope = pb.OutputUploadScope(attempt=attempt, stage="parse", upload_id=upload.upload.id)
-        stale = pb.OutputUploadScope(attempt=pb.ProcessingAttempt(file_id=file, generation=1, attempt_number=1, attempt_id=str(uuid4())), stage="parse", upload_id=upload.upload.id)
+        upload = await api.call("PrepareParseOutput", pb.PrepareParseOutputRequest(source=attempt, output=pb.OutputDescription(path="README.md", storage="inline", size_bytes=len(content))))
+        scope = pb.OutputUploadScope(source=attempt, stage="parse", upload_id=upload.upload.id)
+        stale = pb.OutputUploadScope(source=pb.ProcessingGeneration(file_id=file, generation=2), stage="parse", upload_id=upload.upload.id)
         try:
             await api.call("WriteOutputBytes", pb.WriteOutputBytesRequest(scope=stale, content=content))
-            raise AssertionError("stale attempt was accepted")
+            raise AssertionError("stale generation was accepted")
         except ApplicationError as error:
-            assert error.type == "STALE_PROCESSING_ATTEMPT" and error.non_retryable
+            assert error.type == "SOURCE_REPLACED" and error.non_retryable
         await api.call("WriteOutputBytes", pb.WriteOutputBytesRequest(scope=scope, content=content))
         finalized = await api.call("CompleteOutputUpload", pb.CompleteOutputUploadRequest(scope=scope))
         assert finalized.receipt.status == "finalized"
-        result = await api.call("CompleteParse", pb.CompleteParseRequest(attempt=attempt, uploads=[upload.upload.id]))
+        result = await api.call("CompleteParse", pb.CompleteParseRequest(source=attempt, uploads=[upload.upload.id]))
         assert result.source_id == file
         replay = await api.call("PrepareParse", request)
         assert replay.WhichOneof("result") == "complete"
@@ -143,7 +143,7 @@ async def main():
         except ApplicationError as error:
             assert error.type == "DEPENDENCY_UNAVAILABLE" and not error.non_retryable
             assert "private" not in str(error)
-        task = asyncio.create_task(api.call("PrepareEnrichment", pb.PrepareEnrichmentRequest(attempt=attempt)))
+        task = asyncio.create_task(api.call("PrepareEnrichment", pb.PrepareEnrichmentRequest(source=attempt)))
         async with asyncio.timeout(3):
             while not Path(os.environ["OPENLET_TEST_STARTED"]).exists():
                 if task.done():

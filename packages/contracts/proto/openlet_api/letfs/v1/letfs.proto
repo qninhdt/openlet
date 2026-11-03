@@ -42,7 +42,7 @@ service FilesystemService {
   rpc StreamArchive(StreamArchiveRequest) returns (stream StreamArchiveResponse);
 }
 
-// Generation/attempt authority is validated against letfs records, independently of service authentication.
+// Generation authority is validated against letfs records, independently of service authentication.
 service IngestService {
   rpc PrepareParse(PrepareParseRequest) returns (PrepareParseResponse);
   rpc PrepareParseOutput(PrepareParseOutputRequest) returns (PrepareParseOutputResponse);
@@ -133,8 +133,6 @@ message StreamArchiveResponse {
 message PrepareParseRequest {
   string file_id = 1;
   int64 generation = 2;
-  int32 attempt_number = 3;
-  string attempt_id = 4;
 }
 message ParseInput {
   string source_id = 1;
@@ -356,12 +354,9 @@ message GetCopyResponse {
 }
 message Processing {
   int64 desired_generation = 1;
-  optional int64 published_generation = 2;
-  optional int64 indexed_generation = 3;
   reserved 4;
   reserved "artifact_root_id";
   string publication_status = 5;
-  string index_status = 6;
   optional string error_code = 7;
   string file_id = 8;
 }
@@ -581,13 +576,7 @@ message SemanticSearchResponse {
   optional string degraded_reason = 4;
 }
 
-// Scope is checked against stored generation/attempt facts after service authentication.
-message ProcessingAttempt {
-  string file_id = 1;
-  int64 generation = 2;
-  int32 attempt_number = 3;
-  string attempt_id = 4;
-}
+// Scope is checked against stored generation facts after service authentication.
 message ProcessingGeneration {
   string file_id = 1;
   int64 generation = 2;
@@ -599,14 +588,14 @@ message OutputDescription {
   optional string content_md5 = 4;
 }
 message PrepareParseOutputRequest {
-  ProcessingAttempt attempt = 1;
+  ProcessingGeneration source = 1;
   OutputDescription output = 2;
 }
 message PrepareParseOutputResponse {
   Upload upload = 1;
 }
 message CompleteParseRequest {
-  ProcessingAttempt attempt = 1;
+  ProcessingGeneration source = 1;
   repeated string uploads = 2;
   repeated string directories = 3;
 }
@@ -614,7 +603,7 @@ message CompleteParseResponse {
   string source_id = 1;
 }
 message AbortParseRequest {
-  ProcessingAttempt attempt = 1;
+  ProcessingGeneration source = 1;
   string error_code = 2;
 }
 message AbortParseResponse {}
@@ -635,7 +624,7 @@ message InventoryNode {
   }
 }
 message PrepareEnrichmentRequest {
-  ProcessingAttempt attempt = 1;
+  ProcessingGeneration source = 1;
 }
 message EnrichmentInput {
   string source_id = 1;
@@ -654,7 +643,7 @@ message PrepareEnrichmentResponse {
   }
 }
 message PrepareEnrichmentOutputRequest {
-  ProcessingAttempt attempt = 1;
+  ProcessingGeneration source = 1;
   OutputDescription output = 2;
 }
 message PrepareEnrichmentOutputResponse {
@@ -673,14 +662,14 @@ message EnrichmentUpdate {
   optional string upload_id = 4;
 }
 message CompleteEnrichmentRequest {
-  ProcessingAttempt attempt = 1;
+  ProcessingGeneration source = 1;
   repeated EnrichmentUpdate nodes = 2;
 }
 message CompleteEnrichmentResponse {
   string source_id = 1;
 }
 message FailEnrichmentRequest {
-  ProcessingAttempt attempt = 1;
+  ProcessingGeneration source = 1;
   string error_code = 2;
 }
 message FailEnrichmentResponse {}
@@ -711,19 +700,17 @@ message PrepareIndexResponse {
 }
 message CompleteIndexRequest {
   ProcessingGeneration source = 1;
-  VectorSpace vector_space = 2;
 }
 message CompleteIndexResponse {
   string source_id = 1;
 }
 message FailIndexRequest {
   ProcessingGeneration source = 1;
-  VectorSpace vector_space = 2;
   string error_code = 3;
 }
 message FailIndexResponse {}
 message OutputUploadScope {
-  ProcessingAttempt attempt = 1;
+  ProcessingGeneration source = 1;
   // Only parse or enrichment; index has no writable output surface.
   string stage = 2;
   string upload_id = 3;

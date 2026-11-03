@@ -87,9 +87,6 @@ func (a *Activities) reconcileResources(ctx context.Context) (int, error) {
 			return count, err
 		}
 	}
-	if err = a.Store.ReconcileVectorSpace(ctx); err != nil {
-		return count, err
-	}
 	candidates, err := a.Store.ProcessingCandidates(ctx)
 	if err != nil {
 		return count, err
@@ -102,25 +99,12 @@ func (a *Activities) reconcileResources(ctx context.Context) (int, error) {
 		if running != nil && *running {
 			continue
 		}
-		if candidate.Publication == "ready" {
-			id, err := candidate.Source.IndexWorkflowID(a.Store.IndexSpace)
-			if err != nil {
-				return count, err
-			}
-			running, err = a.Jobs.WorkflowStatus(ctx, id, &candidate.UpdatedAt)
-			if err != nil {
-				return count, err
-			}
-			if running != nil && *running {
-				continue
-			}
-		}
 		dispatch, err := a.Store.ReconcileProcessing(ctx, candidate, running != nil)
 		if err != nil {
 			return count, err
 		}
 		if dispatch {
-			if err = a.Jobs.StartProcessing(ctx, candidate, a.Store.IndexSpace); err != nil {
+			if err = a.Jobs.StartProcessing(ctx, candidate); err != nil {
 				return count, err
 			}
 		}
@@ -131,7 +115,7 @@ func (a *Activities) reconcileResources(ctx context.Context) (int, error) {
 	} else {
 		count += cleaned
 	}
-	rows, err = a.Store.DB.Query(ctx, `SELECT result FROM idempotency_keys WHERE operation='copy-node' AND completed_at IS NULL ORDER BY result->>'id' LIMIT 64`)
+	rows, err = a.Store.DB.Query(ctx, `SELECT result FROM idempotency_keys WHERE operation='copy-node' AND expires_at IS NULL ORDER BY result->>'id' LIMIT 64`)
 	if err != nil {
 		return count, err
 	}
@@ -179,17 +163,6 @@ func (a *Activities) cleanupIndexes(ctx context.Context) (int, error) {
 			break
 		}
 		running, err := a.Jobs.WorkflowStatus(ctx, item.Source.WorkflowID(), nil)
-		if err != nil {
-			return count, err
-		}
-		if running != nil && *running {
-			continue
-		}
-		id, err := item.Source.IndexWorkflowID(item.Space)
-		if err != nil {
-			return count, err
-		}
-		running, err = a.Jobs.WorkflowStatus(ctx, id, nil)
 		if err != nil {
 			return count, err
 		}

@@ -2,8 +2,6 @@ package filesystem
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -87,7 +85,7 @@ func (s *session) usage(ctx context.Context, delta int64) error {
 
 func (s *session) addNodes(ctx context.Context, count int64) error {
 	changed, err := s.tx.Exec(ctx, `UPDATE filesystems SET node_count=node_count+$2
- WHERE id=$1 AND node_count+$2 BETWEEN CASE WHEN state='deleting' THEN 0 ELSE 1 END AND max_nodes`, s.fs, count)
+ WHERE id=$1 AND node_count+$2 >= CASE WHEN state='deleting' THEN 0 ELSE 1 END AND ($2<=0 OR node_count+$2<=$3)`, s.fs, count, s.maxNodes)
 	if err != nil {
 		return databaseError(err)
 	}
@@ -226,8 +224,7 @@ func (s *Store) CreateNode(ctx context.Context, fs uuid.UUID, mounts []Mount, ke
 		return Node{}, err
 	}
 	if input.File != nil {
-		digest := sha256.Sum256(content)
-		if err = session.recordIntent(ctx, node, actor, "inline:"+hex.EncodeToString(digest[:])); err != nil {
+		if err = session.recordIntent(ctx, node); err != nil {
 			return Node{}, err
 		}
 	}
@@ -235,9 +232,9 @@ func (s *Store) CreateNode(ctx context.Context, fs uuid.UUID, mounts []Mount, ke
 	if err != nil {
 		return Node{}, err
 	}
-	_, err = session.tx.Exec(ctx, `INSERT INTO idempotency_keys(scope,operation,request_key,request_hash,result,completed_at,expires_at)
- VALUES($1,'create-node',$2,$3,$4,now(),now()+interval '24 hours') ON CONFLICT(scope,operation,request_key) DO UPDATE
- SET request_hash=excluded.request_hash,result=excluded.result,completed_at=excluded.completed_at,expires_at=excluded.expires_at WHERE idempotency_keys.expires_at<=now()`, scope, key.String(), hash, saved)
+	_, err = session.tx.Exec(ctx, `INSERT INTO idempotency_keys(scope,operation,request_key,request_hash,result,expires_at)
+ VALUES($1,'create-node',$2,$3,$4,now()+interval '24 hours') ON CONFLICT(scope,operation,request_key) DO UPDATE
+ SET request_hash=excluded.request_hash,result=excluded.result,expires_at=excluded.expires_at WHERE idempotency_keys.expires_at<=now()`, scope, key.String(), hash, saved)
 	if err != nil {
 		return Node{}, databaseError(err)
 	}
@@ -361,7 +358,7 @@ func (s *session) validateMove(ctx context.Context, id, parent uuid.UUID) error 
 }
 
 func (s *Store) ReplaceContent(ctx context.Context, fs uuid.UUID, mounts []Mount, locator Locator, revision *int64, content []byte, mime string) (Node, error) {
-	actor, err := s.authorize(ctx, fs, "filesystem", authz.ContentWrite)
+	_, err := s.authorize(ctx, fs, "filesystem", authz.ContentWrite)
 	if err != nil {
 		return Node{}, err
 	}
@@ -422,8 +419,7 @@ func (s *Store) ReplaceContent(ctx context.Context, fs uuid.UUID, mounts []Mount
 	if err != nil {
 		return Node{}, err
 	}
-	digest := sha256.Sum256(content)
-	if err = session.recordIntent(ctx, out, actor, "inline:"+hex.EncodeToString(digest[:])); err != nil {
+	if err = session.recordIntent(ctx, out); err != nil {
 		return Node{}, err
 	}
 	return out, databaseError(session.tx.Commit(ctx))

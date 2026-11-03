@@ -33,7 +33,7 @@ test('operations restore real database state and S3 bytes into an isolated fence
     send.child.stdin?.end(`user = "${credentials}"\n`);
     await send;
     const id = randomUUID();
-    await execute('docker', ['compose', '--file', compose, '--project-name', project, 'exec', '-T', 'postgres', 'psql', '-X', '--set', 'ON_ERROR_STOP=1', '-U', 'openlet_admin', '-d', 'openlet_letfs', '-c', `INSERT INTO quota_buckets(id,creator_service,create_fingerprint,limit_bytes) VALUES('${id}','recovery-test',repeat('0',64),12345)`], { env });
+    await execute('docker', ['compose', '--file', compose, '--project-name', project, 'exec', '-T', 'postgres', 'psql', '-X', '--set', 'ON_ERROR_STOP=1', '-U', 'openlet_admin', '-d', 'openlet_letfs', '-c', `INSERT INTO quota_buckets(id,limit_bytes) VALUES('${id}',12345)`], { env });
     for (const app of ['account', 'workspace', 'letfs']) {
       await execute('docker', ['compose', '--file', compose, '--project-name', project, 'run', '--rm', `${app}-migrate`], { env });
     }

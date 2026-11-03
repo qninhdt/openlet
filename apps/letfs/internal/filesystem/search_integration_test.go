@@ -35,7 +35,7 @@ func TestIntegrationBasicSearchLiveOriginalsFiltersAndBoundCursors(t *testing.T)
 		require.NoError(t, err)
 		files = append(files, node)
 	}
-	_, err = db.Exec(ctx, `UPDATE files SET title='REPORT summary',semantic_type='document:report',context='private context',publication_status='failed',index_status='failed' WHERE node_id=$1`, files[1].ID)
+	_, err = db.Exec(ctx, `UPDATE files SET title='REPORT summary',semantic_type='document:report',context='private context',publication_status='failed' WHERE node_id=$1`, files[1].ID)
 	require.NoError(t, err)
 	artifact := uuid.New()
 	_, err = db.Exec(ctx, `INSERT INTO nodes(id,filesystem_id,parent_id,name,kind) VALUES($1,$2,$3,'generated-report.md','file')`, artifact, fs, files[0].ID)

@@ -21,9 +21,9 @@ func TestIntegrationRelationshipScanIncludesLifecycleTombstones(t *testing.T) {
 	owner := uuid.Must(uuid.NewV7())
 	var ids []uuid.UUID
 	for range 103 {
-		created, err := store.EnsureWorkspace(ctx, CreateInput{ActorID: owner, Key: uuid.Must(uuid.NewV7()), Name: "Scan"}, "")
+		created, err := store.EnsureWorkspace(ctx, CreateInput{ActorID: owner, Key: uuid.Must(uuid.NewV7()), Name: "Scan"})
 		require.NoError(t, err)
-		ids = append(ids, created.Workspace.ID)
+		ids = append(ids, created.ID)
 	}
 	require.NoError(t, store.Fail(ctx, ids[0]))
 	require.NoError(t, store.Fail(ctx, ids[1]))

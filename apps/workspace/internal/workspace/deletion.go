@@ -91,7 +91,7 @@ func (s *Store) CompleteDeletion(ctx context.Context, id uuid.UUID) error {
 	if _, err = tx.Exec(ctx, `UPDATE workspaces SET status='deleted',error_code=NULL,updated_at=now() WHERE id=$1`, id); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE idempotency_keys SET completed_at=COALESCE(completed_at,now()),expires_at=COALESCE(expires_at,now()+interval '24 hours') WHERE workspace_id=$1`, id); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE idempotency_keys SET expires_at=COALESCE(expires_at,now()+interval '24 hours') WHERE workspace_id=$1`, id); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

@@ -53,11 +53,6 @@ type CreateInput struct {
 	Key     uuid.UUID `json:"request_key"`
 	Name    string    `json:"name"`
 }
-type Provision struct {
-	Workspace  Workspace   `json:"workspace"`
-	Input      CreateInput `json:"input"`
-	WorkflowID string      `json:"workflow_id"`
-}
 
 func ValidateName(name string) error {
 	if !utf8.ValidString(name) || utf8.RuneCountInString(name) > 100 || strings.TrimSpace(name) == "" || strings.ContainsRune(name, '\x00') {
@@ -70,78 +65,61 @@ func Fingerprint(v any) string {
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }
-func (s *Store) EnsureWorkspace(ctx context.Context, in CreateInput, workflowID string) (Provision, error) {
+func (s *Store) EnsureWorkspace(ctx context.Context, in CreateInput) (Workspace, error) {
 	if in.ActorID == uuid.Nil || in.Key == uuid.Nil {
-		return Provision{}, Fault{"VALIDATION"}
+		return Workspace{}, Fault{"VALIDATION"}
 	}
 	if err := ValidateName(in.Name); err != nil {
-		return Provision{}, err
+		return Workspace{}, err
 	}
 	tx, err := s.DB.Begin(ctx)
 	if err != nil {
-		return Provision{}, err
+		return Workspace{}, err
 	}
 	defer tx.Rollback(ctx)
 	// Serialize owner admission before enforcing the workspace limit.
 	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, in.ActorID.String()); err != nil {
-		return Provision{}, err
+		return Workspace{}, err
 	}
 	var id uuid.UUID
-	var hash, admittedWorkflow string
-	err = tx.QueryRow(ctx, `SELECT workspace_id,request_hash,workflow_id FROM idempotency_keys WHERE actor_id=$1 AND operation='create-workspace' AND request_key=$2 AND (expires_at IS NULL OR expires_at>now())`, in.ActorID, in.Key).Scan(&id, &hash, &admittedWorkflow)
+	var hash string
+	err = tx.QueryRow(ctx, `SELECT workspace_id,request_hash FROM idempotency_keys WHERE actor_id=$1 AND request_key=$2 AND (expires_at IS NULL OR expires_at>now())`, in.ActorID, in.Key).Scan(&id, &hash)
 	if err == nil {
 		if hash != Fingerprint(in) {
-			return Provision{}, Fault{"IDEMPOTENCY_CONFLICT"}
+			return Workspace{}, Fault{"IDEMPOTENCY_CONFLICT"}
 		}
 		value, err := s.getInTransaction(ctx, tx, id, in.ActorID)
-		return Provision{Workspace: value, Input: in, WorkflowID: admittedWorkflow}, err
+		return value, err
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
-		return Provision{}, err
+		return Workspace{}, err
 	}
-	// A replay of the same admitted execution never allocates another resource after receipt expiry.
-	if workflowID != "" {
-		err = tx.QueryRow(ctx, `SELECT id FROM workspaces WHERE creation_workflow_id=$1`, workflowID).Scan(&id)
-		if err == nil {
-			value, err := s.getInTransaction(ctx, tx, id, in.ActorID)
-			return Provision{Workspace: value, Input: in, WorkflowID: workflowID}, err
-		}
-		if !errors.Is(err, pgx.ErrNoRows) {
-			return Provision{}, err
-		}
-	}
-	if _, err = tx.Exec(ctx, `DELETE FROM idempotency_keys WHERE actor_id=$1 AND operation='create-workspace' AND request_key=$2 AND expires_at<=now()`, in.ActorID, in.Key); err != nil {
-		return Provision{}, err
+	if _, err = tx.Exec(ctx, `DELETE FROM idempotency_keys WHERE actor_id=$1 AND request_key=$2 AND expires_at<=now()`, in.ActorID, in.Key); err != nil {
+		return Workspace{}, err
 	}
 	var count int
 	if err = tx.QueryRow(ctx, `SELECT count(*) FROM workspace_members m JOIN workspaces w ON w.id=m.workspace_id WHERE m.user_id=$1 AND m.role='owner' AND w.status!='deleted'`, in.ActorID).Scan(&count); err != nil {
-		return Provision{}, err
+		return Workspace{}, err
 	}
 	if count >= s.MaxWorkspaces {
-		return Provision{}, Fault{"RESOURCE_LIMIT"}
+		return Workspace{}, Fault{"RESOURCE_LIMIT"}
 	}
 	id = uuid.Must(uuid.NewV7())
-	if workflowID == "" {
-		workflowID = "create-workspace/" + id.String()
-	}
-	if _, err = tx.Exec(ctx, `INSERT INTO workspaces(id,name,creation_workflow_id,limit_bytes) VALUES($1,$2,$3,$4)`, id, in.Name, workflowID, s.QuotaLimit); err != nil {
-		return Provision{}, err
+
+	if _, err = tx.Exec(ctx, `INSERT INTO workspaces(id,name,limit_bytes) VALUES($1,$2,$3)`, id, in.Name, s.QuotaLimit); err != nil {
+		return Workspace{}, err
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO workspace_members(workspace_id,user_id,role) VALUES($1,$2,'owner')`, id, in.ActorID); err != nil {
-		return Provision{}, err
+		return Workspace{}, err
 	}
-	payload, err := json.Marshal(in)
-	if err != nil {
-		return Provision{}, err
-	}
-	if _, err = tx.Exec(ctx, `INSERT INTO idempotency_keys(actor_id,operation,request_key,request_hash,request_input,workspace_id,workflow_id) VALUES($1,'create-workspace',$2,$3,$4,$5,$6)`, in.ActorID, in.Key, Fingerprint(in), payload, id, workflowID); err != nil {
-		return Provision{}, err
+	if _, err = tx.Exec(ctx, `INSERT INTO idempotency_keys(actor_id,request_key,request_hash,workspace_id) VALUES($1,$2,$3,$4)`, in.ActorID, in.Key, Fingerprint(in), id); err != nil {
+		return Workspace{}, err
 	}
 	value, err := s.getInTransaction(ctx, tx, id, in.ActorID)
 	if err != nil {
-		return Provision{}, err
+		return Workspace{}, err
 	}
-	return Provision{Workspace: value, Input: in, WorkflowID: workflowID}, tx.Commit(ctx)
+	return value, tx.Commit(ctx)
 }
 func (s *Store) getInTransaction(ctx context.Context, tx pgx.Tx, id, actor uuid.UUID) (Workspace, error) {
 	var v Workspace
@@ -199,7 +177,7 @@ func (s *Store) Fail(ctx context.Context, id uuid.UUID) error {
 	if _, err = tx.Exec(ctx, `UPDATE workspaces SET status='failed',error_code='WORKFLOW_FAILED',updated_at=now() WHERE id=$1 AND status='provisioning'`, id); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE idempotency_keys SET completed_at=COALESCE(completed_at,now()),expires_at=COALESCE(expires_at,now()+interval '24 hours') WHERE workspace_id=$1 AND EXISTS(SELECT 1 FROM workspaces WHERE id=$1 AND status='failed')`, id); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE idempotency_keys SET expires_at=COALESCE(expires_at,now()+interval '24 hours') WHERE workspace_id=$1 AND EXISTS(SELECT 1 FROM workspaces WHERE id=$1 AND status='failed')`, id); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -408,6 +386,6 @@ func (s *Store) ChangeMember(ctx context.Context, ws, actor, target uuid.UUID, r
 }
 
 func (s *Store) CompleteCreation(ctx context.Context, id uuid.UUID) error {
-	_, err := s.DB.Exec(ctx, `UPDATE idempotency_keys SET completed_at=COALESCE(completed_at,now()),expires_at=COALESCE(expires_at,now()+interval '24 hours') WHERE workspace_id=$1 AND EXISTS(SELECT 1 FROM workspaces WHERE id=$1 AND status IN ('active','deleting','deleted'))`, id)
+	_, err := s.DB.Exec(ctx, `UPDATE idempotency_keys SET expires_at=COALESCE(expires_at,now()+interval '24 hours') WHERE workspace_id=$1 AND EXISTS(SELECT 1 FROM workspaces WHERE id=$1 AND status IN ('active','deleting','deleted'))`, id)
 	return err
 }

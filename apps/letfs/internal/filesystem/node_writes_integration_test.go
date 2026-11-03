@@ -4,8 +4,6 @@ package filesystem
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"sync"
 	"testing"
@@ -68,14 +66,12 @@ func TestIntegrationNodeWritesReceiptsQuotaAndTreeGuards(t *testing.T) {
 	file := nodes[0]
 	var saved []byte
 	var generation, used, count int64
-	var publication, format, source string
-	require.NoError(t, db.QueryRow(ctx, `SELECT inline_bytes,desired_generation,publication_status,processing_format,processing_source_identity FROM files WHERE node_id=$1`, file.ID).Scan(&saved, &generation, &publication, &format, &source))
+	var publication, format string
+	require.NoError(t, db.QueryRow(ctx, `SELECT inline_bytes,desired_generation,publication_status,processing_format FROM files WHERE node_id=$1`, file.ID).Scan(&saved, &generation, &publication, &format))
 	require.Equal(t, content, saved)
 	require.EqualValues(t, 1, generation)
 	require.Equal(t, "pending", publication)
 	require.Equal(t, "pdf", format)
-	digest := sha256.Sum256(content)
-	require.Equal(t, "inline:"+hex.EncodeToString(digest[:]), source)
 	require.NoError(t, db.QueryRow(ctx, `SELECT used_bytes FROM quota_buckets WHERE id=$1`, bucket).Scan(&used))
 	require.EqualValues(t, len(content), used)
 	require.NoError(t, db.QueryRow(ctx, `SELECT node_count FROM filesystems WHERE id=$1`, fs).Scan(&count))
@@ -161,8 +157,9 @@ func TestIntegrationNodeWritesReceiptsQuotaAndTreeGuards(t *testing.T) {
 		require.NoError(t, db.QueryRow(ctx, `SELECT used_bytes FROM quota_buckets WHERE id=$1`, bucket).Scan(&used))
 		require.EqualValues(t, 6, used)
 		_, limitedFS, limitedRoot := newFS(10)
-		_, err = db.Exec(ctx, `UPDATE filesystems SET max_nodes=2 WHERE id=$1`, limitedFS)
-		require.NoError(t, err)
+		previousMaxNodes := s.MaxNodes
+		t.Cleanup(func() { s.MaxNodes = previousMaxNodes })
+		s.MaxNodes = 2
 		_, errs = concurrent(func(i int) (Node, error) {
 			return s.CreateNode(ctx, limitedFS, mounts(limitedFS), uuid.New(), CreateNode{Parent: Locator{NodeID: &limitedRoot}, Name: fmt.Sprint(i)})
 		})

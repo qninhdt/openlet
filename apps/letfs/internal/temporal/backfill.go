@@ -39,23 +39,11 @@ func (a *Activities) Backfill(ctx context.Context, input BackfillOptions) (Backf
 			continue
 		}
 		if c.Dispatch.Source.Generation > 0 {
-			ids := []string{c.Dispatch.Source.WorkflowID()}
-			if c.Dispatch.Publication == "ready" {
-				id, err := c.Dispatch.Source.IndexWorkflowID(a.Store.IndexSpace)
-				if err != nil {
-					return result, err
-				}
-				ids = append(ids, id)
+			running, err := a.Jobs.WorkflowStatus(ctx, c.Dispatch.Source.WorkflowID(), nil)
+			if err != nil {
+				return result, err
 			}
-			busy := false
-			for _, id := range ids {
-				running, err := a.Jobs.WorkflowStatus(ctx, id, nil)
-				if err != nil {
-					return result, err
-				}
-				busy = busy || running != nil && *running
-			}
-			if busy {
+			if running != nil && *running {
 				continue
 			}
 		}
@@ -71,7 +59,7 @@ func (a *Activities) Backfill(ctx context.Context, input BackfillOptions) (Backf
 		if err != nil {
 			return result, err
 		}
-		if err = a.Jobs.StartProcessing(ctx, dispatch, a.Store.IndexSpace); err != nil {
+		if err = a.Jobs.StartProcessing(ctx, dispatch); err != nil {
 			return result, err
 		}
 	}

@@ -67,7 +67,7 @@ func TestIntegrationGenericAdministrationOverAuthenticatedRPC(t *testing.T) {
 	_, err = client.ReleaseProvisioning(owner, &letfsv1.ReleaseProvisioningRequest{BucketId: bucketID, FilesystemId: fsID, RootId: fs.Filesystem.RootId})
 	require.NoError(t, err)
 	_, err = client.FreezeBucket(other, &letfsv1.FreezeBucketRequest{BucketId: bucketID, IdempotencyKey: uuid.NewString()})
-	require.Equal(t, codes.NotFound, status.Code(err))
+	require.NoError(t, err)
 	_, err = client.CreateBucket(deadline, request)
 	require.Equal(t, codes.Unauthenticated, status.Code(err))
 	spoofed := metadata.NewOutgoingContext(deadline, metadata.Pairs("authorization", "Bearer "+otherToken, "x-openlet-service", "workspace"))

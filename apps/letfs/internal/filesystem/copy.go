@@ -207,7 +207,7 @@ func (s *Store) AdmitCopy(ctx context.Context, fs uuid.UUID, mounts []Mount, key
 	}
 	_, err = session.tx.Exec(ctx, `INSERT INTO idempotency_keys(scope,operation,request_key,request_hash,result)
  VALUES($1,'copy-node',$2,$3,$4) ON CONFLICT(scope,operation,request_key) DO UPDATE SET request_hash=excluded.request_hash,
- result=excluded.result,completed_at=NULL,expires_at=NULL WHERE idempotency_keys.expires_at<=now()`, scope, key.String(), hash, saved)
+ result=excluded.result,expires_at=NULL WHERE idempotency_keys.expires_at<=now()`, scope, key.String(), hash, saved)
 	if err != nil {
 		return CopyAdmission{}, databaseError(err)
 	}

@@ -56,13 +56,12 @@ type Upload struct {
 	key, md5, multipartID *string
 	parts                 []byte
 	content               []byte
-	sha256                *string
 }
 
 type uploadAccess struct {
-	actor   uuid.UUID
-	attempt *ProcessingAttempt
-	stage   string
+	actor  uuid.UUID
+	source *Generation
+	stage  string
 }
 
 func uploadState(code string) error {
@@ -85,35 +84,34 @@ func (u Upload) PartCount() int32 {
 
 func (s *session) loadUpload(ctx context.Context, id uuid.UUID, access uploadAccess) (Upload, error) {
 	complete := false
-	if access.attempt != nil {
-		p, err := s.validateProcessing(ctx, *access.attempt, access.stage)
+	if access.source != nil {
+		p, err := s.validateProcessing(ctx, *access.source, access.stage)
 		if err != nil {
 			return Upload{}, err
 		}
 		complete = p.publication != "pending"
 		if access.stage == "enrichment" {
-			complete = p.publication == "ready"
+			complete = p.publication != "parsed"
 		}
 	}
 	var result Upload
 	var publication []byte
-	var fileID, attemptID *uuid.UUID
+	var fileID *uuid.UUID
 	var generation *int64
-	var number *int32
 	var stage *string
-	var actor uuid.UUID
+	var actor *uuid.UUID
 	err := s.tx.QueryRow(ctx, `SELECT id,state,transport,expires_at,expected_size,part_size,input,candidate_key,content_md5,multipart_id,completion_parts,result,
- inline_bytes,sha256,actor_id,processing_file_id,processing_generation,processing_attempt,processing_attempt_id,processing_stage
+ inline_bytes,actor_id,processing_file_id,processing_generation,processing_stage
  FROM uploads WHERE id=$1 AND filesystem_id=$2 FOR UPDATE`, id, s.fs).
 		Scan(&result.ID, &result.State, &result.Transport, &result.ExpiresAt, &result.SizeBytes, &result.PartSize, &result.input, &result.key, &result.md5, &result.multipartID, &result.parts, &publication,
-			&result.content, &result.sha256, &actor, &fileID, &generation, &number, &attemptID, &stage)
+			&result.content, &actor, &fileID, &generation, &stage)
 	if err != nil {
 		return Upload{}, databaseError(err)
 	}
-	permitted := actor == access.actor && fileID == nil
-	if a := access.attempt; a != nil {
-		permitted = fileID != nil && *fileID == a.Source.FileID && generation != nil && *generation == a.Source.Generation &&
-			number != nil && *number == a.Number && attemptID != nil && *attemptID == a.ID && stage != nil && *stage == access.stage
+	permitted := actor != nil && *actor == access.actor && fileID == nil
+	if a := access.source; a != nil {
+		permitted = fileID != nil && *fileID == a.FileID && generation != nil && *generation == a.Generation &&
+			stage != nil && *stage == access.stage
 	}
 	if !permitted {
 		return Upload{}, rpc.Fault(codes.NotFound, "NOT_FOUND", "resource not found")
@@ -121,7 +119,7 @@ func (s *session) loadUpload(ctx context.Context, id uuid.UUID, access uploadAcc
 	if complete && (result.State == "open" || result.State == "completing") {
 		return Upload{}, uploadState("PROCESSING_NOT_ACTIVE")
 	}
-	if publication != nil && access.attempt == nil {
+	if publication != nil && access.source == nil {
 		if err = json.Unmarshal(publication, &result.Publication); err != nil {
 			return Upload{}, uploadState("INVALID_UPLOAD_STATE")
 		}
@@ -195,7 +193,7 @@ func (s *session) uploadCapacity(ctx context.Context, maxOutstanding, maxBacklog
 	var outstanding, backlog int64
 	err := s.tx.QueryRow(ctx, `SELECT
  (SELECT count(*) FROM uploads WHERE bucket_id=$1 AND processing_file_id IS NULL AND state IN ('open','completing'))+
- (SELECT count(*) FROM idempotency_keys r JOIN filesystems f ON f.id=(r.result->>'filesystem_id')::uuid WHERE f.bucket_id=$1 AND r.operation='copy-node' AND r.completed_at IS NULL),
+ (SELECT count(*) FROM idempotency_keys r JOIN filesystems f ON f.id=(r.result->>'filesystem_id')::uuid WHERE f.bucket_id=$1 AND r.operation='copy-node' AND r.expires_at IS NULL),
  (SELECT count(*) FROM object_deletions WHERE bucket_id=$1 AND (state!='deleted' OR ambiguous_write OR open_writes>0))`, s.bucket).Scan(&outstanding, &backlog)
 	if err != nil {
 		return databaseError(err)
@@ -304,7 +302,7 @@ func (s *Store) CreateUpload(ctx context.Context, fs uuid.UUID, mounts []Mount, 
 	if err != nil {
 		return Upload{}, err
 	}
-	_, err = session.tx.Exec(ctx, `INSERT INTO idempotency_keys(scope,operation,request_key,request_hash,result) VALUES($1,'create-upload',$2,$3,$4) ON CONFLICT(scope,operation,request_key) DO UPDATE SET request_hash=excluded.request_hash,result=excluded.result,completed_at=NULL,expires_at=NULL WHERE idempotency_keys.expires_at<=now()`, scope, key.String(), hash, result)
+	_, err = session.tx.Exec(ctx, `INSERT INTO idempotency_keys(scope,operation,request_key,request_hash,result) VALUES($1,'create-upload',$2,$3,$4) ON CONFLICT(scope,operation,request_key) DO UPDATE SET request_hash=excluded.request_hash,result=excluded.result,expires_at=NULL WHERE idempotency_keys.expires_at<=now()`, scope, key.String(), hash, result)
 	if err != nil {
 		return Upload{}, databaseError(err)
 	}
@@ -365,7 +363,7 @@ func (s *Store) signUpload(ctx context.Context, upload Upload, number *int32, pr
 }
 
 func (s *session) recordCapability(ctx context.Context, id uuid.UUID, expires time.Time, grace time.Duration) error {
-	_, err := s.tx.Exec(ctx, `UPDATE uploads SET write_expires_at=greatest(write_expires_at,$2),transfer_deadline=greatest(transfer_deadline,$3),updated_at=now() WHERE id=$1`, id, expires, expires.Add(grace))
+	_, err := s.tx.Exec(ctx, `UPDATE uploads SET transfer_deadline=greatest(transfer_deadline,$2),updated_at=now() WHERE id=$1`, id, expires.Add(grace))
 	return databaseError(err)
 }
 
@@ -383,7 +381,7 @@ func (s *Store) prepareUpload(ctx context.Context, fs, id uuid.UUID, access uplo
 		return upload, nil
 	}
 	if upload.Transport == "single" {
-		signed, err := s.signUpload(ctx, upload, nil, access.attempt != nil)
+		signed, err := s.signUpload(ctx, upload, nil, access.source != nil)
 		if err != nil {
 			return Upload{}, err
 		}
@@ -479,7 +477,7 @@ func (s *Store) getUploadParts(ctx context.Context, fs, id uuid.UUID, access upl
 			return nil, rpc.Fault(codes.InvalidArgument, "VALIDATION", "duplicate part number")
 		}
 		seen[number] = true
-		signed, err := s.signUpload(ctx, upload, &number, access.attempt != nil)
+		signed, err := s.signUpload(ctx, upload, &number, access.source != nil)
 		if err != nil {
 			return nil, err
 		}

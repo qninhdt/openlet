@@ -6,11 +6,8 @@ CREATE TABLE public.idempotency_keys (
     request_key text NOT NULL,
     request_hash text NOT NULL,
     result jsonb NOT NULL,
-    completed_at timestamptz,
     expires_at timestamptz,
-    PRIMARY KEY (scope,operation,request_key),
-    CHECK ((completed_at IS NULL) = (expires_at IS NULL)),
-    CHECK (expires_at IS NULL OR expires_at = completed_at + interval '24 hours')
+    PRIMARY KEY (scope,operation,request_key)
 );
 CREATE INDEX letfs_receipt_expiry ON public.idempotency_keys(expires_at) WHERE expires_at IS NOT NULL;
 
@@ -25,28 +22,11 @@ CREATE TABLE public.files (
     inline_bytes bytea,
     object_key text,
     desired_generation bigint DEFAULT 0 NOT NULL CHECK (desired_generation >= 0),
-    processing_actor_id uuid,
     processing_format text,
-    processing_source_identity text,
-    accepted_attempt integer DEFAULT 0 NOT NULL CHECK (accepted_attempt BETWEEN 0 AND 3),
-    accepted_attempt_id uuid,
-    publication_status text DEFAULT 'not_required' NOT NULL CHECK (publication_status IN ('not_required','pending','parsed','ready','failed')),
-    published_generation bigint,
-    parse_manifest_hash text,
-    publication_manifest_hash text,
-    index_status text DEFAULT 'not_required' NOT NULL CHECK (index_status IN ('not_required','pending','ready','failed')),
-    indexed_generation bigint,
-    embedding_model text,
-    vector_collection text,
-    vector_dimension integer CHECK (vector_dimension > 0),
+    publication_status text DEFAULT 'not_required' NOT NULL CHECK (publication_status IN ('not_required','pending','parsed','enriched','ready','failed','index_failed')),
     processing_error text,
     processing_updated_at timestamptz DEFAULT now() NOT NULL,
-    CHECK ((accepted_attempt = 0) = (accepted_attempt_id IS NULL)),
-    CHECK (published_generation IS NULL OR published_generation = desired_generation),
-    CHECK (indexed_generation IS NULL OR (published_generation IS NOT NULL AND indexed_generation = published_generation)),
-    CHECK (publication_status != 'ready' OR published_generation IS NOT NULL),
-    CHECK (index_status != 'ready' OR (publication_status='ready' AND indexed_generation IS NOT NULL AND embedding_model IS NOT NULL AND vector_collection IS NOT NULL AND vector_dimension IS NOT NULL)),
-    CHECK (publication_status NOT IN ('pending','parsed','ready') OR (desired_generation > 0 AND processing_actor_id IS NOT NULL AND processing_format IS NOT NULL AND processing_source_identity IS NOT NULL)),
+    CHECK (publication_status='not_required' OR (desired_generation>0 AND processing_format IS NOT NULL)),
     CONSTRAINT files_payload_check CHECK ((((storage_kind = 'inline'::text) AND (inline_bytes IS NOT NULL) AND (object_key IS NULL)) OR ((storage_kind = 'object'::text) AND (inline_bytes IS NULL) AND (object_key IS NOT NULL)))),
     CONSTRAINT files_storage_kind_check CHECK ((storage_kind = ANY (ARRAY['inline'::text, 'object'::text])))
 );
@@ -54,15 +34,11 @@ CREATE TABLE public.files (
 CREATE TABLE public.filesystems (
     id uuid NOT NULL,
     bucket_id uuid NOT NULL,
-    create_fingerprint text CHECK (length(create_fingerprint) = 64),
     root_id uuid,
     state text DEFAULT 'active'::text NOT NULL,
     node_count bigint DEFAULT 1 NOT NULL,
-    max_nodes bigint NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT filesystem_live_root CHECK (((state <> 'active'::text) OR (root_id IS NOT NULL))),
-    CONSTRAINT filesystem_create_identity CHECK (create_fingerprint IS NOT NULL OR state <> 'active'),
-    CONSTRAINT filesystems_check CHECK (((max_nodes > 0) AND (node_count <= max_nodes))),
     CONSTRAINT filesystems_node_count_check CHECK ((node_count >= 0)),
     CONSTRAINT filesystems_state_check CHECK ((state = ANY (ARRAY['active'::text, 'deleting'::text, 'deleted'::text])))
 );
@@ -90,7 +66,6 @@ CREATE TABLE public.object_deletions (
     state text DEFAULT 'pending'::text NOT NULL,
     ambiguous_write boolean DEFAULT false NOT NULL,
     open_writes bigint DEFAULT 0 NOT NULL CHECK (open_writes >= 0),
-    attempts bigint DEFAULT 0 NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT object_deletions_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'deleting'::text, 'deleted'::text])))
 );
@@ -98,24 +73,18 @@ CREATE TABLE public.object_deletions (
 CREATE TABLE public.index_deletions (
     file_id uuid NOT NULL,
     generation bigint NOT NULL CHECK (generation > 0),
-    embedding_model text NOT NULL,
-    vector_collection text NOT NULL,
-    vector_dimension integer NOT NULL CHECK (vector_dimension > 0),
     eligible_at timestamptz DEFAULT now() NOT NULL,
-    PRIMARY KEY (file_id,generation,embedding_model,vector_collection,vector_dimension)
+    PRIMARY KEY (file_id,generation)
 );
 CREATE INDEX index_deletions_due ON public.index_deletions (eligible_at);
 
 CREATE TABLE public.quota_buckets (
     id uuid NOT NULL,
-    creator_service text,
-    create_fingerprint text CHECK (length(create_fingerprint) = 64),
     limit_bytes bigint NOT NULL,
     used_bytes bigint DEFAULT 0 NOT NULL,
     state text DEFAULT 'active'::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT quota_buckets_limit_bytes_check CHECK ((limit_bytes >= 0)),
-    CONSTRAINT quota_bucket_create_identity CHECK (creator_service IS NOT NULL AND (create_fingerprint IS NOT NULL OR state IN ('frozen','deleted'))),
     CONSTRAINT quota_buckets_state_check CHECK ((state = ANY (ARRAY['active'::text, 'frozen'::text, 'deleted'::text]))),
     CONSTRAINT quota_buckets_used_bytes_check CHECK ((used_bytes >= 0))
 );
@@ -136,14 +105,12 @@ CREATE TABLE public.uploads (
     id uuid NOT NULL,
     filesystem_id uuid NOT NULL,
     bucket_id uuid NOT NULL,
-    actor_id uuid NOT NULL,
+    actor_id uuid,
     input jsonb NOT NULL,
     candidate_key text,
     state text DEFAULT 'open'::text NOT NULL,
     expires_at timestamp with time zone DEFAULT (now() + '01:00:00'::interval) NOT NULL,
     transfer_deadline timestamp with time zone,
-    size_bytes bigint,
-    sha256 text,
     inline_bytes bytea,
     result_node_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
@@ -154,23 +121,19 @@ CREATE TABLE public.uploads (
     multipart_id text,
     part_size bigint,
     completion_parts jsonb,
-    write_expires_at timestamp with time zone,
     result jsonb,
     processing_file_id uuid,
     processing_generation bigint,
-    processing_attempt integer,
-    processing_attempt_id uuid,
     relative_path text,
     processing_stage text,
     CONSTRAINT uploads_direct_metadata CHECK ((((expected_size IS NOT NULL) AND (expected_size >= 0)))),
-    CONSTRAINT uploads_object_identity CHECK ((((transport = 'inline'::text) AND (candidate_key IS NULL) AND (multipart_id IS NULL) AND (part_size IS NULL) AND (content_md5 IS NULL) AND (write_expires_at IS NULL)) OR ((transport = 'single'::text) AND (candidate_key IS NOT NULL) AND (multipart_id IS NULL) AND (part_size IS NULL) AND (content_md5 IS NOT NULL)) OR ((transport = 'multipart'::text) AND (candidate_key IS NOT NULL) AND (part_size IS NOT NULL) AND (part_size >= 5242880) AND (content_md5 IS NULL)))),
+    CONSTRAINT uploads_object_identity CHECK ((((transport = 'inline'::text) AND (candidate_key IS NULL) AND (multipart_id IS NULL) AND (part_size IS NULL) AND (content_md5 IS NULL) AND (transfer_deadline IS NULL)) OR ((transport = 'single'::text) AND (candidate_key IS NOT NULL) AND (multipart_id IS NULL) AND (part_size IS NULL) AND (content_md5 IS NOT NULL)) OR ((transport = 'multipart'::text) AND (candidate_key IS NOT NULL) AND (part_size IS NOT NULL) AND (part_size >= 5242880) AND (content_md5 IS NULL)))),
     CONSTRAINT uploads_processing_owner CHECK (
-      (processing_file_id IS NULL AND processing_generation IS NULL AND processing_attempt IS NULL AND processing_attempt_id IS NULL AND relative_path IS NULL AND processing_stage IS NULL)
-      OR (processing_file_id IS NOT NULL AND processing_generation IS NOT NULL AND processing_generation > 0 AND relative_path IS NOT NULL AND processing_attempt IS NOT NULL AND processing_attempt BETWEEN 1 AND 3 AND processing_attempt_id IS NOT NULL AND processing_stage IS NOT NULL AND processing_stage IN ('parse','enrichment'))
+      (actor_id IS NOT NULL AND processing_file_id IS NULL AND processing_generation IS NULL AND relative_path IS NULL AND processing_stage IS NULL)
+      OR (processing_file_id IS NOT NULL AND processing_generation IS NOT NULL AND processing_generation > 0 AND relative_path IS NOT NULL AND processing_stage IS NOT NULL AND processing_stage IN ('parse','enrichment'))
     ),
-    CONSTRAINT uploads_size_bytes_check CHECK ((size_bytes >= 0)),
     CONSTRAINT uploads_state_check CHECK ((state = ANY (ARRAY['open'::text, 'completing'::text, 'finalized'::text, 'aborted'::text]))),
-    CONSTRAINT uploads_finalized_result CHECK (state != 'finalized' OR (result IS NOT NULL AND size_bytes IS NOT NULL AND size_bytes = expected_size)),
+    CONSTRAINT uploads_finalized_result CHECK (state != 'finalized' OR result IS NOT NULL),
     CONSTRAINT uploads_transport CHECK ((transport = ANY (ARRAY['inline'::text, 'single'::text, 'multipart'::text])))
 );
 
@@ -219,9 +182,8 @@ CREATE INDEX object_deletions_backlog ON public.object_deletions USING btree (bu
 CREATE INDEX object_deletions_due ON public.object_deletions USING btree (eligible_at, object_key);
 
 
-CREATE INDEX processing_dispatch ON public.files (processing_updated_at,node_id) WHERE publication_status IN ('pending','parsed') OR (publication_status='ready' AND index_status='pending');
+CREATE INDEX processing_dispatch ON public.files (processing_updated_at,node_id) WHERE publication_status IN ('pending','parsed','enriched');
 
-CREATE UNIQUE INDEX processing_output_path ON public.uploads (processing_file_id, processing_generation, processing_stage, processing_attempt, relative_path);
 
 CREATE INDEX trash_page ON public.trash_entries USING btree (filesystem_id, id);
 

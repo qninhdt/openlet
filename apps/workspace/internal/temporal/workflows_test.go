@@ -35,11 +35,10 @@ func TestCreateWorkspaceUsesOwnerGeneratedMappingBeforeRelease(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
 	registerRemote(env)
-	in := workspace.CreateInput{ActorID: uuid.New(), Key: uuid.New(), Name: "Team"}
 	id, bucket, filesystem, root := uuid.New(), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.New()
-	value := workspace.Provision{Workspace: workspace.Workspace{ID: id, Status: "provisioning", LimitBytes: "100"}, Input: in}
+	value := workspace.Workspace{ID: id, Status: "provisioning", LimitBytes: "100"}
 	var a *Activities
-	env.OnActivity(a.EnsureWorkspace, mock.Anything, in).Return(value, nil).Once()
+	env.OnActivity(a.GetWorkspace, mock.Anything, id).Return(value, nil).Once()
 	initialSync := false
 	env.OnActivity(a.SyncWorkspaceRelationships, mock.Anything, id).Run(func(mock.Arguments) { initialSync = true }).Return(nil).Once()
 	reserved := false
@@ -52,7 +51,7 @@ func TestCreateWorkspaceUsesOwnerGeneratedMappingBeforeRelease(t *testing.T) {
 	synced := false
 	env.OnActivity(a.SyncWorkspaceRelationships, mock.Anything, id).Run(func(mock.Arguments) { require.True(t, activated); synced = true }).Return(nil).Once()
 	env.OnActivity(a.CompleteWorkspaceCreation, mock.Anything, id).Run(func(mock.Arguments) { require.True(t, synced) }).Return(nil).Once()
-	env.ExecuteWorkflow(CreateWorkspace, in)
+	env.ExecuteWorkflow(CreateWorkspace, id)
 	require.NoError(t, env.GetWorkflowError())
 	var result uuid.UUID
 	require.NoError(t, env.GetWorkflowResult(&result))
@@ -65,10 +64,9 @@ func TestCreateWorkspaceRejectsForeignStorageResult(t *testing.T) {
 			var suite testsuite.WorkflowTestSuite
 			env := suite.NewTestWorkflowEnvironment()
 			registerRemote(env)
-			in := workspace.CreateInput{ActorID: uuid.New(), Key: uuid.New(), Name: "Team"}
 			id, bucket, fs := uuid.New(), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 			var a *Activities
-			env.OnActivity(a.EnsureWorkspace, mock.Anything, in).Return(workspace.Provision{Workspace: workspace.Workspace{ID: id, Status: "provisioning", LimitBytes: "100"}}, nil).Once()
+			env.OnActivity(a.GetWorkspace, mock.Anything, id).Return(workspace.Workspace{ID: id, Status: "provisioning", LimitBytes: "100"}, nil).Once()
 			env.OnActivity(a.SyncWorkspaceRelationships, mock.Anything, id).Return(nil).Once()
 			env.OnActivity(a.ReserveWorkspaceStorage, mock.Anything, id).Return(workspace.Storage{WorkspaceID: id, BucketID: bucket, FilesystemID: fs, LimitBytes: "100"}, nil).Once()
 			returnedBucket := bucket.String()
@@ -80,20 +78,20 @@ func TestCreateWorkspaceRejectsForeignStorageResult(t *testing.T) {
 				env.OnActivity(letfs.CreateFilesystem, mock.Anything, "workspace", mock.Anything).Return(&letfsv1.Filesystem{Id: uuid.NewString(), BucketId: bucket.String(), RootId: uuid.NewString(), State: "active"}, nil).Once()
 			}
 			env.OnActivity(a.FailWorkspace, mock.Anything, id).Return(nil).Once()
-			env.ExecuteWorkflow(CreateWorkspace, in)
+			env.ExecuteWorkflow(CreateWorkspace, id)
 			require.Error(t, env.GetWorkflowError())
 			env.AssertNotCalled(t, "ActivateWorkspace", mock.Anything, mock.Anything)
 			env.AssertExpectations(t)
 		})
 	}
 }
-func TestCreateWorkspaceRejectsBeforeProvisioning(t *testing.T) {
+func TestCreateWorkspaceRejectsMissingWorkspace(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
 	var a *Activities
-	in := workspace.CreateInput{Name: "invalid"}
-	env.OnActivity(a.EnsureWorkspace, mock.Anything, in).Return(workspace.Provision{}, temporal.NewNonRetryableApplicationError("rejected", "VALIDATION", nil)).Once()
-	env.ExecuteWorkflow(CreateWorkspace, in)
+	id := uuid.New()
+	env.OnActivity(a.GetWorkspace, mock.Anything, id).Return(workspace.Workspace{}, temporal.NewNonRetryableApplicationError("missing", "NOT_FOUND", nil)).Once()
+	env.ExecuteWorkflow(CreateWorkspace, id)
 	require.Error(t, env.GetWorkflowError())
 	env.AssertExpectations(t)
 }

@@ -90,6 +90,7 @@ func databaseError(err error) error {
 
 type session struct {
 	tx               pgx.Tx
+	maxNodes         int64
 	fs, bucket, root uuid.UUID
 }
 
@@ -115,7 +116,7 @@ func (s *Store) openSessionState(ctx context.Context, fs uuid.UUID, write, allow
 			_ = tx.Rollback(ctx)
 		}
 	}()
-	result := &session{tx: tx, fs: fs}
+	result := &session{maxNodes: s.MaxNodes, tx: tx, fs: fs}
 	if err = tx.QueryRow(ctx, `SELECT bucket_id FROM filesystems WHERE id=$1`, fs).Scan(&result.bucket); err != nil {
 		return nil, databaseError(err)
 	}

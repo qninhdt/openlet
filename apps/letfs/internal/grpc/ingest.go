@@ -30,10 +30,6 @@ func processingGenerationInput(ctx context.Context, input *letfsv1.ProcessingGen
 	return filesystem.Generation{FileID: id, Generation: input.Generation}, nil
 }
 
-func indexSpaceInput(input *letfsv1.VectorSpace) filesystem.VectorSpace {
-	return filesystem.VectorSpace{Model: input.GetModel(), Collection: input.GetCollection(), Dimension: input.GetDimension()}
-}
-
 func (s *Ingest) PrepareIndex(ctx context.Context, input *letfsv1.PrepareIndexRequest) (*letfsv1.PrepareIndexResponse, error) {
 	source, err := processingGenerationInput(ctx, input.GetSource())
 	if err != nil {
@@ -56,7 +52,7 @@ func (s *Ingest) CompleteIndex(ctx context.Context, input *letfsv1.CompleteIndex
 	if err != nil {
 		return nil, err
 	}
-	if err = s.Store.CompleteIndex(ctx, source, indexSpaceInput(input.GetVectorSpace())); err != nil {
+	if err = s.Store.CompleteIndex(ctx, source); err != nil {
 		return nil, err
 	}
 	return &letfsv1.CompleteIndexResponse{SourceId: source.FileID.String()}, nil
@@ -67,7 +63,7 @@ func (s *Ingest) FailIndex(ctx context.Context, input *letfsv1.FailIndexRequest)
 	if err != nil {
 		return nil, err
 	}
-	if err = s.Store.FailIndex(ctx, source, indexSpaceInput(input.GetVectorSpace()), input.GetErrorCode()); err != nil {
+	if err = s.Store.FailIndex(ctx, source, input.GetErrorCode()); err != nil {
 		return nil, err
 	}
 	return &letfsv1.FailIndexResponse{}, nil
@@ -81,26 +77,8 @@ func ingestAuthority(ctx context.Context) error {
 	return nil
 }
 
-func processingAttemptInput(ctx context.Context, input *letfsv1.ProcessingAttempt) (filesystem.ProcessingAttempt, error) {
-	if err := ingestAuthority(ctx); err != nil {
-		return filesystem.ProcessingAttempt{}, err
-	}
-	file, err := parseID(input.GetFileId())
-	if err != nil {
-		return filesystem.ProcessingAttempt{}, err
-	}
-	id, err := parseID(input.GetAttemptId())
-	if err != nil {
-		return filesystem.ProcessingAttempt{}, err
-	}
-	if input.GetGeneration() <= 0 || input.GetAttemptNumber() < 1 || input.GetAttemptNumber() > 3 {
-		return filesystem.ProcessingAttempt{}, rpc.Fault(codes.InvalidArgument, "VALIDATION", "invalid processing attempt")
-	}
-	return filesystem.ProcessingAttempt{Source: filesystem.Generation{FileID: file, Generation: input.Generation}, Number: input.AttemptNumber, ID: id}, nil
-}
-
 func outputScopeInput(ctx context.Context, input *letfsv1.OutputUploadScope) (filesystem.OutputScope, error) {
-	a, err := processingAttemptInput(ctx, input.GetAttempt())
+	a, err := processingGenerationInput(ctx, input.GetSource())
 	if err != nil {
 		return filesystem.OutputScope{}, err
 	}
@@ -111,7 +89,7 @@ func outputScopeInput(ctx context.Context, input *letfsv1.OutputUploadScope) (fi
 	if input.GetStage() != "parse" && input.GetStage() != "enrichment" {
 		return filesystem.OutputScope{}, rpc.Fault(codes.InvalidArgument, "VALIDATION", "invalid output stage")
 	}
-	return filesystem.OutputScope{Attempt: a, UploadID: id, Stage: input.Stage}, nil
+	return filesystem.OutputScope{Source: a, UploadID: id, Stage: input.Stage}, nil
 }
 
 func outputDescriptionInput(input *letfsv1.OutputDescription) (filesystem.ProcessingOutput, error) {
@@ -134,7 +112,7 @@ func outputUploadMessage(value filesystem.Upload) *letfsv1.Upload {
 }
 
 func (s *Ingest) PrepareParse(ctx context.Context, input *letfsv1.PrepareParseRequest) (*letfsv1.PrepareParseResponse, error) {
-	a, err := processingAttemptInput(ctx, &letfsv1.ProcessingAttempt{FileId: input.GetFileId(), Generation: input.GetGeneration(), AttemptNumber: input.GetAttemptNumber(), AttemptId: input.GetAttemptId()})
+	a, err := processingGenerationInput(ctx, &letfsv1.ProcessingGeneration{FileId: input.GetFileId(), Generation: input.GetGeneration()})
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +133,7 @@ func (s *Ingest) PrepareParse(ctx context.Context, input *letfsv1.PrepareParseRe
 }
 
 func (s *Ingest) PrepareParseOutput(ctx context.Context, input *letfsv1.PrepareParseOutputRequest) (*letfsv1.PrepareParseOutputResponse, error) {
-	a, err := processingAttemptInput(ctx, input.GetAttempt())
+	a, err := processingGenerationInput(ctx, input.GetSource())
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +149,7 @@ func (s *Ingest) PrepareParseOutput(ctx context.Context, input *letfsv1.PrepareP
 }
 
 func (s *Ingest) CompleteParse(ctx context.Context, input *letfsv1.CompleteParseRequest) (*letfsv1.CompleteParseResponse, error) {
-	a, err := processingAttemptInput(ctx, input.GetAttempt())
+	a, err := processingGenerationInput(ctx, input.GetSource())
 	if err != nil {
 		return nil, err
 	}
@@ -189,11 +167,11 @@ func (s *Ingest) CompleteParse(ctx context.Context, input *letfsv1.CompleteParse
 	if err = s.Store.CompleteParse(ctx, a, filesystem.ParseManifest{Uploads: ids, Directories: input.Directories}); err != nil {
 		return nil, err
 	}
-	return &letfsv1.CompleteParseResponse{SourceId: a.Source.FileID.String()}, nil
+	return &letfsv1.CompleteParseResponse{SourceId: a.FileID.String()}, nil
 }
 
 func (s *Ingest) AbortParse(ctx context.Context, input *letfsv1.AbortParseRequest) (*letfsv1.AbortParseResponse, error) {
-	a, err := processingAttemptInput(ctx, input.GetAttempt())
+	a, err := processingGenerationInput(ctx, input.GetSource())
 	if err != nil {
 		return nil, err
 	}
@@ -276,7 +254,7 @@ func inventoryMessages(nodes []filesystem.ProcessingNode) []*letfsv1.InventoryNo
 }
 
 func (s *Ingest) PrepareEnrichment(ctx context.Context, input *letfsv1.PrepareEnrichmentRequest) (*letfsv1.PrepareEnrichmentResponse, error) {
-	a, err := processingAttemptInput(ctx, input.GetAttempt())
+	a, err := processingGenerationInput(ctx, input.GetSource())
 	if err != nil {
 		return nil, err
 	}
@@ -292,7 +270,7 @@ func (s *Ingest) PrepareEnrichment(ctx context.Context, input *letfsv1.PrepareEn
 }
 
 func (s *Ingest) PrepareEnrichmentOutput(ctx context.Context, input *letfsv1.PrepareEnrichmentOutputRequest) (*letfsv1.PrepareEnrichmentOutputResponse, error) {
-	a, err := processingAttemptInput(ctx, input.GetAttempt())
+	a, err := processingGenerationInput(ctx, input.GetSource())
 	if err != nil {
 		return nil, err
 	}
@@ -308,7 +286,7 @@ func (s *Ingest) PrepareEnrichmentOutput(ctx context.Context, input *letfsv1.Pre
 }
 
 func (s *Ingest) CompleteEnrichment(ctx context.Context, input *letfsv1.CompleteEnrichmentRequest) (*letfsv1.CompleteEnrichmentResponse, error) {
-	a, err := processingAttemptInput(ctx, input.GetAttempt())
+	a, err := processingGenerationInput(ctx, input.GetSource())
 	if err != nil {
 		return nil, err
 	}
@@ -337,11 +315,11 @@ func (s *Ingest) CompleteEnrichment(ctx context.Context, input *letfsv1.Complete
 	if err = s.Store.CompleteEnrichment(ctx, a, filesystem.EnrichmentManifest{Nodes: updates}); err != nil {
 		return nil, err
 	}
-	return &letfsv1.CompleteEnrichmentResponse{SourceId: a.Source.FileID.String()}, nil
+	return &letfsv1.CompleteEnrichmentResponse{SourceId: a.FileID.String()}, nil
 }
 
 func (s *Ingest) FailEnrichment(ctx context.Context, input *letfsv1.FailEnrichmentRequest) (*letfsv1.FailEnrichmentResponse, error) {
-	a, err := processingAttemptInput(ctx, input.GetAttempt())
+	a, err := processingGenerationInput(ctx, input.GetSource())
 	if err != nil {
 		return nil, err
 	}

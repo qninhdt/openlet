@@ -20,22 +20,11 @@ func (g Generation) WorkflowID() string {
 	return fmt.Sprintf("process-file/%s/%d", g.FileID, g.Generation)
 }
 
-func (g Generation) IndexWorkflowID(space VectorSpace) (string, error) {
-	if err := space.Validate(); err != nil {
-		return "", err
-	}
-	hash, err := fingerprint(space)
-	return fmt.Sprintf("index-file/%s/%d/%s", g.FileID, g.Generation, hash), err
-}
-
 type ProcessingStatus struct {
-	FileID              uuid.UUID
-	DesiredGeneration   int64
-	PublishedGeneration *int64
-	IndexedGeneration   *int64
-	PublicationStatus   string
-	IndexStatus         string
-	ErrorCode           *string
+	FileID            uuid.UUID
+	DesiredGeneration int64
+	PublicationStatus string
+	ErrorCode         *string
 }
 
 func (s *Store) GetProcessing(ctx context.Context, fs uuid.UUID, mounts []Mount, id uuid.UUID) (ProcessingStatus, error) {
@@ -51,8 +40,8 @@ func (s *Store) GetProcessing(ctx context.Context, fs uuid.UUID, mounts []Mount,
 		return ProcessingStatus{}, err
 	}
 	var result ProcessingStatus
-	err = session.tx.QueryRow(ctx, `SELECT node_id,desired_generation,published_generation,indexed_generation,publication_status,index_status,processing_error FROM files WHERE node_id=$1`, id).
-		Scan(&result.FileID, &result.DesiredGeneration, &result.PublishedGeneration, &result.IndexedGeneration, &result.PublicationStatus, &result.IndexStatus, &result.ErrorCode)
+	err = session.tx.QueryRow(ctx, `SELECT node_id,desired_generation,publication_status,processing_error FROM files WHERE node_id=$1`, id).
+		Scan(&result.FileID, &result.DesiredGeneration, &result.PublicationStatus, &result.ErrorCode)
 	return result, databaseError(err)
 }
 
@@ -129,7 +118,7 @@ func (s *Store) Reprocess(ctx context.Context, fs uuid.UUID, mounts []Mount, id,
 	if err = session.invalidate(ctx, id); err != nil {
 		return Reprocessing{}, err
 	}
-	if err = session.recordIntent(ctx, node, actor, source); err != nil {
+	if err = session.recordIntent(ctx, node); err != nil {
 		return Reprocessing{}, err
 	}
 	result := Reprocessing{FileID: id}
@@ -142,7 +131,7 @@ func (s *Store) Reprocess(ctx context.Context, fs uuid.UUID, mounts []Mount, id,
 		return Reprocessing{}, err
 	}
 	_, err = session.tx.Exec(ctx, `INSERT INTO idempotency_keys(scope,operation,request_key,request_hash,result) VALUES($1,'process-file',$2,$3,$4)
- ON CONFLICT(scope,operation,request_key) DO UPDATE SET request_hash=excluded.request_hash,result=excluded.result,completed_at=NULL,expires_at=NULL WHERE idempotency_keys.expires_at<=now()`, scope, key.String(), hash, data)
+ ON CONFLICT(scope,operation,request_key) DO UPDATE SET request_hash=excluded.request_hash,result=excluded.result,expires_at=NULL WHERE idempotency_keys.expires_at<=now()`, scope, key.String(), hash, data)
 	if err != nil {
 		return Reprocessing{}, databaseError(err)
 	}
@@ -152,23 +141,22 @@ func (s *Store) Reprocess(ctx context.Context, fs uuid.UUID, mounts []Mount, id,
 type ProcessingDispatch struct {
 	Source      Generation
 	Publication string
-	IndexStatus string
 	UpdatedAt   time.Time
 }
 
 func scanDispatch(row pgx.Row) (ProcessingDispatch, error) {
 	var result ProcessingDispatch
-	err := row.Scan(&result.Source.FileID, &result.Source.Generation, &result.Publication, &result.IndexStatus, &result.UpdatedAt)
+	err := row.Scan(&result.Source.FileID, &result.Source.Generation, &result.Publication, &result.UpdatedAt)
 	return result, databaseError(err)
 }
 
 func (s *Store) PendingProcessing(ctx context.Context, file uuid.UUID) (ProcessingDispatch, error) {
-	return scanDispatch(s.DB.QueryRow(ctx, `SELECT node_id,desired_generation,publication_status,index_status,processing_updated_at FROM files WHERE node_id=$1`, file))
+	return scanDispatch(s.DB.QueryRow(ctx, `SELECT node_id,desired_generation,publication_status,processing_updated_at FROM files WHERE node_id=$1`, file))
 }
 
 func (s *Store) ProcessingCandidates(ctx context.Context) ([]ProcessingDispatch, error) {
-	rows, err := s.DB.Query(ctx, `SELECT f.node_id,f.desired_generation,f.publication_status,f.index_status,f.processing_updated_at FROM files f JOIN nodes n ON n.id=f.node_id JOIN filesystems fs ON fs.id=n.filesystem_id
- WHERE fs.state='active' AND (f.publication_status IN ('pending','parsed') OR (f.publication_status='ready' AND f.index_status='pending')) ORDER BY f.processing_updated_at,f.node_id LIMIT 16`)
+	rows, err := s.DB.Query(ctx, `SELECT f.node_id,f.desired_generation,f.publication_status,f.processing_updated_at FROM files f JOIN nodes n ON n.id=f.node_id JOIN filesystems fs ON fs.id=n.filesystem_id
+ WHERE fs.state='active' AND f.publication_status IN ('pending','parsed','enriched') ORDER BY f.processing_updated_at,f.node_id LIMIT 16`)
 	if err != nil {
 		return nil, databaseError(err)
 	}
@@ -182,11 +170,11 @@ func (s *Store) ReconcileProcessing(ctx context.Context, candidate ProcessingDis
 		return false, err
 	}
 	defer session.tx.Rollback(ctx)
-	current, err := scanDispatch(session.tx.QueryRow(ctx, `SELECT node_id,desired_generation,publication_status,index_status,processing_updated_at FROM files WHERE node_id=$1 FOR UPDATE`, candidate.Source.FileID))
+	current, err := scanDispatch(session.tx.QueryRow(ctx, `SELECT node_id,desired_generation,publication_status,processing_updated_at FROM files WHERE node_id=$1 FOR UPDATE`, candidate.Source.FileID))
 	if err != nil {
 		return false, err
 	}
-	if current.Source != candidate.Source || current.Publication != candidate.Publication || current.IndexStatus != candidate.IndexStatus || !current.UpdatedAt.Equal(candidate.UpdatedAt) {
+	if current.Source != candidate.Source || current.Publication != candidate.Publication || !current.UpdatedAt.Equal(candidate.UpdatedAt) {
 		return false, nil
 	}
 	p, err := session.currentProcessing(ctx, candidate.Source)

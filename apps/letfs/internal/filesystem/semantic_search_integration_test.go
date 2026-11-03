@@ -56,7 +56,7 @@ func TestIntegrationSemanticSearchWithOpenRouterSDKAndCurrentFacts(t *testing.T)
 		files = append(files, node)
 	}
 	for _, node := range files[:2] {
-		_, err = db.Exec(ctx, `UPDATE files SET desired_generation=1,processing_actor_id=$2,processing_format='text',processing_source_identity='fixture',publication_status='ready',published_generation=1,index_status='ready',indexed_generation=1,embedding_model='embedding-v1',vector_collection='files',vector_dimension=2,context='private context' WHERE node_id=$1`, node.ID, actor)
+		_, err = db.Exec(ctx, `UPDATE files SET desired_generation=1,processing_format='text',publication_status='ready',context='private context' WHERE node_id=$1`, node.ID)
 		require.NoError(t, err)
 	}
 	request := func(method, path string, body any) {
@@ -241,7 +241,7 @@ func TestIntegrationSemanticSearchWithOpenRouterSDKAndCurrentFacts(t *testing.T)
 			node, err := s.CreateNode(ctx, fs, mounts, uuid.New(), CreateNode{Parent: Locator{NodeID: created.RootID}, Name: fmt.Sprintf("bounded-%02d.txt", i),
 				File: &InlineFile{Content: []byte("volcano"), MediaType: "text/plain"}})
 			require.NoError(t, err)
-			_, err = db.Exec(ctx, `UPDATE files SET desired_generation=1,processing_actor_id=$2,processing_format='text',processing_source_identity='fixture',publication_status='ready',published_generation=1,index_status='ready',indexed_generation=1,embedding_model='embedding-v1',vector_collection='files',vector_dimension=2 WHERE node_id=$1`, node.ID, actor)
+			_, err = db.Exec(ctx, `UPDATE files SET desired_generation=1,processing_format='text',publication_status='ready' WHERE node_id=$1`, node.ID)
 			require.NoError(t, err)
 			for range 3 {
 				point(node.ID, node.ID, 1, "embedding-v1", "volcano bounded evidence", 2)
@@ -263,14 +263,14 @@ func TestIntegrationSemanticSearchWithOpenRouterSDKAndCurrentFacts(t *testing.T)
 	mutation = func() {
 		_, err := s.TrashNode(ctx, fs, mounts, Locator{NodeID: &files[0].ID}, &files[0].Revision)
 		require.NoError(t, err)
-		_, err = db.Exec(ctx, `UPDATE files SET desired_generation=2,published_generation=NULL,indexed_generation=NULL,publication_status='pending',index_status='pending' WHERE node_id=$1`, files[1].ID)
+		_, err = db.Exec(ctx, `UPDATE files SET desired_generation=2,publication_status='pending' WHERE node_id=$1`, files[1].ID)
 		require.NoError(t, err)
 	}
 	mutationMu.Unlock()
 	page, err = s.SemanticSearch(ctx, fs, mounts, query)
 	require.NoError(t, err)
 	require.Empty(t, page.Items, "trash/replacement during rerank cannot return old evidence")
-	_, err = db.Exec(ctx, `UPDATE files SET desired_generation=1,published_generation=1,indexed_generation=1,publication_status='ready',index_status='ready' WHERE node_id=$1`, files[1].ID)
+	_, err = db.Exec(ctx, `UPDATE files SET desired_generation=1,publication_status='ready' WHERE node_id=$1`, files[1].ID)
 	require.NoError(t, err)
 	mutationMu.Lock()
 	mutation = func() {

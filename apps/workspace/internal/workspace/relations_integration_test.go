@@ -45,9 +45,9 @@ func TestIntegrationRelationshipSyncFencesOldGrantsAndLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, authz.InitializeRolePolicy(ctx, graph, policy))
 	owner, member := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
-	created, err := store.EnsureWorkspace(ctx, CreateInput{ActorID: owner, Key: uuid.Must(uuid.NewV7()), Name: "Team"}, "")
+	created, err := store.EnsureWorkspace(ctx, CreateInput{ActorID: owner, Key: uuid.Must(uuid.NewV7()), Name: "Team"})
 	require.NoError(t, err)
-	id := created.Workspace.ID
+	id := created.ID
 	storage := mapping(id)
 	require.NoError(t, store.Activate(ctx, storage))
 	require.NoError(t, store.SyncRelationships(ctx, graph, id))
@@ -162,9 +162,9 @@ func TestIntegrationRelationshipSyncLargeMembershipAndFencedRebuild(t *testing.T
 	require.NoError(t, err)
 	require.NoError(t, authz.InitializeRolePolicy(ctx, graph, policy))
 	owner := uuid.Must(uuid.NewV7())
-	created, err := store.EnsureWorkspace(ctx, CreateInput{ActorID: owner, Key: uuid.Must(uuid.NewV7()), Name: "Large"}, "")
+	created, err := store.EnsureWorkspace(ctx, CreateInput{ActorID: owner, Key: uuid.Must(uuid.NewV7()), Name: "Large"})
 	require.NoError(t, err)
-	id := created.Workspace.ID
+	id := created.ID
 	storage := mapping(id)
 	require.NoError(t, store.Activate(ctx, storage))
 	var members [][]any

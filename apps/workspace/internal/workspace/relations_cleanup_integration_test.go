@@ -38,9 +38,9 @@ func TestIntegrationRelationshipCleanupPreservesPublishedAndForeignGroups(t *tes
 	require.NoError(t, err)
 	require.NoError(t, authz.InitializeRolePolicy(ctx, graph, policy))
 	owner := uuid.New()
-	created, err := store.EnsureWorkspace(ctx, CreateInput{ActorID: owner, Key: uuid.New(), Name: "Cleanup"}, "")
+	created, err := store.EnsureWorkspace(ctx, CreateInput{ActorID: owner, Key: uuid.New(), Name: "Cleanup"})
 	require.NoError(t, err)
-	id := created.Workspace.ID
+	id := created.ID
 	storage := mapping(id)
 	require.NoError(t, store.Activate(ctx, storage))
 	require.NoError(t, store.SyncRelationships(ctx, graph, id))

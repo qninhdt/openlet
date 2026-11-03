@@ -29,8 +29,8 @@ func TestIntegrationMaintenanceRecoversDispatchAndReplays(t *testing.T) {
 	require.NoError(t, err)
 	_, err = db.Exec(t.Context(), `INSERT INTO nodes(id,filesystem_id,parent_id,name,kind,size_bytes) VALUES($1,$2,$3,'notes.txt','file',1)`, file, fs, created.RootID)
 	require.NoError(t, err)
-	_, err = db.Exec(t.Context(), `INSERT INTO files(node_id,storage_kind,inline_bytes,desired_generation,processing_actor_id,processing_format,processing_source_identity,publication_status,index_status)
- VALUES($1,'inline','x',1,$2,'text','inline:2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881','parsed','pending')`, file, uuid.New())
+	_, err = db.Exec(t.Context(), `INSERT INTO files(node_id,storage_kind,inline_bytes,desired_generation,processing_format,publication_status)
+ VALUES($1,'inline','x',1,'text','parsed')`, file)
 	require.NoError(t, err)
 	jobs := &Jobs{Client: tc}
 	w := worker.New(tc, Queue, worker.Options{WorkerStopTimeout: time.Second})
@@ -90,16 +90,15 @@ func TestIntegrationMaintenanceRecoversDispatchAndReplays(t *testing.T) {
 	firstRun := info.WorkflowExecutionInfo.Execution.RunId
 	pending, err := s.PendingProcessing(ctx, file)
 	require.NoError(t, err)
-	require.NoError(t, jobs.StartProcessing(ctx, pending, s.IndexSpace))
+	require.NoError(t, jobs.StartProcessing(ctx, pending))
 	info, err = tc.DescribeWorkflowExecution(ctx, source.WorkflowID(), "")
 	require.NoError(t, err)
 	require.Equal(t, firstRun, info.WorkflowExecutionInfo.Execution.RunId, "retries reuse the active processing run")
 	require.NoError(t, tc.TerminateWorkflow(ctx, source.WorkflowID(), firstRun, "isolated failure"))
 	runMaintenance()
-	var publication, index, code string
-	require.NoError(t, db.QueryRow(ctx, `SELECT publication_status,index_status,processing_error FROM files WHERE node_id=$1`, file).Scan(&publication, &index, &code))
+	var publication, code string
+	require.NoError(t, db.QueryRow(ctx, `SELECT publication_status,processing_error FROM files WHERE node_id=$1`, file).Scan(&publication, &code))
 	require.Equal(t, "failed", publication)
-	require.Equal(t, "failed", index)
 	require.Equal(t, "PROCESSING_FAILED", code)
 	future := time.Now().Add(time.Minute)
 	running, err = jobs.WorkflowStatus(ctx, source.WorkflowID(), &future)

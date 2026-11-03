@@ -1217,7 +1217,7 @@ class FilesystemService:
 
 
 class IngestServiceStub:
-    """Generation/attempt authority is validated against letfs records, independently of service authentication.
+    """Generation authority is validated against letfs records, independently of service authentication.
     """
 
     def __init__(self, channel):
@@ -1304,7 +1304,7 @@ class IngestServiceStub:
 
 
 class IngestServiceServicer:
-    """Generation/attempt authority is validated against letfs records, independently of service authentication.
+    """Generation authority is validated against letfs records, independently of service authentication.
     """
 
     def PrepareParse(self, request, context):
@@ -1484,7 +1484,7 @@ def add_IngestServiceServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class IngestService:
-    """Generation/attempt authority is validated against letfs records, independently of service authentication.
+    """Generation authority is validated against letfs records, independently of service authentication.
     """
 
     @staticmethod

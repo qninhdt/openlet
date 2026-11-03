@@ -34,8 +34,8 @@ func TestIntegrationIngestParseOverAuthenticatedRPC(t *testing.T) {
 	require.NoError(t, err)
 	_, err = db.Exec(t.Context(), `INSERT INTO nodes(id,filesystem_id,parent_id,name,kind,size_bytes) VALUES($1,$2,$3,'report.pdf','file',0)`, file, fs, created.RootID)
 	require.NoError(t, err)
-	_, err = db.Exec(t.Context(), `INSERT INTO files(node_id,storage_kind,inline_bytes,desired_generation,processing_actor_id,processing_format,processing_source_identity,publication_status,index_status)
- VALUES($1,'inline','',1,$2,'pdf','inline:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855','pending','pending')`, file, uuid.New())
+	_, err = db.Exec(t.Context(), `INSERT INTO files(node_id,storage_kind,inline_bytes,desired_generation,processing_format,publication_status)
+ VALUES($1,'inline','',1,'pdf','pending')`, file)
 	require.NoError(t, err)
 	_, err = db.Exec(t.Context(), `UPDATE filesystems SET node_count=2 WHERE id=$1`, fs)
 	require.NoError(t, err)
@@ -60,7 +60,7 @@ func TestIntegrationIngestParseOverAuthenticatedRPC(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, conn.Close()) })
 	client := letfsv1.NewIngestServiceClient(conn)
 	ctx := metadata.NewOutgoingContext(t.Context(), metadata.Pairs("authorization", "Bearer "+ingestToken))
-	request := &letfsv1.PrepareParseRequest{FileId: file.String(), Generation: 1, AttemptNumber: 1, AttemptId: uuid.NewString()}
+	request := &letfsv1.PrepareParseRequest{FileId: file.String(), Generation: 1}
 	_, err = client.PrepareParse(t.Context(), request)
 	require.Equal(t, codes.Unauthenticated, status.Code(err))
 	gateway := metadata.NewOutgoingContext(t.Context(), metadata.Pairs("authorization", "Bearer "+gatewayToken, "x-openlet-user-id", uuid.NewString()))
@@ -73,18 +73,18 @@ func TestIntegrationIngestParseOverAuthenticatedRPC(t *testing.T) {
 	require.IsType(t, &letfsv1.ParseInput_InlineContent{}, prepared.GetInput().Source, "empty source still uses explicit inline oneof")
 	require.EqualValues(t, 64, prepared.GetInput().InlineLimitBytes)
 	require.EqualValues(t, 10, prepared.GetInput().MaxOutputs)
-	attempt := &letfsv1.ProcessingAttempt{FileId: file.String(), Generation: 1, AttemptNumber: 1, AttemptId: request.AttemptId}
+	attempt := &letfsv1.ProcessingGeneration{FileId: file.String(), Generation: 1}
 	size := int64(3)
-	output := &letfsv1.PrepareParseOutputRequest{Attempt: attempt, Output: &letfsv1.OutputDescription{Path: "page/content.md", Storage: "inline", SizeBytes: &size}}
+	output := &letfsv1.PrepareParseOutputRequest{Source: attempt, Output: &letfsv1.OutputDescription{Path: "page/content.md", Storage: "inline", SizeBytes: &size}}
 	upload, err := client.PrepareParseOutput(ctx, output)
 	require.NoError(t, err)
-	scope := &letfsv1.OutputUploadScope{Attempt: attempt, Stage: "parse", UploadId: upload.Upload.Id}
+	scope := &letfsv1.OutputUploadScope{Source: attempt, Stage: "parse", UploadId: upload.Upload.Id}
 	malformed := proto.Clone(output).(*letfsv1.PrepareParseOutputRequest)
 	malformed.Output.SizeBytes = nil
 	_, err = client.PrepareParseOutput(ctx, malformed)
 	require.Equal(t, codes.InvalidArgument, status.Code(err))
 	stale := proto.Clone(scope).(*letfsv1.OutputUploadScope)
-	stale.Attempt.AttemptId = uuid.NewString()
+	stale.Source.Generation++
 	_, err = client.WriteOutputBytes(ctx, &letfsv1.WriteOutputBytesRequest{Scope: stale, Content: []byte{0, 255, 1}})
 	require.Equal(t, codes.Aborted, status.Code(err))
 	received, err := client.WriteOutputBytes(ctx, &letfsv1.WriteOutputBytesRequest{Scope: scope, Content: []byte{0, 255, 1}})
@@ -99,22 +99,22 @@ func TestIntegrationIngestParseOverAuthenticatedRPC(t *testing.T) {
 	require.Nil(t, state.Upload.GetPublication())
 
 	readmeSize := int64(4)
-	readme, err := client.PrepareParseOutput(ctx, &letfsv1.PrepareParseOutputRequest{Attempt: attempt, Output: &letfsv1.OutputDescription{Path: "README.md", Storage: "inline", SizeBytes: &readmeSize}})
+	readme, err := client.PrepareParseOutput(ctx, &letfsv1.PrepareParseOutputRequest{Source: attempt, Output: &letfsv1.OutputDescription{Path: "README.md", Storage: "inline", SizeBytes: &readmeSize}})
 	require.NoError(t, err)
-	readmeScope := &letfsv1.OutputUploadScope{Attempt: attempt, Stage: "parse", UploadId: readme.Upload.Id}
+	readmeScope := &letfsv1.OutputUploadScope{Source: attempt, Stage: "parse", UploadId: readme.Upload.Id}
 	_, err = client.WriteOutputBytes(ctx, &letfsv1.WriteOutputBytesRequest{Scope: readmeScope, Content: []byte("root")})
 	require.NoError(t, err)
 	_, err = client.CompleteOutputUpload(ctx, &letfsv1.CompleteOutputUploadRequest{Scope: readmeScope})
 	require.NoError(t, err)
-	_, err = client.CompleteParse(ctx, &letfsv1.CompleteParseRequest{Attempt: attempt, Uploads: []string{scope.UploadId, readme.Upload.Id}, Directories: []string{"empty"}})
+	_, err = client.CompleteParse(ctx, &letfsv1.CompleteParseRequest{Source: attempt, Uploads: []string{scope.UploadId, readme.Upload.Id}, Directories: []string{"empty"}})
 	require.NoError(t, err)
 	complete, err := client.PrepareParse(ctx, request)
 	require.NoError(t, err)
 	require.Equal(t, file.String(), complete.GetComplete().SourceId)
-	_, err = client.CompleteParse(ctx, &letfsv1.CompleteParseRequest{Attempt: attempt, Uploads: []string{scope.UploadId, readme.Upload.Id}, Directories: []string{"empty"}})
+	_, err = client.CompleteParse(ctx, &letfsv1.CompleteParseRequest{Source: attempt, Uploads: []string{scope.UploadId, readme.Upload.Id}, Directories: []string{"empty"}})
 	require.NoError(t, err)
-	_, err = client.CompleteParse(ctx, &letfsv1.CompleteParseRequest{Attempt: attempt, Uploads: []string{scope.UploadId}})
-	require.Equal(t, codes.Aborted, status.Code(err))
+	_, err = client.CompleteParse(ctx, &letfsv1.CompleteParseRequest{Source: attempt, Uploads: []string{scope.UploadId}})
+	require.NoError(t, err)
 	_, err = client.GetOutputUpload(gateway, &letfsv1.GetOutputUploadRequest{Scope: scope})
 	require.Equal(t, codes.PermissionDenied, status.Code(err))
 	canceled, cancel := context.WithCancel(ctx)
@@ -124,7 +124,7 @@ func TestIntegrationIngestParseOverAuthenticatedRPC(t *testing.T) {
 	var content []byte
 	require.NoError(t, db.QueryRow(t.Context(), `SELECT f.inline_bytes FROM uploads u JOIN files f ON f.node_id=u.result_node_id WHERE u.id=$1`, scope.UploadId).Scan(&content))
 	require.Equal(t, []byte{0, 255, 1}, content)
-	enriched, err := client.PrepareEnrichment(ctx, &letfsv1.PrepareEnrichmentRequest{Attempt: attempt})
+	enriched, err := client.PrepareEnrichment(ctx, &letfsv1.PrepareEnrichmentRequest{Source: attempt})
 	require.NoError(t, err)
 	require.Len(t, enriched.GetInput().Nodes, 5)
 	require.Equal(t, file.String(), enriched.GetInput().Nodes[0].Id)
@@ -137,9 +137,9 @@ func TestIntegrationIngestParseOverAuthenticatedRPC(t *testing.T) {
 			if node.Path != "" {
 				body := []byte("rewritten " + node.Path)
 				size := int64(len(body))
-				replacement, err := client.PrepareEnrichmentOutput(ctx, &letfsv1.PrepareEnrichmentOutputRequest{Attempt: attempt, Output: &letfsv1.OutputDescription{Path: node.Path, Storage: "inline", SizeBytes: &size}})
+				replacement, err := client.PrepareEnrichmentOutput(ctx, &letfsv1.PrepareEnrichmentOutputRequest{Source: attempt, Output: &letfsv1.OutputDescription{Path: node.Path, Storage: "inline", SizeBytes: &size}})
 				require.NoError(t, err)
-				scope := &letfsv1.OutputUploadScope{Attempt: attempt, Stage: "enrichment", UploadId: replacement.Upload.Id}
+				scope := &letfsv1.OutputUploadScope{Source: attempt, Stage: "enrichment", UploadId: replacement.Upload.Id}
 				_, err = client.WriteOutputBytes(ctx, &letfsv1.WriteOutputBytesRequest{Scope: scope, Content: body})
 				require.NoError(t, err)
 				_, err = client.CompleteOutputUpload(ctx, &letfsv1.CompleteOutputUploadRequest{Scope: scope})
@@ -149,15 +149,15 @@ func TestIntegrationIngestParseOverAuthenticatedRPC(t *testing.T) {
 		}
 		updates = append(updates, update)
 	}
-	manifest := &letfsv1.CompleteEnrichmentRequest{Attempt: attempt, Nodes: updates}
+	manifest := &letfsv1.CompleteEnrichmentRequest{Source: attempt, Nodes: updates}
 	_, err = client.CompleteEnrichment(ctx, manifest)
 	require.NoError(t, err)
 	_, err = client.CompleteEnrichment(ctx, manifest)
 	require.NoError(t, err)
-	doneEnrichment, err := client.PrepareEnrichment(ctx, &letfsv1.PrepareEnrichmentRequest{Attempt: attempt})
+	doneEnrichment, err := client.PrepareEnrichment(ctx, &letfsv1.PrepareEnrichmentRequest{Source: attempt})
 	require.NoError(t, err)
 	require.Equal(t, file.String(), doneEnrichment.GetComplete().SourceId)
-	_, err = client.FailEnrichment(ctx, &letfsv1.FailEnrichmentRequest{Attempt: attempt, ErrorCode: "PROCESSING_FAILED"})
+	_, err = client.FailEnrichment(ctx, &letfsv1.FailEnrichmentRequest{Source: attempt, ErrorCode: "PROCESSING_FAILED"})
 	require.NoError(t, err)
 	var title, name string
 	require.NoError(t, db.QueryRow(t.Context(), `SELECT f.inline_bytes,f.title,n.name FROM files f JOIN nodes n ON n.id=f.node_id WHERE f.node_id=$1`, file).Scan(&content, &title, &name))
@@ -174,10 +174,10 @@ func TestIntegrationIngestParseOverAuthenticatedRPC(t *testing.T) {
 	require.Len(t, index.GetInput().Nodes, 5)
 	require.Nil(t, index.GetInput().Nodes[0].Content)
 	_, err = client.CompleteIndex(ctx, &letfsv1.CompleteIndexRequest{Source: source})
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
-	_, err = client.CompleteIndex(ctx, &letfsv1.CompleteIndexRequest{Source: source, VectorSpace: index.GetInput().VectorSpace})
 	require.NoError(t, err)
-	_, err = client.FailIndex(ctx, &letfsv1.FailIndexRequest{Source: source, VectorSpace: index.GetInput().VectorSpace, ErrorCode: "DEPENDENCY_UNAVAILABLE"})
+	_, err = client.CompleteIndex(ctx, &letfsv1.CompleteIndexRequest{Source: source})
+	require.NoError(t, err)
+	_, err = client.FailIndex(ctx, &letfsv1.FailIndexRequest{Source: source, ErrorCode: "DEPENDENCY_UNAVAILABLE"})
 	require.NoError(t, err)
 	indexed, err := client.PrepareIndex(ctx, &letfsv1.PrepareIndexRequest{Source: source})
 	require.NoError(t, err)

@@ -29,7 +29,7 @@ func processingFormat(name string) (format string, parse bool) {
 	}
 }
 
-func (s *session) recordIntent(ctx context.Context, node Node, actor uuid.UUID, identity string) error {
+func (s *session) recordIntent(ctx context.Context, node Node) error {
 	format, parse := processingFormat(node.Name)
 	publication := "not_required"
 	var storedFormat *string
@@ -40,11 +40,7 @@ func (s *session) recordIntent(ctx context.Context, node Node, actor uuid.UUID, 
 			publication = "pending"
 		}
 	}
-	_, err := s.tx.Exec(ctx, `UPDATE files SET desired_generation=desired_generation+1,processing_actor_id=$2,processing_format=$3,
- processing_source_identity=$4,publication_status=$5,index_status=CASE WHEN $5='not_required' THEN 'not_required' ELSE 'pending' END,
- published_generation=NULL,indexed_generation=NULL,parse_manifest_hash=NULL,publication_manifest_hash=NULL,
- accepted_attempt=0,accepted_attempt_id=NULL,processing_error=NULL,embedding_model=NULL,vector_collection=NULL,vector_dimension=NULL,
- processing_updated_at=now() WHERE node_id=$1`, node.ID, actor, storedFormat, identity, publication)
+	_, err := s.tx.Exec(ctx, `UPDATE files SET desired_generation=desired_generation+1,processing_format=$2,publication_status=$3,processing_error=NULL,processing_updated_at=now() WHERE node_id=$1`, node.ID, storedFormat, publication)
 	return databaseError(err)
 }
 
@@ -113,30 +109,28 @@ func (s *Store) discardForest(ctx context.Context, fs, id uuid.UUID) (bool, erro
 }
 
 func (s *session) enqueueIndexDeletion(ctx context.Context, ids []uuid.UUID) error {
-	_, err := s.tx.Exec(ctx, `INSERT INTO index_deletions(file_id,generation,embedding_model,vector_collection,vector_dimension)
- SELECT node_id,desired_generation,embedding_model,vector_collection,vector_dimension FROM files
- WHERE node_id=ANY($1) AND desired_generation>0 AND embedding_model IS NOT NULL AND vector_collection IS NOT NULL AND vector_dimension IS NOT NULL ON CONFLICT DO NOTHING`, ids)
+	_, err := s.tx.Exec(ctx, `INSERT INTO index_deletions(file_id,generation) SELECT node_id,desired_generation FROM files WHERE node_id=ANY($1) AND desired_generation>0 ON CONFLICT DO NOTHING`, ids)
 	return databaseError(err)
 }
 
-func (s *session) discardUploads(ctx context.Context, source Generation, stage *string) error {
+func (s *session) discardUploads(ctx context.Context, source Generation) error {
 	_, err := s.tx.Exec(ctx, `INSERT INTO object_deletions(object_key,bucket_id,ambiguous_write,eligible_at)
- SELECT candidate_key,bucket_id,write_expires_at IS NOT NULL,greatest(now()+interval '15 minutes',transfer_deadline) FROM uploads
- WHERE processing_file_id=$1 AND processing_generation=$2 AND ($3::text IS NULL OR processing_stage=$3)
+ SELECT candidate_key,bucket_id,transfer_deadline IS NOT NULL,greatest(now()+interval '15 minutes',transfer_deadline) FROM uploads
+ WHERE processing_file_id=$1 AND processing_generation=$2
  AND result_node_id IS NULL AND candidate_key IS NOT NULL ON CONFLICT(object_key) DO UPDATE
- SET state='pending',ambiguous_write=object_deletions.ambiguous_write OR excluded.ambiguous_write,
- eligible_at=greatest(object_deletions.eligible_at,excluded.eligible_at)`, source.FileID, source.Generation, stage)
+ SET ambiguous_write=object_deletions.ambiguous_write OR excluded.ambiguous_write,
+ eligible_at=greatest(object_deletions.eligible_at,excluded.eligible_at)`, source.FileID, source.Generation)
 	if err != nil {
 		return databaseError(err)
 	}
 	_, err = s.tx.Exec(ctx, `UPDATE uploads SET state=CASE WHEN state IN ('open','completing') THEN 'aborted' ELSE state END,inline_bytes=NULL,updated_at=now()
- WHERE processing_file_id=$1 AND processing_generation=$2 AND ($3::text IS NULL OR processing_stage=$3) AND result_node_id IS NULL`, source.FileID, source.Generation, stage)
+ WHERE processing_file_id=$1 AND processing_generation=$2 AND result_node_id IS NULL`, source.FileID, source.Generation)
 	return databaseError(err)
 }
 
 func (s *session) completeProcessingReceipt(ctx context.Context, source Generation) error {
-	_, err := s.tx.Exec(ctx, `UPDATE idempotency_keys SET completed_at=now(),expires_at=now()+interval '24 hours'
- WHERE operation='process-file' AND result->>'file_id'=$1 AND result->>'generation'=$2 AND completed_at IS NULL`, source.FileID.String(), fmt.Sprint(source.Generation))
+	_, err := s.tx.Exec(ctx, `UPDATE idempotency_keys SET expires_at=now()+interval '24 hours'
+ WHERE operation='process-file' AND result->>'file_id'=$1 AND result->>'generation'=$2 AND expires_at IS NULL`, source.FileID.String(), fmt.Sprint(source.Generation))
 	return databaseError(err)
 }
 
@@ -150,14 +144,14 @@ func (s *session) invalidate(ctx context.Context, id uuid.UUID) error {
 		return err
 	}
 	source := Generation{FileID: id, Generation: generation}
-	if err = s.discardUploads(ctx, source, nil); err != nil {
+	if err = s.discardUploads(ctx, source); err != nil {
 		return err
 	}
 	if err = s.completeProcessingReceipt(ctx, source); err != nil {
 		return err
 	}
 	_, err = s.tx.Exec(ctx, `UPDATE files SET title=NULL,description=NULL,semantic_type=NULL,context=NULL,
- publication_status='not_required',published_generation=NULL,indexed_generation=NULL,index_status='not_required',
+ publication_status='not_required',
  processing_error=NULL,processing_updated_at=now() WHERE node_id=$1`, id)
 	if err != nil {
 		return databaseError(err)
@@ -189,11 +183,10 @@ func (s *session) fenceTrashed(ctx context.Context, root uuid.UUID) error {
 		return err
 	}
 	for _, source := range sources {
-		if err = s.discardUploads(ctx, source, nil); err != nil {
+		if err = s.discardUploads(ctx, source); err != nil {
 			return err
 		}
-		_, err = s.tx.Exec(ctx, `UPDATE files SET publication_status=CASE WHEN publication_status='ready' THEN publication_status ELSE 'failed' END,
- index_status=CASE WHEN index_status='ready' THEN index_status ELSE 'failed' END,processing_error='SOURCE_TRASHED',processing_updated_at=now() WHERE node_id=$1`, source.FileID)
+		_, err = s.tx.Exec(ctx, `UPDATE files SET publication_status=CASE WHEN publication_status='ready' THEN 'ready' WHEN publication_status IN ('enriched','index_failed') THEN 'index_failed' ELSE 'failed' END,processing_error='SOURCE_TRASHED',processing_updated_at=now() WHERE node_id=$1`, source.FileID)
 		if err != nil {
 			return databaseError(err)
 		}

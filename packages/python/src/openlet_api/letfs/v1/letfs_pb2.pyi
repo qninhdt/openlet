@@ -119,16 +119,12 @@ class StreamArchiveResponse(_message.Message):
     def __init__(self, metadata: _Optional[_Union[ArchiveMetadata, _Mapping]] = ..., data: _Optional[bytes] = ...) -> None: ...
 
 class PrepareParseRequest(_message.Message):
-    __slots__ = ("file_id", "generation", "attempt_number", "attempt_id")
+    __slots__ = ("file_id", "generation")
     FILE_ID_FIELD_NUMBER: _ClassVar[int]
     GENERATION_FIELD_NUMBER: _ClassVar[int]
-    ATTEMPT_NUMBER_FIELD_NUMBER: _ClassVar[int]
-    ATTEMPT_ID_FIELD_NUMBER: _ClassVar[int]
     file_id: str
     generation: int
-    attempt_number: int
-    attempt_id: str
-    def __init__(self, file_id: _Optional[str] = ..., generation: _Optional[int] = ..., attempt_number: _Optional[int] = ..., attempt_id: _Optional[str] = ...) -> None: ...
+    def __init__(self, file_id: _Optional[str] = ..., generation: _Optional[int] = ...) -> None: ...
 
 class ParseInput(_message.Message):
     __slots__ = ("source_id", "format", "size_bytes", "inline_limit_bytes", "multipart_threshold_bytes", "max_outputs", "max_output_bytes", "inline_content", "signed_url")
@@ -545,22 +541,16 @@ class GetCopyResponse(_message.Message):
     def __init__(self, copy: _Optional[_Union[Copy, _Mapping]] = ...) -> None: ...
 
 class Processing(_message.Message):
-    __slots__ = ("desired_generation", "published_generation", "indexed_generation", "publication_status", "index_status", "error_code", "file_id")
+    __slots__ = ("desired_generation", "publication_status", "error_code", "file_id")
     DESIRED_GENERATION_FIELD_NUMBER: _ClassVar[int]
-    PUBLISHED_GENERATION_FIELD_NUMBER: _ClassVar[int]
-    INDEXED_GENERATION_FIELD_NUMBER: _ClassVar[int]
     PUBLICATION_STATUS_FIELD_NUMBER: _ClassVar[int]
-    INDEX_STATUS_FIELD_NUMBER: _ClassVar[int]
     ERROR_CODE_FIELD_NUMBER: _ClassVar[int]
     FILE_ID_FIELD_NUMBER: _ClassVar[int]
     desired_generation: int
-    published_generation: int
-    indexed_generation: int
     publication_status: str
-    index_status: str
     error_code: str
     file_id: str
-    def __init__(self, desired_generation: _Optional[int] = ..., published_generation: _Optional[int] = ..., indexed_generation: _Optional[int] = ..., publication_status: _Optional[str] = ..., index_status: _Optional[str] = ..., error_code: _Optional[str] = ..., file_id: _Optional[str] = ...) -> None: ...
+    def __init__(self, desired_generation: _Optional[int] = ..., publication_status: _Optional[str] = ..., error_code: _Optional[str] = ..., file_id: _Optional[str] = ...) -> None: ...
 
 class GetProcessingRequest(_message.Message):
     __slots__ = ("filesystem_id", "node_id", "path_context")
@@ -981,18 +971,6 @@ class SemanticSearchResponse(_message.Message):
     degraded_reason: str
     def __init__(self, items: _Optional[_Iterable[_Union[SearchResult, _Mapping]]] = ..., next_cursor: _Optional[str] = ..., degraded: _Optional[bool] = ..., degraded_reason: _Optional[str] = ...) -> None: ...
 
-class ProcessingAttempt(_message.Message):
-    __slots__ = ("file_id", "generation", "attempt_number", "attempt_id")
-    FILE_ID_FIELD_NUMBER: _ClassVar[int]
-    GENERATION_FIELD_NUMBER: _ClassVar[int]
-    ATTEMPT_NUMBER_FIELD_NUMBER: _ClassVar[int]
-    ATTEMPT_ID_FIELD_NUMBER: _ClassVar[int]
-    file_id: str
-    generation: int
-    attempt_number: int
-    attempt_id: str
-    def __init__(self, file_id: _Optional[str] = ..., generation: _Optional[int] = ..., attempt_number: _Optional[int] = ..., attempt_id: _Optional[str] = ...) -> None: ...
-
 class ProcessingGeneration(_message.Message):
     __slots__ = ("file_id", "generation")
     FILE_ID_FIELD_NUMBER: _ClassVar[int]
@@ -1014,12 +992,12 @@ class OutputDescription(_message.Message):
     def __init__(self, path: _Optional[str] = ..., storage: _Optional[str] = ..., size_bytes: _Optional[int] = ..., content_md5: _Optional[str] = ...) -> None: ...
 
 class PrepareParseOutputRequest(_message.Message):
-    __slots__ = ("attempt", "output")
-    ATTEMPT_FIELD_NUMBER: _ClassVar[int]
+    __slots__ = ("source", "output")
+    SOURCE_FIELD_NUMBER: _ClassVar[int]
     OUTPUT_FIELD_NUMBER: _ClassVar[int]
-    attempt: ProcessingAttempt
+    source: ProcessingGeneration
     output: OutputDescription
-    def __init__(self, attempt: _Optional[_Union[ProcessingAttempt, _Mapping]] = ..., output: _Optional[_Union[OutputDescription, _Mapping]] = ...) -> None: ...
+    def __init__(self, source: _Optional[_Union[ProcessingGeneration, _Mapping]] = ..., output: _Optional[_Union[OutputDescription, _Mapping]] = ...) -> None: ...
 
 class PrepareParseOutputResponse(_message.Message):
     __slots__ = ("upload",)
@@ -1028,14 +1006,14 @@ class PrepareParseOutputResponse(_message.Message):
     def __init__(self, upload: _Optional[_Union[Upload, _Mapping]] = ...) -> None: ...
 
 class CompleteParseRequest(_message.Message):
-    __slots__ = ("attempt", "uploads", "directories")
-    ATTEMPT_FIELD_NUMBER: _ClassVar[int]
+    __slots__ = ("source", "uploads", "directories")
+    SOURCE_FIELD_NUMBER: _ClassVar[int]
     UPLOADS_FIELD_NUMBER: _ClassVar[int]
     DIRECTORIES_FIELD_NUMBER: _ClassVar[int]
-    attempt: ProcessingAttempt
+    source: ProcessingGeneration
     uploads: _containers.RepeatedScalarFieldContainer[str]
     directories: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, attempt: _Optional[_Union[ProcessingAttempt, _Mapping]] = ..., uploads: _Optional[_Iterable[str]] = ..., directories: _Optional[_Iterable[str]] = ...) -> None: ...
+    def __init__(self, source: _Optional[_Union[ProcessingGeneration, _Mapping]] = ..., uploads: _Optional[_Iterable[str]] = ..., directories: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class CompleteParseResponse(_message.Message):
     __slots__ = ("source_id",)
@@ -1044,12 +1022,12 @@ class CompleteParseResponse(_message.Message):
     def __init__(self, source_id: _Optional[str] = ...) -> None: ...
 
 class AbortParseRequest(_message.Message):
-    __slots__ = ("attempt", "error_code")
-    ATTEMPT_FIELD_NUMBER: _ClassVar[int]
+    __slots__ = ("source", "error_code")
+    SOURCE_FIELD_NUMBER: _ClassVar[int]
     ERROR_CODE_FIELD_NUMBER: _ClassVar[int]
-    attempt: ProcessingAttempt
+    source: ProcessingGeneration
     error_code: str
-    def __init__(self, attempt: _Optional[_Union[ProcessingAttempt, _Mapping]] = ..., error_code: _Optional[str] = ...) -> None: ...
+    def __init__(self, source: _Optional[_Union[ProcessingGeneration, _Mapping]] = ..., error_code: _Optional[str] = ...) -> None: ...
 
 class AbortParseResponse(_message.Message):
     __slots__ = ()
@@ -1084,10 +1062,10 @@ class InventoryNode(_message.Message):
     def __init__(self, id: _Optional[str] = ..., parent_id: _Optional[str] = ..., path: _Optional[str] = ..., name: _Optional[str] = ..., kind: _Optional[str] = ..., size_bytes: _Optional[int] = ..., media_type: _Optional[str] = ..., title: _Optional[str] = ..., description: _Optional[str] = ..., context: _Optional[str] = ..., inline_content: _Optional[bytes] = ..., signed_url: _Optional[str] = ...) -> None: ...
 
 class PrepareEnrichmentRequest(_message.Message):
-    __slots__ = ("attempt",)
-    ATTEMPT_FIELD_NUMBER: _ClassVar[int]
-    attempt: ProcessingAttempt
-    def __init__(self, attempt: _Optional[_Union[ProcessingAttempt, _Mapping]] = ...) -> None: ...
+    __slots__ = ("source",)
+    SOURCE_FIELD_NUMBER: _ClassVar[int]
+    source: ProcessingGeneration
+    def __init__(self, source: _Optional[_Union[ProcessingGeneration, _Mapping]] = ...) -> None: ...
 
 class EnrichmentInput(_message.Message):
     __slots__ = ("source_id", "nodes", "inline_limit_bytes", "multipart_threshold_bytes", "max_output_bytes")
@@ -1118,12 +1096,12 @@ class PrepareEnrichmentResponse(_message.Message):
     def __init__(self, input: _Optional[_Union[EnrichmentInput, _Mapping]] = ..., complete: _Optional[_Union[EnrichmentComplete, _Mapping]] = ...) -> None: ...
 
 class PrepareEnrichmentOutputRequest(_message.Message):
-    __slots__ = ("attempt", "output")
-    ATTEMPT_FIELD_NUMBER: _ClassVar[int]
+    __slots__ = ("source", "output")
+    SOURCE_FIELD_NUMBER: _ClassVar[int]
     OUTPUT_FIELD_NUMBER: _ClassVar[int]
-    attempt: ProcessingAttempt
+    source: ProcessingGeneration
     output: OutputDescription
-    def __init__(self, attempt: _Optional[_Union[ProcessingAttempt, _Mapping]] = ..., output: _Optional[_Union[OutputDescription, _Mapping]] = ...) -> None: ...
+    def __init__(self, source: _Optional[_Union[ProcessingGeneration, _Mapping]] = ..., output: _Optional[_Union[OutputDescription, _Mapping]] = ...) -> None: ...
 
 class PrepareEnrichmentOutputResponse(_message.Message):
     __slots__ = ("upload",)
@@ -1156,12 +1134,12 @@ class EnrichmentUpdate(_message.Message):
     def __init__(self, id: _Optional[str] = ..., path: _Optional[str] = ..., metadata: _Optional[_Union[SemanticMetadata, _Mapping]] = ..., upload_id: _Optional[str] = ...) -> None: ...
 
 class CompleteEnrichmentRequest(_message.Message):
-    __slots__ = ("attempt", "nodes")
-    ATTEMPT_FIELD_NUMBER: _ClassVar[int]
+    __slots__ = ("source", "nodes")
+    SOURCE_FIELD_NUMBER: _ClassVar[int]
     NODES_FIELD_NUMBER: _ClassVar[int]
-    attempt: ProcessingAttempt
+    source: ProcessingGeneration
     nodes: _containers.RepeatedCompositeFieldContainer[EnrichmentUpdate]
-    def __init__(self, attempt: _Optional[_Union[ProcessingAttempt, _Mapping]] = ..., nodes: _Optional[_Iterable[_Union[EnrichmentUpdate, _Mapping]]] = ...) -> None: ...
+    def __init__(self, source: _Optional[_Union[ProcessingGeneration, _Mapping]] = ..., nodes: _Optional[_Iterable[_Union[EnrichmentUpdate, _Mapping]]] = ...) -> None: ...
 
 class CompleteEnrichmentResponse(_message.Message):
     __slots__ = ("source_id",)
@@ -1170,12 +1148,12 @@ class CompleteEnrichmentResponse(_message.Message):
     def __init__(self, source_id: _Optional[str] = ...) -> None: ...
 
 class FailEnrichmentRequest(_message.Message):
-    __slots__ = ("attempt", "error_code")
-    ATTEMPT_FIELD_NUMBER: _ClassVar[int]
+    __slots__ = ("source", "error_code")
+    SOURCE_FIELD_NUMBER: _ClassVar[int]
     ERROR_CODE_FIELD_NUMBER: _ClassVar[int]
-    attempt: ProcessingAttempt
+    source: ProcessingGeneration
     error_code: str
-    def __init__(self, attempt: _Optional[_Union[ProcessingAttempt, _Mapping]] = ..., error_code: _Optional[str] = ...) -> None: ...
+    def __init__(self, source: _Optional[_Union[ProcessingGeneration, _Mapping]] = ..., error_code: _Optional[str] = ...) -> None: ...
 
 class FailEnrichmentResponse(_message.Message):
     __slots__ = ()
@@ -1228,12 +1206,10 @@ class PrepareIndexResponse(_message.Message):
     def __init__(self, input: _Optional[_Union[IndexInput, _Mapping]] = ..., complete: _Optional[_Union[IndexComplete, _Mapping]] = ...) -> None: ...
 
 class CompleteIndexRequest(_message.Message):
-    __slots__ = ("source", "vector_space")
+    __slots__ = ("source",)
     SOURCE_FIELD_NUMBER: _ClassVar[int]
-    VECTOR_SPACE_FIELD_NUMBER: _ClassVar[int]
     source: ProcessingGeneration
-    vector_space: VectorSpace
-    def __init__(self, source: _Optional[_Union[ProcessingGeneration, _Mapping]] = ..., vector_space: _Optional[_Union[VectorSpace, _Mapping]] = ...) -> None: ...
+    def __init__(self, source: _Optional[_Union[ProcessingGeneration, _Mapping]] = ...) -> None: ...
 
 class CompleteIndexResponse(_message.Message):
     __slots__ = ("source_id",)
@@ -1242,28 +1218,26 @@ class CompleteIndexResponse(_message.Message):
     def __init__(self, source_id: _Optional[str] = ...) -> None: ...
 
 class FailIndexRequest(_message.Message):
-    __slots__ = ("source", "vector_space", "error_code")
+    __slots__ = ("source", "error_code")
     SOURCE_FIELD_NUMBER: _ClassVar[int]
-    VECTOR_SPACE_FIELD_NUMBER: _ClassVar[int]
     ERROR_CODE_FIELD_NUMBER: _ClassVar[int]
     source: ProcessingGeneration
-    vector_space: VectorSpace
     error_code: str
-    def __init__(self, source: _Optional[_Union[ProcessingGeneration, _Mapping]] = ..., vector_space: _Optional[_Union[VectorSpace, _Mapping]] = ..., error_code: _Optional[str] = ...) -> None: ...
+    def __init__(self, source: _Optional[_Union[ProcessingGeneration, _Mapping]] = ..., error_code: _Optional[str] = ...) -> None: ...
 
 class FailIndexResponse(_message.Message):
     __slots__ = ()
     def __init__(self) -> None: ...
 
 class OutputUploadScope(_message.Message):
-    __slots__ = ("attempt", "stage", "upload_id")
-    ATTEMPT_FIELD_NUMBER: _ClassVar[int]
+    __slots__ = ("source", "stage", "upload_id")
+    SOURCE_FIELD_NUMBER: _ClassVar[int]
     STAGE_FIELD_NUMBER: _ClassVar[int]
     UPLOAD_ID_FIELD_NUMBER: _ClassVar[int]
-    attempt: ProcessingAttempt
+    source: ProcessingGeneration
     stage: str
     upload_id: str
-    def __init__(self, attempt: _Optional[_Union[ProcessingAttempt, _Mapping]] = ..., stage: _Optional[str] = ..., upload_id: _Optional[str] = ...) -> None: ...
+    def __init__(self, source: _Optional[_Union[ProcessingGeneration, _Mapping]] = ..., stage: _Optional[str] = ..., upload_id: _Optional[str] = ...) -> None: ...
 
 class GetOutputUploadRequest(_message.Message):
     __slots__ = ("scope",)

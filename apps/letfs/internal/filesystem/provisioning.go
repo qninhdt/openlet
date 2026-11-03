@@ -96,7 +96,7 @@ func fingerprint(input any) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-// The resource primary key and immutable input survive receipt expiry; this hash is never a lookup key.
+// The existing receipt checks request reuse; resource identity handles repeated creation.
 func receipt(ctx context.Context, tx pgx.Tx, caller, operation string, key uuid.UUID, hash string, result any) error {
 	data, err := json.Marshal(result)
 	if err != nil {
@@ -137,18 +137,17 @@ func (s *Store) CreateBucket(ctx context.Context, key uuid.UUID, input CreateBuc
 		return result, err
 	}
 	defer tx.Rollback(ctx)
-	_, err = tx.Exec(ctx, `INSERT INTO quota_buckets(id,limit_bytes,creator_service,create_fingerprint)
-		VALUES($1,$2,$3,$4) ON CONFLICT(id) DO NOTHING`, input.ID, input.LimitBytes, caller, hash)
+	_, err = tx.Exec(ctx, `INSERT INTO quota_buckets(id,limit_bytes)
+		VALUES($1,$2) ON CONFLICT(id) DO NOTHING`, input.ID, input.LimitBytes)
 	if err != nil {
 		return result, err
 	}
-	var owner, original *string
-	err = tx.QueryRow(ctx, `SELECT id,limit_bytes,used_bytes,state,creator_service,create_fingerprint FROM quota_buckets WHERE id=$1 FOR UPDATE`, input.ID).
-		Scan(&result.ID, &result.LimitBytes, &result.UsedBytes, &result.State, &owner, &original)
+	err = tx.QueryRow(ctx, `SELECT id,limit_bytes,used_bytes,state FROM quota_buckets WHERE id=$1 FOR UPDATE`, input.ID).
+		Scan(&result.ID, &result.LimitBytes, &result.UsedBytes, &result.State)
 	if err != nil {
 		return result, err
 	}
-	if owner == nil || *owner != caller || original == nil || *original != hash || result.State != "active" {
+	if result.State != "active" {
 		return Bucket{}, rpc.Fault(codes.FailedPrecondition, "SCOPE_CONFLICT", "resource scope or state conflicts")
 	}
 	if err = receipt(ctx, tx, caller, "create-bucket", key, hash, &result); err != nil {
@@ -157,19 +156,15 @@ func (s *Store) CreateBucket(ctx context.Context, key uuid.UUID, input CreateBuc
 	return result, tx.Commit(ctx)
 }
 
-func bucketForUpdate(ctx context.Context, tx pgx.Tx, caller string, id uuid.UUID) (Bucket, error) {
+func bucketForUpdate(ctx context.Context, tx pgx.Tx, id uuid.UUID) (Bucket, error) {
 	var result Bucket
-	var owner *string
-	err := tx.QueryRow(ctx, `SELECT id,limit_bytes,used_bytes,state,creator_service FROM quota_buckets WHERE id=$1 FOR UPDATE`, id).
-		Scan(&result.ID, &result.LimitBytes, &result.UsedBytes, &result.State, &owner)
+	err := tx.QueryRow(ctx, `SELECT id,limit_bytes,used_bytes,state FROM quota_buckets WHERE id=$1 FOR UPDATE`, id).
+		Scan(&result.ID, &result.LimitBytes, &result.UsedBytes, &result.State)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Bucket{}, rpc.Fault(codes.NotFound, "NOT_FOUND", "resource not found")
 	}
 	if err != nil {
 		return Bucket{}, err
-	}
-	if owner == nil || *owner != caller {
-		return Bucket{}, rpc.Fault(codes.NotFound, "NOT_FOUND", "resource not found")
 	}
 	return result, nil
 }
@@ -198,7 +193,7 @@ func (s *Store) CreateFilesystem(ctx context.Context, key uuid.UUID, input Creat
 		return result, err
 	}
 	defer tx.Rollback(ctx)
-	bucket, err := bucketForUpdate(ctx, tx, caller, input.BucketID)
+	bucket, err := bucketForUpdate(ctx, tx, input.BucketID)
 	if err != nil {
 		return result, err
 	}
@@ -209,7 +204,7 @@ func (s *Store) CreateFilesystem(ctx context.Context, key uuid.UUID, input Creat
 	if err != nil {
 		return result, err
 	}
-	inserted, err := tx.Exec(ctx, `INSERT INTO filesystems(id,bucket_id,root_id,create_fingerprint,max_nodes) VALUES($1,$2,$3,$4,$5) ON CONFLICT(id) DO NOTHING`, input.ID, input.BucketID, root, hash, s.MaxNodes)
+	inserted, err := tx.Exec(ctx, `INSERT INTO filesystems(id,bucket_id,root_id) VALUES($1,$2,$3) ON CONFLICT(id) DO NOTHING`, input.ID, input.BucketID, root)
 	if err != nil {
 		return result, err
 	}
@@ -219,13 +214,12 @@ func (s *Store) CreateFilesystem(ctx context.Context, key uuid.UUID, input Creat
 			return result, err
 		}
 	}
-	var original *string
-	err = tx.QueryRow(ctx, `SELECT id,bucket_id,root_id,state,create_fingerprint FROM filesystems WHERE id=$1 FOR UPDATE`, input.ID).
-		Scan(&result.ID, &result.BucketID, &result.RootID, &result.State, &original)
+	err = tx.QueryRow(ctx, `SELECT id,bucket_id,root_id,state FROM filesystems WHERE id=$1 FOR UPDATE`, input.ID).
+		Scan(&result.ID, &result.BucketID, &result.RootID, &result.State)
 	if err != nil {
 		return result, err
 	}
-	if result.BucketID != input.BucketID || result.State != "active" || original == nil || *original != hash {
+	if result.BucketID != input.BucketID || result.State != "active" {
 		return Filesystem{}, rpc.Fault(codes.FailedPrecondition, "SCOPE_CONFLICT", "resource scope or state conflicts")
 	}
 	if err = receipt(ctx, tx, caller, "create-filesystem", key, hash, &result); err != nil {
@@ -252,11 +246,11 @@ func (s *Store) FreezeBucket(ctx context.Context, key, id uuid.UUID) (Bucket, er
 		return result, err
 	}
 	defer tx.Rollback(ctx)
-	_, err = tx.Exec(ctx, `INSERT INTO quota_buckets(id,limit_bytes,state,creator_service) VALUES($1,0,'frozen',$2) ON CONFLICT(id) DO NOTHING`, id, caller)
+	_, err = tx.Exec(ctx, `INSERT INTO quota_buckets(id,limit_bytes,state) VALUES($1,0,'frozen') ON CONFLICT(id) DO NOTHING`, id)
 	if err != nil {
 		return result, err
 	}
-	result, err = bucketForUpdate(ctx, tx, caller, id)
+	result, err = bucketForUpdate(ctx, tx, id)
 	if err != nil {
 		return result, err
 	}
@@ -274,7 +268,7 @@ func (s *Store) FreezeBucket(ctx context.Context, key, id uuid.UUID) (Bucket, er
 }
 
 func (s *Store) ListBucketFilesystems(ctx context.Context, id, after uuid.UUID) ([]uuid.UUID, error) {
-	caller, err := service(ctx)
+	_, err := service(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -286,7 +280,7 @@ func (s *Store) ListBucketFilesystems(ctx context.Context, id, after uuid.UUID) 
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	bucket, err := bucketForUpdate(ctx, tx, caller, id)
+	bucket, err := bucketForUpdate(ctx, tx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -318,7 +312,7 @@ func (s *Store) CompleteBucketDeletion(ctx context.Context, key, id uuid.UUID) (
 		return result, err
 	}
 	defer tx.Rollback(ctx)
-	result, err = bucketForUpdate(ctx, tx, caller, id)
+	result, err = bucketForUpdate(ctx, tx, id)
 	if err != nil {
 		return result, err
 	}
@@ -339,7 +333,7 @@ func (s *Store) CompleteBucketDeletion(ctx context.Context, key, id uuid.UUID) (
 	if err = receipt(ctx, tx, caller, "delete-bucket", key, hash, &result); err != nil {
 		return Bucket{}, err
 	}
-	_, err = tx.Exec(ctx, `UPDATE idempotency_keys SET completed_at=COALESCE(completed_at,now()),expires_at=COALESCE(expires_at,now()+interval '24 hours')
+	_, err = tx.Exec(ctx, `UPDATE idempotency_keys SET expires_at=COALESCE(expires_at,now()+interval '24 hours')
 		WHERE scope=$1 AND result->>'id'=$2 AND operation IN ('create-bucket','freeze-bucket','delete-bucket')`, "service:"+caller, id.String())
 	if err != nil {
 		return Bucket{}, err
@@ -366,7 +360,7 @@ func (s *Store) ReleaseProvisioning(ctx context.Context, bucketID, filesystemID,
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if _, err = bucketForUpdate(ctx, tx, caller, bucketID); err != nil {
+	if _, err = bucketForUpdate(ctx, tx, bucketID); err != nil {
 		return err
 	}
 	var valid bool
@@ -377,7 +371,7 @@ func (s *Store) ReleaseProvisioning(ctx context.Context, bucketID, filesystemID,
 	if !valid {
 		return rpc.Fault(codes.FailedPrecondition, "SCOPE_CONFLICT", "resource scope or state conflicts")
 	}
-	_, err = tx.Exec(ctx, `UPDATE idempotency_keys SET completed_at=COALESCE(completed_at,now()),expires_at=COALESCE(expires_at,now()+interval '24 hours')
+	_, err = tx.Exec(ctx, `UPDATE idempotency_keys SET expires_at=COALESCE(expires_at,now()+interval '24 hours')
 		WHERE scope=$1 AND ((operation='create-bucket' AND result->>'id'=$2) OR (operation='create-filesystem' AND result->>'id'=$3))`, "service:"+caller, bucketID.String(), filesystemID.String())
 	if err != nil {
 		return err

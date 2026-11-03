@@ -2,27 +2,12 @@ package filesystem
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"openlet/apps/letfs/internal/storage"
 	"openlet/packages/go/rpc"
 )
-
-type ProcessingAttempt struct {
-	Source Generation `json:"source"`
-	Number int32      `json:"number"`
-	ID     uuid.UUID  `json:"attempt_id"`
-}
-
-func (a ProcessingAttempt) validate() error {
-	if a.Source.FileID == uuid.Nil || a.Source.Generation <= 0 || a.Number < 1 || a.Number > 3 || a.ID == uuid.Nil {
-		return rpc.Fault(codes.InvalidArgument, "VALIDATION", "invalid processing attempt")
-	}
-	return nil
-}
 
 type ParsePreparation struct {
 	SourceID      uuid.UUID
@@ -34,20 +19,12 @@ type ParsePreparation struct {
 }
 
 type processingState struct {
-	id                                 uuid.UUID
-	generation                         int64
-	actor                              *uuid.UUID
-	format, identity                   *string
-	publication                        string
-	accepted                           int32
-	attempt                            *uuid.UUID
-	key                                *string
-	content                            []byte
-	parseManifest, publicationManifest *string
-	indexStatus                        string
-	indexedGeneration                  *int64
-	model, collection                  *string
-	dimension                          *int32
+	id          uuid.UUID
+	generation  int64
+	format      *string
+	publication string
+	key         *string
+	content     []byte
 }
 
 func (s *Store) processingSession(ctx context.Context, source Generation, lifecycle bool) (*session, error) {
@@ -63,12 +40,9 @@ func (s *Store) processingSession(ctx context.Context, source Generation, lifecy
 
 func (s *session) currentProcessing(ctx context.Context, source Generation) (processingState, error) {
 	var p processingState
-	err := s.tx.QueryRow(ctx, `SELECT f.node_id,f.desired_generation,f.processing_actor_id,f.processing_format,f.processing_source_identity,
- f.publication_status,f.accepted_attempt,f.accepted_attempt_id,f.object_key,f.inline_bytes,f.parse_manifest_hash,f.publication_manifest_hash,
- f.index_status,f.indexed_generation,f.embedding_model,f.vector_collection,f.vector_dimension
+	err := s.tx.QueryRow(ctx, `SELECT f.node_id,f.desired_generation,f.processing_format,f.publication_status,f.object_key,f.inline_bytes
  FROM files f JOIN nodes n ON n.id=f.node_id WHERE f.node_id=$1 AND n.filesystem_id=$2 FOR UPDATE OF f`, source.FileID, s.fs).
-		Scan(&p.id, &p.generation, &p.actor, &p.format, &p.identity, &p.publication, &p.accepted, &p.attempt, &p.key, &p.content, &p.parseManifest, &p.publicationManifest,
-			&p.indexStatus, &p.indexedGeneration, &p.model, &p.collection, &p.dimension)
+		Scan(&p.id, &p.generation, &p.format, &p.publication, &p.key, &p.content)
 	if err != nil {
 		return p, databaseError(err)
 	}
@@ -89,58 +63,21 @@ func (s *session) processingSource(ctx context.Context, p processingState) (Node
 	if err = node.writable(); err != nil {
 		return Node{}, err
 	}
-	var identity string
-	switch {
-	case p.key != nil && p.content == nil:
-		identity = "object:" + *p.key
-	case p.key == nil && p.content != nil:
-		digest := sha256.Sum256(p.content)
-		identity = "inline:" + hex.EncodeToString(digest[:])
-	default:
-		return Node{}, uploadState("INVALID_SOURCE_IDENTITY")
-	}
-	if p.identity == nil || *p.identity != identity {
-		return Node{}, uploadState("SOURCE_REPLACED")
-	}
+
 	return node, nil
 }
 
-func (p processingState) checkAttempt(attempt ProcessingAttempt) error {
-	if p.accepted != attempt.Number || p.attempt == nil || *p.attempt != attempt.ID {
-		return uploadState("STALE_PROCESSING_ATTEMPT")
-	}
-	return nil
-}
-
-func (s *session) acceptProcessing(ctx context.Context, p processingState, attempt ProcessingAttempt, stage string) error {
-	if err := attempt.validate(); err != nil {
-		return err
-	}
-	if p.accepted > attempt.Number || p.accepted == attempt.Number && (p.attempt == nil || *p.attempt != attempt.ID) {
-		return uploadState("STALE_PROCESSING_ATTEMPT")
-	}
-	if p.accepted < attempt.Number {
-		if err := s.discardUploads(ctx, attempt.Source, &stage); err != nil {
-			return err
-		}
-		_, err := s.tx.Exec(ctx, `UPDATE files SET accepted_attempt=$2,accepted_attempt_id=$3,processing_updated_at=now() WHERE node_id=$1`,
-			attempt.Source.FileID, attempt.Number, attempt.ID)
-		return databaseError(err)
-	}
-	return nil
-}
-
 // PrepareParse is pipeline-local; the Ingest transport owns service/job admission.
-func (s *Store) PrepareParse(ctx context.Context, attempt ProcessingAttempt) (ParsePreparation, error) {
-	if err := attempt.validate(); err != nil {
+func (s *Store) PrepareParse(ctx context.Context, source Generation) (ParsePreparation, error) {
+	if err := source.validate(); err != nil {
 		return ParsePreparation{}, err
 	}
-	session, err := s.processingSession(ctx, attempt.Source, false)
+	session, err := s.processingSession(ctx, source, false)
 	if err != nil {
 		return ParsePreparation{}, err
 	}
 	defer session.tx.Rollback(ctx)
-	p, err := session.currentProcessing(ctx, attempt.Source)
+	p, err := session.currentProcessing(ctx, source)
 	if err != nil {
 		return ParsePreparation{}, err
 	}
@@ -150,9 +87,6 @@ func (s *Store) PrepareParse(ctx context.Context, attempt ProcessingAttempt) (Pa
 	}
 	if p.publication != "pending" {
 		return ParsePreparation{SourceID: node.ID, Complete: true}, nil
-	}
-	if err = session.acceptProcessing(ctx, p, attempt, "parse"); err != nil {
-		return ParsePreparation{}, err
 	}
 	result := ParsePreparation{SourceID: node.ID, Format: *p.format, SizeBytes: node.SizeBytes, InlineContent: p.content}
 	if err = session.tx.Commit(ctx); err != nil {
@@ -171,19 +105,18 @@ func (s *Store) PrepareParse(ctx context.Context, attempt ProcessingAttempt) (Pa
 }
 
 func (s *session) failProcessing(ctx context.Context, source Generation, code string) error {
-	if err := s.discardUploads(ctx, source, nil); err != nil {
+	if err := s.discardUploads(ctx, source); err != nil {
 		return err
 	}
-	_, err := s.tx.Exec(ctx, `UPDATE files SET publication_status=CASE WHEN publication_status='ready' THEN publication_status ELSE 'failed' END,
- index_status=CASE WHEN index_status='ready' THEN index_status ELSE 'failed' END,processing_error=$2,processing_updated_at=now() WHERE node_id=$1`, source.FileID, code)
+	_, err := s.tx.Exec(ctx, `UPDATE files SET publication_status=CASE WHEN publication_status='ready' THEN 'ready' WHEN publication_status IN ('enriched','index_failed') THEN 'index_failed' ELSE 'failed' END,processing_error=$2,processing_updated_at=now() WHERE node_id=$1`, source.FileID, code)
 	if err != nil {
 		return databaseError(err)
 	}
 	return s.completeProcessingReceipt(ctx, source)
 }
 
-func (s *Store) AbortParse(ctx context.Context, attempt ProcessingAttempt, code string) error {
-	if err := attempt.validate(); err != nil {
+func (s *Store) AbortParse(ctx context.Context, source Generation, code string) error {
+	if err := source.validate(); err != nil {
 		return err
 	}
 	switch code {
@@ -191,12 +124,12 @@ func (s *Store) AbortParse(ctx context.Context, attempt ProcessingAttempt, code 
 	default:
 		return rpc.Fault(codes.InvalidArgument, "VALIDATION", "invalid processing failure code")
 	}
-	session, err := s.processingSession(ctx, attempt.Source, true)
+	session, err := s.processingSession(ctx, source, true)
 	if err != nil {
 		return err
 	}
 	defer session.tx.Rollback(ctx)
-	p, err := session.currentProcessing(ctx, attempt.Source)
+	p, err := session.currentProcessing(ctx, source)
 	if err != nil {
 		return err
 	}
@@ -206,10 +139,7 @@ func (s *Store) AbortParse(ctx context.Context, attempt ProcessingAttempt, code 
 	if p.publication != "pending" {
 		return nil
 	}
-	if err = p.checkAttempt(attempt); err != nil {
-		return err
-	}
-	if err = session.failProcessing(ctx, attempt.Source, code); err != nil {
+	if err = session.failProcessing(ctx, source, code); err != nil {
 		return err
 	}
 	return databaseError(session.tx.Commit(ctx))

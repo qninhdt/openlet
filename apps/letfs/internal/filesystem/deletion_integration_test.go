@@ -90,21 +90,20 @@ func TestIntegrationDeletionBatchesRetainEvidenceAndDebitOnce(t *testing.T) {
 
 	// Full deletion fences outstanding writes, retains cleanup and leaves a stable tombstone.
 	upload := uuid.Must(uuid.NewV7())
-	_, err = db.Exec(ctx, `INSERT INTO uploads(id,filesystem_id,bucket_id,actor_id,input,transport,candidate_key,expected_size,content_md5,write_expires_at,transfer_deadline)
- VALUES($1,$2,$3,$4,'{}','single','candidate/delete',4,'CY9rzUYh03PK3k6DJie09g==',now()+interval '1 hour',now()+interval '2 hours')`, upload, fs, bucket, actor)
+	_, err = db.Exec(ctx, `INSERT INTO uploads(id,filesystem_id,bucket_id,actor_id,input,transport,candidate_key,expected_size,content_md5,transfer_deadline)
+ VALUES($1,$2,$3,$4,'{}','single','candidate/delete',4,'CY9rzUYh03PK3k6DJie09g==',now()+interval '1 hour')`, upload, fs, bucket, actor)
 	require.NoError(t, err)
-	_, err = db.Exec(ctx, `UPDATE files SET storage_kind='object',inline_bytes=NULL,object_key='objects/delete',
- embedding_model='model',vector_collection='collection',vector_dimension=3 WHERE node_id=$1`, outside.ID)
+	_, err = db.Exec(ctx, `UPDATE files SET storage_kind='object',inline_bytes=NULL,object_key='objects/delete' WHERE node_id=$1`, outside.ID)
 	require.NoError(t, err)
 	foreign := identity.WithPrincipal(t.Context(), identity.Principal{Service: "other-owner"})
-	require.Equal(t, codes.NotFound, status.Code(s.PrepareFilesystemDeletion(foreign, fs)))
 	require.Equal(t, codes.PermissionDenied, status.Code(s.PrepareFilesystemDeletion(ctx, fs)))
 	done, err = s.DeletionBatch(ctx, fs, nil)
 	require.Equal(t, "FILESYSTEM_NOT_DELETING", reason(err))
 	require.False(t, done)
+	s.MaxNodes = 1 // Lowering the deployment limit must still allow deletion.
 	_, err = s.FreezeBucket(owner, uuid.New(), bucket)
 	require.NoError(t, err)
-	require.NoError(t, s.PrepareFilesystemDeletion(owner, fs))
+	require.NoError(t, s.PrepareFilesystemDeletion(foreign, fs))
 	require.NoError(t, s.PrepareFilesystemDeletion(owner, fs))
 	var state string
 	require.NoError(t, db.QueryRow(ctx, `SELECT state FROM uploads WHERE id=$1`, upload).Scan(&state))

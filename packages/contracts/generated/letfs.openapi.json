@@ -1169,31 +1169,9 @@
             "title": "desired_generation",
             "format": "int64"
           },
-          "published_generation": {
-            "type": [
-              "integer",
-              "string",
-              "null"
-            ],
-            "title": "published_generation",
-            "format": "int64"
-          },
-          "indexed_generation": {
-            "type": [
-              "integer",
-              "string",
-              "null"
-            ],
-            "title": "indexed_generation",
-            "format": "int64"
-          },
           "publication_status": {
             "type": "string",
             "title": "publication_status"
-          },
-          "index_status": {
-            "type": "string",
-            "title": "index_status"
           },
           "error_code": {
             "type": [

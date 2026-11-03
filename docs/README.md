@@ -6,7 +6,7 @@ Status: Go filesystem, direct gRPC/HTTP APIs, shared Go/Python contracts and Spi
 - [Setup and verification](setup.md): foundation configuration, local commands and test isolation.
 - [Operation and recovery](operations.md): limits, cleanup, coordinated backup, isolated restore and external release checks.
 - [Data model and consistency](data-model.md): tree, quota, storage publication and lifecycle invariants.
-- [Monolith database diagram](openlet-monolith.dbml): English DBML covering current application tables, constraints and physical/logical relationships.
+- [Monolith database diagram](openlet.dbml): English DBML covering current application tables, constraints and physical/logical relationships.
 - [API contracts](api-contracts.md): public/internal responsibilities and authorization.
 - [Workflows](workflows.md): service-owned Temporal workflows, activities and recovery.
 - [Testing](testing.md): native unit/integration and Playwright API E2E, with concrete correctness gates.

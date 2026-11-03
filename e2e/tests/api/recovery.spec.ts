@@ -82,8 +82,8 @@ test('a real CPU worker restart resumes object-source parsing without another ar
       const response = await session.api.get(`${base}/nodes/${uploaded.node_id}/processing`);
       expect(response.status()).toBe(200);
       const status = await response.json();
-      return [status.publication_status, status.index_status];
-    }, { timeout: 150_000 }).toEqual(['ready', 'ready']);
+      return status.publication_status;
+    }, { timeout: 150_000 }).toBe('ready');
     const state = await (await session.api.get(`${base}/nodes/${uploaded.node_id}/processing`)).json();
     const outputs = await session.api.get(`${base}/nodes`, { params: { parent_id: uploaded.node_id } });
     expect(outputs.status()).toBe(200);
@@ -115,7 +115,7 @@ test('workspace deletion remains admitted after the client stops polling', async
   const workspaces = await session.api.get('/v1/workspaces');
   expect((await workspaces.json()).items).not.toContainEqual(expect.objectContaining({ id: session.workspaceId }));
   expect((await session.api.get(`/v1/filesystems/${session.filesystemId}/nodes/${session.rootId}`)).status()).toBe(403);
-  await recordLifecycleHistories(identity.id, session.userId, session.workspaceId);
+  await recordLifecycleHistories(identity.id, session.workspaceId);
 });
 
 test('a terminated Workspace parent resumes cleanup while its filesystem child remains active', async ({ session }) => {

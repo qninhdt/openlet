@@ -137,25 +137,25 @@ func (s *Server) startCreate(w http.ResponseWriter, r *http.Request, in workspac
 		return
 	}
 	in.Key = key
-	admission, err := s.Store.EnsureWorkspace(r.Context(), in, "")
+	admission, err := s.Store.EnsureWorkspace(r.Context(), in)
 	if err != nil {
 		failure(w, r, err)
 		return
 	}
-	if admission.Workspace.Status == "provisioning" {
+	if admission.Status == "provisioning" {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
-		if err = worker.StartCreate(ctx, s.Temporal, admission); err != nil {
-			slog.WarnContext(r.Context(), "workspace dispatch deferred", "workspace_id", admission.Workspace.ID, "reason", err.Error())
+		if err = worker.StartCreate(ctx, s.Temporal, admission.ID); err != nil {
+			slog.WarnContext(r.Context(), "workspace dispatch deferred", "workspace_id", admission.ID, "reason", err.Error())
 		}
 	}
-	w.Header().Set("Location", "/v1/workspaces/"+admission.Workspace.ID.String())
-	w.Header().Set("ETag", "\""+admission.Workspace.Revision+"\"")
+	w.Header().Set("Location", "/v1/workspaces/"+admission.ID.String())
+	w.Header().Set("ETag", "\""+admission.Revision+"\"")
 	status := 202
-	if admission.Workspace.Status != "provisioning" {
+	if admission.Status != "provisioning" {
 		status = 200
 	}
-	respond(w, status, admission.Workspace)
+	respond(w, status, admission)
 }
 func (s *Server) createWorkspace(c *gin.Context) {
 	w, r := c.Writer, c.Request

@@ -3,7 +3,6 @@ package filesystem
 import (
 	"context"
 	"encoding/json"
-	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -97,34 +96,19 @@ func artifactMediaType(name string) string {
 	}
 }
 
-func (s *Store) CompleteParse(ctx context.Context, a ProcessingAttempt, manifest ParseManifest) error {
+func (s *Store) CompleteParse(ctx context.Context, a Generation, manifest ParseManifest) error {
 	if err := a.validate(); err != nil {
 		return err
 	}
 	if int64(len(manifest.Uploads)) > s.ProcessingMaxOutputs || int64(len(manifest.Directories)) > s.ProcessingMaxOutputs {
 		return uploadState("RESOURCE_LIMIT")
 	}
-	manifest.Uploads = slices.Clone(manifest.Uploads)
-	manifest.Directories = slices.Clone(manifest.Directories)
-	slices.SortFunc(manifest.Uploads, func(a, b uuid.UUID) int { return strings.Compare(a.String(), b.String()) })
-	slices.Sort(manifest.Directories)
-	// Empty repeated fields have one canonical hash, independent of nil slice allocation.
-	if manifest.Uploads == nil {
-		manifest.Uploads = []uuid.UUID{}
-	}
-	if manifest.Directories == nil {
-		manifest.Directories = []string{}
-	}
-	hash, err := fingerprint(manifest)
-	if err != nil {
-		return err
-	}
-	session, err := s.processingSession(ctx, a.Source, false)
+	session, err := s.processingSession(ctx, a, false)
 	if err != nil {
 		return err
 	}
 	defer session.tx.Rollback(ctx)
-	p, err := session.currentProcessing(ctx, a.Source)
+	p, err := session.currentProcessing(ctx, a)
 	if err != nil {
 		return err
 	}
@@ -132,16 +116,10 @@ func (s *Store) CompleteParse(ctx context.Context, a ProcessingAttempt, manifest
 		return err
 	}
 	if p.publication != "pending" {
-		if p.parseManifest == nil || *p.parseManifest != hash {
-			return uploadState("IDEMPOTENCY_CONFLICT")
-		}
 		return nil
 	}
-	if err = p.checkAttempt(a); err != nil {
-		return err
-	}
 	rows, err := session.tx.Query(ctx, `SELECT id,relative_path,state,result_node_id,expected_size FROM uploads
- WHERE processing_file_id=$1 AND processing_generation=$2 AND processing_attempt=$3 AND processing_attempt_id=$4 AND processing_stage='parse' ORDER BY relative_path FOR UPDATE`, a.Source.FileID, a.Source.Generation, a.Number, a.ID)
+ WHERE processing_file_id=$1 AND processing_generation=$2 AND id=ANY($3) AND processing_stage='parse' ORDER BY relative_path FOR UPDATE`, a.FileID, a.Generation, manifest.Uploads)
 	if err != nil {
 		return databaseError(err)
 	}
@@ -179,13 +157,16 @@ func (s *Store) CompleteParse(ctx context.Context, a ProcessingAttempt, manifest
 			return uploadState("RESOURCE_LIMIT")
 		}
 		bytes += out.size
+		if _, exists := files[out.path]; exists {
+			return enrichmentValidation("duplicate artifact path")
+		}
 		files[out.path] = out.id
 	}
 	tree, err := outputTree(files, manifest.Directories, s.ProcessingMaxOutputs)
 	if err != nil {
 		return err
 	}
-	depth, err := session.depth(ctx, a.Source.FileID)
+	depth, err := session.depth(ctx, a.FileID)
 	if err != nil {
 		return err
 	}
@@ -195,7 +176,7 @@ func (s *Store) CompleteParse(ctx context.Context, a ProcessingAttempt, manifest
 		}
 	}
 	var children bool
-	if err = session.tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM nodes WHERE filesystem_id=$1 AND parent_id=$2)`, session.fs, a.Source.FileID).Scan(&children); err != nil {
+	if err = session.tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM nodes WHERE filesystem_id=$1 AND parent_id=$2)`, session.fs, a.FileID).Scan(&children); err != nil {
 		return databaseError(err)
 	}
 	if children {
@@ -220,7 +201,7 @@ func (s *Store) CompleteParse(ctx context.Context, a ProcessingAttempt, manifest
 	}
 	entries := make([]entry, 0, len(tree))
 	for path, upload := range tree {
-		parent, name := a.Source.FileID, path
+		parent, name := a.FileID, path
 		if at := strings.LastIndexByte(path, '/'); at >= 0 {
 			parent, name = ids[path[:at]], path[at+1:]
 		}
@@ -244,9 +225,12 @@ func (s *Store) CompleteParse(ctx context.Context, a ProcessingAttempt, manifest
 	if err != nil {
 		return databaseError(err)
 	}
-	_, err = session.tx.Exec(ctx, `UPDATE files SET publication_status='parsed',parse_manifest_hash=$2,accepted_attempt=0,accepted_attempt_id=NULL,processing_updated_at=now() WHERE node_id=$1`, a.Source.FileID, hash)
+	_, err = session.tx.Exec(ctx, `UPDATE files SET publication_status='parsed',processing_updated_at=now() WHERE node_id=$1`, a.FileID)
 	if err != nil {
 		return databaseError(err)
+	}
+	if err = session.discardUploads(ctx, a); err != nil {
+		return err
 	}
 	return databaseError(session.tx.Commit(ctx))
 }

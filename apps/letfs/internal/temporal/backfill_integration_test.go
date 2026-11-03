@@ -35,7 +35,7 @@ func TestIntegrationBackfillDryRunMissingAndIndexOnly(t *testing.T) {
 	}
 	_, err = db.Exec(t.Context(), `UPDATE nodes SET parent_id=NULL WHERE id=$1`, files[3])
 	require.NoError(t, err)
-	_, err = db.Exec(t.Context(), `UPDATE files SET desired_generation=2,processing_actor_id=$2,processing_format='pdf',processing_source_identity='inline:2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881',publication_status='ready',published_generation=2,index_status='ready',indexed_generation=2,embedding_model='embedding-v1',vector_collection='files-v1',vector_dimension=2,parse_manifest_hash='parse-manifest',publication_manifest_hash='semantic-manifest' WHERE node_id=$1`, files[1], uuid.New())
+	_, err = db.Exec(t.Context(), `UPDATE files SET desired_generation=2,processing_format='pdf',publication_status='ready' WHERE node_id=$1`, files[1])
 	require.NoError(t, err)
 	child := uuid.New()
 	_, err = db.Exec(t.Context(), `INSERT INTO nodes(id,filesystem_id,parent_id,name,kind) VALUES($1,$2,$3,'README.md','file')`, child, fs, files[1])
@@ -62,10 +62,10 @@ func TestIntegrationBackfillDryRunMissingAndIndexOnly(t *testing.T) {
 	result, err = activities.Backfill(t.Context(), input)
 	require.NoError(t, err)
 	require.Equal(t, 1, result.Applied)
-	var source, publication string
-	require.NoError(t, db.QueryRow(t.Context(), `SELECT desired_generation,processing_source_identity,publication_status FROM files WHERE node_id=$1`, files[0]).Scan(&generation, &source, &publication))
+	var publication string
+	require.NoError(t, db.QueryRow(t.Context(), `SELECT desired_generation,publication_status FROM files WHERE node_id=$1`, files[0]).Scan(&generation, &publication))
 	require.EqualValues(t, 1, generation)
-	require.Equal(t, "inline:2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881", source)
+
 	require.Equal(t, "parsed", publication)
 	pendingID := (filesystem.Generation{FileID: files[0], Generation: 1}).WorkflowID()
 	running, err := jobs.WorkflowStatus(t.Context(), pendingID, nil)
@@ -76,26 +76,26 @@ func TestIntegrationBackfillDryRunMissingAndIndexOnly(t *testing.T) {
 	require.NoError(t, err)
 	require.Zero(t, result.Applied, "an active processing workflow is skipped")
 	input.Mode = "rebuild-index"
+	observed, err := store.BackfillCandidates(t.Context(), "rebuild-index", uuid.Nil, 100)
+	require.NoError(t, err)
+	require.Len(t, observed, 1)
 	result, err = activities.Backfill(t.Context(), input)
 	require.NoError(t, err)
 	require.Equal(t, 1, result.Scanned)
 	require.Equal(t, 1, result.Applied)
-	var manifest, parseManifest, index string
 	var parent uuid.UUID
 	var content []byte
-	require.NoError(t, db.QueryRow(t.Context(), `SELECT desired_generation,publication_status,index_status,publication_manifest_hash,parse_manifest_hash,inline_bytes FROM files WHERE node_id=$1`, files[1]).Scan(&generation, &publication, &index, &manifest, &parseManifest, &content))
+	require.NoError(t, db.QueryRow(t.Context(), `SELECT desired_generation,publication_status,inline_bytes FROM files WHERE node_id=$1`, files[1]).Scan(&generation, &publication, &content))
 	require.EqualValues(t, 2, generation)
-	require.Equal(t, "ready", publication)
-	require.Equal(t, "pending", index)
-	require.Equal(t, "semantic-manifest", manifest)
-	require.Equal(t, "parse-manifest", parseManifest)
+	require.Equal(t, "enriched", publication)
+
 	require.Equal(t, []byte("x"), content)
 	require.NoError(t, db.QueryRow(t.Context(), `SELECT parent_id FROM nodes WHERE id=$1`, child).Scan(&parent))
 	require.Equal(t, files[1], parent, "index-only rebuild preserves parsed outputs")
 	var count int
-	require.NoError(t, db.QueryRow(t.Context(), `SELECT count(*) FROM index_deletions WHERE file_id=$1 AND generation=2 AND embedding_model='embedding-v1' AND vector_collection='files-v1' AND vector_dimension=2`, files[1]).Scan(&count))
+	require.NoError(t, db.QueryRow(t.Context(), `SELECT count(*) FROM index_deletions WHERE file_id=$1 AND generation=2`, files[1]).Scan(&count))
 	require.Equal(t, 1, count)
-	indexID, err := (filesystem.Generation{FileID: files[1], Generation: 2}).IndexWorkflowID(store.IndexSpace)
+	indexID := (filesystem.Generation{FileID: files[1], Generation: 2}).WorkflowID()
 	require.NoError(t, err)
 	running, err = jobs.WorkflowStatus(t.Context(), indexID, nil)
 	require.NoError(t, err)
@@ -104,10 +104,7 @@ func TestIntegrationBackfillDryRunMissingAndIndexOnly(t *testing.T) {
 	result, err = activities.Backfill(t.Context(), input)
 	require.NoError(t, err)
 	require.Zero(t, result.Applied, "an active index-only workflow is skipped")
-	observed, err := store.BackfillCandidates(t.Context(), "rebuild-index", uuid.Nil, 100)
-	require.NoError(t, err)
-	require.Len(t, observed, 1)
-	_, err = db.Exec(t.Context(), `UPDATE files SET desired_generation=3,publication_status='pending',published_generation=NULL,indexed_generation=NULL,processing_updated_at=now() WHERE node_id=$1`, files[1])
+	_, err = db.Exec(t.Context(), `UPDATE files SET desired_generation=3,publication_status='pending',processing_updated_at=now() WHERE node_id=$1`, files[1])
 	require.NoError(t, err)
 	applied, err := store.AdmitBackfill(t.Context(), observed[0], uuid.New())
 	require.NoError(t, err)

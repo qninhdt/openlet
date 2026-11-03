@@ -15,7 +15,7 @@ test('HTTP and Temporal preserve trace context through Go and Python without bag
   await expect.poll(async () => {
     const result = await session.api.get(`${base}/nodes/${source.id}/processing`);
     expect(result.status()).toBe(200);
-    return (await result.json()).index_status;
+    return (await result.json()).publication_status;
   }).toBe('ready');
   await expect.poll(async () => {
     const observed = await controls.get('/control/traces', { params: { trace_id: traceId } });

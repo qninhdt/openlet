@@ -67,7 +67,7 @@ async def test_committed_result_reconciliation_never_runs_converter(tmp_path):
         return pb.PrepareParseResponse(complete=pb.ParseComplete())
 
     processor = Processor("localhost:9090", "a" * 32, tmp_path)
-    await processor.process(SimpleNamespace(call=call), None, pb.ProcessingAttempt())
+    await processor.process(SimpleNamespace(call=call), None, pb.ProcessingGeneration())
     assert list(tmp_path.iterdir()) == []
 
 
@@ -96,7 +96,7 @@ async def test_output_retry_reconciles_terminal_transfer_without_resending_bytes
     work = processor.upload(
         SimpleNamespace(call=call),
         None,
-        pb.ProcessingAttempt(),
+        pb.ProcessingGeneration(),
         "parse",
         file,
         "image.png",
@@ -235,9 +235,5 @@ async def test_semantic_stage_reports_failure_only_when_retries_end(
     assert bool(reported) == (attempt == 3 or terminal)
     for method, request in reported:
         assert method == ("FailIndex" if stage == "index" else "FailEnrichment")
-        scope = request.source if stage == "index" else request.attempt
+        scope = request.source
         assert scope.generation == 7
-    if reported and stage == "index":
-        assert reported[0][1].vector_space == pb.VectorSpace(
-            model="model", collection="files", dimension=2
-        )

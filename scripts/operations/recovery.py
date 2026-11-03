@@ -239,7 +239,7 @@ class Recovery:
                 "-d",
                 "openlet_letfs",
                 "-c",
-                "SELECT count(*) FROM uploads WHERE state IN ('open','completing') OR (state='aborted' AND write_expires_at>now())",
+                "SELECT count(*) FROM uploads WHERE state IN ('open','completing') OR (state='aborted' AND transfer_deadline>now())",
             )
             .decode()
             .strip()

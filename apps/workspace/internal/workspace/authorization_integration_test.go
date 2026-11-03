@@ -30,9 +30,9 @@ func TestIntegrationActionAdmissionUsesGraphAndRechecksCanonicalRevision(t *test
 	server := setupGraph(t, &store)
 	graph := store.Graph
 	owner, viewer := uuid.New(), uuid.New()
-	created, err := store.EnsureWorkspace(ctx, CreateInput{ActorID: owner, Key: uuid.New(), Name: "Actions"}, "")
+	created, err := store.EnsureWorkspace(ctx, CreateInput{ActorID: owner, Key: uuid.New(), Name: "Actions"})
 	require.NoError(t, err)
-	id := created.Workspace.ID
+	id := created.ID
 	require.NoError(t, store.Activate(ctx, mapping(id)))
 	syncGraph(t, &store, id)
 	_, token, err := store.Invite(ctx, id, owner, "viewer@example.test", "viewer")
@@ -111,9 +111,9 @@ func TestIntegrationConcurrentOwnershipAndMemberChangesPreserveOneOwner(t *testi
 	for _, competing := range []string{"transfer", "leave", "remove"} {
 		t.Run(competing, func(t *testing.T) {
 			owner, first, second := uuid.New(), uuid.New(), uuid.New()
-			admitted, err := store.EnsureWorkspace(ctx, CreateInput{ActorID: owner, Key: uuid.New(), Name: competing}, "")
+			admitted, err := store.EnsureWorkspace(ctx, CreateInput{ActorID: owner, Key: uuid.New(), Name: competing})
 			require.NoError(t, err)
-			id := admitted.Workspace.ID
+			id := admitted.ID
 			storage := mapping(id)
 			require.NoError(t, store.Activate(ctx, storage))
 			_, err = store.DB.Exec(ctx, `INSERT INTO workspace_members(workspace_id,user_id,role) VALUES($1,$2,'editor'),($1,$3,'editor')`, id, first, second)

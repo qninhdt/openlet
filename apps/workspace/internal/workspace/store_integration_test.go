@@ -40,17 +40,17 @@ func TestIntegrationWorkspaceCollaboration(t *testing.T) {
 	ctx := t.Context()
 	owner, member := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	input := CreateInput{ActorID: owner, Key: uuid.Must(uuid.NewV7()), Name: "Team"}
-	created, err := store.EnsureWorkspace(ctx, input, "")
+	created, err := store.EnsureWorkspace(ctx, input)
 	require.NoError(t, err)
-	again, err := store.EnsureWorkspace(ctx, input, "")
+	again, err := store.EnsureWorkspace(ctx, input)
 	require.NoError(t, err)
 	require.Equal(t, created, again)
 	changed := input
 	changed.Name = "Different"
-	_, err = store.EnsureWorkspace(ctx, changed, "")
+	_, err = store.EnsureWorkspace(ctx, changed)
 	require.EqualError(t, err, "IDEMPOTENCY_CONFLICT")
-	require.NoError(t, store.Activate(ctx, mapping(created.Workspace.ID)))
-	ws := created.Workspace.ID
+	require.NoError(t, store.Activate(ctx, mapping(created.ID)))
+	ws := created.ID
 	syncGraph(t, &store, ws)
 	_, err = store.Authorize(ctx, ws, member, authz.WorkspaceRead)
 	require.EqualError(t, err, "NOT_FOUND")
@@ -127,7 +127,7 @@ func TestIntegrationConcurrentWorkspaceLimit(t *testing.T) {
 				ActorID: owner,
 				Key:     uuid.Must(uuid.NewV7()),
 				Name:    "Concurrent",
-			}, "")
+			})
 			results <- err
 		})
 	}
@@ -157,9 +157,9 @@ func TestIntegrationStorageReservationSurvivesConcurrentRetryAndRejectsRebinding
 	store := Store{DB: postgres(t), MaxWorkspaces: 10, MaxMembers: 10, QuotaLimit: 1024}
 	actor := uuid.New()
 	input := CreateInput{ActorID: actor, Key: uuid.New(), Name: "Stable storage"}
-	admission, err := store.EnsureWorkspace(ctx, input, "")
+	admission, err := store.EnsureWorkspace(ctx, input)
 	require.NoError(t, err)
-	id := admission.Workspace.ID
+	id := admission.ID
 	type reservation struct {
 		storage Storage
 		err     error
@@ -186,10 +186,10 @@ func TestIntegrationStorageReservationSurvivesConcurrentRetryAndRejectsRebinding
 	require.Equal(t, uuid.Version(7), reserved.FilesystemID.Version())
 	require.NotEqual(t, reserved.BucketID, reserved.FilesystemID)
 	require.Equal(t, uuid.Nil, reserved.RootID, "root is returned by letfs after creation")
-	owner, err := store.EnsureWorkspace(ctx, input, "")
+	owner, err := store.EnsureWorkspace(ctx, input)
 	require.NoError(t, err)
-	require.Equal(t, reserved.BucketID, *owner.Workspace.BucketID)
-	require.Equal(t, reserved.FilesystemID, *owner.Workspace.FilesystemID)
+	require.Equal(t, reserved.BucketID, *owner.BucketID)
+	require.Equal(t, reserved.FilesystemID, *owner.FilesystemID)
 	foreign := reserved
 	foreign.RootID = uuid.New()
 	foreign.BucketID = uuid.New()
@@ -224,10 +224,10 @@ func TestIntegrationConcurrentInvitationsReturnOneToken(t *testing.T) {
 	store := Store{DB: postgres(t), MaxWorkspaces: 10, MaxMembers: 10, QuotaLimit: 1024, InviteTTL: time.Hour}
 	setupGraph(t, &store)
 	owner := uuid.Must(uuid.NewV7())
-	provision, err := store.EnsureWorkspace(t.Context(), CreateInput{ActorID: owner, Key: uuid.Must(uuid.NewV7()), Name: "Team"}, "")
+	provision, err := store.EnsureWorkspace(t.Context(), CreateInput{ActorID: owner, Key: uuid.Must(uuid.NewV7()), Name: "Team"})
 	require.NoError(t, err)
-	require.NoError(t, store.Activate(t.Context(), mapping(provision.Workspace.ID)))
-	syncGraph(t, &store, provision.Workspace.ID)
+	require.NoError(t, store.Activate(t.Context(), mapping(provision.ID)))
+	syncGraph(t, &store, provision.ID)
 	type result struct {
 		invitation Invitation
 		token      string
@@ -239,7 +239,7 @@ func TestIntegrationConcurrentInvitationsReturnOneToken(t *testing.T) {
 	for range 8 {
 		workers.Go(func() {
 			<-start
-			invitation, token, err := store.Invite(t.Context(), provision.Workspace.ID, owner, " GUEST@EXAMPLE.COM ", "viewer")
+			invitation, token, err := store.Invite(t.Context(), provision.ID, owner, " GUEST@EXAMPLE.COM ", "viewer")
 			results <- result{invitation, token, err}
 		})
 	}
@@ -259,22 +259,22 @@ func TestIntegrationConcurrentInvitationsReturnOneToken(t *testing.T) {
 		}
 	}
 	require.Equal(t, 1, tokens)
-	_, _, err = store.Invite(t.Context(), provision.Workspace.ID, owner, "guest@example.com", "editor")
+	_, _, err = store.Invite(t.Context(), provision.ID, owner, "guest@example.com", "editor")
 	require.EqualError(t, err, "INVITATION_CONFLICT")
-	require.NoError(t, store.RevokeInvite(t.Context(), provision.Workspace.ID, owner, id))
-	next, token, err := store.Invite(t.Context(), provision.Workspace.ID, owner, "guest@example.com", "viewer")
+	require.NoError(t, store.RevokeInvite(t.Context(), provision.ID, owner, id))
+	next, token, err := store.Invite(t.Context(), provision.ID, owner, "guest@example.com", "viewer")
 	require.NoError(t, err)
 	require.NotEqual(t, id, next.ID)
 	require.NotEmpty(t, token)
 	_, err = store.DB.Exec(t.Context(), `UPDATE workspace_invitations SET expires_at=now()-interval '1 second' WHERE id=$1`, next.ID)
 	require.NoError(t, err)
-	renewed, token, err := store.Invite(t.Context(), provision.Workspace.ID, owner, "guest@example.com", "viewer")
+	renewed, token, err := store.Invite(t.Context(), provision.ID, owner, "guest@example.com", "viewer")
 	require.NoError(t, err)
 	require.NotEqual(t, next.ID, renewed.ID)
 	guest := uuid.Must(uuid.NewV7())
 	_, err = store.AcceptInvite(t.Context(), guest, token, []string{"guest@example.com"})
 	require.NoError(t, err)
-	current, err := store.Get(t.Context(), provision.Workspace.ID, owner)
+	current, err := store.Get(t.Context(), provision.ID, owner)
 	require.NoError(t, err)
 	require.NoError(t, store.ChangeMember(t.Context(), current.ID, owner, guest, "", true, current.Revision))
 	_, err = store.AcceptInvite(t.Context(), guest, token, []string{"guest@example.com"})
@@ -289,38 +289,36 @@ func TestIntegrationWorkspaceReceiptAdmissionAndExpiry(t *testing.T) {
 	ctx := t.Context()
 	in := CreateInput{ActorID: uuid.New(), Key: uuid.New(), Name: "Same request"}
 	type result struct {
-		value Provision
+		value Workspace
 		err   error
 	}
 	results := make(chan result, 8)
 	var workers sync.WaitGroup
 	for range 8 {
-		workers.Go(func() { value, err := store.EnsureWorkspace(ctx, in, ""); results <- result{value, err} })
+		workers.Go(func() { value, err := store.EnsureWorkspace(ctx, in); results <- result{value, err} })
 	}
 	workers.Wait()
 	close(results)
-	var admitted Provision
+	var admitted Workspace
 	for value := range results {
 		require.NoError(t, value.err)
-		if admitted.Workspace.ID == uuid.Nil {
+		if admitted.ID == uuid.Nil {
 			admitted = value.value
 		}
-		require.Equal(t, admitted.Workspace.ID, value.value.Workspace.ID)
-		require.Equal(t, admitted.WorkflowID, value.value.WorkflowID)
-		require.Nil(t, value.value.Workspace.BucketID)
+		require.Equal(t, admitted.ID, value.value.ID)
+		require.Nil(t, value.value.BucketID)
 	}
 	pending, err := store.Pending(ctx)
 	require.NoError(t, err)
 	require.Len(t, pending, 1)
-	require.Equal(t, in, pending[0].Provision.Input)
-	require.Equal(t, admitted.WorkflowID, pending[0].Provision.WorkflowID)
+	require.Equal(t, Pending{ID: admitted.ID, Status: "provisioning"}, pending[0])
 	require.NoError(t, store.PruneReceipts(ctx))
 	var count int
 	require.NoError(t, store.DB.QueryRow(ctx, `SELECT count(*) FROM idempotency_keys`).Scan(&count))
 	require.Equal(t, 1, count)
 	// The resource cannot become active until its owner-returned mapping is complete.
-	require.EqualError(t, store.Activate(ctx, Storage{WorkspaceID: admitted.Workspace.ID}), "VALIDATION")
-	assigned := mapping(admitted.Workspace.ID)
+	require.EqualError(t, store.Activate(ctx, Storage{WorkspaceID: admitted.ID}), "VALIDATION")
+	assigned := mapping(admitted.ID)
 	require.NoError(t, store.Activate(ctx, assigned))
 	unreleased, err := store.UnreleasedProvisioning(ctx)
 	require.NoError(t, err)
@@ -329,23 +327,20 @@ func TestIntegrationWorkspaceReceiptAdmissionAndExpiry(t *testing.T) {
 	unreleased, err = store.UnreleasedProvisioning(ctx)
 	require.NoError(t, err)
 	require.Empty(t, unreleased)
-	var lifetime float64
-	require.NoError(t, store.DB.QueryRow(ctx, `SELECT extract(epoch FROM expires_at-completed_at) FROM idempotency_keys`).Scan(&lifetime))
-	require.Equal(t, 86400.0, lifetime)
+	var expiresInWindow bool
+	require.NoError(t, store.DB.QueryRow(ctx, `SELECT expires_at BETWEEN now()+interval '23 hours 59 minutes' AND now()+interval '24 hours 1 minute' FROM idempotency_keys`).Scan(&expiresInWindow))
+	require.True(t, expiresInWindow)
 	require.NoError(t, store.Activate(ctx, assigned))
 	different := assigned
 	different.BucketID = uuid.New()
 	require.EqualError(t, store.Activate(ctx, different), "STATE_CONFLICT")
-	// An expired client key may admit new work, while the old workflow identity cannot.
-	_, err = store.DB.Exec(ctx, `UPDATE idempotency_keys SET completed_at=now()-interval '25 hours',expires_at=now()-interval '1 hour'`)
+	// An expired client key admits new work independently of the existing resource workflow.
+	_, err = store.DB.Exec(ctx, `UPDATE idempotency_keys SET expires_at=now()-interval '1 hour'`)
 	require.NoError(t, err)
 	require.NoError(t, store.PruneReceipts(ctx))
-	old, err := store.EnsureWorkspace(ctx, in, admitted.WorkflowID)
+	next, err := store.EnsureWorkspace(ctx, in)
 	require.NoError(t, err)
-	require.Equal(t, admitted.Workspace.ID, old.Workspace.ID)
-	next, err := store.EnsureWorkspace(ctx, in, "")
-	require.NoError(t, err)
-	require.NotEqual(t, admitted.Workspace.ID, next.Workspace.ID)
+	require.NotEqual(t, admitted.ID, next.ID)
 }
 
 func TestIntegrationFailedProvisioningCanBeDeleted(t *testing.T) {
@@ -353,18 +348,18 @@ func TestIntegrationFailedProvisioningCanBeDeleted(t *testing.T) {
 	setupGraph(t, &store)
 	ctx := t.Context()
 	actor := uuid.New()
-	admitted, err := store.EnsureWorkspace(ctx, CreateInput{ActorID: actor, Key: uuid.New(), Name: "Failed"}, "")
+	admitted, err := store.EnsureWorkspace(ctx, CreateInput{ActorID: actor, Key: uuid.New(), Name: "Failed"})
 	require.NoError(t, err)
-	require.NoError(t, store.Fail(ctx, admitted.Workspace.ID))
-	syncGraph(t, &store, admitted.Workspace.ID)
-	failed, err := store.Get(ctx, admitted.Workspace.ID, actor)
+	require.NoError(t, store.Fail(ctx, admitted.ID))
+	syncGraph(t, &store, admitted.ID)
+	failed, err := store.Get(ctx, admitted.ID, actor)
 	require.NoError(t, err)
 	require.Equal(t, "failed", failed.Status)
 	require.NotNil(t, failed.ErrorCode)
 	_, err = store.BeginDeletion(ctx, DeleteInput{ActorID: actor, WorkspaceID: failed.ID, Revision: failed.Revision})
 	require.NoError(t, err)
 	require.NoError(t, store.CompleteDeletion(ctx, failed.ID))
-	next, err := store.EnsureWorkspace(ctx, CreateInput{ActorID: actor, Key: uuid.New(), Name: "Fresh"}, "")
+	next, err := store.EnsureWorkspace(ctx, CreateInput{ActorID: actor, Key: uuid.New(), Name: "Fresh"})
 	require.NoError(t, err)
-	require.NotEqual(t, failed.ID, next.Workspace.ID)
+	require.NotEqual(t, failed.ID, next.ID)
 }

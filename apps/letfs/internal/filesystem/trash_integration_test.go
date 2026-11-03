@@ -50,8 +50,7 @@ func TestIntegrationReplacementAndTrashPreserveAccountingAndCleanup(t *testing.T
 	_, err = db.Exec(ctx, `UPDATE quota_buckets SET used_bytes=used_bytes+3 WHERE id=$1`, bucket)
 	require.NoError(t, err)
 	_, err = db.Exec(ctx, `UPDATE files SET title='old title',context='old context',
- publication_status='ready',published_generation=desired_generation,index_status='ready',indexed_generation=desired_generation,
- embedding_model='model',vector_collection='collection',vector_dimension=3 WHERE node_id=$1`, file.ID)
+ publication_status='ready' WHERE node_id=$1`, file.ID)
 	require.NoError(t, err)
 	_, err = s.ReplaceContent(ctx, fs, mounts, Locator{NodeID: &file.ID}, &file.Revision, []byte("1234567890"), "application/pdf")
 	require.Equal(t, "QUOTA_EXCEEDED", reason(err))
@@ -64,9 +63,8 @@ func TestIntegrationReplacementAndTrashPreserveAccountingAndCleanup(t *testing.T
 
 	// These rows represent a completed generation with a still outstanding ingest transfer.
 	upload := uuid.Must(uuid.NewV7())
-	_, err = db.Exec(ctx, `INSERT INTO uploads(id,filesystem_id,bucket_id,actor_id,input,transport,candidate_key,expected_size,content_md5,
- processing_file_id,processing_generation,processing_attempt,processing_attempt_id,relative_path,processing_stage,write_expires_at,transfer_deadline)
- VALUES($1,$2,$3,$4,'{}','single','candidate/old',4,'CY9rzUYh03PK3k6DJie09g==',$5,1,1,$6,'output.md','parse',now()+interval '1 hour',now()+interval '2 hours')`, upload, fs, bucket, actor, file.ID, uuid.New())
+	_, err = db.Exec(ctx, `INSERT INTO uploads(id,filesystem_id,bucket_id,actor_id,input,transport,candidate_key,expected_size,content_md5,processing_file_id,processing_generation,relative_path,processing_stage,transfer_deadline)
+ VALUES($1,$2,$3,$4,'{}','single','candidate/old',4,'CY9rzUYh03PK3k6DJie09g==',$5,1,'output.md','parse',now()+interval '1 hour')`, upload, fs, bucket, actor, file.ID)
 	require.NoError(t, err)
 	result, err := json.Marshal(Generation{FileID: file.ID, Generation: 1})
 	require.NoError(t, err)
@@ -101,7 +99,7 @@ func TestIntegrationReplacementAndTrashPreserveAccountingAndCleanup(t *testing.T
 	require.NoError(t, db.QueryRow(ctx, `SELECT transfer_deadline FROM uploads WHERE id=$1`, upload).Scan(&deadline))
 	require.False(t, eligible.Before(deadline), "cleanup cannot beat outstanding signed transfer deadline")
 	var completed bool
-	require.NoError(t, db.QueryRow(ctx, `SELECT completed_at IS NOT NULL FROM idempotency_keys WHERE operation='process-file'`).Scan(&completed))
+	require.NoError(t, db.QueryRow(ctx, `SELECT expires_at IS NOT NULL FROM idempotency_keys WHERE operation='process-file'`).Scan(&completed))
 	require.True(t, completed)
 	require.NoError(t, db.QueryRow(ctx, `SELECT count(*) FROM index_deletions WHERE file_id=$1 AND generation=1`, file.ID).Scan(&count))
 	require.EqualValues(t, 1, count)
