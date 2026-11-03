@@ -19,7 +19,7 @@ async def test_missing_ocr_runtime_fails_before_connecting(tmp_path, monkeypatch
         monkeypatch.setenv(name, value)
     monkeypatch.setitem(sys.modules, "onnxruntime", None)
     connect = AsyncMock(side_effect=AssertionError("must not connect"))
-    monkeypatch.setattr(worker.Client, "connect", connect)
+    monkeypatch.setattr(worker, "connect", connect)
     with pytest.raises(RuntimeError, match="OCR runtime unavailable") as error:
         await worker.main("cpu")
     assert isinstance(error.value.__cause__, ImportError)
@@ -52,7 +52,8 @@ async def test_io_worker_polls_without_parser_models_or_ocr(tmp_path, monkeypatc
     monkeypatch.setattr(loop, "remove_signal_handler", lambda sig: handlers.pop(sig))
 
     @asynccontextmanager
-    async def telemetry(role):
+    async def telemetry(service, role):
+        assert service == "openlet-letfs-ingest"
         assert role == "io"
         yield "tracing", None
 
@@ -76,7 +77,7 @@ async def test_io_worker_polls_without_parser_models_or_ocr(tmp_path, monkeypatc
     monkeypatch.setattr(worker.AISettings, "from_env", lambda: None)
     monkeypatch.setattr(worker.IndexSettings, "from_env", lambda: None)
     monkeypatch.setattr(worker, "OpenRouter", lambda settings: ai)
-    monkeypatch.setattr(worker.Client, "connect", AsyncMock())
+    monkeypatch.setattr(worker, "connect", AsyncMock())
     monkeypatch.setattr(worker, "Worker", Poller)
     await worker.main("io")
     ai.close.assert_awaited_once()

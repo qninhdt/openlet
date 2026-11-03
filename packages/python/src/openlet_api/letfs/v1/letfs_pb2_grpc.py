@@ -1903,6 +1903,16 @@ class StorageAdministrationServiceStub:
         Args:
             channel: A grpc.Channel.
         """
+        self.CreateStorage = channel.unary_unary(
+                '/openlet_api.letfs.v1.StorageAdministrationService/CreateStorage',
+                request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateStorageRequest.SerializeToString,
+                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateStorageResponse.FromString,
+                _registered_method=True)
+        self.DeleteFilesystem = channel.unary_unary(
+                '/openlet_api.letfs.v1.StorageAdministrationService/DeleteFilesystem',
+                request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.DeleteFilesystemRequest.SerializeToString,
+                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.DeleteFilesystemResponse.FromString,
+                _registered_method=True)
         self.CreateBucket = channel.unary_unary(
                 '/openlet_api.letfs.v1.StorageAdministrationService/CreateBucket',
                 request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateBucketRequest.SerializeToString,
@@ -1938,6 +1948,18 @@ class StorageAdministrationServiceStub:
 class StorageAdministrationServiceServicer:
     """These methods require explicit service authority, never a public user JWT.
     """
+
+    def CreateStorage(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DeleteFilesystem(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
 
     def CreateBucket(self, request, context):
         """Missing associated documentation comment in .proto file."""
@@ -1978,6 +2000,16 @@ class StorageAdministrationServiceServicer:
 
 def add_StorageAdministrationServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
+            'CreateStorage': grpc.unary_unary_rpc_method_handler(
+                    servicer.CreateStorage,
+                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateStorageRequest.FromString,
+                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateStorageResponse.SerializeToString,
+            ),
+            'DeleteFilesystem': grpc.unary_unary_rpc_method_handler(
+                    servicer.DeleteFilesystem,
+                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.DeleteFilesystemRequest.FromString,
+                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.DeleteFilesystemResponse.SerializeToString,
+            ),
             'CreateBucket': grpc.unary_unary_rpc_method_handler(
                     servicer.CreateBucket,
                     request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateBucketRequest.FromString,
@@ -2019,6 +2051,60 @@ def add_StorageAdministrationServiceServicer_to_server(servicer, server):
 class StorageAdministrationService:
     """These methods require explicit service authority, never a public user JWT.
     """
+
+    @staticmethod
+    def CreateStorage(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/openlet_api.letfs.v1.StorageAdministrationService/CreateStorage',
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateStorageRequest.SerializeToString,
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateStorageResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DeleteFilesystem(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/openlet_api.letfs.v1.StorageAdministrationService/DeleteFilesystem',
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.DeleteFilesystemRequest.SerializeToString,
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.DeleteFilesystemResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
 
     @staticmethod
     def CreateBucket(request,

@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/qninhdt/openlet/apps/letfs/internal/clients/search"
+	"github.com/qninhdt/openlet/apps/letfs/internal/clients/storage"
 	"github.com/qninhdt/openlet/apps/letfs/internal/filesystem"
-	"github.com/qninhdt/openlet/apps/letfs/internal/search"
-	"github.com/qninhdt/openlet/apps/letfs/internal/storage"
 	sharedconfig "github.com/qninhdt/openlet/packages/go/config"
 )
 

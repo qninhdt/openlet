@@ -6,7 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/qninhdt/openlet/apps/letfs/internal/search"
+	"github.com/qninhdt/openlet/apps/letfs/internal/clients/search"
 )
 
 type IndexDeletion struct {

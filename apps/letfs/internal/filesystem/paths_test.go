@@ -1,23 +1,19 @@
 package filesystem
 
 import (
+	"github.com/qninhdt/openlet/packages/go/apperr"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/genproto/googleapis/rpc/errdetails"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 func ptr[T any](v T) *T { return &v }
 
 func reason(err error) string {
-	for _, detail := range status.Convert(err).Details() {
-		if info, ok := detail.(*errdetails.ErrorInfo); ok {
-			return info.Reason
-		}
+	if fault, ok := apperr.As(err); ok {
+		return fault.Reason
 	}
 	return ""
 }
@@ -83,16 +79,16 @@ func TestAliasGuardsAndScopedPages(t *testing.T) {
 	require.EqualValues(t, 50, count)
 	for _, limit := range []int32{0, -1, 101} {
 		_, _, err := page("scope", nil, &limit)
-		require.Equal(t, codes.InvalidArgument, status.Code(err))
+		require.Equal(t, apperr.Invalid, apperr.KindOf(err))
 	}
 	_, _, err = page("scope", ptr("foreign|"+id.String()), nil)
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
+	require.Equal(t, apperr.Invalid, apperr.KindOf(err))
 	_, _, err = page("scope", ptr("scope|not-uuid"), nil)
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
+	require.Equal(t, apperr.Invalid, apperr.KindOf(err))
 }
 
 func TestUserOperationsRequireVerifiedActorBeforeStorage(t *testing.T) {
 	s := &Store{}
 	_, err := s.GetNode(t.Context(), uuid.New(), nil, Locator{})
-	require.Equal(t, codes.Unauthenticated, status.Code(err))
+	require.Equal(t, apperr.Unauthenticated, apperr.KindOf(err))
 }

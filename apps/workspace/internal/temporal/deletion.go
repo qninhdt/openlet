@@ -3,10 +3,8 @@ package temporal
 import (
 	"context"
 	"github.com/google/uuid"
-	"github.com/qninhdt/openlet/apps/workspace/internal/letfs"
 	"github.com/qninhdt/openlet/apps/workspace/internal/workspace"
-	letfsv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/letfs/v1"
-	"go.temporal.io/api/enums/v1"
+	sharedtemporal "github.com/qninhdt/openlet/packages/go/temporal"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 	"time"
@@ -18,19 +16,27 @@ type DeleteWorkflowInput struct {
 }
 
 func (a *Activities) PrepareWorkspaceDeletion(ctx context.Context, in workspace.DeleteInput) (workspace.Workspace, error) {
-	value, err := a.Store.BeginDeletion(ctx, in)
-	if err != nil {
-		return value, businessError(err)
-	}
-	err = a.Store.PublishStorageRelationships(ctx, a.Graph, value.ID)
-	return value, err
+	value, err := a.Service.BeginDeletion(ctx, in)
+	return value, sharedtemporal.Error(err)
 }
 func (a *Activities) CompleteWorkspaceDeletion(ctx context.Context, id uuid.UUID) error {
-	if err := a.Store.CompleteDeletion(ctx, id); err != nil {
-		return businessError(err)
-	}
-	return a.Store.DeleteMemberRelationships(ctx, a.Graph, id)
+	return sharedtemporal.Error(a.Service.CompleteDeletion(ctx, id))
 }
+func (a *Activities) FreezeBucket(ctx context.Context, id uuid.UUID) error {
+	return sharedtemporal.Error(a.Service.Storage.FreezeBucket(ctx, id))
+}
+func (a *Activities) ListFilesystems(ctx context.Context, bucket, after uuid.UUID) ([]uuid.UUID, error) {
+	value, err := a.Service.Storage.ListFilesystems(ctx, bucket, after)
+	return value, sharedtemporal.Error(err)
+}
+func (a *Activities) DeleteFilesystem(ctx context.Context, id uuid.UUID) (bool, error) {
+	value, err := a.Service.Storage.DeleteFilesystem(ctx, id)
+	return value, sharedtemporal.Error(err)
+}
+func (a *Activities) CompleteBucket(ctx context.Context, id uuid.UUID) error {
+	return sharedtemporal.Error(a.Service.Storage.CompleteBucket(ctx, id))
+}
+
 func DeleteWorkspace(ctx workflow.Context, in DeleteWorkflowInput) (uuid.UUID, error) {
 	ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{StartToCloseTimeout: 30 * time.Second, RetryPolicy: &temporal.RetryPolicy{InitialInterval: time.Second, MaximumInterval: 30 * time.Second}})
 	// Once admitted, cancellation must not strand destructive cleanup.
@@ -42,44 +48,35 @@ func DeleteWorkspace(ctx workflow.Context, in DeleteWorkflowInput) (uuid.UUID, e
 		return value.ID, nil
 	}
 	if value.BucketID != nil {
-		bucketID := value.BucketID.String()
-		remote := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{TaskQueue: letfs.Queue, StartToCloseTimeout: 30 * time.Second, RetryPolicy: &temporal.RetryPolicy{InitialInterval: time.Second, MaximumInterval: 30 * time.Second}})
-		var bucket *letfsv1.Bucket
-		if err := workflow.ExecuteActivity(remote, letfs.FreezeBucket, "workspace", &letfsv1.FreezeBucketRequest{BucketId: bucketID, IdempotencyKey: bucketID}).Get(ctx, &bucket); err != nil {
+		bucket := *value.BucketID
+		if err := workflow.ExecuteActivity(ctx, a.FreezeBucket, bucket).Get(ctx, nil); err != nil {
 			return value.ID, err
-		}
-		if bucket.GetId() != bucketID || (bucket.GetState() != "frozen" && bucket.GetState() != "deleted") {
-			return value.ID, temporal.NewNonRetryableApplicationError("invalid bucket result", "STORAGE_SCOPE_CONFLICT", nil)
 		}
 		count := 0
 		for {
-			request := &letfsv1.ListBucketFilesystemsRequest{BucketId: bucketID}
-			if in.Cursor != uuid.Nil {
-				after := in.Cursor.String()
-				request.AfterId = &after
-			}
-			var page *letfsv1.ListBucketFilesystemsResponse
-			if err := workflow.ExecuteActivity(remote, letfs.ListFilesystems, "workspace", request).Get(ctx, &page); err != nil {
+			var ids []uuid.UUID
+			if err := workflow.ExecuteActivity(ctx, a.ListFilesystems, bucket, in.Cursor).Get(ctx, &ids); err != nil {
 				return value.ID, err
 			}
-			if len(page.GetFilesystemIds()) == 0 {
+			if len(ids) == 0 {
 				break
 			}
-			for _, rawID := range page.GetFilesystemIds() {
-				id, err := uuid.Parse(rawID)
-				if err != nil || id == uuid.Nil || id.String() <= in.Cursor.String() {
-					return value.ID, temporal.NewNonRetryableApplicationError("invalid filesystem page", "STORAGE_SCOPE_CONFLICT", err)
-				}
-				if err := workflow.ExecuteActivity(remote, letfs.PrepareDeletion, "workspace", id).Get(ctx, nil); err != nil {
-					return value.ID, err
-				}
-				childCtx := workflow.WithChildOptions(ctx, workflow.ChildWorkflowOptions{WorkflowID: "delete-filesystem/" + id.String() + "/" + workflow.GetInfo(ctx).WorkflowExecution.RunID, TaskQueue: letfs.Queue, WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE, ParentClosePolicy: enums.PARENT_CLOSE_POLICY_ABANDON, WorkflowExecutionTimeout: 7 * 24 * time.Hour})
-				child := workflow.ExecuteChildWorkflow(childCtx, "DeleteFilesystem", letfs.DeletionInput{FilesystemID: id})
-				if err := child.GetChildWorkflowExecution().Get(ctx, nil); err != nil {
-					return value.ID, err
-				}
-				if err := child.Get(ctx, nil); err != nil {
-					return value.ID, err
+			for _, id := range ids {
+				for {
+					var done bool
+					if err := workflow.ExecuteActivity(ctx, a.DeleteFilesystem, id).Get(ctx, &done); err != nil {
+						return value.ID, err
+					}
+					if done {
+						break
+					}
+					count++
+					if count >= 100 {
+						return value.ID, workflow.NewContinueAsNewError(ctx, DeleteWorkspace, in)
+					}
+					if err := workflow.Sleep(ctx, time.Second); err != nil {
+						return value.ID, err
+					}
 				}
 				in.Cursor = id
 				count++
@@ -88,11 +85,8 @@ func DeleteWorkspace(ctx workflow.Context, in DeleteWorkflowInput) (uuid.UUID, e
 				}
 			}
 		}
-		if err := workflow.ExecuteActivity(remote, letfs.CompleteBucket, "workspace", &letfsv1.CompleteBucketDeletionRequest{BucketId: bucketID, IdempotencyKey: bucketID}).Get(ctx, &bucket); err != nil {
+		if err := workflow.ExecuteActivity(ctx, a.CompleteBucket, bucket).Get(ctx, nil); err != nil {
 			return value.ID, err
-		}
-		if bucket.GetId() != bucketID || bucket.GetState() != "deleted" {
-			return value.ID, temporal.NewNonRetryableApplicationError("invalid bucket result", "STORAGE_SCOPE_CONFLICT", nil)
 		}
 	}
 	if err := workflow.ExecuteActivity(ctx, a.CompleteWorkspaceDeletion, value.ID).Get(ctx, nil); err != nil {

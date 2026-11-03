@@ -5,6 +5,7 @@ package filesystem
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"github.com/qninhdt/openlet/packages/go/apperr"
 	"sync"
 	"testing"
 
@@ -14,8 +15,6 @@ import (
 	"github.com/qninhdt/openlet/packages/go/identity"
 	sharedfixture "github.com/qninhdt/openlet/packages/go/testfixture"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 func TestIntegrationCopyAdmissionCapturesIdentityAndReplaysWithoutMutation(t *testing.T) {
@@ -39,7 +38,7 @@ func TestIntegrationCopyAdmissionCapturesIdentityAndReplaysWithoutMutation(t *te
 	input := CreateCopy{SourceID: source.ID, ParentID: root, Name: "copy.bin", Revision: &source.Revision}
 	key := uuid.New()
 	_, err = s.AdmitCopy(ctx, fs, mounts, key, input)
-	require.Equal(t, codes.PermissionDenied, status.Code(err), "copy_create does not imply source read")
+	require.Equal(t, apperr.Forbidden, apperr.KindOf(err), "copy_create does not imply source read")
 	testfixture.Grant(t, graph, "filesystem", fs, actor, authz.NodeRead)
 	var workers sync.WaitGroup
 	results := make(chan CopyAdmission, 6)
@@ -119,5 +118,5 @@ func TestIntegrationCopyAdmissionCapturesIdentityAndReplaysWithoutMutation(t *te
 	require.NoError(t, err)
 	require.Equal(t, admission, replay, "lost reply returns immutable admission after source disappears")
 	_, err = s.AdmitCopy(ctx, fs, mounts, uuid.New(), input)
-	require.Equal(t, codes.NotFound, status.Code(err))
+	require.Equal(t, apperr.Missing, apperr.KindOf(err))
 }

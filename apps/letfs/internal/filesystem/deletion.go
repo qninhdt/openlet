@@ -6,10 +6,21 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/qninhdt/openlet/packages/go/apperr"
 	"github.com/qninhdt/openlet/packages/go/authz"
-	"github.com/qninhdt/openlet/packages/go/rpc"
-	"google.golang.org/grpc/codes"
 )
+
+type DeletionInput struct {
+	FilesystemID uuid.UUID  `json:"filesystem_id"`
+	EntryID      *uuid.UUID `json:"entry_id"`
+}
+
+func (in DeletionInput) WorkflowID() string {
+	if in.EntryID != nil {
+		return "purge-trash/" + in.FilesystemID.String() + "/" + in.EntryID.String()
+	}
+	return "delete-filesystem/" + in.FilesystemID.String()
+}
 
 // PrepareTrashPurge persists admission; the workflow dispatcher owns scheduling.
 func (s *Store) PrepareTrashPurge(ctx context.Context, fs, id uuid.UUID) (*TrashEntry, error) {
@@ -17,7 +28,7 @@ func (s *Store) PrepareTrashPurge(ctx context.Context, fs, id uuid.UUID) (*Trash
 		return nil, err
 	}
 	if id == uuid.Nil {
-		return nil, rpc.Fault(codes.InvalidArgument, "VALIDATION", "entry identity required")
+		return nil, apperr.New(apperr.Invalid, "VALIDATION", "entry identity required")
 	}
 	session, err := s.lifecycleSession(ctx, fs)
 	if err != nil {
@@ -37,7 +48,7 @@ func (s *Store) PrepareTrashPurge(ctx context.Context, fs, id uuid.UUID) (*Trash
 			return nil, databaseError(err)
 		}
 		if state != "active" {
-			return nil, rpc.Fault(codes.Aborted, "BUCKET_FROZEN", "bucket is frozen")
+			return nil, apperr.New(apperr.Conflict, "BUCKET_FROZEN", "bucket is frozen")
 		}
 		if _, err = session.tx.Exec(ctx, `UPDATE trash_entries SET state='purging' WHERE id=$1`, id); err != nil {
 			return nil, databaseError(err)
@@ -174,7 +185,7 @@ func (s *session) deletionLeaves(ctx context.Context, root uuid.UUID) ([]uuid.UU
 		return nil, databaseError(err)
 	}
 	if len(ids) == 0 {
-		return nil, rpc.Fault(codes.Aborted, "RESOURCE_LIMIT", "tree exceeds deletion depth")
+		return nil, apperr.New(apperr.Conflict, "RESOURCE_LIMIT", "tree exceeds deletion depth")
 	}
 	return ids, nil
 }
@@ -182,7 +193,7 @@ func (s *session) deletionLeaves(ctx context.Context, root uuid.UUID) ([]uuid.UU
 // DeletionBatch is local workflow state work, never a public operation.
 func (s *Store) DeletionBatch(ctx context.Context, fs uuid.UUID, entryID *uuid.UUID) (bool, error) {
 	if fs == uuid.Nil || entryID != nil && *entryID == uuid.Nil {
-		return false, rpc.Fault(codes.InvalidArgument, "VALIDATION", "deletion identities required")
+		return false, apperr.New(apperr.Invalid, "VALIDATION", "deletion identities required")
 	}
 	session, err := s.lifecycleSession(ctx, fs)
 	if err != nil {
@@ -199,7 +210,7 @@ func (s *Store) DeletionBatch(ctx context.Context, fs uuid.UUID, entryID *uuid.U
 			return false, err
 		}
 		if entry.Status != "purging" {
-			return false, rpc.Fault(codes.Aborted, "TRASH_NOT_PURGING", "trash entry is not purging")
+			return false, apperr.New(apperr.Conflict, "TRASH_NOT_PURGING", "trash entry is not purging")
 		}
 		ids, err = session.deletionLeaves(ctx, entry.NodeID)
 		if err != nil {
@@ -214,7 +225,7 @@ func (s *Store) DeletionBatch(ctx context.Context, fs uuid.UUID, entryID *uuid.U
 			return true, nil
 		}
 		if state != "deleting" {
-			return false, rpc.Fault(codes.Aborted, "FILESYSTEM_NOT_DELETING", "filesystem is not deleting")
+			return false, apperr.New(apperr.Conflict, "FILESYSTEM_NOT_DELETING", "filesystem is not deleting")
 		}
 		rows, err := session.tx.Query(ctx, `SELECT n.id FROM nodes n WHERE n.filesystem_id=$1
  AND NOT EXISTS(SELECT 1 FROM nodes c WHERE c.filesystem_id=$1 AND c.parent_id=n.id) ORDER BY n.id LIMIT 64`, fs)
@@ -252,4 +263,14 @@ func (s *Store) DeletionBatch(ctx context.Context, fs uuid.UUID, entryID *uuid.U
 		}
 	}
 	return !remaining, databaseError(session.tx.Commit(ctx))
+}
+
+// FilesystemDeleted reports completion only after the owner committed all cleanup.
+func (s *Store) FilesystemDeleted(ctx context.Context, id uuid.UUID) (bool, error) {
+	if _, err := service(ctx); err != nil {
+		return false, err
+	}
+	var completed bool
+	err := s.DB.QueryRow(ctx, `SELECT state='deleted' FROM filesystems WHERE id=$1`, id).Scan(&completed)
+	return completed, databaseError(err)
 }

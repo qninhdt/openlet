@@ -9,6 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import httpx
 import httpx2
 import pytest
+from openlet.telemetry import JsonFormatter, sanitize_async_request
 from opentelemetry import propagate
 from opentelemetry.instrumentation.httpx import (
     HTTPX2ClientInstrumentor,
@@ -18,8 +19,6 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
-
-from letfs_ingest.telemetry import JsonFormatter, sanitize_async_request
 
 
 @pytest.mark.parametrize("endpoint", ["", "http://127.0.0.1:1"])
@@ -40,7 +39,7 @@ def test_optional_exporter_does_not_block_worker_or_shutdown(endpoint):
             """
 import asyncio, logging
 from opentelemetry import trace
-from letfs_ingest.telemetry import configure
+from openlet.telemetry import configure
 async def main():
     async with configure('processing'):
         with trace.get_tracer('test').start_as_current_span('business operation'):

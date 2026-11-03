@@ -5,6 +5,7 @@ package filesystem
 import (
 	"bytes"
 	"fmt"
+	"github.com/qninhdt/openlet/packages/go/apperr"
 	"sync"
 	"testing"
 
@@ -14,8 +15,6 @@ import (
 	"github.com/qninhdt/openlet/packages/go/identity"
 	sharedfixture "github.com/qninhdt/openlet/packages/go/testfixture"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 func TestIntegrationNodeWritesReceiptsQuotaAndTreeGuards(t *testing.T) {
@@ -98,7 +97,7 @@ func TestIntegrationNodeWritesReceiptsQuotaAndTreeGuards(t *testing.T) {
 	_, err = s.CreateNode(ctx, fs, mounts(fs), uuid.New(), CreateNode{Parent: Locator{NodeID: &root}, Name: "too-big", File: &InlineFile{Content: bytes.Repeat([]byte{1}, 129), MediaType: "text/plain"}})
 	require.Equal(t, "REQUEST_LIMIT", reason(err))
 	_, err = s.CreateNode(ctx, fs, mounts(fs), uuid.New(), CreateNode{Parent: Locator{NodeID: &root}, Name: "@" + uuid.NewString()})
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
+	require.Equal(t, apperr.Invalid, apperr.KindOf(err))
 	_, err = s.CreateNode(ctx, fs, mounts(fs), uuid.New(), CreateNode{Parent: Locator{Path: ptr("/drive")}, Name: "guarded"})
 	require.Equal(t, "PRECONDITION_REQUIRED", reason(err))
 

@@ -7,8 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/qninhdt/openlet/packages/go/rpc"
-	"google.golang.org/grpc/codes"
+	"github.com/qninhdt/openlet/packages/go/apperr"
 )
 
 type ParseManifest struct {
@@ -24,11 +23,11 @@ func outputTree(files map[string]uuid.UUID, directories []string, limit int64) (
 			return err
 		}
 		if explicit[path] {
-			return rpc.Fault(codes.InvalidArgument, "VALIDATION", "duplicate artifact path")
+			return apperr.New(apperr.Invalid, "VALIDATION", "duplicate artifact path")
 		}
 		explicit[path] = true
 		if old, exists := tree[path]; exists && (old != nil || upload != nil) {
-			return rpc.Fault(codes.InvalidArgument, "VALIDATION", "artifact file/directory collision")
+			return apperr.New(apperr.Invalid, "VALIDATION", "artifact file/directory collision")
 		}
 		tree[path] = upload
 		for parent := path; ; {
@@ -38,7 +37,7 @@ func outputTree(files map[string]uuid.UUID, directories []string, limit int64) (
 			}
 			parent = parent[:at]
 			if tree[parent] != nil {
-				return rpc.Fault(codes.InvalidArgument, "VALIDATION", "artifact file/directory collision")
+				return apperr.New(apperr.Invalid, "VALIDATION", "artifact file/directory collision")
 			}
 			if _, exists := tree[parent]; !exists {
 				tree[parent] = nil

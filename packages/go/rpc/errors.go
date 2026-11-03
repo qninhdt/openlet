@@ -2,11 +2,10 @@ package rpc
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"net/http"
 
-	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
+	"github.com/qninhdt/openlet/packages/go/apperr"
+
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -25,6 +24,9 @@ func Fault(code codes.Code, reason, message string) error {
 func NormalizeError(err error) error {
 	if err == nil {
 		return nil
+	}
+	if fault, ok := apperr.As(err); ok {
+		return Fault(grpcCode(fault.Kind), fault.Reason, fault.Message)
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		err = status.FromContextError(err).Err()
@@ -70,34 +72,45 @@ func errorDescription(grpcCode codes.Code) (string, string) {
 	return code, message
 }
 
-// WriteHTTPError is for errors before response headers; stream failures abort the response.
-func WriteHTTPError(w http.ResponseWriter, r *http.Request, err error) {
+var kinds = map[codes.Code]apperr.Kind{
+	codes.Internal:        apperr.Internal,
+	codes.InvalidArgument: apperr.Invalid, codes.Unauthenticated: apperr.Unauthenticated,
+	codes.PermissionDenied: apperr.Forbidden, codes.NotFound: apperr.Missing,
+	codes.AlreadyExists: apperr.Exists, codes.Aborted: apperr.Conflict,
+	codes.FailedPrecondition: apperr.Precondition, codes.ResourceExhausted: apperr.Limit,
+	codes.Unavailable: apperr.Unavailable, codes.Canceled: apperr.Canceled,
+	codes.DeadlineExceeded: apperr.Timeout, codes.Unimplemented: apperr.Unsupported,
+	codes.OutOfRange: apperr.OutOfRange,
+}
+
+func grpcCode(kind apperr.Kind) codes.Code {
+	for code, candidate := range kinds {
+		if candidate == kind {
+			return code
+		}
+	}
+	return codes.Internal
+}
+
+// DecodeError stops remote transport errors escaping into application code.
+func DecodeError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if _, ok := apperr.As(err); ok {
+		return err
+	}
 	s := status.Convert(NormalizeError(err))
-	code, message := errorDescription(s.Code())
+	reason, message := errorDescription(s.Code())
 	for _, detail := range s.Details() {
 		if info, ok := detail.(*errdetails.ErrorInfo); ok && info.Domain == "openlet" && info.Reason != "" {
-			code, message = info.Reason, s.Message()
+			reason, message = info.Reason, s.Message()
 			break
 		}
 	}
-	responseStatus := runtime.HTTPStatusFromCode(s.Code())
-	switch code {
-	case "PRECONDITION_REQUIRED":
-		responseStatus = http.StatusPreconditionRequired
-	case "REVISION_MISMATCH", "TARGET_MISMATCH":
-		responseStatus = http.StatusPreconditionFailed
-	case "COPY_EXPIRED":
-		responseStatus = http.StatusGone
-	case "REQUEST_LIMIT":
-		responseStatus = http.StatusRequestEntityTooLarge
-	case "INVALID_RANGE":
-		responseStatus = http.StatusRequestedRangeNotSatisfiable
+	kind, ok := kinds[s.Code()]
+	if !ok {
+		kind = apperr.Internal
 	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(responseStatus)
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"type": "about:blank", "title": http.StatusText(responseStatus), "status": responseStatus,
-		"detail": message, "code": code, "request_id": r.Header.Get("X-Request-ID"),
-	})
+	return apperr.New(kind, reason, message)
 }

@@ -3,6 +3,7 @@
 package workspace
 
 import (
+	"context"
 	"crypto/sha256"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/testcontainers/testcontainers-go"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	localfixture "github.com/qninhdt/openlet/apps/workspace/internal/testfixture"
 	"github.com/qninhdt/openlet/packages/go/authz"
 	"github.com/qninhdt/openlet/packages/go/testfixture"
 	"github.com/stretchr/testify/require"
@@ -19,8 +21,8 @@ import (
 
 func setupGraph(t *testing.T, store *Store) testcontainers.Container {
 	t.Helper()
-	graph, _, server := testfixture.SpiceDB(t, "../../../../packages/contracts/authz/schema.zed")
-	data, err := os.ReadFile("../../../../packages/contracts/authz/roles.json")
+	graph, _, server := testfixture.SpiceDB(t, localfixture.Path("packages", "contracts", "authz", "schema.zed"))
+	data, err := os.ReadFile(localfixture.Path("packages", "contracts", "authz", "roles.json"))
 	require.NoError(t, err)
 	policy, err := authz.ParseRolePolicy(data)
 	require.NoError(t, err)
@@ -147,7 +149,7 @@ func TestIntegrationConcurrentWorkspaceLimit(t *testing.T) {
 
 func postgres(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	return testfixture.Postgres(t, "../../migrations/0001_initial.sql")
+	return testfixture.Postgres(t, localfixture.Path("apps", "workspace", "migrations", "0001_initial.sql"))
 }
 
 func TestIntegrationStorageReservationSurvivesConcurrentRetryAndRejectsRebinding(t *testing.T) {
@@ -339,6 +341,46 @@ func TestIntegrationWorkspaceReceiptAdmissionAndExpiry(t *testing.T) {
 	next, err := store.EnsureWorkspace(ctx, in)
 	require.NoError(t, err)
 	require.NotEqual(t, admitted.ID, next.ID)
+}
+
+func TestIntegrationInitialWorkspaceReceiptRemainsRecoverable(t *testing.T) {
+	store := Store{DB: postgres(t), MaxWorkspaces: 10, MaxMembers: 10, QuotaLimit: 1024}
+	ctx := t.Context()
+	actor := uuid.New()
+	initial := CreateInput{ActorID: actor, Key: actor, Name: "My workspace"}
+	service := Service{Store: &store}
+	service.StartInitial = func(ctx context.Context, in CreateInput) (Workspace, error) {
+		return store.EnsureWorkspace(ctx, in)
+	}
+
+	_, err := service.Create(ctx, initial)
+	require.EqualError(t, err, "VALIDATION", "the account identity is reserved for initial-workspace admission")
+	admitted, completed, err := service.EnsureInitial(ctx, initial)
+	require.NoError(t, err)
+	require.False(t, completed)
+	require.NoError(t, store.Activate(ctx, mapping(admitted.ID)))
+	require.NoError(t, store.CompleteCreation(ctx, initial))
+
+	ordinary := CreateInput{ActorID: uuid.New(), Key: uuid.New(), Name: "Ordinary workspace"}
+	ordinaryWorkspace, err := store.EnsureWorkspace(ctx, ordinary)
+	require.NoError(t, err)
+	require.NoError(t, store.Activate(ctx, mapping(ordinaryWorkspace.ID)))
+	require.NoError(t, store.CompleteCreation(ctx, ordinary))
+	_, err = store.DB.Exec(ctx, `UPDATE idempotency_keys SET expires_at=now()-interval '1 hour' WHERE actor_id=$1 AND request_key=$2`, ordinary.ActorID, ordinary.Key)
+	require.NoError(t, err)
+	require.NoError(t, store.PruneReceipts(ctx))
+
+	service.StartInitial = func(context.Context, CreateInput) (Workspace, error) {
+		t.Fatal("durable initial receipt must prevent a duplicate workflow start")
+		return Workspace{}, nil
+	}
+	recovered, completed, err := service.EnsureInitial(ctx, initial)
+	require.NoError(t, err)
+	require.True(t, completed)
+	require.Equal(t, admitted.ID, recovered.ID)
+	_, found, err := store.FindCreation(ctx, ordinary)
+	require.NoError(t, err)
+	require.False(t, found)
 }
 
 func TestIntegrationFailedProvisioningCanBeDeleted(t *testing.T) {

@@ -7,13 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/qninhdt/openlet/packages/go/apperr"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/qninhdt/openlet/packages/go/authz"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 func (g Generation) WorkflowID() string {
@@ -184,8 +183,8 @@ func (s *Store) ReconcileProcessing(ctx context.Context, candidate ProcessingDis
 	_, err = session.processingSource(ctx, p)
 	live := err == nil
 	if err != nil {
-		switch status.Code(err) {
-		case codes.InvalidArgument, codes.PermissionDenied, codes.NotFound, codes.AlreadyExists, codes.FailedPrecondition, codes.Aborted:
+		switch apperr.KindOf(err) {
+		case apperr.Invalid, apperr.Forbidden, apperr.Missing, apperr.Exists, apperr.Precondition, apperr.Conflict:
 		default:
 			return false, err
 		}

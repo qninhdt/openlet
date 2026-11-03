@@ -5,9 +5,8 @@ import (
 	"strconv"
 
 	"github.com/google/uuid"
+	"github.com/qninhdt/openlet/packages/go/apperr"
 	"github.com/qninhdt/openlet/packages/go/authz"
-	"github.com/qninhdt/openlet/packages/go/rpc"
-	"google.golang.org/grpc/codes"
 )
 
 type Download struct {
@@ -31,7 +30,7 @@ func (s *Store) GetDownload(ctx context.Context, fs uuid.UUID, mounts []Mount, i
 		return Download{}, err
 	}
 	if node.Kind != "file" {
-		return Download{}, rpc.Fault(codes.Aborted, "NOT_FILE", "file required")
+		return Download{}, apperr.New(apperr.Conflict, "NOT_FILE", "file required")
 	}
 	if revision != nil {
 		if err := node.revision(revision); err != nil {
@@ -52,14 +51,14 @@ func (s *Store) GetDownload(ctx context.Context, fs uuid.UUID, mounts []Mount, i
 	switch kind {
 	case "inline":
 		if result.InlineContent == nil || int64(len(result.InlineContent)) != result.SizeBytes {
-			return Download{}, rpc.Fault(codes.Internal, "INTERNAL", "invalid stored content")
+			return Download{}, apperr.New(apperr.Internal, "INTERNAL", "invalid stored content")
 		}
 	case "object":
 		if key == nil || s.Storage == nil {
-			return Download{}, rpc.Fault(codes.Unavailable, "DEPENDENCY_UNAVAILABLE", "object storage unavailable")
+			return Download{}, apperr.New(apperr.Unavailable, "DEPENDENCY_UNAVAILABLE", "object storage unavailable")
 		}
 	default:
-		return Download{}, rpc.Fault(codes.Unavailable, "DEPENDENCY_UNAVAILABLE", "object storage unavailable")
+		return Download{}, apperr.New(apperr.Unavailable, "DEPENDENCY_UNAVAILABLE", "object storage unavailable")
 	}
 	// Sign only after closing the metadata snapshot; storage never holds a SQL transaction.
 	if err = session.tx.Commit(ctx); err != nil {
@@ -71,7 +70,7 @@ func (s *Store) GetDownload(ctx context.Context, fs uuid.UUID, mounts []Mount, i
 			if contextErr := ctx.Err(); contextErr != nil {
 				return Download{}, contextErr
 			}
-			return Download{}, rpc.Fault(codes.Unavailable, "DEPENDENCY_UNAVAILABLE", "object storage unavailable")
+			return Download{}, apperr.New(apperr.Unavailable, "DEPENDENCY_UNAVAILABLE", "object storage unavailable")
 		}
 	}
 	return result, nil

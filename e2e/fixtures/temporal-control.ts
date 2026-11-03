@@ -30,29 +30,24 @@ async function temporal(args: string[]): Promise<string> {
   return result.stdout;
 }
 
-export async function workspaceDeletionHasChild(workspaceId: string): Promise<boolean> {
-  const history = JSON.parse(await temporal(['workflow', 'show', '--workflow-id', `delete-workspace/${workspaceId}`, '--output', 'json']));
-  return history.events.some((event: { eventType: string }) => event.eventType === 'EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_STARTED');
+export async function filesystemDeletionIsRunning(filesystemId: string): Promise<boolean> {
+  const executions = JSON.parse(await temporal(['workflow', 'list', '--query', `WorkflowId = 'delete-filesystem/${filesystemId}' AND ExecutionStatus = 'Running'`, '--limit', '1', '--output', 'json']));
+  return executions.length === 1;
 }
 export async function terminateWorkspaceDeletion(workspaceId: string) {
   await temporal(['workflow', 'terminate', '--workflow-id', `delete-workspace/${workspaceId}`, '--reason', 'API recovery verification']);
 }
 
-export async function recordLifecycleHistories(subject: string, workspaceId: string, userId: string) {
+export async function recordLifecycleHistories(subject: string, workspaceId: string, userId: string, filesystemId: string) {
   const workflows: Record<string, string> = {
     OnboardUser: `onboard/${subject}`,
     CreateWorkspace: `create-workspace/${userId}/${userId}`,
     DeleteWorkspace: `delete-workspace/${workspaceId}`,
+    DeleteFilesystem: `delete-filesystem/${filesystemId}`,
   };
   for (const name of ['OnboardUser', 'CreateWorkspace', 'DeleteWorkspace', 'DeleteFilesystem']) {
     const workflowId = workflows[name];
-    const output = await recordWorkflowHistory(name, workflowId);
-    const history = JSON.parse(output);
-    if (name === 'DeleteWorkspace') {
-      const child = history.events.find((event: { startChildWorkflowExecutionInitiatedEventAttributes?: { workflowType: { name: string } } }) => event.startChildWorkflowExecutionInitiatedEventAttributes?.workflowType.name === 'DeleteFilesystem');
-      if (!child) throw new Error('Workspace did not start a filesystem child');
-      workflows.DeleteFilesystem = child.startChildWorkflowExecutionInitiatedEventAttributes.workflowId;
-    }
+    await recordWorkflowHistory(name, workflowId);
   }
   await triggerStorageMaintenance();
   let maintenanceId = '';

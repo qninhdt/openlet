@@ -10,10 +10,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/qninhdt/openlet/packages/go/apperr"
 	"github.com/qninhdt/openlet/packages/go/authz"
-	"github.com/qninhdt/openlet/packages/go/rpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 type CreateCopy struct {
@@ -52,6 +50,21 @@ type CopyAdmission struct {
 	Deadline     time.Time `json:"deadline"`
 }
 
+type CopyState struct {
+	Admission      CopyAdmission `json:"admission"`
+	Frames         []CopyFrame   `json:"frames"`
+	Pending        *CopyItem     `json:"pending"`
+	CommittedNodes int64         `json:"committed_nodes"`
+	CommittedBytes int64         `json:"committed_bytes"`
+	Status         string        `json:"status"`
+	ErrorCode      *string       `json:"error_code"`
+}
+
+func NewCopyState(admission CopyAdmission) CopyState {
+	root := admission.Root
+	return CopyState{Admission: admission, Frames: []CopyFrame{}, Pending: &root, Status: "running"}
+}
+
 func (s *Store) CopyReader(ctx context.Context, fs uuid.UUID) (uuid.UUID, bool, error) {
 	actor, err := s.authorize(ctx, fs, "filesystem", authz.CopyRead)
 	if err != nil {
@@ -63,7 +76,7 @@ func (s *Store) CopyReader(ctx context.Context, fs uuid.UUID) (uuid.UUID, bool, 
 	}
 	_ = session.tx.Rollback(ctx)
 	_, err = s.authorize(ctx, fs, "filesystem", authz.CopyInspectAny)
-	if status.Code(err) == codes.PermissionDenied {
+	if apperr.KindOf(err) == apperr.Forbidden {
 		return actor, false, nil
 	}
 	return actor, err == nil, err
@@ -112,7 +125,7 @@ func (s *Store) AdmitCopy(ctx context.Context, fs uuid.UUID, mounts []Mount, key
 		return CopyAdmission{}, err
 	}
 	if key == uuid.Nil || input.SourceID == uuid.Nil || input.ParentID == uuid.Nil {
-		return CopyAdmission{}, rpc.Fault(codes.InvalidArgument, "VALIDATION", "copy identities required")
+		return CopyAdmission{}, apperr.New(apperr.Invalid, "VALIDATION", "copy identities required")
 	}
 	if err = ValidateName(input.Name); err != nil {
 		return CopyAdmission{}, err
@@ -136,11 +149,11 @@ func (s *Store) AdmitCopy(ctx context.Context, fs uuid.UUID, mounts []Mount, key
  WHERE scope=$1 AND operation='copy-node' AND request_key=$2 AND (expires_at IS NULL OR expires_at>now())`, scope, key.String()).Scan(&savedHash, &saved)
 	if err == nil {
 		if savedHash != hash {
-			return CopyAdmission{}, rpc.Fault(codes.Aborted, "IDEMPOTENCY_CONFLICT", "request key was used for different input")
+			return CopyAdmission{}, apperr.New(apperr.Conflict, "IDEMPOTENCY_CONFLICT", "request key was used for different input")
 		}
 		var admission CopyAdmission
 		if err = json.Unmarshal(saved, &admission); err != nil {
-			return CopyAdmission{}, rpc.Fault(codes.Aborted, "INVALID_RECEIPT", "invalid saved receipt")
+			return CopyAdmission{}, apperr.New(apperr.Conflict, "INVALID_RECEIPT", "invalid saved receipt")
 		}
 		return admission, nil
 	}
@@ -179,14 +192,14 @@ func (s *Store) AdmitCopy(ctx context.Context, fs uuid.UUID, mounts []Mount, key
 		return CopyAdmission{}, databaseError(err)
 	}
 	if occupied {
-		return CopyAdmission{}, rpc.Fault(codes.AlreadyExists, "NAME_CONFLICT", "name already exists")
+		return CopyAdmission{}, apperr.New(apperr.Exists, "NAME_CONFLICT", "name already exists")
 	}
 	depth, err := session.depth(ctx, parent.ID)
 	if err != nil {
 		return CopyAdmission{}, err
 	}
 	if depth >= maxDepth {
-		return CopyAdmission{}, rpc.Fault(codes.Aborted, "RESOURCE_LIMIT", "tree depth limit exceeded")
+		return CopyAdmission{}, apperr.New(apperr.Conflict, "RESOURCE_LIMIT", "tree depth limit exceeded")
 	}
 	id := uuid.Must(uuid.NewV7())
 	root, err := session.selectCopy(ctx, id, source, parent, input.Name, false, depth+1)
@@ -198,7 +211,7 @@ func (s *Store) AdmitCopy(ctx context.Context, fs uuid.UUID, mounts []Mount, key
 		return CopyAdmission{}, databaseError(err)
 	}
 	if s.MaxCopyNodes <= 0 {
-		return CopyAdmission{}, rpc.Fault(codes.Aborted, "RESOURCE_LIMIT", "invalid copy node limit")
+		return CopyAdmission{}, apperr.New(apperr.Conflict, "RESOURCE_LIMIT", "invalid copy node limit")
 	}
 	admission := CopyAdmission{ID: id, FilesystemID: fs, ActorID: actor, Root: root, MaxNodes: s.MaxCopyNodes, MaxBytes: maxBytes, Deadline: time.Now().UTC().Add(time.Hour)}
 	saved, err = json.Marshal(admission)

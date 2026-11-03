@@ -2,10 +2,9 @@ package temporal
 
 import (
 	"context"
-	"errors"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/qninhdt/openlet/apps/workspace/internal/workspace"
+	sharedtemporal "github.com/qninhdt/openlet/packages/go/temporal"
 	"go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/temporal"
@@ -13,95 +12,16 @@ import (
 	"time"
 )
 
-type Mutation struct {
-	Kind           string
-	WorkspaceID    uuid.UUID
-	ActorID        uuid.UUID
-	TargetID       uuid.UUID
-	Key            uuid.UUID
-	Revision       string
-	Role           string
-	Remove         bool
-	Update         workspace.UpdateInput
-	InvitationHash [32]byte
-}
-type PreparedMutation struct {
-	Command       Mutation
-	PreviousOwner uuid.UUID
-}
+type Mutation = workspace.Mutation
+type PreparedMutation = workspace.PreparedMutation
 
 func (a *Activities) PrepareMutation(ctx context.Context, in Mutation) (PreparedMutation, error) {
-	out := PreparedMutation{Command: in}
-	if in.WorkspaceID == uuid.Nil || in.ActorID == uuid.Nil || in.Key == uuid.Nil {
-		return out, businessError(workspace.Fault{Code: "VALIDATION"})
-	}
-	switch in.Kind {
-	case "member", "invite":
-	case "update":
-		if in.Update.OwnerID == nil {
-			return out, businessError(workspace.Fault{Code: "VALIDATION"})
-		}
-		if err := a.Store.DB.QueryRow(ctx, `SELECT user_id FROM workspace_members WHERE workspace_id=$1 AND role='owner'`, in.WorkspaceID).Scan(&out.PreviousOwner); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return out, businessError(workspace.Fault{Code: "NOT_FOUND"})
-			}
-			return out, err
-		}
-	default:
-		return out, businessError(workspace.Fault{Code: "VALIDATION"})
-	}
-	return out, nil
+	value, err := a.Service.PrepareMutation(ctx, in)
+	return value, sharedtemporal.Error(err)
 }
-
 func (a *Activities) ApplyMutation(ctx context.Context, in PreparedMutation) (workspace.Workspace, error) {
-	cmd := in.Command
-	receipt := workspace.MutationReceipt{Key: cmd.Key, Hash: workspace.Fingerprint(in)}
-	applied, err := a.Store.MutationApplied(ctx, cmd.ActorID, cmd.WorkspaceID, receipt)
-	if err != nil {
-		return workspace.Workspace{}, businessError(err)
-	}
-	if !applied {
-		switch cmd.Kind {
-		case "member":
-			err = a.Store.ChangeMember(ctx, cmd.WorkspaceID, cmd.ActorID, cmd.TargetID, cmd.Role, cmd.Remove, cmd.Revision, receipt)
-		case "update":
-			_, err = a.Store.Update(ctx, cmd.WorkspaceID, cmd.ActorID, cmd.Revision, cmd.Update, receipt)
-		case "invite":
-			var emails []string
-			emails, err = a.User.VerifiedEmails(ctx, cmd.ActorID)
-			if err == nil {
-				_, err = a.Store.AcceptInvite(ctx, cmd.ActorID, cmd.InvitationHash, emails, receipt)
-			}
-		}
-		if err != nil {
-			// A commit can succeed even when its acknowledgement is lost.
-			applied, checkErr := a.Store.MutationApplied(ctx, cmd.ActorID, cmd.WorkspaceID, receipt)
-			if checkErr != nil {
-				return workspace.Workspace{}, businessError(checkErr)
-			}
-			if !applied {
-				return workspace.Workspace{}, businessError(err)
-			}
-		}
-	}
-	affected := []uuid.UUID{cmd.TargetID}
-	if cmd.Kind == "update" {
-		affected = []uuid.UUID{in.PreviousOwner, *cmd.Update.OwnerID}
-	}
-	if cmd.Kind == "invite" {
-		affected = []uuid.UUID{cmd.ActorID}
-	}
-	if err = a.Store.WriteMemberRelationships(ctx, a.Graph, cmd.WorkspaceID, affected...); err != nil {
-		return workspace.Workspace{}, err
-	}
-	if err = a.Store.CompleteMutation(ctx, cmd.ActorID, receipt); err != nil {
-		return workspace.Workspace{}, err
-	}
-	if cmd.Kind == "member" && cmd.Remove && cmd.TargetID == cmd.ActorID {
-		return workspace.Workspace{ID: cmd.WorkspaceID}, nil
-	}
-	value, err := a.Store.Get(ctx, cmd.WorkspaceID, cmd.ActorID)
-	return value, businessError(err)
+	value, err := a.Service.ApplyMutation(ctx, in)
+	return value, sharedtemporal.Error(err)
 }
 
 // WorkspacePermissions serializes business mutations and their graph effects across worker instances.
@@ -161,5 +81,5 @@ func Mutate(ctx context.Context, tc client.Client, in Mutation) (workspace.Works
 	}
 	var value workspace.Workspace
 	err = handle.Get(ctx, &value)
-	return value, err
+	return value, startError(err)
 }

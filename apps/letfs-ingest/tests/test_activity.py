@@ -1,18 +1,26 @@
 import asyncio
 import os
 import sys
-from contextlib import asynccontextmanager
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
-from openlet_api.letfs.v1 import letfs_pb2 as pb
+from openlet.clients.letfs import (
+    Generation,
+    IndexInput,
+    ParseInput,
+    Upload,
+    UploadReceipt,
+    VectorSpace,
+)
+from openlet.errors import AppError
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 from temporalio.testing import ActivityEnvironment
 
-from letfs_ingest.activity import Processor, supervise
-from letfs_ingest.convert_child import ResourceLimit
+from letfs_ingest.parser.convert_child import ResourceLimit
+from letfs_ingest.parser.supervisor import supervise
+from letfs_ingest.processing.processor import Processor
+from letfs_ingest.temporal.activities import Activities
 
 
 @pytest.mark.parametrize("cancel", [True, False])
@@ -62,12 +70,12 @@ async def test_supervisor_reaps_child_on_cancellation_or_output_limit(
 
 
 async def test_committed_result_reconciliation_never_runs_converter(tmp_path):
-    async def call(method, request):
-        assert method == "PrepareParse"
-        return pb.PrepareParseResponse(complete=pb.ParseComplete())
+    class API:
+        async def prepare_parse(self, source):
+            return None
 
-    processor = Processor("localhost:9090", "a" * 32, tmp_path)
-    await processor.process(SimpleNamespace(call=call), None, pb.ProcessingGeneration())
+    processor = Processor(tmp_path)
+    await processor.process(API(), None, Generation("file", 1))
     assert list(tmp_path.iterdir()) == []
 
 
@@ -79,34 +87,32 @@ async def test_output_retry_reconciles_terminal_transfer_without_resending_bytes
     file.write_bytes(b"image")
     calls = []
 
-    async def call(method, request):
-        calls.append(method)
-        if method == "PrepareParseOutput":
-            return pb.PrepareParseOutputResponse(
-                upload=pb.Upload(id="output", status=state)
-            )
-        assert method == "CompleteOutputUpload"
-        assert request.scope.upload_id == "output"
-        assert not request.parts
-        return pb.CompleteOutputUploadResponse(
-            receipt=pb.UploadReceipt(id="output", status="finalized", size_bytes=5)
-        )
+    class API:
+        async def prepare_parse_output(self, source, output):
+            calls.append("PrepareParseOutput")
+            return Upload("output", state)
 
-    processor = Processor("localhost:9090", "a" * 32, tmp_path)
+        async def complete_output_upload(self, scope, parts):
+            calls.append("CompleteOutputUpload")
+            assert scope.upload_id == "output"
+            assert not parts
+            return UploadReceipt("output", "finalized", 5)
+
+    processor = Processor(tmp_path)
     work = processor.upload(
-        SimpleNamespace(call=call),
+        API(),
         None,
-        pb.ProcessingGeneration(),
+        Generation("file", 1),
         "parse",
         file,
         "image.png",
-        pb.ParseInput(inline_limit_bytes=10, multipart_threshold_bytes=100),
+        ParseInput("pdf", 5, 10, 100, 1, 100),
     )
     if state == "aborted":
-        with pytest.raises(ApplicationError) as captured:
+        with pytest.raises(AppError) as captured:
             await work
-        assert captured.value.type == "UPLOAD_NOT_ACTIVE"
-        assert captured.value.non_retryable
+        assert captured.value.reason == "UPLOAD_NOT_ACTIVE"
+        assert not captured.value.retryable
     else:
         assert await work == "output"
     assert calls == ["PrepareParseOutput"] + (
@@ -119,7 +125,7 @@ async def test_worker_shutdown_leaves_processing_retryable(
     tmp_path, monkeypatch, worker_shutdown
 ):
     environment = ActivityEnvironment()
-    processor = Processor("localhost:9090", "a" * 32, tmp_path)
+    processor = Processor(tmp_path)
     ready = asyncio.Event()
     failures = []
 
@@ -127,19 +133,20 @@ async def test_worker_shutdown_leaves_processing_retryable(
         ready.set()
         await asyncio.Future()
 
-    async def abort(api, path, code):
+    class API:
+        async def abort_parse(self, source, code):
+            failures.append(code)
+
+    activities = Activities(processor, API())
+
+    async def abort(source, code):
         failures.append(code)
 
-    @asynccontextmanager
-    async def connect():
-        yield None
-
-    monkeypatch.setattr(processor, "connect", connect)
     monkeypatch.setattr(processor, "process", process)
-    monkeypatch.setattr(processor, "abort", abort)
+    monkeypatch.setattr(activities, "abort", abort)
     task = asyncio.create_task(
         environment.run(
-            processor.process_file,
+            activities.process_file,
             {"file_id": "019ad06b-7d00-7000-9500-000000000001", "generation": 7},
         )
     )
@@ -161,7 +168,10 @@ async def test_worker_shutdown_leaves_processing_retryable(
 @pytest.mark.parser
 async def test_real_child_converts_local_file_with_minimal_environment(tmp_path):
     source = Path(__file__).parent / "fixtures/tiny.docx"
-    models = Path(os.environ["DOCLING_MODELS_PATH"])
+    models = Path(
+        os.environ.get("DOCLING_MODELS_PATH")
+        or pytest.skip("offline Docling models are unavailable")
+    )
     await supervise(source, tmp_path, "docx", models, 10, 10000)
     assert "## Conclusion\n\nDone." in (tmp_path / "README.md").read_text()
 
@@ -182,9 +192,9 @@ async def test_supervisor_reports_internal_failure_without_logging_document_text
         return await original(sys.executable, "-c", script, **kwargs)
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
-    with pytest.raises(ApplicationError) as captured:
+    with pytest.raises(AppError) as captured:
         await supervise(tmp_path / "source", tmp_path, "pdf", tmp_path, 10, 10000)
-    assert captured.value.type == "PROCESSING_FAILED"
+    assert captured.value.reason == "PROCESSING_FAILED"
     assert "RuntimeError" in caplog.text
     assert "peak_rss_kib=1234" in caplog.text
     assert "private document text" not in caplog.text
@@ -199,7 +209,7 @@ async def test_semantic_stage_reports_failure_only_when_retries_end(
 
     environment = ActivityEnvironment()
     environment.info = replace(environment.info, attempt=attempt)
-    processor = Processor("localhost:9090", "a" * 32, tmp_path)
+    processor = Processor(tmp_path)
     reported = []
 
     async def fail(*args):
@@ -207,33 +217,32 @@ async def test_semantic_stage_reports_failure_only_when_retries_end(
             raise ResourceLimit("bounded evidence")
         raise RuntimeError("transient provider failure")
 
-    async def call(method, request):
-        if method == "PrepareIndex":
-            return pb.PrepareIndexResponse(
-                input=pb.IndexInput(
-                    vector_space=pb.VectorSpace(
-                        model="model", collection="files", dimension=2
-                    )
-                )
+    class API:
+        async def prepare_index(self, source):
+            return IndexInput(
+                "filesystem",
+                source.file_id,
+                source.generation,
+                (),
+                VectorSpace("model", "files", 2),
+                100,
             )
-        reported.append((method, request))
-        return (
-            pb.FailIndexResponse() if stage == "index" else pb.FailEnrichmentResponse()
-        )
 
-    @asynccontextmanager
-    async def connect():
-        yield SimpleNamespace(call=call)
+        async def fail_index(self, source, code):
+            reported.append(("FailIndex", source, code))
 
+        async def fail_enrichment(self, source, code):
+            reported.append(("FailEnrichment", source, code))
+
+    activities = Activities(processor, API())
     monkeypatch.setattr(processor, stage, fail)
-    monkeypatch.setattr(processor, "connect", connect)
     with pytest.raises(ApplicationError):
         await environment.run(
-            getattr(processor, stage + "_file"),
+            getattr(activities, stage + "_file"),
             {"file_id": "019ad06b-7d00-7000-9500-000000000001", "generation": 7},
         )
     assert bool(reported) == (attempt == 3 or terminal)
-    for method, request in reported:
+    for method, source, code in reported:
         assert method == ("FailIndex" if stage == "index" else "FailEnrichment")
-        scope = request.source
-        assert scope.generation == 7
+        assert source.generation == 7
+        assert code in {"RESOURCE_LIMIT", "PROCESSING_FAILED", "DEPENDENCY_UNAVAILABLE"}

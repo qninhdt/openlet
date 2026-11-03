@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/qninhdt/openlet/packages/go/apperr"
 	"strconv"
 	"strings"
 	"time"
@@ -21,6 +22,22 @@ import (
 type Fault struct{ Code string }
 
 func (e Fault) Error() string { return e.Code }
+func (e Fault) Unwrap() error {
+	kind := apperr.Conflict
+	switch e.Code {
+	case "VALIDATION":
+		kind = apperr.Invalid
+	case "FORBIDDEN", "INVITATION_EMAIL_MISMATCH":
+		kind = apperr.Forbidden
+	case "NOT_FOUND":
+		kind = apperr.Missing
+	case "PRECONDITION_REQUIRED", "REVISION_MISMATCH":
+		kind = apperr.Precondition
+	case "REQUEST_LIMIT":
+		kind = apperr.Limit
+	}
+	return apperr.New(kind, e.Code, strings.ToLower(strings.ReplaceAll(e.Code, "_", " ")))
+}
 
 type Store struct {
 	Graph                     v1.PermissionsServiceClient
@@ -392,14 +409,32 @@ func (s *Store) ChangeMember(ctx context.Context, ws, actor, target uuid.UUID, r
 }
 
 func (s *Store) CompleteCreation(ctx context.Context, in CreateInput) error {
-	_, err := s.DB.Exec(ctx, `UPDATE idempotency_keys k SET expires_at=COALESCE(k.expires_at,now()+interval '24 hours') WHERE k.actor_id=$1 AND k.request_key=$2 AND k.request_hash=$3 AND EXISTS(SELECT 1 FROM workspaces w WHERE w.id=k.workspace_id AND w.status IN ('active','deleting','deleted'))`, in.ActorID, in.Key, Fingerprint(in))
+	_, err := s.DB.Exec(ctx, `UPDATE idempotency_keys k
+		SET expires_at=CASE WHEN k.actor_id=k.request_key THEN NULL ELSE COALESCE(k.expires_at,now()+interval '24 hours') END
+		WHERE k.actor_id=$1 AND k.request_key=$2 AND k.request_hash=$3
+		AND EXISTS(SELECT 1 FROM workspaces w WHERE w.id=k.workspace_id AND w.status IN ('active','deleting','deleted'))`, in.ActorID, in.Key, Fingerprint(in))
 	return err
 }
 
 func (s *Store) FindCreation(ctx context.Context, in CreateInput) (Workspace, bool, error) {
+	return s.findCreation(ctx, in, false)
+}
+
+func (s *Store) FindInitialCreation(ctx context.Context, in CreateInput) (Workspace, bool, error) {
+	if in.ActorID == uuid.Nil || in.ActorID != in.Key {
+		return Workspace{}, false, Fault{"VALIDATION"}
+	}
+	return s.findCreation(ctx, in, true)
+}
+
+func (s *Store) findCreation(ctx context.Context, in CreateInput, includeExpired bool) (Workspace, bool, error) {
 	var id uuid.UUID
 	var hash string
-	err := s.DB.QueryRow(ctx, `SELECT workspace_id,request_hash FROM idempotency_keys WHERE actor_id=$1 AND request_key=$2 AND (expires_at IS NULL OR expires_at>now())`, in.ActorID, in.Key).Scan(&id, &hash)
+	query := `SELECT workspace_id,request_hash FROM idempotency_keys WHERE actor_id=$1 AND request_key=$2 AND (expires_at IS NULL OR expires_at>now())`
+	if includeExpired {
+		query = `SELECT workspace_id,request_hash FROM idempotency_keys WHERE actor_id=$1 AND request_key=$2`
+	}
+	err := s.DB.QueryRow(ctx, query, in.ActorID, in.Key).Scan(&id, &hash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Workspace{}, false, nil
 	}

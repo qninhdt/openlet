@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "build": "uv build --package openlet-python",
-    "check": "uv run --locked --package openlet-python ruff check tests && uv run --locked --package openlet-python ruff format --check tests",
+    "check": "uv run --locked --package openlet-python ruff check src/openlet tests && uv run --locked --package openlet-python ruff format --check src/openlet tests",
     "test": "uv run --locked --package openlet-python pytest tests -m \"not integration\"",
     "test:integration": "uv run --locked --package openlet-python pytest tests -m integration"
   },

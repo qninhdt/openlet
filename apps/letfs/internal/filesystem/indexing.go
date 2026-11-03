@@ -5,8 +5,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/qninhdt/openlet/packages/go/rpc"
-	"google.golang.org/grpc/codes"
+	"github.com/qninhdt/openlet/packages/go/apperr"
 )
 
 type VectorSpace struct {
@@ -17,11 +16,11 @@ type VectorSpace struct {
 
 func (v VectorSpace) Validate() error {
 	if strings.TrimSpace(v.Model) == "" || v.Dimension < 1 || v.Dimension > 65536 || len(v.Collection) == 0 || len(v.Collection) > 100 {
-		return rpc.Fault(codes.InvalidArgument, "VALIDATION", "invalid vector space")
+		return apperr.New(apperr.Invalid, "VALIDATION", "invalid vector space")
 	}
 	for _, c := range v.Collection {
 		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
-			return rpc.Fault(codes.InvalidArgument, "VALIDATION", "invalid vector collection")
+			return apperr.New(apperr.Invalid, "VALIDATION", "invalid vector collection")
 		}
 	}
 	return nil
@@ -29,7 +28,7 @@ func (v VectorSpace) Validate() error {
 
 func (g Generation) validate() error {
 	if g.FileID == uuid.Nil || g.Generation <= 0 {
-		return rpc.Fault(codes.InvalidArgument, "VALIDATION", "invalid processing generation")
+		return apperr.New(apperr.Invalid, "VALIDATION", "invalid processing generation")
 	}
 	return nil
 }
@@ -47,7 +46,7 @@ func (s *Store) PrepareIndex(ctx context.Context, source Generation) (IndexPrepa
 		return IndexPreparation{}, err
 	}
 	if s.IndexSpace.Validate() != nil {
-		return IndexPreparation{}, rpc.Fault(codes.Unavailable, "DEPENDENCY_UNAVAILABLE", "vector space configuration unavailable")
+		return IndexPreparation{}, apperr.New(apperr.Unavailable, "DEPENDENCY_UNAVAILABLE", "vector space configuration unavailable")
 	}
 	session, err := s.processingSession(ctx, source, false)
 	if err != nil {

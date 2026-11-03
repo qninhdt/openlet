@@ -9,7 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
-	"github.com/qninhdt/openlet/apps/letfs/internal/search"
+	"github.com/qninhdt/openlet/apps/letfs/internal/clients/search"
 	"github.com/qninhdt/openlet/packages/go/authz"
 )
 

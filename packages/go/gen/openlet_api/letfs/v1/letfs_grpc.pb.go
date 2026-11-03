@@ -1753,6 +1753,8 @@ var IngestService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
+	StorageAdministrationService_CreateStorage_FullMethodName          = "/openlet_api.letfs.v1.StorageAdministrationService/CreateStorage"
+	StorageAdministrationService_DeleteFilesystem_FullMethodName       = "/openlet_api.letfs.v1.StorageAdministrationService/DeleteFilesystem"
 	StorageAdministrationService_CreateBucket_FullMethodName           = "/openlet_api.letfs.v1.StorageAdministrationService/CreateBucket"
 	StorageAdministrationService_CreateFilesystem_FullMethodName       = "/openlet_api.letfs.v1.StorageAdministrationService/CreateFilesystem"
 	StorageAdministrationService_FreezeBucket_FullMethodName           = "/openlet_api.letfs.v1.StorageAdministrationService/FreezeBucket"
@@ -1767,6 +1769,8 @@ const (
 //
 // These methods require explicit service authority, never a public user JWT.
 type StorageAdministrationServiceClient interface {
+	CreateStorage(ctx context.Context, in *CreateStorageRequest, opts ...grpc.CallOption) (*CreateStorageResponse, error)
+	DeleteFilesystem(ctx context.Context, in *DeleteFilesystemRequest, opts ...grpc.CallOption) (*DeleteFilesystemResponse, error)
 	CreateBucket(ctx context.Context, in *CreateBucketRequest, opts ...grpc.CallOption) (*CreateBucketResponse, error)
 	CreateFilesystem(ctx context.Context, in *CreateFilesystemRequest, opts ...grpc.CallOption) (*CreateFilesystemResponse, error)
 	FreezeBucket(ctx context.Context, in *FreezeBucketRequest, opts ...grpc.CallOption) (*FreezeBucketResponse, error)
@@ -1781,6 +1785,26 @@ type storageAdministrationServiceClient struct {
 
 func NewStorageAdministrationServiceClient(cc grpc.ClientConnInterface) StorageAdministrationServiceClient {
 	return &storageAdministrationServiceClient{cc}
+}
+
+func (c *storageAdministrationServiceClient) CreateStorage(ctx context.Context, in *CreateStorageRequest, opts ...grpc.CallOption) (*CreateStorageResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateStorageResponse)
+	err := c.cc.Invoke(ctx, StorageAdministrationService_CreateStorage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *storageAdministrationServiceClient) DeleteFilesystem(ctx context.Context, in *DeleteFilesystemRequest, opts ...grpc.CallOption) (*DeleteFilesystemResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteFilesystemResponse)
+	err := c.cc.Invoke(ctx, StorageAdministrationService_DeleteFilesystem_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *storageAdministrationServiceClient) CreateBucket(ctx context.Context, in *CreateBucketRequest, opts ...grpc.CallOption) (*CreateBucketResponse, error) {
@@ -1849,6 +1873,8 @@ func (c *storageAdministrationServiceClient) ReleaseProvisioning(ctx context.Con
 //
 // These methods require explicit service authority, never a public user JWT.
 type StorageAdministrationServiceServer interface {
+	CreateStorage(context.Context, *CreateStorageRequest) (*CreateStorageResponse, error)
+	DeleteFilesystem(context.Context, *DeleteFilesystemRequest) (*DeleteFilesystemResponse, error)
 	CreateBucket(context.Context, *CreateBucketRequest) (*CreateBucketResponse, error)
 	CreateFilesystem(context.Context, *CreateFilesystemRequest) (*CreateFilesystemResponse, error)
 	FreezeBucket(context.Context, *FreezeBucketRequest) (*FreezeBucketResponse, error)
@@ -1865,6 +1891,12 @@ type StorageAdministrationServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedStorageAdministrationServiceServer struct{}
 
+func (UnimplementedStorageAdministrationServiceServer) CreateStorage(context.Context, *CreateStorageRequest) (*CreateStorageResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateStorage not implemented")
+}
+func (UnimplementedStorageAdministrationServiceServer) DeleteFilesystem(context.Context, *DeleteFilesystemRequest) (*DeleteFilesystemResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteFilesystem not implemented")
+}
 func (UnimplementedStorageAdministrationServiceServer) CreateBucket(context.Context, *CreateBucketRequest) (*CreateBucketResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateBucket not implemented")
 }
@@ -1903,6 +1935,42 @@ func RegisterStorageAdministrationServiceServer(s grpc.ServiceRegistrar, srv Sto
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&StorageAdministrationService_ServiceDesc, srv)
+}
+
+func _StorageAdministrationService_CreateStorage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateStorageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StorageAdministrationServiceServer).CreateStorage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StorageAdministrationService_CreateStorage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StorageAdministrationServiceServer).CreateStorage(ctx, req.(*CreateStorageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _StorageAdministrationService_DeleteFilesystem_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteFilesystemRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StorageAdministrationServiceServer).DeleteFilesystem(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StorageAdministrationService_DeleteFilesystem_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StorageAdministrationServiceServer).DeleteFilesystem(ctx, req.(*DeleteFilesystemRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _StorageAdministrationService_CreateBucket_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -2020,6 +2088,14 @@ var StorageAdministrationService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "openlet_api.letfs.v1.StorageAdministrationService",
 	HandlerType: (*StorageAdministrationServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "CreateStorage",
+			Handler:    _StorageAdministrationService_CreateStorage_Handler,
+		},
+		{
+			MethodName: "DeleteFilesystem",
+			Handler:    _StorageAdministrationService_DeleteFilesystem_Handler,
+		},
 		{
 			MethodName: "CreateBucket",
 			Handler:    _StorageAdministrationService_CreateBucket_Handler,

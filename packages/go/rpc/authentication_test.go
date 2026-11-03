@@ -96,3 +96,30 @@ func TestServiceCredentialsCannotImpersonateUsers(t *testing.T) {
 		})
 	}
 }
+
+func TestExplicitDelegationKeepsServiceIdentity(t *testing.T) {
+	const method = "/openlet_api.letfs.v1.FilesystemService/GetNode"
+	const token = "isolated-agent-service-credential-12345"
+	const actor = "019a3b66-0000-7000-8000-000000000001"
+	authentication, err := NewAuthenticator([]Credential{{Service: "agent", Token: token, Methods: []string{method}, DelegateActor: true}})
+	require.NoError(t, err)
+	for _, id := range []string{"", actor, "invalid", "00000000-0000-0000-0000-000000000000"} {
+		md := metadata.Pairs("authorization", "Bearer "+token)
+		if id != "" {
+			md.Set("x-openlet-user-id", id)
+		}
+		ctx, err := authentication.Authenticate(metadata.NewIncomingContext(t.Context(), md), method)
+		if id != "" && id != actor {
+			require.Equal(t, codes.Unauthenticated, status.Code(err))
+			continue
+		}
+		require.NoError(t, err)
+		principal, ok := identity.FromContext(ctx)
+		require.True(t, ok)
+		require.Equal(t, "agent", principal.Service)
+		require.False(t, principal.Gateway)
+		if id != "" {
+			require.Equal(t, actor, principal.ActorID.String())
+		}
+	}
+}

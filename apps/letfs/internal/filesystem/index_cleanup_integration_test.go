@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/qninhdt/openlet/apps/letfs/internal/search"
+	"github.com/qninhdt/openlet/apps/letfs/internal/clients/search"
 	"github.com/qninhdt/openlet/apps/letfs/internal/testfixture"
 	"github.com/qninhdt/openlet/packages/go/identity"
 	"github.com/stretchr/testify/require"

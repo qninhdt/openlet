@@ -3,102 +3,78 @@
 package temporal
 
 import (
+	"testing"
+
 	"github.com/google/uuid"
-	"github.com/qninhdt/openlet/apps/workspace/internal/letfs"
 	"github.com/qninhdt/openlet/apps/workspace/internal/workspace"
-	letfsv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/letfs/v1"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/workflow"
-	"slices"
-	"testing"
 )
 
-func deleteFilesystemStub(workflow.Context, letfs.DeletionInput) (uuid.UUID, error) {
-	return uuid.Nil, nil
-}
-func TestDeleteWorkspaceAwaitsAllFilesystemChildren(t *testing.T) {
+func TestDeleteWorkspaceWaitsForEveryFilesystem(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
-	registerRemote(env)
-	env.RegisterWorkflowWithOptions(deleteFilesystemStub, workflow.RegisterOptions{Name: "DeleteFilesystem"})
-	id, bucket, first, second := uuid.New(), uuid.New(), uuid.New(), uuid.New()
-	if first.String() > second.String() {
-		first, second = second, first
-	}
-	var a *Activities
-	freeze := &letfsv1.FreezeBucketRequest{BucketId: bucket.String(), IdempotencyKey: bucket.String()}
-	env.OnActivity(letfs.FreezeBucket, mock.Anything, "workspace", freeze).Return(&letfsv1.Bucket{Id: bucket.String(), State: "frozen"}, nil).Once()
-	env.OnActivity(letfs.ListFilesystems, mock.Anything, "workspace", &letfsv1.ListBucketFilesystemsRequest{BucketId: bucket.String()}).Return(&letfsv1.ListBucketFilesystemsResponse{FilesystemIds: []string{first.String(), second.String()}}, nil).Once()
-	for _, fs := range []uuid.UUID{first, second} {
-		env.OnActivity(letfs.PrepareDeletion, mock.Anything, "workspace", fs).Return(nil).Once()
-		env.OnWorkflow("DeleteFilesystem", mock.Anything, letfs.DeletionInput{FilesystemID: fs}).Return(fs, nil).Once()
-	}
-	env.OnActivity(letfs.ListFilesystems, mock.Anything, "workspace", &letfsv1.ListBucketFilesystemsRequest{BucketId: bucket.String(), AfterId: stringPointer(second.String())}).Return(&letfsv1.ListBucketFilesystemsResponse{}, nil).Once()
-	env.OnActivity(letfs.CompleteBucket, mock.Anything, "workspace", &letfsv1.CompleteBucketDeletionRequest{BucketId: bucket.String(), IdempotencyKey: bucket.String()}).Return(&letfsv1.Bucket{Id: bucket.String(), State: "deleted"}, nil).Once()
-	env.OnActivity(a.CompleteWorkspaceDeletion, mock.Anything, id).Return(nil).Once()
-	env.ExecuteWorkflow(DeleteWorkspace, DeleteWorkflowInput{Workspace: workspace.Workspace{ID: id, Status: "deleting", BucketID: &bucket}})
+	var activities *Activities
+	workspaceID, bucketID, first, second := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	env.OnActivity(activities.FreezeBucket, mock.Anything, bucketID).Return(nil).Once()
+	env.OnActivity(activities.ListFilesystems, mock.Anything, bucketID, uuid.Nil).Return([]uuid.UUID{first, second}, nil).Once()
+	env.OnActivity(activities.DeleteFilesystem, mock.Anything, first).Return(false, nil).Once()
+	env.OnActivity(activities.DeleteFilesystem, mock.Anything, first).Return(true, nil).Once()
+	env.OnActivity(activities.DeleteFilesystem, mock.Anything, second).Return(true, nil).Once()
+	env.OnActivity(activities.ListFilesystems, mock.Anything, bucketID, second).Return([]uuid.UUID{}, nil).Once()
+	env.OnActivity(activities.CompleteBucket, mock.Anything, bucketID).Return(nil).Once()
+	env.OnActivity(activities.CompleteWorkspaceDeletion, mock.Anything, workspaceID).Return(nil).Once()
+	env.ExecuteWorkflow(DeleteWorkspace, DeleteWorkflowInput{Workspace: workspace.Workspace{ID: workspaceID, Status: "deleting", BucketID: &bucketID}})
 	require.NoError(t, env.GetWorkflowError())
 	env.AssertExpectations(t)
 }
 
-func TestDeleteWorkspaceContinuationCarriesOnlyItsRemainingCursor(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	id, bucket := uuid.New(), uuid.New()
-	freeze := &letfsv1.FreezeBucketRequest{BucketId: bucket.String(), IdempotencyKey: bucket.String()}
-	var a *Activities
-	configure := func() *testsuite.TestWorkflowEnvironment {
-		env := suite.NewTestWorkflowEnvironment()
-		registerRemote(env)
-		env.RegisterWorkflowWithOptions(deleteFilesystemStub, workflow.RegisterOptions{Name: "DeleteFilesystem"})
-		env.OnActivity(letfs.FreezeBucket, mock.Anything, "workspace", freeze).Return(&letfsv1.Bucket{Id: bucket.String(), State: "frozen"}, nil).Once()
-		return env
-	}
-	first := configure()
-	ids := make([]uuid.UUID, 100)
-	for index := range ids {
-		ids[index] = uuid.Must(uuid.NewV7())
-	}
-	slices.SortFunc(ids, func(a, b uuid.UUID) int { return slices.Compare(a[:], b[:]) })
-	for index := range ids {
-		first.OnActivity(letfs.PrepareDeletion, mock.Anything, "workspace", ids[index]).Return(nil).Once()
-		first.OnWorkflow("DeleteFilesystem", mock.Anything, letfs.DeletionInput{FilesystemID: ids[index]}).Return(ids[index], nil).Once()
-	}
-	first.OnActivity(letfs.ListFilesystems, mock.Anything, "workspace", &letfsv1.ListBucketFilesystemsRequest{BucketId: bucket.String()}).Return(filesystemPage(ids[:64]), nil).Once()
-	first.OnActivity(letfs.ListFilesystems, mock.Anything, "workspace", &letfsv1.ListBucketFilesystemsRequest{BucketId: bucket.String(), AfterId: stringPointer(ids[63].String())}).Return(filesystemPage(ids[64:]), nil).Once()
-	first.ExecuteWorkflow(DeleteWorkspace, DeleteWorkflowInput{Workspace: workspace.Workspace{ID: id, Status: "deleting", BucketID: &bucket}})
-	var continued *workflow.ContinueAsNewError
-	require.ErrorAs(t, first.GetWorkflowError(), &continued)
-	var input DeleteWorkflowInput
-	require.NoError(t, converter.GetDefaultDataConverter().FromPayloads(continued.Input, &input))
-	require.Equal(t, DeleteWorkflowInput{Workspace: workspace.Workspace{ID: id, Status: "deleting", BucketID: &bucket}, Cursor: ids[99]}, input)
-	first.AssertExpectations(t)
-	next := configure()
-	next.OnActivity(letfs.ListFilesystems, mock.Anything, "workspace", &letfsv1.ListBucketFilesystemsRequest{BucketId: bucket.String(), AfterId: stringPointer(ids[99].String())}).Return(&letfsv1.ListBucketFilesystemsResponse{}, nil).Once()
-	next.OnActivity(letfs.CompleteBucket, mock.Anything, "workspace", &letfsv1.CompleteBucketDeletionRequest{BucketId: bucket.String(), IdempotencyKey: bucket.String()}).Return(&letfsv1.Bucket{Id: bucket.String(), State: "deleted"}, nil).Once()
-	next.OnActivity(a.CompleteWorkspaceDeletion, mock.Anything, id).Return(nil).Once()
-	next.ExecuteWorkflow(DeleteWorkspace, input)
-	require.NoError(t, next.GetWorkflowError())
-	next.AssertExpectations(t)
-}
-
-func stringPointer(value string) *string { return &value }
-func filesystemPage(ids []uuid.UUID) *letfsv1.ListBucketFilesystemsResponse {
-	result := &letfsv1.ListBucketFilesystemsResponse{}
-	for _, id := range ids {
-		result.FilesystemIds = append(result.FilesystemIds, id.String())
-	}
-	return result
-}
-func TestDeleteWorkspaceWithoutReservedStorageHasNoRemoteEffects(t *testing.T) {
+func TestDeleteWorkspaceContinuationCarriesCursor(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
-	var a *Activities
+	var activities *Activities
+	workspaceID, bucketID := uuid.New(), uuid.New()
+	ids := make([]uuid.UUID, 100)
+	for i := range ids {
+		ids[i] = uuid.Must(uuid.NewV7())
+	}
+	env.OnActivity(activities.FreezeBucket, mock.Anything, bucketID).Return(nil).Once()
+	env.OnActivity(activities.ListFilesystems, mock.Anything, bucketID, uuid.Nil).Return(ids, nil).Once()
+	for _, id := range ids {
+		env.OnActivity(activities.DeleteFilesystem, mock.Anything, id).Return(true, nil).Once()
+	}
+	env.ExecuteWorkflow(DeleteWorkspace, DeleteWorkflowInput{Workspace: workspace.Workspace{ID: workspaceID, Status: "deleting", BucketID: &bucketID}})
+	var continued *workflow.ContinueAsNewError
+	require.ErrorAs(t, env.GetWorkflowError(), &continued)
+	var input DeleteWorkflowInput
+	require.NoError(t, converter.GetDefaultDataConverter().FromPayloads(continued.Input, &input))
+	require.Equal(t, ids[99], input.Cursor)
+	env.AssertExpectations(t)
+}
+
+func TestDeleteWorkspaceWithoutStorageOnlyCompletesWorkspace(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	var activities *Activities
 	id := uuid.New()
-	env.OnActivity(a.CompleteWorkspaceDeletion, mock.Anything, id).Return(nil).Once()
+	env.OnActivity(activities.CompleteWorkspaceDeletion, mock.Anything, id).Return(nil).Once()
 	env.ExecuteWorkflow(DeleteWorkspace, DeleteWorkflowInput{Workspace: workspace.Workspace{ID: id, Status: "deleting"}})
 	require.NoError(t, env.GetWorkflowError())
+	env.AssertExpectations(t)
+}
+
+func TestDeleteWorkspaceBoundsPollingHistoryBeforeFilesystemCompletes(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	a := &Activities{}
+	workspaceID, bucket, fs := uuid.New(), uuid.New(), uuid.New()
+	env.OnActivity(a.FreezeBucket, mock.Anything, bucket).Return(nil).Once()
+	env.OnActivity(a.ListFilesystems, mock.Anything, bucket, uuid.Nil).Return([]uuid.UUID{fs}, nil).Once()
+	env.OnActivity(a.DeleteFilesystem, mock.Anything, fs).Return(false, nil).Times(100)
+	env.ExecuteWorkflow(DeleteWorkspace, DeleteWorkflowInput{Workspace: workspace.Workspace{ID: workspaceID, Status: "deleting", BucketID: &bucket}})
+	require.True(t, workflow.IsContinueAsNewError(env.GetWorkflowError()))
 	env.AssertExpectations(t)
 }

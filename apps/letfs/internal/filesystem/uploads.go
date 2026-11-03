@@ -9,10 +9,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/qninhdt/openlet/apps/letfs/internal/storage"
+	"github.com/qninhdt/openlet/apps/letfs/internal/clients/storage"
+	"github.com/qninhdt/openlet/packages/go/apperr"
 	"github.com/qninhdt/openlet/packages/go/authz"
-	"github.com/qninhdt/openlet/packages/go/rpc"
-	"google.golang.org/grpc/codes"
 )
 
 type UploadDestination struct {
@@ -65,7 +64,7 @@ type uploadAccess struct {
 }
 
 func uploadState(code string) error {
-	return rpc.Fault(codes.Aborted, code, "upload conflicts with current state")
+	return apperr.New(apperr.Conflict, code, "upload conflicts with current state")
 }
 
 func (u Upload) active() error {
@@ -114,7 +113,7 @@ func (s *session) loadUpload(ctx context.Context, id uuid.UUID, access uploadAcc
 			stage != nil && *stage == access.stage
 	}
 	if !permitted {
-		return Upload{}, rpc.Fault(codes.NotFound, "NOT_FOUND", "resource not found")
+		return Upload{}, apperr.New(apperr.Missing, "NOT_FOUND", "resource not found")
 	}
 	if complete && (result.State == "open" || result.State == "completing") {
 		return Upload{}, uploadState("PROCESSING_NOT_ACTIVE")
@@ -130,7 +129,7 @@ func (s *session) loadUpload(ctx context.Context, id uuid.UUID, access uploadAcc
 func (s *session) uploadTarget(ctx context.Context, saved savedUpload) (*Node, uuid.UUID, string, error) {
 	input := saved.Input
 	if (input.Replacement == nil) == (input.Destination == nil) {
-		return nil, uuid.Nil, "", rpc.Fault(codes.InvalidArgument, "VALIDATION", "exactly one upload target required")
+		return nil, uuid.Nil, "", apperr.New(apperr.Invalid, "VALIDATION", "exactly one upload target required")
 	}
 	if input.Replacement != nil {
 		r := input.Replacement
@@ -148,10 +147,10 @@ func (s *session) uploadTarget(ctx context.Context, saved savedUpload) (*Node, u
 			return nil, uuid.Nil, "", err
 		}
 		if node.Kind != "file" {
-			return nil, uuid.Nil, "", rpc.Fault(codes.Aborted, "NOT_FILE", "file required")
+			return nil, uuid.Nil, "", apperr.New(apperr.Conflict, "NOT_FILE", "file required")
 		}
 		if node.ParentID == nil {
-			return nil, uuid.Nil, "", rpc.Fault(codes.NotFound, "NOT_FOUND", "resource not found")
+			return nil, uuid.Nil, "", apperr.New(apperr.Missing, "NOT_FOUND", "resource not found")
 		}
 		return &node, *node.ParentID, node.Name, nil
 	}
@@ -177,14 +176,14 @@ func (s *session) uploadTarget(ctx context.Context, saved savedUpload) (*Node, u
 		return nil, uuid.Nil, "", databaseError(err)
 	}
 	if exists {
-		return nil, uuid.Nil, "", rpc.Fault(codes.AlreadyExists, "NAME_CONFLICT", "name already exists")
+		return nil, uuid.Nil, "", apperr.New(apperr.Exists, "NAME_CONFLICT", "name already exists")
 	}
 	depth, err := s.depth(ctx, parent.ID)
 	if err != nil {
 		return nil, uuid.Nil, "", err
 	}
 	if depth >= maxDepth {
-		return nil, uuid.Nil, "", rpc.Fault(codes.Aborted, "RESOURCE_LIMIT", "tree depth limit exceeded")
+		return nil, uuid.Nil, "", apperr.New(apperr.Conflict, "RESOURCE_LIMIT", "tree depth limit exceeded")
 	}
 	return nil, parent.ID, d.Name, nil
 }
@@ -199,7 +198,7 @@ func (s *session) uploadCapacity(ctx context.Context, maxOutstanding, maxBacklog
 		return databaseError(err)
 	}
 	if outstanding >= maxOutstanding || backlog >= maxBacklog {
-		return rpc.Fault(codes.Aborted, "RESOURCE_LIMIT", "outstanding operation limit exceeded")
+		return apperr.New(apperr.Conflict, "RESOURCE_LIMIT", "outstanding operation limit exceeded")
 	}
 	return nil
 }
@@ -211,7 +210,7 @@ func storageError(ctx context.Context, err error) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	return rpc.Fault(codes.Unavailable, "DEPENDENCY_UNAVAILABLE", "object storage unavailable")
+	return apperr.New(apperr.Unavailable, "DEPENDENCY_UNAVAILABLE", "object storage unavailable")
 }
 
 func (s *Store) CreateUpload(ctx context.Context, fs uuid.UUID, mounts []Mount, key uuid.UUID, input UploadCreation) (Upload, error) {
@@ -220,7 +219,7 @@ func (s *Store) CreateUpload(ctx context.Context, fs uuid.UUID, mounts []Mount, 
 		return Upload{}, err
 	}
 	if key == uuid.Nil || input.SizeBytes == nil || *input.SizeBytes < 0 || (input.Destination == nil) == (input.Replacement == nil) {
-		return Upload{}, rpc.Fault(codes.InvalidArgument, "VALIDATION", "request key, size and one target required")
+		return Upload{}, apperr.New(apperr.Invalid, "VALIDATION", "request key, size and one target required")
 	}
 	if err = mediaType(input.MediaType); err != nil {
 		return Upload{}, err
@@ -258,7 +257,7 @@ func (s *Store) CreateUpload(ctx context.Context, fs uuid.UUID, mounts []Mount, 
 		return Upload{}, databaseError(err)
 	}
 	if *input.SizeBytes > s.MaxFileBytes {
-		return Upload{}, rpc.Fault(codes.ResourceExhausted, "REQUEST_LIMIT", "file exceeds maximum")
+		return Upload{}, apperr.New(apperr.Limit, "REQUEST_LIMIT", "file exceeds maximum")
 	}
 	if s.Storage == nil || s.MultipartThreshold <= 0 || s.MultipartPartBytes < 5*1024*1024 {
 		return Upload{}, storageError(ctx, storage.ErrUnavailable)
@@ -268,15 +267,15 @@ func (s *Store) CreateUpload(ctx context.Context, fs uuid.UUID, mounts []Mount, 
 	if *input.SizeBytes < s.MultipartThreshold {
 		transport = "single"
 		if input.ContentMD5 == nil {
-			return Upload{}, rpc.Fault(codes.InvalidArgument, "VALIDATION", "Content-MD5 required")
+			return Upload{}, apperr.New(apperr.Invalid, "VALIDATION", "Content-MD5 required")
 		}
 		digest, err := base64.StdEncoding.DecodeString(*input.ContentMD5)
 		if err != nil || len(digest) != 16 || base64.StdEncoding.EncodeToString(digest) != *input.ContentMD5 {
-			return Upload{}, rpc.Fault(codes.InvalidArgument, "VALIDATION", "invalid Content-MD5")
+			return Upload{}, apperr.New(apperr.Invalid, "VALIDATION", "invalid Content-MD5")
 		}
 	} else {
 		if input.ContentMD5 != nil || 1+(*input.SizeBytes-1)/s.MultipartPartBytes > 10000 {
-			return Upload{}, rpc.Fault(codes.InvalidArgument, "VALIDATION", "invalid multipart metadata")
+			return Upload{}, apperr.New(apperr.Invalid, "VALIDATION", "invalid multipart metadata")
 		}
 		partSize = &s.MultipartPartBytes
 	}
@@ -347,7 +346,7 @@ func (s *Store) signUpload(ctx context.Context, upload Upload, number *int32, pr
 		signed, err = sign(ctx, *upload.key, upload.SizeBytes, *upload.md5, lifetime)
 	} else {
 		if upload.PartSize == nil || *number < 1 || *number > upload.PartCount() {
-			return storage.SignedUpload{}, rpc.Fault(codes.InvalidArgument, "VALIDATION", "invalid part number")
+			return storage.SignedUpload{}, apperr.New(apperr.Invalid, "VALIDATION", "invalid part number")
 		}
 		if upload.multipartID == nil {
 			return storage.SignedUpload{}, uploadState("UPLOAD_NOT_READY")
@@ -452,7 +451,7 @@ func (s *Store) GetUploadParts(ctx context.Context, fs, id uuid.UUID, numbers []
 
 func (s *Store) getUploadParts(ctx context.Context, fs, id uuid.UUID, access uploadAccess, numbers []int32) ([]UploadPart, error) {
 	if len(numbers) < 1 || len(numbers) > 64 {
-		return nil, rpc.Fault(codes.InvalidArgument, "VALIDATION", "1..64 parts required")
+		return nil, apperr.New(apperr.Invalid, "VALIDATION", "1..64 parts required")
 	}
 	session, err := s.openSession(ctx, fs, true)
 	if err != nil {
@@ -474,7 +473,7 @@ func (s *Store) getUploadParts(ctx context.Context, fs, id uuid.UUID, access upl
 	latest := time.Now()
 	for i, number := range numbers {
 		if seen[number] {
-			return nil, rpc.Fault(codes.InvalidArgument, "VALIDATION", "duplicate part number")
+			return nil, apperr.New(apperr.Invalid, "VALIDATION", "duplicate part number")
 		}
 		seen[number] = true
 		signed, err := s.signUpload(ctx, upload, &number, access.source != nil)

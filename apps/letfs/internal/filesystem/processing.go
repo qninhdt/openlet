@@ -4,9 +4,8 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/qninhdt/openlet/apps/letfs/internal/storage"
-	"github.com/qninhdt/openlet/packages/go/rpc"
-	"google.golang.org/grpc/codes"
+	"github.com/qninhdt/openlet/apps/letfs/internal/clients/storage"
+	"github.com/qninhdt/openlet/packages/go/apperr"
 )
 
 type ParsePreparation struct {
@@ -122,7 +121,7 @@ func (s *Store) AbortParse(ctx context.Context, source Generation, code string) 
 	switch code {
 	case "PROCESSING_FAILED", "PROCESSING_CANCELLED", "DOCUMENT_INVALID", "RESOURCE_LIMIT", "QUOTA_EXCEEDED":
 	default:
-		return rpc.Fault(codes.InvalidArgument, "VALIDATION", "invalid processing failure code")
+		return apperr.New(apperr.Invalid, "VALIDATION", "invalid processing failure code")
 	}
 	session, err := s.processingSession(ctx, source, true)
 	if err != nil {

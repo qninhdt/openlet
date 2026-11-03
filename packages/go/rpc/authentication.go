@@ -15,10 +15,11 @@ import (
 )
 
 type Credential struct {
-	Service string
-	Token   string
-	Methods []string
-	Gateway bool
+	Service       string
+	Token         string
+	Methods       []string
+	Gateway       bool
+	DelegateActor bool
 }
 
 type Authenticator struct{ credentials []Credential }
@@ -74,7 +75,7 @@ func (a *Authenticator) Authenticate(ctx context.Context, method string) (contex
 		}
 		principal := identity.Principal{Service: credential.Service, Gateway: credential.Gateway}
 		if actors := md.Get("x-openlet-user-id"); len(actors) == 1 {
-			if !credential.Gateway {
+			if !credential.Gateway && !credential.DelegateActor {
 				return nil, status.Error(codes.PermissionDenied, "caller cannot delegate user")
 			}
 			actor, err := uuid.Parse(actors[0])

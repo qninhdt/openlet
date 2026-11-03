@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/base64"
+	"github.com/qninhdt/openlet/packages/go/apperr"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -16,15 +17,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/qninhdt/openlet/apps/letfs/internal/storage"
+	"github.com/qninhdt/openlet/apps/letfs/internal/clients/storage"
 	"github.com/qninhdt/openlet/apps/letfs/internal/testfixture"
 	"github.com/qninhdt/openlet/packages/go/authz"
 	"github.com/qninhdt/openlet/packages/go/identity"
 	sharedfixture "github.com/qninhdt/openlet/packages/go/testfixture"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/semaphore"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 func TestIntegrationArchiveExactBytesBoundsAndOwnedCancellation(t *testing.T) {
@@ -46,7 +45,7 @@ func TestIntegrationArchiveExactBytesBoundsAndOwnedCancellation(t *testing.T) {
 	require.NoError(t, err)
 	mounts := []Mount{{Path: "/drive", FilesystemID: fs}}
 	_, err = s.OpenArchive(ctx, fs, mounts, *created.RootID)
-	require.Equal(t, codes.PermissionDenied, status.Code(err))
+	require.Equal(t, apperr.Forbidden, apperr.KindOf(err))
 	testfixture.Grant(t, graph, "filesystem", fs, actor, authz.Archive, authz.NodeCreate)
 	inline, err := s.CreateNode(ctx, fs, mounts, uuid.New(), CreateNode{Parent: Locator{NodeID: created.RootID}, Name: "inline.txt", File: &InlineFile{Content: []byte("exact inline"), MediaType: "text/plain"}})
 	require.NoError(t, err)
@@ -81,7 +80,7 @@ func TestIntegrationArchiveExactBytesBoundsAndOwnedCancellation(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "Báo cáo.zip", stream.Name)
 	_, err = s.OpenArchive(ctx, fs, mounts, *created.RootID)
-	require.Equal(t, codes.ResourceExhausted, status.Code(err))
+	require.Equal(t, apperr.Limit, apperr.KindOf(err))
 	data, err := io.ReadAll(stream)
 	require.NoError(t, err)
 	require.NoError(t, stream.Close())
@@ -105,7 +104,7 @@ func TestIntegrationArchiveExactBytesBoundsAndOwnedCancellation(t *testing.T) {
 	} {
 		s.Archive = limit
 		_, err = s.OpenArchive(ctx, fs, mounts, *created.RootID)
-		require.Equal(t, codes.ResourceExhausted, status.Code(err))
+		require.Equal(t, apperr.Limit, apperr.KindOf(err))
 	}
 	s.Archive = config
 	s.Archive.MaxOutputBytes = 50
@@ -120,12 +119,12 @@ func TestIntegrationArchiveExactBytesBoundsAndOwnedCancellation(t *testing.T) {
 	_, err = db.Exec(ctx, `UPDATE nodes SET revision=revision+1 WHERE id=$1`, inline.ID)
 	require.NoError(t, err)
 	err = s.produceArchive(ctx, plan, io.Discard)
-	require.Equal(t, codes.Aborted, status.Code(err), "changed revision after preflight must fail")
+	require.Equal(t, apperr.Conflict, apperr.KindOf(err), "changed revision after preflight must fail")
 	for _, collision := range []string{"INLINE.txt", "CON.txt"} {
 		node, err := s.CreateNode(ctx, fs, mounts, uuid.New(), CreateNode{Parent: Locator{NodeID: created.RootID}, Name: collision, File: &InlineFile{Content: []byte("x"), MediaType: "text/plain"}})
 		require.NoError(t, err)
 		_, err = s.OpenArchive(ctx, fs, mounts, *created.RootID)
-		require.Equal(t, codes.InvalidArgument, status.Code(err))
+		require.Equal(t, apperr.Invalid, apperr.KindOf(err))
 		_, err = db.Exec(ctx, `DELETE FROM files WHERE node_id=$1`, node.ID)
 		require.NoError(t, err)
 		_, err = db.Exec(ctx, `DELETE FROM nodes WHERE id=$1`, node.ID)

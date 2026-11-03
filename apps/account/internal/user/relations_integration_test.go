@@ -27,7 +27,7 @@ func (g *recordingRelationshipWrites) WriteRelationships(ctx context.Context, in
 
 func TestIntegrationAccountSelfRelationships(t *testing.T) {
 	store := Store{DB: testfixture.Postgres(t)}
-	graph, address, _ := sharedfixture.SpiceDB(t, "../../../../packages/contracts/authz/schema.zed")
+	graph, address, _ := sharedfixture.SpiceDB(t, testfixture.Path("packages", "contracts", "authz", "schema.zed"))
 	reader := sharedfixture.SpiceDBClient(t, address)
 	ctx := t.Context()
 	account, err := store.EnsureUser(ctx, "self-test")

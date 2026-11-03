@@ -4,6 +4,7 @@ package filesystem
 
 import (
 	"context"
+	"github.com/qninhdt/openlet/packages/go/apperr"
 	"testing"
 
 	"github.com/google/uuid"
@@ -12,8 +13,6 @@ import (
 	"github.com/qninhdt/openlet/packages/go/identity"
 	sharedfixture "github.com/qninhdt/openlet/packages/go/testfixture"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 func TestIntegrationParsePreparationFencesGenerationAndLifecycle(t *testing.T) {
@@ -53,7 +52,7 @@ func TestIntegrationParsePreparationFencesGenerationAndLifecycle(t *testing.T) {
 	current := Generation{FileID: file.ID, Generation: 2}
 	_, err = s.PrepareParse(pipeline, current)
 	require.NoError(t, err)
-	require.Equal(t, codes.InvalidArgument, status.Code(s.AbortParse(pipeline, current, "private provider text")))
+	require.Equal(t, apperr.Invalid, apperr.KindOf(s.AbortParse(pipeline, current, "private provider text")))
 	_, err = s.FreezeBucket(owner, uuid.New(), bucket)
 	require.NoError(t, err)
 	require.NoError(t, s.AbortParse(pipeline, current, "PROCESSING_CANCELLED"), "cleanup is still allowed after freeze")
@@ -97,7 +96,7 @@ func TestIntegrationParseOutputPublicationAtomicReplayAndScope(t *testing.T) {
 	require.NotEqual(t, upload.ID, replay.ID, "each execution selects its own output uploads")
 	scope := OutputScope{Source: a, Stage: "parse", UploadID: upload.ID}
 	_, err = s.GetUpload(ctx, fs, upload.ID)
-	require.Equal(t, codes.NotFound, status.Code(err), "public upload API cannot read processing output")
+	require.Equal(t, apperr.Missing, apperr.KindOf(err), "public upload API cannot read processing output")
 	wrong := scope
 	wrong.Stage = "enrichment"
 	_, err = s.GetOutputUpload(t.Context(), wrong)
@@ -124,7 +123,7 @@ func TestIntegrationParseOutputPublicationAtomicReplayAndScope(t *testing.T) {
 	require.Equal(t, "OUTPUTS_INCOMPLETE", reason(s.CompleteParse(t.Context(), a, ParseManifest{Uploads: []uuid.UUID{upload.ID, upload.ID}})))
 	collision := manifest
 	collision.Directories = []string{"pages/text.md"}
-	require.Equal(t, codes.InvalidArgument, status.Code(s.CompleteParse(t.Context(), a, collision)))
+	require.Equal(t, apperr.Invalid, apperr.KindOf(s.CompleteParse(t.Context(), a, collision)))
 	_, err = db.Exec(t.Context(), `UPDATE quota_buckets SET limit_bytes=used_bytes WHERE id=$1`, bucket)
 	require.NoError(t, err)
 	require.Equal(t, "QUOTA_EXCEEDED", reason(s.CompleteParse(t.Context(), a, manifest)))

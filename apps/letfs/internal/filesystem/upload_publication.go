@@ -9,21 +9,18 @@ import (
 	"unicode"
 
 	"github.com/google/uuid"
-	"github.com/qninhdt/openlet/apps/letfs/internal/storage"
+	"github.com/qninhdt/openlet/apps/letfs/internal/clients/storage"
+	"github.com/qninhdt/openlet/packages/go/apperr"
 	"github.com/qninhdt/openlet/packages/go/authz"
-	"github.com/qninhdt/openlet/packages/go/rpc"
-	"google.golang.org/genproto/googleapis/rpc/errdetails"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 func multipartEvidence(parts []storage.PartReceipt, expected int32) error {
 	if len(parts) == 0 || len(parts) > 10000 || len(parts) != int(expected) {
-		return rpc.Fault(codes.InvalidArgument, "VALIDATION", "incomplete multipart receipts")
+		return apperr.New(apperr.Invalid, "VALIDATION", "incomplete multipart receipts")
 	}
 	for i, part := range parts {
 		if part.Number != int32(i+1) || part.ETag == "" || len(part.ETag) > 1024 || strings.IndexFunc(part.ETag, unicode.IsControl) >= 0 {
-			return rpc.Fault(codes.InvalidArgument, "VALIDATION", "invalid ordered multipart receipts")
+			return apperr.New(apperr.Invalid, "VALIDATION", "invalid ordered multipart receipts")
 		}
 	}
 	return nil
@@ -57,7 +54,7 @@ func (s *Store) completeUpload(ctx context.Context, fs, id uuid.UUID, access upl
 		}
 	}
 	if upload.Transport != "multipart" && len(parts) > 0 {
-		return UploadPublication{}, rpc.Fault(codes.InvalidArgument, "VALIDATION", "only multipart accepts receipts")
+		return UploadPublication{}, apperr.New(apperr.Invalid, "VALIDATION", "only multipart accepts receipts")
 	}
 	if upload.State == "finalized" {
 		if access.source != nil {
@@ -93,7 +90,7 @@ func (s *Store) completeUpload(ctx context.Context, fs, id uuid.UUID, access upl
 			}
 		}
 		if len(frozen) == 0 {
-			return UploadPublication{}, rpc.Fault(codes.InvalidArgument, "VALIDATION", "multipart completion requires receipts")
+			return UploadPublication{}, apperr.New(apperr.Invalid, "VALIDATION", "multipart completion requires receipts")
 		}
 	}
 	_, err = session.tx.Exec(ctx, `UPDATE uploads SET state='completing',updated_at=now() WHERE id=$1`, id)
@@ -130,8 +127,8 @@ func (s *Store) completeUpload(ctx context.Context, fs, id uuid.UUID, access upl
 		}
 	}
 	result, err := s.publishUpload(ctx, fs, id, access)
-	switch status.Code(err) {
-	case codes.InvalidArgument, codes.NotFound, codes.AlreadyExists, codes.Aborted, codes.FailedPrecondition, codes.PermissionDenied, codes.ResourceExhausted:
+	switch apperr.KindOf(err) {
+	case apperr.Invalid, apperr.Missing, apperr.Exists, apperr.Conflict, apperr.Precondition, apperr.Forbidden, apperr.Limit:
 		if cleanupErr := s.abortUpload(ctx, fs, id, access); cleanupErr != nil && errorReason(cleanupErr) != "UPLOAD_FINALIZED" {
 			return UploadPublication{}, cleanupErr
 		}
@@ -140,10 +137,8 @@ func (s *Store) completeUpload(ctx context.Context, fs, id uuid.UUID, access upl
 }
 
 func errorReason(err error) string {
-	for _, detail := range status.Convert(err).Details() {
-		if value, ok := detail.(*errdetails.ErrorInfo); ok && value.Domain == "openlet" {
-			return value.Reason
-		}
+	if fault, ok := apperr.As(err); ok {
+		return fault.Reason
 	}
 	return ""
 }

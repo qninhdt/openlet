@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from letfs_ingest.convert_child import ResourceLimit, check_outputs, convert
-from letfs_ingest.exporters import markdown, slug
+from letfs_ingest.parser.convert_child import ResourceLimit, check_outputs, convert
+from letfs_ingest.parser.exporters import markdown, slug
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

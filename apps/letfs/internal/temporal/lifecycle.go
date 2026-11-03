@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/qninhdt/openlet/apps/letfs/internal/filesystem"
 	"go.temporal.io/sdk/workflow"
 )
 
@@ -12,20 +13,7 @@ const (
 	DeleteFilesystemName = "DeleteFilesystem"
 )
 
-// DeletionInput references an admission already committed by letfs.
-type DeletionInput struct {
-	FilesystemID uuid.UUID  `json:"filesystem_id"`
-	EntryID      *uuid.UUID `json:"entry_id"`
-}
-
-func (in DeletionInput) WorkflowID() string {
-	if in.EntryID != nil {
-		return "purge-trash/" + in.FilesystemID.String() + "/" + in.EntryID.String()
-	}
-	return "delete-filesystem/" + in.FilesystemID.String()
-}
-
-func deleteNodes(ctx workflow.Context, input DeletionInput, name string) (uuid.UUID, error) {
+func deleteNodes(ctx workflow.Context, input filesystem.DeletionInput, name string) (uuid.UUID, error) {
 	// Once admitted, cancellation must not strand destructive cleanup.
 	ctx, cancel := workflow.NewDisconnectedContext(ctx)
 	defer cancel()
@@ -45,10 +33,10 @@ func deleteNodes(ctx workflow.Context, input DeletionInput, name string) (uuid.U
 	return uuid.Nil, workflow.NewContinueAsNewError(ctx, name, input)
 }
 
-func PurgeTrash(ctx workflow.Context, input DeletionInput) (uuid.UUID, error) {
+func PurgeTrash(ctx workflow.Context, input filesystem.DeletionInput) (uuid.UUID, error) {
 	return deleteNodes(ctx, input, PurgeTrashName)
 }
 
-func DeleteFilesystem(ctx workflow.Context, input DeletionInput) (uuid.UUID, error) {
+func DeleteFilesystem(ctx workflow.Context, input filesystem.DeletionInput) (uuid.UUID, error) {
 	return deleteNodes(ctx, input, DeleteFilesystemName)
 }

@@ -3,14 +3,13 @@
 package filesystem
 
 import (
+	"github.com/qninhdt/openlet/packages/go/apperr"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/qninhdt/openlet/apps/letfs/internal/testfixture"
 	"github.com/qninhdt/openlet/packages/go/identity"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 func TestIntegrationIndexPublicationAndGenerationFences(t *testing.T) {
@@ -58,5 +57,5 @@ func TestIntegrationIndexPublicationAndGenerationFences(t *testing.T) {
 	_, err = s.PrepareIndex(t.Context(), source)
 	require.Equal(t, "SOURCE_REPLACED", reason(err))
 	require.Equal(t, "SOURCE_REPLACED", reason(s.FailIndex(t.Context(), source, "PROCESSING_FAILED")))
-	require.Equal(t, codes.InvalidArgument, status.Code(s.CompleteIndex(t.Context(), Generation{})))
+	require.Equal(t, apperr.Invalid, apperr.KindOf(s.CompleteIndex(t.Context(), Generation{})))
 }

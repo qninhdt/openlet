@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/qninhdt/openlet/packages/go/apperr"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -20,14 +21,12 @@ import (
 
 	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/google/uuid"
-	"github.com/qninhdt/openlet/apps/letfs/internal/search"
+	"github.com/qninhdt/openlet/apps/letfs/internal/clients/search"
 	"github.com/qninhdt/openlet/apps/letfs/internal/testfixture"
 	"github.com/qninhdt/openlet/packages/go/authz"
 	"github.com/qninhdt/openlet/packages/go/identity"
 	sharedfixture "github.com/qninhdt/openlet/packages/go/testfixture"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 func TestIntegrationSemanticSearchWithOpenRouterSDKAndCurrentFacts(t *testing.T) {
@@ -167,11 +166,11 @@ func TestIntegrationSemanticSearchWithOpenRouterSDKAndCurrentFacts(t *testing.T)
 	changed := query
 	changed.Query = "different"
 	_, err = s.SemanticSearch(ctx, fs, mounts, changed)
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
+	require.Equal(t, apperr.Invalid, apperr.KindOf(err))
 	originalModel := s.AI.RerankModel
 	s.AI.RerankModel = "different-reranker"
 	_, err = s.SemanticSearch(ctx, fs, mounts, query)
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
+	require.Equal(t, apperr.Invalid, apperr.KindOf(err))
 	s.AI.RerankModel = originalModel
 	query.Cursor, query.Limit = nil, nil
 	rerankFail.Store(true)
@@ -183,13 +182,13 @@ func TestIntegrationSemanticSearchWithOpenRouterSDKAndCurrentFacts(t *testing.T)
 	rerankFail.Store(false)
 	embedFail.Store(true)
 	_, err = s.SemanticSearch(ctx, fs, mounts, query)
-	require.Equal(t, codes.Unavailable, status.Code(err))
+	require.Equal(t, apperr.Unavailable, apperr.KindOf(err))
 	embedFail.Store(false)
 	working := s.Search
 	s.Search, err = search.New(endpoint, "invalid-key")
 	require.NoError(t, err)
 	_, err = s.SemanticSearch(ctx, fs, mounts, query)
-	require.Equal(t, codes.Unavailable, status.Code(err))
+	require.Equal(t, apperr.Unavailable, apperr.KindOf(err))
 	s.Search = working
 	t.Run("bounded evidence and provider batches", func(t *testing.T) {
 		original := points
@@ -279,7 +278,7 @@ func TestIntegrationSemanticSearchWithOpenRouterSDKAndCurrentFacts(t *testing.T)
 	}
 	mutationMu.Unlock()
 	_, err = s.SemanticSearch(ctx, fs, mounts, query)
-	require.Equal(t, codes.PermissionDenied, status.Code(err), "revocation during rerank must be checked before returning text")
+	require.Equal(t, apperr.Forbidden, apperr.KindOf(err), "revocation during rerank must be checked before returning text")
 	_, err = s.SemanticSearch(context.Background(), fs, mounts, SearchInput{Query: strings.Repeat("a", 2001)})
-	require.Equal(t, codes.Unauthenticated, status.Code(err))
+	require.Equal(t, apperr.Unauthenticated, apperr.KindOf(err))
 }

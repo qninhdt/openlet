@@ -1,6 +1,6 @@
 import pytest
 
-from letfs_ingest import convert_child
+from letfs_ingest.parser import convert_child
 
 
 @pytest.mark.parametrize(

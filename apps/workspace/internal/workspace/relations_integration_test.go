@@ -11,6 +11,7 @@ import (
 	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	localfixture "github.com/qninhdt/openlet/apps/workspace/internal/testfixture"
 	"github.com/qninhdt/openlet/packages/go/authz"
 	"github.com/qninhdt/openlet/packages/go/testfixture"
 	"github.com/stretchr/testify/require"
@@ -107,9 +108,9 @@ func TestIntegrationOfflineRebuildPagesLargeMembership(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
 	store := Store{DB: postgres(t), MaxWorkspaces: 10, MaxMembers: 1200, QuotaLimit: 1024}
-	graph, address, _ := testfixture.SpiceDB(t, "../../../../packages/contracts/authz/schema.zed")
+	graph, address, _ := testfixture.SpiceDB(t, localfixture.Path("packages", "contracts", "authz", "schema.zed"))
 	independent := testfixture.SpiceDBClient(t, address)
-	data, err := os.ReadFile("../../../../packages/contracts/authz/roles.json")
+	data, err := os.ReadFile(localfixture.Path("packages", "contracts", "authz", "roles.json"))
 	require.NoError(t, err)
 	policy, err := authz.ParseRolePolicy(data)
 	require.NoError(t, err)

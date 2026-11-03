@@ -7,6 +7,7 @@ import (
 	"errors"
 	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/google/uuid"
+	localfixture "github.com/qninhdt/openlet/apps/workspace/internal/testfixture"
 	"github.com/qninhdt/openlet/apps/workspace/internal/workspace"
 	"github.com/qninhdt/openlet/packages/go/authz"
 	"github.com/qninhdt/openlet/packages/go/testfixture"
@@ -29,9 +30,9 @@ func (g lostGraphResponse) WriteRelationships(ctx context.Context, in *v1.WriteR
 }
 func TestIntegrationMutationRecoversCommittedSQLAndLostGraphResponse(t *testing.T) {
 	ctx := t.Context()
-	db := testfixture.Postgres(t, "../../migrations/0001_initial.sql")
-	graph, _, _ := testfixture.SpiceDB(t, "../../../../packages/contracts/authz/schema.zed")
-	data, err := os.ReadFile("../../../../packages/contracts/authz/roles.json")
+	db := testfixture.Postgres(t, localfixture.Path("apps", "workspace", "migrations", "0001_initial.sql"))
+	graph, _, _ := testfixture.SpiceDB(t, localfixture.Path("packages", "contracts", "authz", "schema.zed"))
+	data, err := os.ReadFile(localfixture.Path("packages", "contracts", "authz", "roles.json"))
 	require.NoError(t, err)
 	policy, err := authz.ParseRolePolicy(data)
 	require.NoError(t, err)
@@ -45,7 +46,8 @@ func TestIntegrationMutationRecoversCommittedSQLAndLostGraphResponse(t *testing.
 	_, err = db.Exec(ctx, `INSERT INTO workspace_members(workspace_id,user_id,role) VALUES($1,$2,'editor')`, value.ID, member)
 	require.NoError(t, err)
 	require.NoError(t, store.RebuildWorkspaceRelationships(ctx, graph, value.ID))
-	a := &Activities{Store: store, Graph: graph}
+	service := &workspace.Service{Store: store}
+	a := &Activities{Service: service}
 	_, missingErr := a.PrepareMutation(ctx, Mutation{Kind: "update", WorkspaceID: uuid.New(), ActorID: owner, Key: uuid.New(), Update: workspace.UpdateInput{OwnerID: &member}})
 	var rejected *sdktemporal.ApplicationError
 	require.ErrorAs(t, missingErr, &rejected)
@@ -61,10 +63,13 @@ func TestIntegrationMutationRecoversCommittedSQLAndLostGraphResponse(t *testing.
 	receipt := workspace.MutationReceipt{Key: cmd.Key, Hash: workspace.Fingerprint(prepared)}
 	_, err = store.Update(ctx, value.ID, owner, current.Revision, cmd.Update, receipt)
 	require.NoError(t, err)
-	a.Graph = lostGraphResponse{graph}
+	store.Graph = lostGraphResponse{graph}
 	_, err = a.ApplyMutation(ctx, prepared)
-	require.EqualError(t, err, "graph acknowledgement lost")
-	a.Graph = graph
+	var activityFailure *sdktemporal.ApplicationError
+	require.ErrorAs(t, err, &activityFailure)
+	require.Equal(t, "INTERNAL", activityFailure.Type())
+	require.False(t, activityFailure.NonRetryable())
+	store.Graph = graph
 	completed, err := a.ApplyMutation(ctx, prepared)
 	require.NoError(t, err)
 	require.NotEqual(t, current.Revision, completed.Revision)

@@ -7,11 +7,12 @@ This ledger records implemented application RPC boundaries. The [authorization m
 | Service | Caller | Generated contract | Implementation state |
 |---|---|---|---|
 | AccountService | Workspace service | GetUserSummaries, GetVerifiedEmails | Implemented; active-user lookup, verified Clerk emails, exact caller response scope |
-| FilesystemService | Gateway carrying a verified public user | All public operations assigned below | Active Go handlers; direct public HTTP and native gRPC use the same filesystem operations |
-| StorageAdministrationService | Explicit storage-owner service/job | CreateBucket, CreateFilesystem, FreezeBucket, ListBucketFilesystems, CompleteBucketDeletion, ReleaseProvisioning | Active Go handlers; caller credentials restrict storage-owner operations |
+| WorkspaceAdministrationService | Account service | EnsureInitialWorkspace | Authenticated durable admission; stable actor/request scope |
+| FilesystemService | Explicitly allowed caller carrying a verified delegated actor | All public operations assigned below | Active Go handlers; direct public HTTP and native gRPC use the same filesystem operations |
+| StorageAdministrationService | Explicit storage-owner service/job | CreateStorage, CreateBucket, CreateFilesystem, DeleteFilesystem, FreezeBucket, ListBucketFilesystems, CompleteBucketDeletion, ReleaseProvisioning | Active Go handlers; caller credentials restrict storage-owner operations |
 | IngestService | Ingest service plus stored generation/attempt scope | All ingest operations assigned below | Active Go handlers called by Python letfs-ingest through generated gRPC; dedicated ingest credentials; no public ingress |
 
-Workspace exposes its public HTTP API; Account creates workspaces through native Temporal remote Activities. Native Temporal children/remote Activities remain native durable orchestration. Health uses standard gRPC health. External Clerk, S3 signed transfers, Qdrant and OpenRouter keep provider-native protocols.
+All public ingress is HTTP. Account creates initial workspaces through authenticated Workspace gRPC from its own Activity. Workspace storage Activities call letfs gRPC; each owner runs its own durable workflows. Health uses standard gRPC health. External Clerk, S3 signed transfers, Qdrant and OpenRouter keep provider-native protocols.
 
 ## Complete filesystem operation assignment
 
@@ -36,11 +37,11 @@ All public operations below belong to `FilesystemService` unless stated otherwis
 | Trash detach/list/get | TrashNode, ListTrash, GetTrash | Detached IDs hidden; trash-entry identity retained; bounded cursor |
 | Restore/purge | RestoreTrash, PurgeTrash | Revision/lifecycle, original parent/name, explicit Owner purge action and durable purge identity |
 | Generic provisioning | StorageAdministrationService methods above | Caller-preallocated UUIDv7, scoped request key, local tombstones, no provision key |
-| Filesystem deletion | Generic DeleteFilesystem workflow/Activities | Explicit storage-job authority, bounded local cleanup, retained tombstone; no business identifier |
+| Filesystem deletion | StorageAdministrationService.DeleteFilesystem | Explicit storage-job authority, bounded local cleanup, retained tombstone; no business identifier |
 
 ## Ingest operation assignment
 
-All application calls below belong to the private `IngestService`. Go handlers live in `apps/letfs/internal/grpc`; Python callers live in `apps/letfs-ingest/src/letfs_ingest/activity.py`. A caller credential never replaces the recorded file/generation/stage/attempt checks.
+All application calls below belong to the private `IngestService`. Go handlers live in `apps/letfs/internal/transport/grpc`; Python callers live in `packages/python/src/openlet/clients/letfs/ (called from letfs-ingest/temporal/activities.py)`. A caller credential never replaces the recorded file/generation/stage/attempt checks.
 
 | Operation | Native RPC | Contract |
 |---|---|---|
@@ -55,4 +56,4 @@ All application calls below belong to the private `IngestService`. Go handlers l
 
 Ingest never imports an app-local generated package. All client and server interfaces generate into the independent `openlet-python` wheel. Typed parse/enrichment manifests, generation/attempt scope, vector-space identity and output-transfer receipts are included. The deployed ingest app consumes this wheel independently of Go service source.
 
-Public upload publication returns the node ID/revision; private output completion returns the upload ID/status/size receipt. Receiving inline output bytes does not publish an artifact. A native multipart transfer signs part numbers into bounded `{part_number, transfer}` items; signed PUT descriptors include required headers, exact content length and expiry. Native RPC uses int64 and bytes; HTTP adapters retain decimal-string counters, flattened metadata, response status/headers and raw byte semantics. GetNode has a generated HTTP annotation. Explicit public HTTP routes and byte/ZIP adapters live in `apps/letfs/internal/http`; no generated HTTP gateway runs in production.
+Public upload publication returns the node ID/revision; private output completion returns the upload ID/status/size receipt. Receiving inline output bytes does not publish an artifact. A native multipart transfer signs part numbers into bounded `{part_number, transfer}` items; signed PUT descriptors include required headers, exact content length and expiry. Native RPC uses int64 and bytes; HTTP adapters retain decimal-string counters, flattened metadata, response status/headers and raw byte semantics. GetNode has a generated HTTP annotation. Explicit public HTTP routes and byte/ZIP adapters live in `apps/letfs/internal/transport/http`; no generated HTTP gateway runs in production.

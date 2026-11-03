@@ -9,9 +9,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/qninhdt/openlet/apps/letfs/internal/storage"
-	"github.com/qninhdt/openlet/packages/go/rpc"
-	"google.golang.org/grpc/codes"
+	"github.com/qninhdt/openlet/apps/letfs/internal/clients/storage"
+	"github.com/qninhdt/openlet/packages/go/apperr"
 )
 
 type SemanticMetadata struct {
@@ -22,7 +21,7 @@ type SemanticMetadata struct {
 }
 
 func enrichmentValidation(message string) error {
-	return rpc.Fault(codes.InvalidArgument, "VALIDATION", message)
+	return apperr.New(apperr.Invalid, "VALIDATION", message)
 }
 
 func (m SemanticMetadata) validate() error {

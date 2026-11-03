@@ -10,7 +10,9 @@ import (
 	"time"
 )
 
-func (a *Activities) PruneReceipts(ctx context.Context) error { return a.Store.PruneReceipts(ctx) }
+func (a *Activities) PruneReceipts(ctx context.Context) error {
+	return a.Service.Store.PruneReceipts(ctx)
+}
 func WorkspaceMaintenance(ctx workflow.Context) error {
 	ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{StartToCloseTimeout: 30 * time.Second, RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 3}})
 	var a *Activities

@@ -9,13 +9,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/qninhdt/openlet/packages/go/rpc"
-	"google.golang.org/grpc/codes"
+	"github.com/qninhdt/openlet/packages/go/apperr"
 )
 
 func copyDeadline(admission CopyAdmission) error {
 	if !time.Now().Before(admission.Deadline) {
-		return rpc.Fault(codes.Aborted, "RESOURCE_LIMIT", "copy deadline exceeded")
+		return apperr.New(apperr.Conflict, "RESOURCE_LIMIT", "copy deadline exceeded")
 	}
 	return nil
 }
@@ -25,14 +24,14 @@ func (s *session) copyNode(ctx context.Context, id uuid.UUID) (Node, error) {
 func (s *session) copySource(ctx context.Context, item CopyItem, exact bool) (Node, error) {
 	node, err := s.copyNode(ctx, item.Source)
 	if errorReason(err) == "NOT_FOUND" {
-		return Node{}, rpc.Fault(codes.Aborted, "SOURCE_REPLACED", "copy source changed")
+		return Node{}, apperr.New(apperr.Conflict, "SOURCE_REPLACED", "copy source changed")
 	}
 	if err != nil {
 		return Node{}, err
 	}
 	sameParent := node.ParentID == nil && item.SourceParent == nil || node.ParentID != nil && item.SourceParent != nil && *node.ParentID == *item.SourceParent
 	if !sameParent || node.Name != item.SourceName || node.Kind != item.Kind || (exact || node.Kind == "file") && node.Revision != item.Revision {
-		return Node{}, rpc.Fault(codes.Aborted, "SOURCE_REPLACED", "copy source changed")
+		return Node{}, apperr.New(apperr.Conflict, "SOURCE_REPLACED", "copy source changed")
 	}
 	if node.Kind == "file" {
 		var object *string
@@ -48,7 +47,7 @@ func (s *session) copySource(ctx context.Context, item CopyItem, exact bool) (No
 		}
 		same := func(a, b *string) bool { return a == nil && b == nil || a != nil && b != nil && *a == *b }
 		if !same(object, item.ObjectKey) || !same(digest, item.InlineSHA256) || node.SizeBytes != item.Size {
-			return Node{}, rpc.Fault(codes.Aborted, "SOURCE_REPLACED", "copy payload changed")
+			return Node{}, apperr.New(apperr.Conflict, "SOURCE_REPLACED", "copy payload changed")
 		}
 	}
 	return node, nil
@@ -61,7 +60,7 @@ func (s *session) copyActive(ctx context.Context, admission CopyAdmission) error
 		return databaseError(err)
 	}
 	if !active {
-		return rpc.Fault(codes.Aborted, "COPY_CLOSED", "copy admission is closed")
+		return apperr.New(apperr.Conflict, "COPY_CLOSED", "copy admission is closed")
 	}
 	return nil
 }
@@ -78,12 +77,12 @@ func (s *session) copyCommitted(ctx context.Context, admission CopyAdmission, it
 		return false, err
 	}
 	if depth >= maxDepth {
-		return false, rpc.Fault(codes.Aborted, "RESOURCE_LIMIT", "tree depth limit exceeded")
+		return false, apperr.New(apperr.Conflict, "RESOURCE_LIMIT", "tree depth limit exceeded")
 	}
 	node, err := s.fetch(ctx, item.Destination)
 	if err == nil {
 		if node.ParentID == nil || *node.ParentID != item.Parent || node.Name != item.Name || node.Kind != item.Kind || node.Revision != 1 || node.SizeBytes != item.Size || parent.Revision-1 != item.ParentRevision {
-			return false, rpc.Fault(codes.Aborted, "DESTINATION_CHANGED", "copy destination changed")
+			return false, apperr.New(apperr.Conflict, "DESTINATION_CHANGED", "copy destination changed")
 		}
 		return true, nil
 	}
@@ -91,7 +90,7 @@ func (s *session) copyCommitted(ctx context.Context, admission CopyAdmission, it
 		return false, err
 	}
 	if parent.Revision != item.ParentRevision {
-		return false, rpc.Fault(codes.Aborted, "DESTINATION_CHANGED", "copy parent changed")
+		return false, apperr.New(apperr.Conflict, "DESTINATION_CHANGED", "copy parent changed")
 	}
 	if !item.Derived {
 		if err = parent.writable(); err != nil {
@@ -106,7 +105,7 @@ func (s *session) copyCommitted(ctx context.Context, admission CopyAdmission, it
 		return false, databaseError(err)
 	}
 	if occupied {
-		return false, rpc.Fault(codes.AlreadyExists, "NAME_CONFLICT", "name already exists")
+		return false, apperr.New(apperr.Exists, "NAME_CONFLICT", "name already exists")
 	}
 	return false, nil
 }
@@ -139,7 +138,7 @@ func (s *Store) CommitCopyItem(ctx context.Context, admission CopyAdmission, ite
 	var key *string
 	if item.ObjectKey != nil {
 		if s.Storage == nil {
-			return rpc.Fault(codes.Unavailable, "DEPENDENCY_UNAVAILABLE", "storage unavailable")
+			return apperr.New(apperr.Unavailable, "DEPENDENCY_UNAVAILABLE", "storage unavailable")
 		}
 		value := fmt.Sprintf("objects/%s/%s", session.bucket, item.Destination)
 		key = &value
@@ -150,7 +149,7 @@ func (s *Store) CommitCopyItem(ctx context.Context, admission CopyAdmission, ite
 			return databaseError(err)
 		}
 		if changed.RowsAffected() != 1 {
-			return rpc.Fault(codes.Aborted, "COPY_CANDIDATE_CLOSED", "copy candidate cleanup already started")
+			return apperr.New(apperr.Conflict, "COPY_CANDIDATE_CLOSED", "copy candidate cleanup already started")
 		}
 		if err = session.tx.Commit(ctx); err != nil {
 			return databaseError(err)
@@ -178,13 +177,13 @@ func (s *Store) CommitCopyItem(ctx context.Context, admission CopyAdmission, ite
 				return false, databaseError(err)
 			}
 			if !active {
-				return false, rpc.Fault(codes.Aborted, "FILESYSTEM_DELETING", "filesystem is deleting")
+				return false, apperr.New(apperr.Conflict, "FILESYSTEM_DELETING", "filesystem is deleting")
 			}
 			if err := session.tx.QueryRow(ctx, `SELECT state!='pending' FROM object_deletions WHERE object_key=$1`, key).Scan(&attempted); err != nil {
 				return false, databaseError(err)
 			}
 			if attempted {
-				return false, rpc.Fault(codes.Aborted, "COPY_CANDIDATE_CLOSED", "copy candidate cleanup already started")
+				return false, apperr.New(apperr.Conflict, "COPY_CANDIDATE_CLOSED", "copy candidate cleanup already started")
 			}
 			done, err := session.copyCommitted(ctx, admission, item)
 			if err == nil && !done {
@@ -257,7 +256,7 @@ func (s *session) copyFrame(ctx context.Context, frame CopyFrame) (Node, error) 
 		return Node{}, err
 	}
 	if node.ParentID == nil || *node.ParentID != frame.Item.Parent || node.Name != frame.Item.Name || node.Kind != frame.Item.Kind || node.Revision != frame.Revision {
-		return Node{}, rpc.Fault(codes.Aborted, "DESTINATION_CHANGED", "copy destination changed")
+		return Node{}, apperr.New(apperr.Conflict, "DESTINATION_CHANGED", "copy destination changed")
 	}
 	return node, nil
 }
@@ -283,7 +282,7 @@ func (s *Store) NextCopyItem(ctx context.Context, admission CopyAdmission, frame
 		return nil, databaseError(err)
 	}
 	if frame.Item.Depth >= maxDepth {
-		return nil, rpc.Fault(codes.Aborted, "RESOURCE_LIMIT", "tree depth limit exceeded")
+		return nil, apperr.New(apperr.Conflict, "RESOURCE_LIMIT", "tree depth limit exceeded")
 	}
 	node, err := session.copyNode(ctx, child)
 	if err != nil {

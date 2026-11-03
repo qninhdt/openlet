@@ -3,6 +3,7 @@
 package temporal
 
 import (
+	"context"
 	"testing"
 
 	"github.com/google/uuid"
@@ -14,18 +15,23 @@ import (
 	"go.temporal.io/sdk/workflow"
 )
 
-func registerWorkspace(env *testsuite.TestWorkflowEnvironment) {
-	env.RegisterWorkflowWithOptions(func(workflow.Context, InitialWorkspace) (uuid.UUID, error) { return uuid.Nil, nil }, workflow.RegisterOptions{Name: "CreateWorkspace"})
+func TestStartErrorReturnsNativeAccountFaults(t *testing.T) {
+	err := startError(temporal.NewNonRetryableApplicationError("rejected", "ONBOARDING_FAILED", nil))
+	var fault user.Fault
+	require.ErrorAs(t, err, &fault)
+	require.Equal(t, "ONBOARDING_FAILED", fault.Code)
+	require.ErrorIs(t, startError(temporal.NewCanceledError()), context.Canceled)
 }
+
 func TestOnboardUserWaitsForWorkspaceAndPublishesIdentityBeforeCompletion(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
-	registerWorkspace(env)
 	a := &Activities{}
 	admission := user.Onboarding{UserID: uuid.Must(uuid.NewV7()), Status: "provisioning"}
 	workspaceID := uuid.Must(uuid.NewV7())
 	env.OnActivity(a.EnsureUser, mock.Anything, "subject").Return(admission, nil).Once()
-	env.OnWorkflow("CreateWorkspace", mock.Anything, InitialWorkspace{ActorID: admission.UserID, Key: admission.UserID, Name: "My workspace"}).Return(workspaceID, nil).Once()
+	env.OnActivity(a.EnsureInitialWorkspace, mock.Anything, admission.UserID).Return(InitialWorkspace{ID: workspaceID, Completed: false}, nil).Once()
+	env.OnActivity(a.EnsureInitialWorkspace, mock.Anything, admission.UserID).Return(InitialWorkspace{ID: workspaceID, Completed: true}, nil).Once()
 	env.OnActivity(a.PublishClerkUserID, mock.Anything, "subject", admission.UserID).Return(nil).Once()
 	env.OnActivity(a.CompleteOnboarding, mock.Anything, "subject", workspaceID).Return(nil).Once()
 	env.ExecuteWorkflow(OnboardUser, "subject")
@@ -48,11 +54,10 @@ func TestOnboardUserCompletedNeverRecreatesWorkspace(t *testing.T) {
 func TestOnboardingFailureRetainsUser(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
-	registerWorkspace(env)
 	a := &Activities{}
 	admission := user.Onboarding{UserID: uuid.Must(uuid.NewV7()), Status: "provisioning"}
 	env.OnActivity(a.EnsureUser, mock.Anything, "subject").Return(admission, nil).Once()
-	env.OnWorkflow("CreateWorkspace", mock.Anything, InitialWorkspace{ActorID: admission.UserID, Key: admission.UserID, Name: "My workspace"}).Return(uuid.Nil, temporal.NewNonRetryableApplicationError("rejected", "WORKSPACE_REJECTED", nil)).Once()
+	env.OnActivity(a.EnsureInitialWorkspace, mock.Anything, admission.UserID).Return(InitialWorkspace{}, temporal.NewNonRetryableApplicationError("rejected", "WORKSPACE_REJECTED", nil)).Once()
 	env.OnActivity(a.FailOnboarding, mock.Anything, "subject").Return(nil).Once()
 	env.ExecuteWorkflow(OnboardUser, "subject")
 	require.Error(t, env.GetWorkflowError())
@@ -69,5 +74,18 @@ func TestOnboardingRelationshipFailureCannotPublishCompletedIdentity(t *testing.
 	require.Error(t, env.GetWorkflowError())
 	env.AssertNotCalled(t, "PublishClerkUserID", mock.Anything, mock.Anything, mock.Anything)
 	env.AssertNotCalled(t, "CompleteOnboarding", mock.Anything, mock.Anything, mock.Anything)
+	env.AssertExpectations(t)
+}
+
+func TestOnboardingBoundsPollingHistoryWithoutFailingAdmission(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	a := &Activities{}
+	admission := user.Onboarding{UserID: uuid.New(), Status: "provisioning"}
+	env.OnActivity(a.EnsureUser, mock.Anything, "subject").Return(admission, nil).Once()
+	env.OnActivity(a.EnsureInitialWorkspace, mock.Anything, admission.UserID).Return(InitialWorkspace{ID: uuid.New()}, nil).Times(100)
+	env.ExecuteWorkflow(OnboardUser, "subject")
+	require.True(t, workflow.IsContinueAsNewError(env.GetWorkflowError()))
+	env.AssertNotCalled(t, "FailOnboarding", mock.Anything, mock.Anything)
 	env.AssertExpectations(t)
 }

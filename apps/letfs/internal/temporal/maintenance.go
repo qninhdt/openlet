@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/qninhdt/openlet/apps/letfs/internal/filesystem"
+	sharedtemporal "github.com/qninhdt/openlet/packages/go/temporal"
 	"go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/client"
 	sdktemporal "go.temporal.io/sdk/temporal"
@@ -40,24 +41,24 @@ func EnsureSchedule(ctx context.Context, tc client.Client) error {
 
 func (a *Activities) ExpireUploads(ctx context.Context) (int, error) {
 	if err := a.Store.PruneReceipts(ctx); err != nil {
-		return 0, activityError(err)
+		return 0, sharedtemporal.Error(err)
 	}
 	count, err := a.Store.ExpireUploads(ctx)
-	return count, activityError(err)
+	return count, sharedtemporal.Error(err)
 }
 
 func (a *Activities) DeleteObjects(ctx context.Context) (int, error) {
 	stop := heartbeat(ctx)
 	defer stop()
 	count, err := a.Store.DeleteObjects(ctx)
-	return count, activityError(err)
+	return count, sharedtemporal.Error(err)
 }
 
 func (a *Activities) ReconcileResources(ctx context.Context) (int, error) {
 	stop := heartbeat(ctx)
 	defer stop()
 	count, err := a.reconcileResources(ctx)
-	return count, activityError(err)
+	return count, sharedtemporal.Error(err)
 }
 
 func (a *Activities) reconcileResources(ctx context.Context) (int, error) {
@@ -69,8 +70,8 @@ func (a *Activities) reconcileResources(ctx context.Context) (int, error) {
 	if err != nil {
 		return count, err
 	}
-	purges, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (DeletionInput, error) {
-		var input DeletionInput
+	purges, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (filesystem.DeletionInput, error) {
+		var input filesystem.DeletionInput
 		var id uuid.UUID
 		err := row.Scan(&input.FilesystemID, &id)
 		input.EntryID = &id

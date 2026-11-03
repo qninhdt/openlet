@@ -3,6 +3,7 @@ package user
 import (
 	"context"
 	"errors"
+	"github.com/qninhdt/openlet/packages/go/apperr"
 	"net/url"
 	"strings"
 	"unicode/utf8"
@@ -15,6 +16,16 @@ import (
 type Fault struct{ Code string }
 
 func (e Fault) Error() string { return e.Code }
+func (e Fault) Unwrap() error {
+	kind := apperr.Invalid
+	if e.Code == "NOT_FOUND" {
+		kind = apperr.Missing
+	}
+	if e.Code == "FORBIDDEN" {
+		kind = apperr.Forbidden
+	}
+	return apperr.New(kind, e.Code, strings.ToLower(strings.ReplaceAll(e.Code, "_", " ")))
+}
 
 type Store struct{ DB *pgxpool.Pool }
 type Profile struct {

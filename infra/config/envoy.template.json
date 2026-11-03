@@ -134,43 +134,6 @@
                           },
                           {
                             "match": {
-                              "path": "/openlet_api.letfs.v1.FilesystemService/StreamArchive"
-                            },
-                            "route": {
-                              "cluster": "letfs-rpc",
-                              "timeout": "1815s",
-                              "idle_timeout": "120s"
-                            },
-                            "request_headers_to_add": [
-                              {
-                                "header": {
-                                  "key": "authorization",
-                                  "value": "Bearer __GATEWAY_TOKEN__"
-                                },
-                                "append_action": "OVERWRITE_IF_EXISTS_OR_ADD"
-                              }
-                            ]
-                          },
-                          {
-                            "match": {
-                              "prefix": "/openlet_api.letfs.v1.FilesystemService/"
-                            },
-                            "route": {
-                              "cluster": "letfs-rpc",
-                              "timeout": "120s"
-                            },
-                            "request_headers_to_add": [
-                              {
-                                "header": {
-                                  "key": "authorization",
-                                  "value": "Bearer __GATEWAY_TOKEN__"
-                                },
-                                "append_action": "OVERWRITE_IF_EXISTS_OR_ADD"
-                              }
-                            ]
-                          },
-                          {
-                            "match": {
                               "prefix": "/"
                             },
                             "direct_response": {
@@ -409,31 +372,6 @@
             }
           ]
         }
-      },
-      {
-        "name": "letfs-rpc",
-        "type": "STRICT_DNS",
-        "connect_timeout": "3s",
-        "load_assignment": {
-          "cluster_name": "letfs-rpc",
-          "endpoints": [
-            {
-              "lb_endpoints": [
-                {
-                  "endpoint": {
-                    "address": {
-                      "socket_address": {
-                        "address": "letfs",
-                        "port_value": 9090
-                      }
-                    }
-                  }
-                }
-              ]
-            }
-          ]
-        },
-        "http2_protocol_options": {}
       },
       {
         "name": "jwks",

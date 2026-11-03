@@ -2,11 +2,10 @@ import grpc
 import pytest
 from google.protobuf.any_pb2 import Any
 from google.rpc import error_details_pb2, status_pb2
-from openlet_api.letfs.v1 import letfs_pb2 as pb
+from openlet.clients.letfs import Generation, ProcessingClient
+from openlet.errors import AppError
+from openlet.rpc import RpcClient
 from openlet_api.letfs.v1 import letfs_pb2_grpc as rpc
-from temporalio.exceptions import ApplicationError
-
-from letfs_ingest.ingest_rpc import IngestRPC
 
 
 @pytest.mark.parametrize(
@@ -27,14 +26,14 @@ from letfs_ingest.ingest_rpc import IngestRPC
     ],
 )
 def test_invalid_ingest_transport_is_rejected_without_dialing(address, token):
-    with pytest.raises(ValueError, match="invalid ingest RPC configuration"):
-        IngestRPC(address, token)
+    with pytest.raises(ValueError, match="invalid RPC configuration"):
+        RpcClient(address, token)
 
 
 @pytest.mark.parametrize(
     "status,reason,attempts,terminal,expected",
     [
-        (grpc.StatusCode.INTERNAL, "INTERNAL", 3, False, "DEPENDENCY_UNAVAILABLE"),
+        (grpc.StatusCode.INTERNAL, "INTERNAL", 3, False, "INTERNAL"),
         (
             grpc.StatusCode.UNAVAILABLE,
             "DEPENDENCY_UNAVAILABLE",
@@ -73,14 +72,14 @@ async def test_native_error_classification_preserves_retry_and_resource_limits(
     port = server.add_insecure_port("127.0.0.1:0")
     await server.start()
     try:
-        async with IngestRPC(
+        async with RpcClient(
             f"127.0.0.1:{port}", "a" * 32, allow_plaintext=True
-        ) as api:
-            with pytest.raises(ApplicationError) as captured:
-                await api.call("PrepareParse", pb.PrepareParseRequest())
+        ) as transport:
+            with pytest.raises(AppError) as captured:
+                await ProcessingClient(transport).prepare_parse(Generation("file", 1))
         assert calls == attempts
-        assert captured.value.type == expected
-        assert captured.value.non_retryable is terminal
+        assert captured.value.reason == expected
+        assert captured.value.retryable is not terminal
         assert "private" not in str(captured.value)
     finally:
         await server.stop(None)

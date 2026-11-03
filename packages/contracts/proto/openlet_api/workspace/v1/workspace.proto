@@ -1,0 +1,20 @@
+syntax = "proto3";
+package openlet_api.workspace.v1;
+
+option go_package = "github.com/qninhdt/openlet/packages/go/gen/openlet_api/workspace/v1;workspacev1";
+
+// Private Account-to-Workspace onboarding contract. Workspace owns durable creation.
+service WorkspaceAdministrationService {
+  rpc EnsureInitialWorkspace(EnsureInitialWorkspaceRequest) returns (EnsureInitialWorkspaceResponse);
+}
+
+message EnsureInitialWorkspaceRequest {
+  string actor_id = 1;
+  string request_key = 2;
+  string name = 3;
+}
+
+message EnsureInitialWorkspaceResponse {
+  string workspace_id = 1;
+  bool completed = 2;
+}

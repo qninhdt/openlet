@@ -3,10 +3,9 @@ package temporal
 import (
 	"context"
 	"errors"
-	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/google/uuid"
-	"github.com/qninhdt/openlet/apps/account/internal/clerk"
 	"github.com/qninhdt/openlet/apps/account/internal/user"
+	sharedtemporal "github.com/qninhdt/openlet/packages/go/temporal"
 	"go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/temporal"
@@ -16,42 +15,30 @@ import (
 
 const Queue = "openlet-account"
 
-type Activities struct {
-	Store *user.Store
-	Clerk clerk.Client
-	Graph v1.PermissionsServiceClient
-}
+type Activities struct{ Service *user.Service }
 
-func businessError(err error) error {
-	var fault user.Fault
-	if errors.As(err, &fault) {
-		return temporal.NewNonRetryableApplicationError(fault.Code, fault.Code, err)
-	}
-	return err
-}
 func (a *Activities) EnsureUser(ctx context.Context, subject string) (user.Onboarding, error) {
-	value, err := a.Store.EnsureUser(ctx, subject)
-	if err != nil {
-		return value, businessError(err)
-	}
-	err = a.Store.SyncRelationships(ctx, a.Graph, value.UserID)
-	return value, err
+	value, err := a.Service.EnsureUser(ctx, subject)
+	return value, sharedtemporal.Error(err)
 }
 func (a *Activities) PublishClerkUserID(ctx context.Context, subject string, id uuid.UUID) error {
-	return a.Clerk.PublishUserID(ctx, subject, id.String())
+	return sharedtemporal.Error(a.Service.Clerk.PublishUserID(ctx, subject, id.String()))
 }
 func (a *Activities) CompleteOnboarding(ctx context.Context, subject string, id uuid.UUID) error {
-	return businessError(a.Store.Complete(ctx, subject, id))
+	return sharedtemporal.Error(a.Service.Store.Complete(ctx, subject, id))
 }
 func (a *Activities) FailOnboarding(ctx context.Context, subject string) error {
-	return a.Store.Fail(ctx, subject)
+	return sharedtemporal.Error(a.Service.Store.Fail(ctx, subject))
 }
 
-// The Workspace workflow owns this input contract; no Account-to-Workspace Go dependency.
 type InitialWorkspace struct {
-	ActorID uuid.UUID `json:"actor_id"`
-	Key     uuid.UUID `json:"request_key"`
-	Name    string    `json:"name"`
+	ID        uuid.UUID
+	Completed bool
+}
+
+func (a *Activities) EnsureInitialWorkspace(ctx context.Context, actor uuid.UUID) (InitialWorkspace, error) {
+	id, completed, err := a.Service.Workspace.EnsureInitial(ctx, actor)
+	return InitialWorkspace{ID: id, Completed: completed}, sharedtemporal.Error(err)
 }
 
 func OnboardUser(ctx workflow.Context, subject string) (result uuid.UUID, err error) {
@@ -70,7 +57,7 @@ func OnboardUser(ctx workflow.Context, subject string) (result uuid.UUID, err er
 	}
 	defer func() { _ = workflow.Await(ctx, func() bool { return workflow.AllHandlersFinished(ctx) }) }()
 	defer func() {
-		if err != nil {
+		if err != nil && !workflow.IsContinueAsNewError(err) {
 			cleanup, cancel := workflow.NewDisconnectedContext(ctx)
 			defer cancel()
 			_ = workflow.ExecuteActivity(cleanup, a.FailOnboarding, subject).Get(cleanup, nil)
@@ -87,11 +74,22 @@ func OnboardUser(ctx workflow.Context, subject string) (result uuid.UUID, err er
 	if admission.Status != "provisioning" {
 		return uuid.Nil, temporal.NewNonRetryableApplicationError("onboarding failed", "ONBOARDING_FAILED", nil)
 	}
-	child := workflow.WithChildOptions(ctx, workflow.ChildWorkflowOptions{WorkflowID: "create-workspace/" + admission.UserID.String() + "/" + admission.UserID.String(), TaskQueue: "openlet-workspace", WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE, WorkflowExecutionTimeout: 7 * 24 * time.Hour})
-	var workspaceID uuid.UUID
-	if err = workflow.ExecuteChildWorkflow(child, "CreateWorkspace", InitialWorkspace{ActorID: admission.UserID, Key: admission.UserID, Name: "My workspace"}).Get(child, &workspaceID); err != nil {
-		return uuid.Nil, err
+	var initial InitialWorkspace
+	for polls := 0; ; polls++ {
+		if polls == 100 {
+			return uuid.Nil, workflow.NewContinueAsNewError(ctx, OnboardUser, subject)
+		}
+		if err = workflow.ExecuteActivity(ctx, a.EnsureInitialWorkspace, admission.UserID).Get(ctx, &initial); err != nil {
+			return uuid.Nil, err
+		}
+		if initial.Completed {
+			break
+		}
+		if err = workflow.Sleep(ctx, time.Second); err != nil {
+			return uuid.Nil, err
+		}
 	}
+	workspaceID := initial.ID
 	if err = workflow.ExecuteActivity(ctx, a.PublishClerkUserID, subject, admission.UserID).Get(ctx, nil); err != nil {
 		return uuid.Nil, err
 	}
@@ -109,5 +107,19 @@ func StartOnboarding(ctx context.Context, tc client.Client, subject string) (use
 	}
 	var value user.Onboarding
 	err = handle.Get(ctx, &value)
-	return value, err
+	return value, startError(err)
+}
+
+func startError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var application *temporal.ApplicationError
+	if errors.As(err, &application) && application.NonRetryable() {
+		return user.Fault{Code: application.Type()}
+	}
+	if temporal.IsCanceledError(err) {
+		return context.Canceled
+	}
+	return err
 }

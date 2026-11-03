@@ -13,11 +13,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/qninhdt/openlet/packages/go/apperr"
 	"github.com/qninhdt/openlet/packages/go/authz"
-	"github.com/qninhdt/openlet/packages/go/rpc"
 	"golang.org/x/text/unicode/norm"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 type ArchiveConfig struct {
@@ -145,7 +143,7 @@ func (s *Store) preflightArchive(ctx context.Context, fs uuid.UUID, mounts []Mou
 }
 
 func archiveLimit() error {
-	return rpc.Fault(codes.ResourceExhausted, "RESOURCE_LIMIT", "archive resource limit")
+	return apperr.New(apperr.Limit, "RESOURCE_LIMIT", "archive resource limit")
 }
 
 func (s *Store) OpenArchive(ctx context.Context, fs uuid.UUID, mounts []Mount, id uuid.UUID) (*ArchiveStream, error) {
@@ -153,7 +151,7 @@ func (s *Store) OpenArchive(ctx context.Context, fs uuid.UUID, mounts []Mount, i
 		return nil, err
 	}
 	if s.Archive.Validate() != nil || s.ArchiveSlots == nil {
-		return nil, rpc.Fault(codes.Unavailable, "DEPENDENCY_UNAVAILABLE", "archive configuration unavailable")
+		return nil, apperr.New(apperr.Unavailable, "DEPENDENCY_UNAVAILABLE", "archive configuration unavailable")
 	}
 	if !s.ArchiveSlots.TryAcquire(1) {
 		return nil, archiveLimit()
@@ -251,10 +249,10 @@ func (s *Store) produceArchive(ctx context.Context, plan archivePlan, output io.
 		}
 		destination, err := writer.CreateHeader(&zip.FileHeader{Name: path, Method: zip.Store})
 		if err != nil {
-			if status.Code(err) != codes.Unknown {
+			if apperr.KindOf(err) != apperr.Internal {
 				return err
 			}
-			return rpc.Fault(codes.Internal, "ARCHIVE_FAILED", "archive stream failed")
+			return apperr.New(apperr.Internal, "ARCHIVE_FAILED", "archive stream failed")
 		}
 		if entry.Kind != "file" {
 			continue
@@ -270,7 +268,7 @@ func (s *Store) writeArchiveFile(ctx context.Context, destination io.Writer, ent
 	var source io.Reader = bytes.NewReader(inline)
 	if entry.Key.Valid {
 		if s.Storage == nil {
-			return rpc.Fault(codes.Unavailable, "DEPENDENCY_UNAVAILABLE", "object storage unavailable")
+			return apperr.New(apperr.Unavailable, "DEPENDENCY_UNAVAILABLE", "object storage unavailable")
 		}
 		input, err := s.Storage.Open(ctx, entry.Key.String)
 		if err != nil {

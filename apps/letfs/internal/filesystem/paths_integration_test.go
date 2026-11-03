@@ -4,6 +4,7 @@ package filesystem
 
 import (
 	"context"
+	"github.com/qninhdt/openlet/packages/go/apperr"
 	"testing"
 
 	"github.com/google/uuid"
@@ -12,8 +13,6 @@ import (
 	"github.com/qninhdt/openlet/packages/go/identity"
 	sharedfixture "github.com/qninhdt/openlet/packages/go/testfixture"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 func TestIntegrationLivePathsMetadataAndActionBoundaries(t *testing.T) {
@@ -43,7 +42,7 @@ func TestIntegrationLivePathsMetadataAndActionBoundaries(t *testing.T) {
 	_, err = db.Exec(ctx, `INSERT INTO files(node_id,media_type,storage_kind,inline_bytes,context,title) VALUES($1,'application/pdf','inline',''::bytea,'detail context','A report')`, file)
 	require.NoError(t, err)
 	_, err = s.ResolveNode(ctx, fsID, mounts, Locator{Path: ptr("/drive/Việt/report.pdf")})
-	require.Equal(t, codes.PermissionDenied, status.Code(err))
+	require.Equal(t, apperr.Forbidden, apperr.KindOf(err))
 	testfixture.Grant(t, graph, "filesystem", fsID, actor, authz.NodeRead, authz.NodeResolve, authz.NodeList)
 	for _, locator := range []Locator{
 		{NodeID: &file}, {Path: ptr("/drive/Việt/report.pdf")}, {Path: ptr("report.pdf"), CwdID: &dir},
@@ -61,7 +60,7 @@ func TestIntegrationLivePathsMetadataAndActionBoundaries(t *testing.T) {
 	require.Equal(t, "ARTIFACT_READ_ONLY", reason(node.writable()))
 	for _, locator := range []Locator{{Path: ptr("/drive/..")}, {Path: ptr("@" + file.String()), CwdID: &dir}, {NodeID: ptr(uuid.New())}} {
 		_, err = s.ResolveNode(ctx, fsID, mounts, locator)
-		require.Equal(t, codes.NotFound, status.Code(err))
+		require.Equal(t, apperr.Missing, apperr.KindOf(err))
 	}
 	_, err = s.ResolveNode(ctx, fsID, append(mounts, Mount{Path: "/drive/Việt", FilesystemID: uuid.New()}), Locator{Path: ptr("/drive/Việt/report.pdf")})
 	require.Equal(t, "CROSS_FILESYSTEM_UNSUPPORTED", reason(err))
@@ -71,7 +70,7 @@ func TestIntegrationLivePathsMetadataAndActionBoundaries(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []uuid.UUID{file, artifact, file}, []uuid.UUID{nodes[0].ID, nodes[1].ID, nodes[2].ID})
 	nodes, err = s.BatchStat(ctx, fsID, mounts, []Locator{{NodeID: &file}, {NodeID: ptr(uuid.New())}})
-	require.Equal(t, codes.NotFound, status.Code(err))
+	require.Equal(t, apperr.Missing, apperr.KindOf(err))
 	require.Nil(t, nodes, "batch failure must not return partial metadata")
 	page, err := s.ListNodes(ctx, fsID, mounts, Locator{NodeID: &dir}, nil, nil)
 	require.NoError(t, err)
@@ -89,22 +88,22 @@ func TestIntegrationLivePathsMetadataAndActionBoundaries(t *testing.T) {
 	require.Equal(t, second, next.Items[0].ID)
 	require.Nil(t, next.NextCursor)
 	_, err = s.ListNodes(ctx, fsID, mounts, Locator{NodeID: &root}, page.NextCursor, nil)
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
+	require.Equal(t, apperr.Invalid, apperr.KindOf(err))
 
 	_, err = s.GetBucketUsage(ctx, bucketID)
-	require.Equal(t, codes.PermissionDenied, status.Code(err), "FS grant cannot inspect its bucket")
+	require.Equal(t, apperr.Forbidden, apperr.KindOf(err), "FS grant cannot inspect its bucket")
 	testfixture.Grant(t, graph, "quota_bucket", bucketID, actor, authz.BucketRead)
 	usage, err := s.GetBucketUsage(ctx, bucketID)
 	require.NoError(t, err)
 	require.EqualValues(t, 1024, usage.LimitBytes)
 	_, err = s.GetNode(ctx, uuid.New(), []Mount{{Path: "/drive", FilesystemID: uuid.New()}}, Locator{NodeID: &file})
-	require.Equal(t, codes.PermissionDenied, status.Code(err), "foreign target checks its own permission")
+	require.Equal(t, apperr.Forbidden, apperr.KindOf(err), "foreign target checks its own permission")
 
 	_, err = db.Exec(ctx, `UPDATE nodes SET parent_id=NULL WHERE id=$1`, dir)
 	require.NoError(t, err)
 	for _, locator := range []Locator{{NodeID: &artifact}, {Path: ptr("/drive/@" + file.String())}, {Path: ptr("report.pdf"), CwdID: &dir}} {
 		_, err = s.GetNode(ctx, fsID, mounts, locator)
-		require.Equal(t, codes.NotFound, status.Code(err), "detached descendants stay hidden even by raw ID")
+		require.Equal(t, apperr.Missing, apperr.KindOf(err), "detached descendants stay hidden even by raw ID")
 	}
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()
@@ -112,5 +111,5 @@ func TestIntegrationLivePathsMetadataAndActionBoundaries(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 	require.NoError(t, server.Stop(t.Context(), nil))
 	_, err = s.GetFilesystem(ctx, fsID)
-	require.Equal(t, codes.Unavailable, status.Code(err), "graph outage never reuses previous allow")
+	require.Equal(t, apperr.Unavailable, apperr.KindOf(err), "graph outage never reuses previous allow")
 }

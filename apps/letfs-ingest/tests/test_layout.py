@@ -10,9 +10,9 @@ from docling_core.types.doc import (
 )
 from PIL import Image
 
-from letfs_ingest.exporters import markdown
-from letfs_ingest.layout import document_layout
-from letfs_ingest.text_split import estimate_tokens, layout_limits, split_text
+from letfs_ingest.parser.exporters import markdown
+from letfs_ingest.parser.layout import document_layout
+from letfs_ingest.parser.text_split import estimate_tokens, layout_limits, split_text
 
 
 def build(parts=3, chapters=3):

@@ -3,14 +3,13 @@
 package filesystem
 
 import (
+	"github.com/qninhdt/openlet/packages/go/apperr"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/qninhdt/openlet/apps/letfs/internal/testfixture"
 	"github.com/qninhdt/openlet/packages/go/identity"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 func TestIntegrationEnrichmentDirectChildrenPublishAtomicallyAndPreserveSource(t *testing.T) {
@@ -123,7 +122,7 @@ func TestIntegrationEnrichmentDirectChildrenPublishAtomicallyAndPreserveSource(t
 	require.NoError(t, err)
 	require.True(t, complete.Complete)
 	require.NoError(t, s.FailEnrichment(t.Context(), a, "PROCESSING_FAILED"), "late failure cannot undo committed publication")
-	require.Equal(t, codes.InvalidArgument, status.Code(s.FailEnrichment(t.Context(), a, "secret provider text")))
+	require.Equal(t, apperr.Invalid, apperr.KindOf(s.FailEnrichment(t.Context(), a, "secret provider text")))
 }
 
 func TestIntegrationEnrichmentDirectSourceNeedsNoOutputAndFencesRetries(t *testing.T) {

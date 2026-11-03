@@ -12,21 +12,6 @@ import (
 
 const CopyNodeName = "CopyNode"
 
-type CopyState struct {
-	Admission      filesystem.CopyAdmission `json:"admission"`
-	Frames         []filesystem.CopyFrame   `json:"frames"`
-	Pending        *filesystem.CopyItem     `json:"pending"`
-	CommittedNodes int64                    `json:"committed_nodes"`
-	CommittedBytes int64                    `json:"committed_bytes"`
-	Status         string                   `json:"status"`
-	ErrorCode      *string                  `json:"error_code"`
-}
-
-func NewCopyState(admission filesystem.CopyAdmission) CopyState {
-	root := admission.Root
-	return CopyState{Admission: admission, Frames: []filesystem.CopyFrame{}, Pending: &root, Status: "running"}
-}
-
 type CopyStep struct {
 	Admission filesystem.CopyAdmission `json:"admission"`
 	Item      filesystem.CopyItem      `json:"item"`
@@ -43,9 +28,9 @@ func copyErrorCode(err error) string {
 	}
 	return "COPY_FAILED"
 }
-func CopyNode(ctx workflow.Context, state CopyState) (CopyState, error) {
-	if err := workflow.SetQueryHandler(ctx, "progress", func() (CopyState, error) { return state, nil }); err != nil {
-		return CopyState{}, err
+func CopyNode(ctx workflow.Context, state filesystem.CopyState) (filesystem.CopyState, error) {
+	if err := workflow.SetQueryHandler(ctx, "progress", func() (filesystem.CopyState, error) { return state, nil }); err != nil {
+		return filesystem.CopyState{}, err
 	}
 	short := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{StartToCloseTimeout: 30 * time.Second, RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 3}})
 	storage := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{StartToCloseTimeout: 150 * time.Second, HeartbeatTimeout: 30 * time.Second, RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 3}})
@@ -101,7 +86,7 @@ func CopyNode(ctx workflow.Context, state CopyState) (CopyState, error) {
 		}
 	}
 	if state.Status == "running" {
-		return CopyState{}, workflow.NewContinueAsNewError(ctx, CopyNodeName, state)
+		return filesystem.CopyState{}, workflow.NewContinueAsNewError(ctx, CopyNodeName, state)
 	}
 	err := workflow.ExecuteActivity(short, "complete_copy", state.Admission).Get(short, nil)
 	return state, err

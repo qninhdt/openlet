@@ -9,9 +9,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/qninhdt/openlet/packages/go/apperr"
 	"github.com/qninhdt/openlet/packages/go/authz"
-	"github.com/qninhdt/openlet/packages/go/rpc"
-	"google.golang.org/grpc/codes"
 )
 
 type InlineFile struct {
@@ -26,7 +25,7 @@ type CreateNode struct {
 }
 
 func mediaType(value string) error {
-	invalid := rpc.Fault(codes.InvalidArgument, "VALIDATION", "invalid media type")
+	invalid := apperr.New(apperr.Invalid, "VALIDATION", "invalid media type")
 	if !utf8.ValidString(value) || len(value) > 200 {
 		return invalid
 	}
@@ -55,7 +54,7 @@ func mediaType(value string) error {
 
 func (s *Store) inlineSize(content []byte) error {
 	if int64(len(content)) > min(s.InlineLimit, s.MaxFileBytes) {
-		return rpc.Fault(codes.ResourceExhausted, "REQUEST_LIMIT", "inline content exceeds limit")
+		return apperr.New(apperr.Limit, "REQUEST_LIMIT", "inline content exceeds limit")
 	}
 	return nil
 }
@@ -65,7 +64,7 @@ func (s *session) name(parent uuid.UUID, name string) error {
 		return err
 	}
 	if _, alias := nodeAlias(name); parent == s.root && alias {
-		return rpc.Fault(codes.InvalidArgument, "VALIDATION", "root UUID alias names are reserved")
+		return apperr.New(apperr.Invalid, "VALIDATION", "root UUID alias names are reserved")
 	}
 	return nil
 }
@@ -78,7 +77,7 @@ func (s *session) usage(ctx context.Context, delta int64) error {
 		return databaseError(err)
 	}
 	if changed.RowsAffected() != 1 {
-		return rpc.Fault(codes.Aborted, "QUOTA_EXCEEDED", "quota exceeded")
+		return apperr.New(apperr.Conflict, "QUOTA_EXCEEDED", "quota exceeded")
 	}
 	return nil
 }
@@ -90,7 +89,7 @@ func (s *session) addNodes(ctx context.Context, count int64) error {
 		return databaseError(err)
 	}
 	if changed.RowsAffected() != 1 {
-		return rpc.Fault(codes.Aborted, "RESOURCE_LIMIT", "node limit exceeded")
+		return apperr.New(apperr.Conflict, "RESOURCE_LIMIT", "node limit exceeded")
 	}
 	return nil
 }
@@ -120,7 +119,7 @@ func (s *Store) CreateNode(ctx context.Context, fs uuid.UUID, mounts []Mount, ke
 		return Node{}, err
 	}
 	if key == uuid.Nil {
-		return Node{}, rpc.Fault(codes.InvalidArgument, "VALIDATION", "request key required")
+		return Node{}, apperr.New(apperr.Invalid, "VALIDATION", "request key required")
 	}
 	if err = ValidateName(input.Name); err != nil {
 		return Node{}, err
@@ -157,11 +156,11 @@ func (s *Store) CreateNode(ctx context.Context, fs uuid.UUID, mounts []Mount, ke
  WHERE scope=$1 AND operation='create-node' AND request_key=$2 AND (expires_at IS NULL OR expires_at>now())`, scope, key.String()).Scan(&savedHash, &saved)
 	if err == nil {
 		if savedHash != hash {
-			return Node{}, rpc.Fault(codes.Aborted, "IDEMPOTENCY_CONFLICT", "request key was used for different input")
+			return Node{}, apperr.New(apperr.Conflict, "IDEMPOTENCY_CONFLICT", "request key was used for different input")
 		}
 		var node Node
 		if err = json.Unmarshal(saved, &node); err != nil {
-			return Node{}, rpc.Fault(codes.Aborted, "INVALID_RECEIPT", "invalid saved receipt")
+			return Node{}, apperr.New(apperr.Conflict, "INVALID_RECEIPT", "invalid saved receipt")
 		}
 		return node, nil
 	}
@@ -189,7 +188,7 @@ func (s *Store) CreateNode(ctx context.Context, fs uuid.UUID, mounts []Mount, ke
 		return Node{}, err
 	}
 	if depth >= maxDepth {
-		return Node{}, rpc.Fault(codes.Aborted, "RESOURCE_LIMIT", "tree depth limit exceeded")
+		return Node{}, apperr.New(apperr.Conflict, "RESOURCE_LIMIT", "tree depth limit exceeded")
 	}
 	if err = session.addNodes(ctx, 1); err != nil {
 		return Node{}, err
@@ -253,7 +252,7 @@ func (s *Store) UpdateNode(ctx context.Context, fs uuid.UUID, mounts []Mount, in
 		return Node{}, err
 	}
 	if input.Name == nil && input.Parent == nil {
-		return Node{}, rpc.Fault(codes.InvalidArgument, "VALIDATION", "node patch is empty")
+		return Node{}, apperr.New(apperr.Invalid, "VALIDATION", "node patch is empty")
 	}
 	session, err := s.openSession(ctx, fs, true)
 	if err != nil {
@@ -274,7 +273,7 @@ func (s *Store) UpdateNode(ctx context.Context, fs uuid.UUID, mounts []Mount, in
 		return Node{}, err
 	}
 	if node.ID == session.root {
-		return Node{}, rpc.Fault(codes.Aborted, "ROOT_IMMUTABLE", "root is immutable")
+		return Node{}, apperr.New(apperr.Conflict, "ROOT_IMMUTABLE", "root is immutable")
 	}
 	name := node.Name
 	if input.Name != nil {
@@ -330,7 +329,7 @@ func (s *session) cycle(ctx context.Context, id, parent uuid.UUID) error {
 		return databaseError(err)
 	}
 	if cycle {
-		return rpc.Fault(codes.Aborted, "CYCLE", "move would create a cycle")
+		return apperr.New(apperr.Conflict, "CYCLE", "move would create a cycle")
 	}
 	return nil
 }
@@ -352,7 +351,7 @@ func (s *session) validateMove(ctx context.Context, id, parent uuid.UUID) error 
 		return databaseError(err)
 	}
 	if depth+1+height > maxDepth {
-		return rpc.Fault(codes.Aborted, "RESOURCE_LIMIT", "tree depth limit exceeded")
+		return apperr.New(apperr.Conflict, "RESOURCE_LIMIT", "tree depth limit exceeded")
 	}
 	return nil
 }
@@ -384,10 +383,10 @@ func (s *Store) ReplaceContent(ctx context.Context, fs uuid.UUID, mounts []Mount
 		return Node{}, err
 	}
 	if node.ID == session.root {
-		return Node{}, rpc.Fault(codes.Aborted, "ROOT_IMMUTABLE", "root is immutable")
+		return Node{}, apperr.New(apperr.Conflict, "ROOT_IMMUTABLE", "root is immutable")
 	}
 	if node.Kind != "file" {
-		return Node{}, rpc.Fault(codes.Aborted, "NOT_FILE", "file required")
+		return Node{}, apperr.New(apperr.Conflict, "NOT_FILE", "file required")
 	}
 	if err = mediaType(mime); err != nil {
 		return Node{}, err

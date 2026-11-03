@@ -7,8 +7,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
-	"github.com/qninhdt/openlet/packages/go/rpc"
-	"google.golang.org/grpc/codes"
+	"github.com/qninhdt/openlet/packages/go/apperr"
 )
 
 const maxDepth = 128
@@ -35,7 +34,7 @@ func nodeAlias(name string) (uuid.UUID, bool) {
 }
 
 func pathParts(fs uuid.UUID, mounts []Mount, locator Locator) ([]string, error) {
-	invalid := func() error { return rpc.Fault(codes.InvalidArgument, "VALIDATION", "invalid locator or mount") }
+	invalid := func() error { return apperr.New(apperr.Invalid, "VALIDATION", "invalid locator or mount") }
 	if len(mounts) == 0 || len(mounts) > 32 {
 		return nil, invalid()
 	}
@@ -55,7 +54,7 @@ func pathParts(fs uuid.UUID, mounts []Mount, locator Locator) ([]string, error) 
 		found = found || mount.FilesystemID == fs
 	}
 	if !found {
-		return nil, rpc.Fault(codes.NotFound, "NOT_FOUND", "resource not found")
+		return nil, apperr.New(apperr.Missing, "NOT_FOUND", "resource not found")
 	}
 	for _, id := range []*uuid.UUID{locator.NodeID, locator.CwdID, locator.ExpectedNodeID, locator.ExpectedParentID} {
 		if id != nil && *id == uuid.Nil {
@@ -85,10 +84,10 @@ func pathParts(fs uuid.UUID, mounts []Mount, locator Locator) ([]string, error) 
 			}
 		}
 		if selected < 0 {
-			return nil, rpc.Fault(codes.NotFound, "NOT_FOUND", "resource not found")
+			return nil, apperr.New(apperr.Missing, "NOT_FOUND", "resource not found")
 		}
 		if mounts[selected].FilesystemID != fs {
-			return nil, rpc.Fault(codes.Aborted, "CROSS_FILESYSTEM_UNSUPPORTED", "cross-filesystem operation unsupported")
+			return nil, apperr.New(apperr.Conflict, "CROSS_FILESYSTEM_UNSUPPORTED", "cross-filesystem operation unsupported")
 		}
 		path = path[len(mounts[selected].Path):]
 	}
@@ -114,17 +113,17 @@ func guard(locator Locator, id uuid.UUID, parent bool) error {
 		expected = locator.ExpectedParentID
 	}
 	if expected == nil {
-		return rpc.Fault(codes.FailedPrecondition, "PRECONDITION_REQUIRED", "expected identity required")
+		return apperr.New(apperr.Precondition, "PRECONDITION_REQUIRED", "expected identity required")
 	}
 	if *expected != id {
-		return rpc.Fault(codes.FailedPrecondition, "TARGET_MISMATCH", "target mismatch")
+		return apperr.New(apperr.Precondition, "TARGET_MISMATCH", "target mismatch")
 	}
 	return nil
 }
 
 func (s *session) resolve(ctx context.Context, mounts []Mount, locators []Locator) ([]Node, error) {
 	if len(locators) == 0 || len(locators) > 100 {
-		return nil, rpc.Fault(codes.InvalidArgument, "VALIDATION", "locator batch must contain 1..100 items")
+		return nil, apperr.New(apperr.Invalid, "VALIDATION", "locator batch must contain 1..100 items")
 	}
 	type request struct {
 		Index int       `json:"idx"`
@@ -187,7 +186,7 @@ SELECT n.idx,`+nodeColumns+`,p.artifact_readonly FROM resolved n JOIN (
 			return nil, databaseError(err)
 		}
 		if index != len(result) {
-			return nil, rpc.Fault(codes.NotFound, "NOT_FOUND", "resource not found")
+			return nil, apperr.New(apperr.Missing, "NOT_FOUND", "resource not found")
 		}
 		result = append(result, node)
 	}
@@ -195,7 +194,7 @@ SELECT n.idx,`+nodeColumns+`,p.artifact_readonly FROM resolved n JOIN (
 		return nil, databaseError(err)
 	}
 	if len(result) != len(locators) {
-		return nil, rpc.Fault(codes.NotFound, "NOT_FOUND", "resource not found")
+		return nil, apperr.New(apperr.Missing, "NOT_FOUND", "resource not found")
 	}
 	return result, nil
 }

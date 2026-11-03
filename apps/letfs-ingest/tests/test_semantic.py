@@ -7,15 +7,15 @@ import pytest
 from PIL import Image
 from pydantic import ValidationError
 
-from letfs_ingest.openrouter import AISettings, OpenRouter, vision_data
-from letfs_ingest.readme import own_body, render_readme
-from letfs_ingest.semantic import (
+from letfs_ingest.clients.openrouter import AISettings, OpenRouter, vision_data
+from letfs_ingest.parser.text_split import estimate_tokens
+from letfs_ingest.processing.readme import own_body, render_readme
+from letfs_ingest.processing.semantic import (
     Metadata,
     csv_profile,
     enrich_tree,
     sample_text,
 )
-from letfs_ingest.text_split import estimate_tokens
 
 
 def meta(title="Overview", kind="text:content"):
@@ -249,7 +249,7 @@ def test_readme_generated_header_does_not_accumulate():
 
 
 def test_readme_folder_collision_keeps_children_under_their_renamed_parent():
-    from letfs_ingest.readme import final_paths
+    from letfs_ingest.processing.readme import final_paths
 
     nodes = [node("root", "", None, None, "directory")]
     metadata = {}

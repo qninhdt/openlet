@@ -3,7 +3,7 @@ import { test, expect, directory, objectFile, inline } from '../../fixtures/api-
 import { lockFilesystemRoot } from '../../fixtures/filesystem-lock.ts';
 import { recoveryGuide } from '../../fixtures/documents.ts';
 import { restartService } from '../../fixtures/restart-service.ts';
-import { setTemporalRunning, temporalIsHealthy, triggerStorageMaintenance, recordCopyHistory, recordLifecycleHistories, recordWorkflowHistory, workspaceDeletionHasChild, terminateWorkspaceDeletion } from '../../fixtures/temporal-control.ts';
+import { setTemporalRunning, temporalIsHealthy, triggerStorageMaintenance, recordCopyHistory, recordLifecycleHistories, recordWorkflowHistory, filesystemDeletionIsRunning, terminateWorkspaceDeletion } from '../../fixtures/temporal-control.ts';
 
 test('copy admission survives a Temporal outage and maintenance starts the committed receipt', async ({ session }) => {
   const base = `/v1/filesystems/${session.filesystemId}`;
@@ -115,17 +115,17 @@ test('workspace deletion remains admitted after the client stops polling', async
   const workspaces = await session.api.get('/v1/workspaces');
   expect((await workspaces.json()).items).not.toContainEqual(expect.objectContaining({ id: session.workspaceId }));
   expect((await session.api.get(`/v1/filesystems/${session.filesystemId}/nodes/${session.rootId}`)).status()).toBe(403);
-  await recordLifecycleHistories(identity.id, session.workspaceId, session.userId);
+  await recordLifecycleHistories(identity.id, session.workspaceId, session.userId, session.filesystemId);
 });
 
-test('a terminated Workspace parent resumes cleanup while its filesystem child remains active', async ({ session }) => {
+test('a terminated Workspace deletion resumes cleanup while letfs-owned deletion remains active', async ({ session }) => {
   const base = `/v1/workspaces/${session.workspaceId}`;
   const selected = await session.api.get(base);
   const headers = { 'if-match': selected.headers().etag };
   const release = await lockFilesystemRoot((await selected.json()).filesystem_id);
   try {
     expect((await session.api.delete(base, { headers })).status()).toBe(202);
-    await expect.poll(() => workspaceDeletionHasChild(session.workspaceId)).toBe(true);
+    await expect.poll(() => filesystemDeletionIsRunning(session.filesystemId)).toBe(true);
     await terminateWorkspaceDeletion(session.workspaceId);
     expect((await session.api.delete(base, { headers })).status()).toBe(202);
   } finally { await release(); }

@@ -3,6 +3,7 @@
 package filesystem
 
 import (
+	"github.com/qninhdt/openlet/packages/go/apperr"
 	"testing"
 
 	"github.com/google/uuid"
@@ -11,8 +12,6 @@ import (
 	"github.com/qninhdt/openlet/packages/go/identity"
 	sharedfixture "github.com/qninhdt/openlet/packages/go/testfixture"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 func TestIntegrationBasicSearchLiveOriginalsFiltersAndBoundCursors(t *testing.T) {
@@ -44,7 +43,7 @@ func TestIntegrationBasicSearchLiveOriginalsFiltersAndBoundCursors(t *testing.T)
 	require.NoError(t, err)
 	query := SearchInput{Query: " REPORT ", Limit: ptr(int32(1))}
 	_, err = s.SearchFiles(ctx, fs, mounts, query)
-	require.Equal(t, codes.PermissionDenied, status.Code(err))
+	require.Equal(t, apperr.Forbidden, apperr.KindOf(err))
 	testfixture.Grant(t, graph, "filesystem", fs, actor, authz.Search)
 	page, err := s.SearchFiles(ctx, fs, mounts, query)
 	require.NoError(t, err)
@@ -83,14 +82,14 @@ func TestIntegrationBasicSearchLiveOriginalsFiltersAndBoundCursors(t *testing.T)
 	changed := query
 	changed.Query = "different"
 	_, err = s.SearchFiles(ctx, fs, mounts, changed)
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
+	require.Equal(t, apperr.Invalid, apperr.KindOf(err))
 	_, err = s.SearchFiles(ctx, fs, []Mount{{Path: "/other", FilesystemID: fs}}, query)
-	require.Equal(t, codes.InvalidArgument, status.Code(err))
+	require.Equal(t, apperr.Invalid, apperr.KindOf(err))
 	other := uuid.New()
 	testfixture.Grant(t, graph, "filesystem", fs, other, authz.Search)
 	otherCtx := identity.WithPrincipal(t.Context(), identity.Principal{Service: "gateway", Gateway: true, ActorID: other})
 	_, err = s.SearchFiles(otherCtx, fs, mounts, query)
-	require.Equal(t, codes.InvalidArgument, status.Code(err), "cursor binds actor even with identical current permission")
+	require.Equal(t, apperr.Invalid, apperr.KindOf(err), "cursor binds actor even with identical current permission")
 	_, err = s.TrashNode(ctx, fs, mounts, Locator{NodeID: &files[0].ID}, &files[0].Revision)
 	require.NoError(t, err)
 	query.Cursor, query.Limit = nil, ptr(int32(100))

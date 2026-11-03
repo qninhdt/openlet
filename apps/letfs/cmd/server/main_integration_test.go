@@ -13,7 +13,7 @@ import (
 	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/google/uuid"
 	"github.com/qninhdt/openlet/apps/letfs/internal/config"
-	"github.com/qninhdt/openlet/apps/letfs/internal/temporal"
+	"github.com/qninhdt/openlet/apps/letfs/internal/filesystem"
 	"github.com/qninhdt/openlet/apps/letfs/internal/testfixture"
 	"github.com/qninhdt/openlet/packages/go/authz"
 	letfsv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/letfs/v1"
@@ -135,7 +135,7 @@ func TestIntegrationCompositionChecksPolicyServesRealRPCAndDrains(t *testing.T) 
 	require.NoError(t, err)
 	job, stopJob := context.WithTimeout(t.Context(), 10*time.Second)
 	defer stopJob()
-	var copied temporal.CopyState
+	var copied filesystem.CopyState
 	require.NoError(t, tc.GetWorkflow(job, "copy/"+fsID+"/"+copy.Copy.Id, "").Get(job, &copied))
 	require.Equal(t, "succeeded", copied.Status)
 	progress, err := files.GetCopy(caller, &letfsv1.GetCopyRequest{FilesystemId: fsID, CopyId: copy.Copy.Id})

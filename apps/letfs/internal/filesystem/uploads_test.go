@@ -1,14 +1,13 @@
 package filesystem
 
 import (
+	"github.com/qninhdt/openlet/packages/go/apperr"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/qninhdt/openlet/apps/letfs/internal/storage"
+	"github.com/qninhdt/openlet/apps/letfs/internal/clients/storage"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 func TestMultipartReceiptAndPartBounds(t *testing.T) {
@@ -32,12 +31,12 @@ func TestMultipartReceiptAndPartBounds(t *testing.T) {
 func TestUploadAdmissionPrecedesDependencies(t *testing.T) {
 	s := &Store{}
 	_, err := s.CreateUpload(t.Context(), uuid.New(), nil, uuid.New(), UploadCreation{})
-	require.Equal(t, codes.Unauthenticated, status.Code(err))
+	require.Equal(t, apperr.Unauthenticated, apperr.KindOf(err))
 	_, err = s.GetUpload(t.Context(), uuid.New(), uuid.New())
-	require.Equal(t, codes.Unauthenticated, status.Code(err))
+	require.Equal(t, apperr.Unauthenticated, apperr.KindOf(err))
 	_, err = s.GetUploadParts(t.Context(), uuid.New(), uuid.New(), []int32{1})
-	require.Equal(t, codes.Unauthenticated, status.Code(err))
+	require.Equal(t, apperr.Unauthenticated, apperr.KindOf(err))
 	_, err = s.CompleteUpload(t.Context(), uuid.New(), uuid.New(), nil)
-	require.Equal(t, codes.Unauthenticated, status.Code(err))
-	require.Equal(t, codes.Unauthenticated, status.Code(s.AbortUpload(t.Context(), uuid.New(), uuid.New())))
+	require.Equal(t, apperr.Unauthenticated, apperr.KindOf(err))
+	require.Equal(t, apperr.Unauthenticated, apperr.KindOf(s.AbortUpload(t.Context(), uuid.New(), uuid.New())))
 }

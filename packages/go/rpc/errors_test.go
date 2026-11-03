@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/qninhdt/openlet/packages/go/apperr"
+	"github.com/qninhdt/openlet/packages/go/httpapi"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -35,7 +37,7 @@ func TestApplicationErrorsKeepNativeAndHTTPContracts(t *testing.T) {
 			r := httptest.NewRequest("GET", "/", nil)
 			r.Header.Set("X-Request-ID", "request")
 			w := httptest.NewRecorder()
-			WriteHTTPError(w, r, err)
+			httpapi.WriteError(w, r, DecodeError(err))
 			require.Equal(t, test.http, w.Code)
 			require.Equal(t, "application/problem+json", w.Header().Get("Content-Type"))
 			require.Equal(t, "no-store", w.Header().Get("Cache-Control"))
@@ -80,8 +82,21 @@ func TestNativeInterceptorSanitizesHandlerErrors(t *testing.T) {
 func TestDependencyAndUnexpectedErrorsDoNotLeakDetails(t *testing.T) {
 	for _, err := range []error{errors.New("database password=secret"), status.Error(codes.Unavailable, "signed URL=secret")} {
 		w := httptest.NewRecorder()
-		WriteHTTPError(w, httptest.NewRequest("GET", "/", nil), err)
+		httpapi.WriteError(w, httptest.NewRequest("GET", "/", nil), DecodeError(err))
 		require.NotContains(t, w.Body.String(), "secret")
 		require.Contains(t, []int{500, 503}, w.Code)
 	}
+}
+
+func TestNativeErrorRoundTrip(t *testing.T) {
+	for kind := apperr.Internal; kind <= apperr.OutOfRange; kind++ {
+		original := apperr.New(kind, "SAFE_REASON", "safe message")
+		decoded, ok := apperr.As(DecodeError(NormalizeError(original)))
+		require.True(t, ok)
+		require.Equal(t, kind, decoded.Kind)
+		require.Equal(t, "SAFE_REASON", decoded.Reason)
+	}
+	require.Equal(t, apperr.Internal, apperr.KindOf(DecodeError(errors.New("unexpected secret"))))
+	require.Equal(t, apperr.Internal, apperr.KindOf(DecodeError(status.Error(codes.DataLoss, "secret"))))
+	require.Nil(t, DecodeError(nil))
 }

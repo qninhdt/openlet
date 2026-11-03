@@ -4,6 +4,7 @@ package filesystem
 
 import (
 	"fmt"
+	"github.com/qninhdt/openlet/packages/go/apperr"
 	"sync"
 	"testing"
 
@@ -13,8 +14,6 @@ import (
 	"github.com/qninhdt/openlet/packages/go/identity"
 	sharedfixture "github.com/qninhdt/openlet/packages/go/testfixture"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 func TestIntegrationDeletionBatchesRetainEvidenceAndDebitOnce(t *testing.T) {
@@ -48,7 +47,7 @@ func TestIntegrationDeletionBatchesRetainEvidenceAndDebitOnce(t *testing.T) {
 	entry, err := s.TrashNode(ctx, fs, mounts, Locator{NodeID: &folder.ID}, &folder.Revision)
 	require.NoError(t, err)
 	_, err = s.PrepareTrashPurge(ctx, fs, entry.ID)
-	require.Equal(t, codes.PermissionDenied, status.Code(err))
+	require.Equal(t, apperr.Forbidden, apperr.KindOf(err))
 	testfixture.Grant(t, graph, "filesystem", fs, actor, authz.TrashPurge)
 	admitted, err := s.PrepareTrashPurge(ctx, fs, entry.ID)
 	require.NoError(t, err)
@@ -96,7 +95,7 @@ func TestIntegrationDeletionBatchesRetainEvidenceAndDebitOnce(t *testing.T) {
 	_, err = db.Exec(ctx, `UPDATE files SET storage_kind='object',inline_bytes=NULL,object_key='objects/delete' WHERE node_id=$1`, outside.ID)
 	require.NoError(t, err)
 	foreign := identity.WithPrincipal(t.Context(), identity.Principal{Service: "other-owner"})
-	require.Equal(t, codes.PermissionDenied, status.Code(s.PrepareFilesystemDeletion(ctx, fs)))
+	require.Equal(t, apperr.Forbidden, apperr.KindOf(s.PrepareFilesystemDeletion(ctx, fs)))
 	done, err = s.DeletionBatch(ctx, fs, nil)
 	require.Equal(t, "FILESYSTEM_NOT_DELETING", reason(err))
 	require.False(t, done)

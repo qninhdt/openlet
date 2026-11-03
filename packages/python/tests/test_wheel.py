@@ -22,6 +22,8 @@ def test_independent_wheel_and_app_dependency(tmp_path):
     app = next(wheels.glob("letfs_ingest-*.whl"))
     with zipfile.ZipFile(shared) as archive:
         assert "openlet_api/letfs/v1/letfs_pb2_grpc.py" in archive.namelist()
+        assert "openlet/clients/letfs.py" in archive.namelist()
+        assert "openlet/authz.py" in archive.namelist()
         assert not any(p.startswith("letfs_ingest/") for p in archive.namelist())
     with zipfile.ZipFile(app) as archive:
         assert not any(p.startswith("openlet_api/") for p in archive.namelist())
@@ -49,6 +51,9 @@ def test_independent_wheel_and_app_dependency(tmp_path):
             "-c",
             "import importlib.metadata as m; "
             "import openlet_api, letfs_ingest; "
+            "from openlet.clients.letfs import ProcessingClient, Generation; "
+            "from openlet.clients.letfs import StorageAdministrationClient; "
+            "from openlet.authz import Resource; "
             "from openlet_api.letfs.v1.letfs_pb2_grpc import "
             "FilesystemServiceStub, FilesystemServiceServicer; "
             "assert m.packages_distributions()['openlet_api'] == ['openlet-python']",

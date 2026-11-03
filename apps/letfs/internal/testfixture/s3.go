@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -22,8 +23,9 @@ import (
 func S3(t *testing.T) string {
 	t.Helper()
 	build, cancelBuild := context.WithTimeout(t.Context(), 10*time.Minute)
-	directory, err := filepath.Abs("../../../../infra/minio")
-	require.NoError(t, err)
+	_, source, _, ok := runtime.Caller(0)
+	require.True(t, ok)
+	directory := filepath.Join(filepath.Dir(source), "../../../../infra/minio")
 	const image = "openlet-minio:RELEASE.2025-10-15T17-29-55Z"
 	output, err := exec.CommandContext(build, "docker", "build", "--tag", image, directory).CombinedOutput()
 	cancelBuild()

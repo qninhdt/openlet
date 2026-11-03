@@ -18,8 +18,8 @@ import (
 	"go.temporal.io/sdk/workflow"
 )
 
-func copyInput() CopyState {
-	return NewCopyState(filesystem.CopyAdmission{
+func copyInput() filesystem.CopyState {
+	return filesystem.NewCopyState(filesystem.CopyAdmission{
 		ID: uuid.New(), FilesystemID: uuid.New(), ActorID: uuid.New(),
 		Root:     filesystem.CopyItem{Source: uuid.New(), Destination: uuid.New(), Kind: "directory", ParentRevision: 4},
 		MaxNodes: 1000, MaxBytes: 1000, Deadline: time.Now().UTC().Add(time.Hour),
@@ -66,11 +66,11 @@ func TestCopyNodeKeepsPartialProgressAndBusinessFailure(t *testing.T) {
 			}, activity.RegisterOptions{Name: "complete_copy"})
 			env.ExecuteWorkflow(CopyNode, input)
 			require.NoError(t, env.GetWorkflowError())
-			var result CopyState
+			var result filesystem.CopyState
 			require.NoError(t, env.GetWorkflowResult(&result))
 			progress, err := env.QueryWorkflow("progress")
 			require.NoError(t, err)
-			var queried CopyState
+			var queried filesystem.CopyState
 			require.NoError(t, progress.Get(&queried))
 			require.Equal(t, result, queried)
 			if fail {
@@ -107,7 +107,7 @@ func TestCopyNodeRejectsBudgetBeforeIO(t *testing.T) {
 		env.RegisterActivityWithOptions(func(context.Context, filesystem.CopyAdmission) error { return nil }, activity.RegisterOptions{Name: "complete_copy"})
 		env.ExecuteWorkflow(CopyNode, input)
 		require.NoError(t, env.GetWorkflowError())
-		var result CopyState
+		var result filesystem.CopyState
 		require.NoError(t, env.GetWorkflowResult(&result))
 		require.Equal(t, "failed", result.Status)
 		require.Equal(t, "RESOURCE_LIMIT", *result.ErrorCode)
@@ -128,7 +128,7 @@ func TestCopyNodeSkipsProcessingForDerivedFile(t *testing.T) {
 	env.ExecuteWorkflow(CopyNode, input)
 
 	require.NoError(t, env.GetWorkflowError())
-	var result CopyState
+	var result filesystem.CopyState
 	require.NoError(t, env.GetWorkflowResult(&result))
 	require.Equal(t, "succeeded", result.Status)
 }
@@ -147,7 +147,7 @@ func TestCopyNodeContinuesWithBoundedTraversalState(t *testing.T) {
 	var continued *workflow.ContinueAsNewError
 	require.True(t, errors.As(env.GetWorkflowError(), &continued))
 	require.Equal(t, CopyNodeName, continued.WorkflowType.Name)
-	var state CopyState
+	var state filesystem.CopyState
 	require.NoError(t, converter.GetDefaultDataConverter().FromPayloads(continued.Input, &state))
 	require.Equal(t, input.Admission, state.Admission)
 	require.Equal(t, "running", state.Status)
@@ -172,7 +172,7 @@ func TestCopyNodeRetriesTransientActivityOnly(t *testing.T) {
 	env.RegisterActivityWithOptions(func(context.Context, filesystem.CopyAdmission) error { return nil }, activity.RegisterOptions{Name: "complete_copy"})
 	env.ExecuteWorkflow(CopyNode, input)
 	require.NoError(t, env.GetWorkflowError())
-	var result CopyState
+	var result filesystem.CopyState
 	require.NoError(t, env.GetWorkflowResult(&result))
 	require.Equal(t, []int32{1, 2, 3}, attempts)
 	require.Equal(t, "DEPENDENCY_UNAVAILABLE", *result.ErrorCode)

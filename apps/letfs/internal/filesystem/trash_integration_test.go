@@ -4,6 +4,7 @@ package filesystem
 
 import (
 	"encoding/json"
+	"github.com/qninhdt/openlet/packages/go/apperr"
 	"sync"
 	"testing"
 	"time"
@@ -14,8 +15,6 @@ import (
 	"github.com/qninhdt/openlet/packages/go/identity"
 	sharedfixture "github.com/qninhdt/openlet/packages/go/testfixture"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 func TestIntegrationReplacementAndTrashPreserveAccountingAndCleanup(t *testing.T) {
@@ -89,7 +88,7 @@ func TestIntegrationReplacementAndTrashPreserveAccountingAndCleanup(t *testing.T
 	require.NoError(t, db.QueryRow(ctx, `SELECT node_count FROM filesystems WHERE id=$1`, fs).Scan(&count))
 	require.EqualValues(t, 3, count)
 	_, err = s.GetNode(ctx, fs, mounts, Locator{NodeID: &artifact})
-	require.Equal(t, codes.NotFound, status.Code(err))
+	require.Equal(t, apperr.Missing, apperr.KindOf(err))
 	require.NoError(t, db.QueryRow(ctx, `SELECT state FROM uploads WHERE id=$1`, upload).Scan(&state))
 	require.Equal(t, "aborted", state)
 	var ambiguous bool
@@ -111,7 +110,7 @@ func TestIntegrationReplacementAndTrashPreserveAccountingAndCleanup(t *testing.T
 	require.Equal(t, actor, entry.ActorID)
 	require.Equal(t, root, *entry.ParentID)
 	_, err = s.GetNode(ctx, fs, mounts, Locator{NodeID: &file.ID})
-	require.Equal(t, codes.NotFound, status.Code(err))
+	require.Equal(t, apperr.Missing, apperr.KindOf(err))
 	readEntry, err := s.GetTrash(ctx, fs, entry.ID)
 	require.NoError(t, err)
 	require.Equal(t, entry, readEntry)
@@ -135,7 +134,7 @@ func TestIntegrationReplacementAndTrashPreserveAccountingAndCleanup(t *testing.T
 	require.Equal(t, file.Name, restored.Name)
 	require.EqualValues(t, 4, restored.Revision)
 	_, err = s.GetTrash(ctx, fs, entry.ID)
-	require.Equal(t, codes.NotFound, status.Code(err))
+	require.Equal(t, apperr.Missing, apperr.KindOf(err))
 
 	t.Run("separately trashed parent and concurrent restore", func(t *testing.T) {
 		parent := create(root, "parent", nil)
@@ -147,7 +146,7 @@ func TestIntegrationReplacementAndTrashPreserveAccountingAndCleanup(t *testing.T
 		parentEntry, err := s.TrashNode(ctx, fs, mounts, Locator{NodeID: &parent.ID}, &parent.Revision)
 		require.NoError(t, err)
 		_, err = s.RestoreTrash(ctx, fs, childEntry.ID)
-		require.Equal(t, codes.NotFound, status.Code(err))
+		require.Equal(t, apperr.Missing, apperr.KindOf(err))
 		_, err = s.RestoreTrash(ctx, fs, parentEntry.ID)
 		require.NoError(t, err)
 		start, results := make(chan struct{}), make(chan error, 2)
@@ -163,7 +162,7 @@ func TestIntegrationReplacementAndTrashPreserveAccountingAndCleanup(t *testing.T
 			if err == nil {
 				accepted++
 			} else {
-				require.Equal(t, codes.NotFound, status.Code(err))
+				require.Equal(t, apperr.Missing, apperr.KindOf(err))
 			}
 		}
 		require.Equal(t, 1, accepted)

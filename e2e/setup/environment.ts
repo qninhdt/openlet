@@ -124,7 +124,7 @@ export default async function setup() {
     await chmod(join(state, 'secrets'), 0o700);
     for (const name of ['postgres_password', 'account_db_password', 'workspace_db_password', 'letfs_db_password',
       'temporal_db_password', 'temporal_visibility_db_password', 'spicedb_db_password', 'spicedb_key', 'gateway_token',
-      'workspace_service_token', 'ingest_service_token', 'clerk_secret_key', 'fixture_control_token',
+      'workspace_service_token', 'account_service_token', 'ingest_service_token', 'clerk_secret_key', 'fixture_control_token',
       'openrouter_api_key', 'qdrant_api_key', 's3_access_key_id', 's3_secret_access_key']) {
       secrets[name] = randomBytes(32).toString('base64url');
     }

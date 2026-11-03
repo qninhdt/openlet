@@ -63,6 +63,8 @@ service IngestService {
 
 // These methods require explicit service authority, never a public user JWT.
 service StorageAdministrationService {
+  rpc CreateStorage(CreateStorageRequest) returns (CreateStorageResponse);
+  rpc DeleteFilesystem(DeleteFilesystemRequest) returns (DeleteFilesystemResponse);
   rpc CreateBucket(CreateBucketRequest) returns (CreateBucketResponse);
   rpc CreateFilesystem(CreateFilesystemRequest) returns (CreateFilesystemResponse);
   rpc FreezeBucket(FreezeBucketRequest) returns (FreezeBucketResponse);
@@ -71,7 +73,14 @@ service StorageAdministrationService {
   rpc ReleaseProvisioning(ReleaseProvisioningRequest) returns (ReleaseProvisioningResponse);
 }
 
-// Composite provisioning is one retryable letfs activity; each create retains its own receipt.
+message DeleteFilesystemRequest {
+  string filesystem_id = 1;
+}
+message DeleteFilesystemResponse {
+  bool completed = 1;
+}
+
+// Composite provisioning retains a receipt for each stable resource identity.
 message CreateStorageRequest {
   CreateBucketRequest bucket = 1;
   CreateFilesystemRequest filesystem = 2;

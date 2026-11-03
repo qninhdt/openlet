@@ -10,6 +10,18 @@ from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
+class DeleteFilesystemRequest(_message.Message):
+    __slots__ = ("filesystem_id",)
+    FILESYSTEM_ID_FIELD_NUMBER: _ClassVar[int]
+    filesystem_id: str
+    def __init__(self, filesystem_id: _Optional[str] = ...) -> None: ...
+
+class DeleteFilesystemResponse(_message.Message):
+    __slots__ = ("completed",)
+    COMPLETED_FIELD_NUMBER: _ClassVar[int]
+    completed: bool
+    def __init__(self, completed: _Optional[bool] = ...) -> None: ...
+
 class CreateStorageRequest(_message.Message):
     __slots__ = ("bucket", "filesystem")
     BUCKET_FIELD_NUMBER: _ClassVar[int]

@@ -3,6 +3,7 @@ package authz
 import (
 	"context"
 	"errors"
+	"github.com/qninhdt/openlet/packages/go/apperr"
 
 	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"google.golang.org/grpc/status"
@@ -29,7 +30,7 @@ func Check(ctx context.Context, client v1.PermissionsServiceClient, actor string
 		Subject:     &v1.SubjectReference{Object: &v1.ObjectReference{ObjectType: "user", ObjectId: actor}},
 	})
 	if err != nil {
-		return false, err
+		return false, dependencyError(ctx, err)
 	}
 	return response.Permissionship == v1.CheckPermissionResponse_PERMISSIONSHIP_HAS_PERMISSION, nil
 }
@@ -57,7 +58,7 @@ func BulkCheck(ctx context.Context, client v1.PermissionsServiceClient, actor st
 	}
 	response, err := client.CheckBulkPermissions(ctx, &v1.CheckBulkPermissionsRequest{Consistency: fullyConsistent(), Items: items})
 	if err != nil {
-		return nil, err
+		return nil, dependencyError(ctx, err)
 	}
 	if len(response.GetPairs()) != len(items) {
 		return nil, ErrInvalidResponse
@@ -76,7 +77,7 @@ func BulkCheck(ctx context.Context, client v1.PermissionsServiceClient, actor st
 			if err == nil {
 				return nil, ErrInvalidResponse
 			}
-			return nil, err
+			return nil, dependencyError(ctx, err)
 		}
 		if pair.GetItem() == nil {
 			return nil, ErrInvalidResponse
@@ -84,4 +85,11 @@ func BulkCheck(ctx context.Context, client v1.PermissionsServiceClient, actor st
 		allowed[i] = pair.GetItem().Permissionship == v1.CheckPermissionResponse_PERMISSIONSHIP_HAS_PERMISSION
 	}
 	return allowed, nil
+}
+
+func dependencyError(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return apperr.New(apperr.Unavailable, "DEPENDENCY_UNAVAILABLE", "authorization unavailable")
 }

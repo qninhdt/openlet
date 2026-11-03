@@ -5,9 +5,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/qninhdt/openlet/packages/go/apperr"
 	"github.com/qninhdt/openlet/packages/go/authz"
-	"github.com/qninhdt/openlet/packages/go/rpc"
-	"google.golang.org/grpc/codes"
 )
 
 type TrashEntry struct {
@@ -121,7 +120,7 @@ func (s *Store) TrashNode(ctx context.Context, fs uuid.UUID, mounts []Mount, loc
 		return TrashEntry{}, err
 	}
 	if node.ID == session.root {
-		return TrashEntry{}, rpc.Fault(codes.Aborted, "ROOT_IMMUTABLE", "root is immutable")
+		return TrashEntry{}, apperr.New(apperr.Conflict, "ROOT_IMMUTABLE", "root is immutable")
 	}
 	if err = session.fenceTrashed(ctx, node.ID); err != nil {
 		return TrashEntry{}, err
@@ -159,10 +158,10 @@ func (s *Store) RestoreTrash(ctx context.Context, fs, id uuid.UUID) (Node, error
 		return Node{}, err
 	}
 	if entry.Status != "trashed" {
-		return Node{}, rpc.Fault(codes.Aborted, "TRASH_PURGING", "trash entry is being purged")
+		return Node{}, apperr.New(apperr.Conflict, "TRASH_PURGING", "trash entry is being purged")
 	}
 	if entry.ParentID == nil {
-		return Node{}, rpc.Fault(codes.NotFound, "NOT_FOUND", "original parent not found")
+		return Node{}, apperr.New(apperr.Missing, "NOT_FOUND", "original parent not found")
 	}
 	parent, err := session.resolveOne(ctx, []Mount{{Path: "/", FilesystemID: fs}}, Locator{NodeID: entry.ParentID})
 	if err != nil {

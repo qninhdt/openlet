@@ -16,18 +16,18 @@ import (
 	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/exaring/otelpgx"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/qninhdt/openlet/apps/letfs/internal/clients/search"
+	"github.com/qninhdt/openlet/apps/letfs/internal/clients/storage"
 	"github.com/qninhdt/openlet/apps/letfs/internal/config"
 	"github.com/qninhdt/openlet/apps/letfs/internal/filesystem"
-	handlers "github.com/qninhdt/openlet/apps/letfs/internal/grpc"
-	httpapi "github.com/qninhdt/openlet/apps/letfs/internal/http"
-	"github.com/qninhdt/openlet/apps/letfs/internal/search"
-	"github.com/qninhdt/openlet/apps/letfs/internal/storage"
-	"github.com/qninhdt/openlet/apps/letfs/internal/temporal"
+	temporal "github.com/qninhdt/openlet/apps/letfs/internal/temporal"
+	handlers "github.com/qninhdt/openlet/apps/letfs/internal/transport/grpc"
+	httpapi "github.com/qninhdt/openlet/apps/letfs/internal/transport/http"
 	"github.com/qninhdt/openlet/packages/go/authz"
 	letfsv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/letfs/v1"
 	"github.com/qninhdt/openlet/packages/go/rpc"
 	"github.com/qninhdt/openlet/packages/go/telemetry"
-	"go.opentelemetry.io/otel/propagation"
+	sharedtemporal "github.com/qninhdt/openlet/packages/go/temporal"
 	"go.temporal.io/sdk/client"
 	temporalotel "go.temporal.io/sdk/contrib/opentelemetry"
 	"go.temporal.io/sdk/interceptor"
@@ -188,7 +188,7 @@ func serve(ctx context.Context, cfg config.Config, contract *authz.Contract, lis
 	if err != nil {
 		return err
 	}
-	tracing, err := temporalotel.NewTracingInterceptor(temporalotel.TracerOptions{DisableBaggage: true, TextMapPropagator: propagation.TraceContext{}})
+	tracing, err := sharedtemporal.Tracing()
 	if err != nil {
 		return errors.New("Temporal tracing configuration rejected")
 	}
@@ -199,6 +199,7 @@ func serve(ctx context.Context, cfg config.Config, contract *authz.Contract, lis
 	}
 	defer tc.Close()
 	jobs := &temporal.Jobs{Client: tc}
+	service := &filesystem.Service{Store: store, Processing: jobs, Copies: jobs, Deletions: jobs}
 	if backfill != nil {
 		result, err := (&temporal.Activities{Store: store, Jobs: jobs}).Backfill(ctx, *backfill)
 		if writeErr := json.NewEncoder(os.Stdout).Encode(result); writeErr != nil {
@@ -239,9 +240,9 @@ func serve(ctx context.Context, cfg config.Config, contract *authz.Contract, lis
 		return err
 	}
 	defer server.Stop()
-	public := &handlers.Filesystem{Store: store, Jobs: jobs}
+	public := &handlers.Filesystem{Store: store, Service: service}
 	letfsv1.RegisterFilesystemServiceServer(server, public)
-	letfsv1.RegisterStorageAdministrationServiceServer(server, &handlers.Administration{Store: store})
+	letfsv1.RegisterStorageAdministrationServiceServer(server, &handlers.Administration{Store: store, Service: service})
 	letfsv1.RegisterIngestServiceServer(server, &handlers.Ingest{Store: store})
 	healthv1.RegisterHealthServer(server, &readiness{check: ready})
 	httpListener, err := net.Listen("tcp", cfg.Listen)
@@ -249,7 +250,7 @@ func serve(ctx context.Context, cfg config.Config, contract *authz.Contract, lis
 		return errors.New("HTTP listener unavailable")
 	}
 	defer httpListener.Close()
-	publicHTTP := &http.Server{Handler: (&httpapi.Server{API: public, Store: store, GatewayToken: cfg.GatewayToken, Ready: ready}).Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 120 * time.Second, MaxHeaderBytes: 32 * 1024}
+	publicHTTP := &http.Server{Handler: (&httpapi.Server{Store: store, Service: service, GatewayToken: cfg.GatewayToken, Ready: ready}).Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 120 * time.Second, MaxHeaderBytes: 32 * 1024}
 	defer publicHTTP.Close()
 	result := make(chan error, 2)
 	go func() {

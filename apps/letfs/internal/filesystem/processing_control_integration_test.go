@@ -3,6 +3,7 @@
 package filesystem
 
 import (
+	"github.com/qninhdt/openlet/packages/go/apperr"
 	"sync"
 	"testing"
 
@@ -12,8 +13,6 @@ import (
 	"github.com/qninhdt/openlet/packages/go/identity"
 	sharedfixture "github.com/qninhdt/openlet/packages/go/testfixture"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 func TestIntegrationReprocessAdmissionReplayAndCurrentState(t *testing.T) {
@@ -34,7 +33,7 @@ func TestIntegrationReprocessAdmissionReplayAndCurrentState(t *testing.T) {
 	require.NoError(t, err)
 	key := uuid.New()
 	_, err = s.Reprocess(ctx, fs, mounts, file.ID, key)
-	require.Equal(t, codes.PermissionDenied, status.Code(err))
+	require.Equal(t, apperr.Forbidden, apperr.KindOf(err))
 	testfixture.Grant(t, graph, "filesystem", fs, actor, authz.ProcessingRun)
 	var wg sync.WaitGroup
 	results, failures := make([]Reprocessing, 2), make([]error, 2)

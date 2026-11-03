@@ -7,9 +7,8 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/qninhdt/openlet/apps/letfs/internal/storage"
-	"github.com/qninhdt/openlet/packages/go/rpc"
-	"google.golang.org/grpc/codes"
+	"github.com/qninhdt/openlet/apps/letfs/internal/clients/storage"
+	"github.com/qninhdt/openlet/packages/go/apperr"
 )
 
 type ProcessingOutput struct {
@@ -30,7 +29,7 @@ func (s OutputScope) access() (uploadAccess, error) {
 		return uploadAccess{}, err
 	}
 	if s.UploadID == uuid.Nil || (s.Stage != "parse" && s.Stage != "enrichment") {
-		return uploadAccess{}, rpc.Fault(codes.InvalidArgument, "VALIDATION", "invalid output scope")
+		return uploadAccess{}, apperr.New(apperr.Invalid, "VALIDATION", "invalid output scope")
 	}
 	return uploadAccess{source: &s.Source, stage: s.Stage}, nil
 }
@@ -50,14 +49,14 @@ func (s *session) validateProcessing(ctx context.Context, a Generation, stage st
 			return p, uploadState("PARSE_NOT_COMPLETE")
 		}
 	default:
-		return p, rpc.Fault(codes.InvalidArgument, "VALIDATION", "invalid processing stage")
+		return p, apperr.New(apperr.Invalid, "VALIDATION", "invalid processing stage")
 	}
 	return p, err
 }
 
 func relativeArtifactPath(path string) error {
 	if path == "" || len(path) > 4096 || strings.Contains(path, `\`) || strings.Count(path, "/")+1 > maxDepth {
-		return rpc.Fault(codes.InvalidArgument, "VALIDATION", "invalid artifact relative path")
+		return apperr.New(apperr.Invalid, "VALIDATION", "invalid artifact relative path")
 	}
 	for _, part := range strings.Split(path, "/") {
 		if err := ValidateName(part); err != nil {
@@ -102,7 +101,7 @@ func (s *session) insertProcessingOutput(ctx context.Context, store *Store, a Ge
 		return uuid.Nil, err
 	}
 	if output.SizeBytes == nil || *output.SizeBytes < 0 {
-		return uuid.Nil, rpc.Fault(codes.InvalidArgument, "VALIDATION", "nonnegative output size required")
+		return uuid.Nil, apperr.New(apperr.Invalid, "VALIDATION", "nonnegative output size required")
 	}
 	encoded, err := json.Marshal(output)
 	if err != nil {
@@ -113,7 +112,7 @@ func (s *session) insertProcessingOutput(ctx context.Context, store *Store, a Ge
 		return uuid.Nil, uploadState("RESOURCE_LIMIT")
 	}
 	if size > store.MaxFileBytes {
-		return uuid.Nil, rpc.Fault(codes.ResourceExhausted, "REQUEST_LIMIT", "file exceeds maximum")
+		return uuid.Nil, apperr.New(apperr.Limit, "REQUEST_LIMIT", "file exceeds maximum")
 	}
 	transport := output.Storage
 	var partSize *int64
@@ -121,10 +120,10 @@ func (s *session) insertProcessingOutput(ctx context.Context, store *Store, a Ge
 	switch transport {
 	case "inline":
 		if size > store.InlineLimit {
-			return uuid.Nil, rpc.Fault(codes.ResourceExhausted, "REQUEST_LIMIT", "inline bytes exceed limit")
+			return uuid.Nil, apperr.New(apperr.Limit, "REQUEST_LIMIT", "inline bytes exceed limit")
 		}
 		if output.ContentMD5 != nil {
-			return uuid.Nil, rpc.Fault(codes.InvalidArgument, "VALIDATION", "inline output has no Content-MD5")
+			return uuid.Nil, apperr.New(apperr.Invalid, "VALIDATION", "inline output has no Content-MD5")
 		}
 	case "object":
 		if store.Storage == nil || store.MultipartThreshold <= 0 || store.MultipartPartBytes < 5242880 {
@@ -133,21 +132,21 @@ func (s *session) insertProcessingOutput(ctx context.Context, store *Store, a Ge
 		if size < store.MultipartThreshold {
 			transport = "single"
 			if output.ContentMD5 == nil {
-				return uuid.Nil, rpc.Fault(codes.InvalidArgument, "VALIDATION", "Content-MD5 required")
+				return uuid.Nil, apperr.New(apperr.Invalid, "VALIDATION", "Content-MD5 required")
 			}
 			digest, e := base64.StdEncoding.DecodeString(*output.ContentMD5)
 			if e != nil || len(digest) != 16 || base64.StdEncoding.EncodeToString(digest) != *output.ContentMD5 {
-				return uuid.Nil, rpc.Fault(codes.InvalidArgument, "VALIDATION", "invalid Content-MD5")
+				return uuid.Nil, apperr.New(apperr.Invalid, "VALIDATION", "invalid Content-MD5")
 			}
 		} else {
 			transport = "multipart"
 			if output.ContentMD5 != nil || 1+(size-1)/store.MultipartPartBytes > 10000 {
-				return uuid.Nil, rpc.Fault(codes.InvalidArgument, "VALIDATION", "invalid multipart metadata")
+				return uuid.Nil, apperr.New(apperr.Invalid, "VALIDATION", "invalid multipart metadata")
 			}
 			partSize = &store.MultipartPartBytes
 		}
 	default:
-		return uuid.Nil, rpc.Fault(codes.InvalidArgument, "VALIDATION", "invalid output storage")
+		return uuid.Nil, apperr.New(apperr.Invalid, "VALIDATION", "invalid output storage")
 	}
 	id := uuid.Must(uuid.NewV7())
 	if transport != "inline" {
@@ -214,7 +213,7 @@ func (s *Store) WriteOutputBytes(ctx context.Context, scope OutputScope, content
 		return Upload{}, err
 	}
 	if int64(len(content)) > s.InlineLimit {
-		return Upload{}, rpc.Fault(codes.ResourceExhausted, "REQUEST_LIMIT", "inline bytes exceed limit")
+		return Upload{}, apperr.New(apperr.Limit, "REQUEST_LIMIT", "inline bytes exceed limit")
 	}
 	session, err := s.processingSession(ctx, scope.Source, false)
 	if err != nil {
@@ -229,7 +228,7 @@ func (s *Store) WriteOutputBytes(ctx context.Context, scope OutputScope, content
 		return Upload{}, uploadState("DIRECT_UPLOAD_REQUIRED")
 	}
 	if int64(len(content)) != upload.SizeBytes {
-		return Upload{}, rpc.Fault(codes.InvalidArgument, "VALIDATION", "inline size differs from prepared size")
+		return Upload{}, apperr.New(apperr.Invalid, "VALIDATION", "inline size differs from prepared size")
 	}
 	if upload.State == "finalized" {
 		return upload, nil

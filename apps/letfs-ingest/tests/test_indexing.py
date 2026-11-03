@@ -2,9 +2,11 @@ import json
 
 import httpx
 import pytest
+from openlet.clients.letfs import VectorSpace
 
-from letfs_ingest.indexing import Qdrant, VectorSpace, evidence_points, index_tree
-from letfs_ingest.openrouter import AISettings, OpenRouter
+from letfs_ingest.clients.openrouter import AISettings, OpenRouter
+from letfs_ingest.clients.qdrant import Qdrant
+from letfs_ingest.processing.indexing import evidence_points, index_tree
 
 SPACE = VectorSpace("model", "files", 2)
 
@@ -318,7 +320,7 @@ async def test_collection_dimension_mismatch_never_changes_indexes():
 def test_index_configuration_rejects_invalid_bounds(
     tmp_path, monkeypatch, setting, value
 ):
-    from letfs_ingest.indexing import IndexSettings
+    from letfs_ingest.clients.qdrant import IndexSettings
 
     key = tmp_path / "qdrant-key"
     key.write_text("test-key")

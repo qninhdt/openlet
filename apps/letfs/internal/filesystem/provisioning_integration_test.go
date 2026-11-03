@@ -4,6 +4,7 @@ package filesystem
 
 import (
 	"context"
+	"github.com/qninhdt/openlet/packages/go/apperr"
 	"sync"
 	"testing"
 
@@ -11,8 +12,6 @@ import (
 	"github.com/qninhdt/openlet/apps/letfs/internal/testfixture"
 	"github.com/qninhdt/openlet/packages/go/identity"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 func TestIntegrationStableProvisioningIdentity(t *testing.T) {
@@ -43,10 +42,10 @@ func TestIntegrationStableProvisioningIdentity(t *testing.T) {
 	require.NoError(t, db.QueryRow(ctx, "SELECT count(*) FROM idempotency_keys").Scan(&count))
 	require.Equal(t, 1, count)
 	_, err := s.CreateBucket(ctx, key, CreateBucket{ID: id, LimitBytes: 101})
-	require.Equal(t, codes.Aborted, status.Code(err))
+	require.Equal(t, apperr.Conflict, apperr.KindOf(err))
 	rollbackID := uuid.Must(uuid.NewV7())
 	_, err = s.CreateBucket(ctx, key, CreateBucket{ID: rollbackID, LimitBytes: 100})
-	require.Equal(t, codes.Aborted, status.Code(err))
+	require.Equal(t, apperr.Conflict, apperr.KindOf(err))
 	require.NoError(t, db.QueryRow(ctx, "SELECT count(*) FROM quota_buckets WHERE id=$1", rollbackID).Scan(&count))
 	require.Zero(t, count, "idempotency conflict rolls back the entire resource creation")
 	otherID := uuid.Must(uuid.NewV7())
@@ -64,7 +63,7 @@ func TestIntegrationStableProvisioningIdentity(t *testing.T) {
 	changed := fsInput
 	changed.RootName = "different"
 	_, err = s.CreateFilesystem(ctx, fsKey, changed)
-	require.Equal(t, codes.Aborted, status.Code(err))
+	require.Equal(t, apperr.Conflict, apperr.KindOf(err))
 	wrongRoot := uuid.New()
 	require.Error(t, s.ReleaseProvisioning(ctx, id, fs.ID, wrongRoot))
 	require.NoError(t, s.ReleaseProvisioning(ctx, id, fs.ID, *fs.RootID))
@@ -133,7 +132,7 @@ func TestIntegrationFreezeSerializesConcurrentCreation(t *testing.T) {
 		for range 2 {
 			err := <-results
 			if err != nil {
-				require.Equal(t, codes.FailedPrecondition, status.Code(err))
+				require.Equal(t, apperr.Precondition, apperr.KindOf(err))
 			}
 		}
 		var state string

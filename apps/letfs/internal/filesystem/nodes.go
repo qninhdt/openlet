@@ -9,10 +9,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/qninhdt/openlet/packages/go/apperr"
 	"github.com/qninhdt/openlet/packages/go/authz"
-	"github.com/qninhdt/openlet/packages/go/rpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 type Node struct {
@@ -43,27 +41,27 @@ func (n *Node) fields() []any {
 
 func (n Node) writable() error {
 	if n.readonly {
-		return rpc.Fault(codes.PermissionDenied, "ARTIFACT_READ_ONLY", "generated artifacts are read only")
+		return apperr.New(apperr.Forbidden, "ARTIFACT_READ_ONLY", "generated artifacts are read only")
 	}
 	return nil
 }
 
 func (n Node) directory() error {
 	if n.Kind != "directory" {
-		return rpc.Fault(codes.Aborted, "NOT_DIRECTORY", "directory required")
+		return apperr.New(apperr.Conflict, "NOT_DIRECTORY", "directory required")
 	}
 	return nil
 }
 
 func (n Node) revision(expected *int64) error {
 	if expected == nil {
-		return rpc.Fault(codes.FailedPrecondition, "PRECONDITION_REQUIRED", "revision required")
+		return apperr.New(apperr.Precondition, "PRECONDITION_REQUIRED", "revision required")
 	}
 	if *expected <= 0 {
-		return rpc.Fault(codes.InvalidArgument, "VALIDATION", "positive revision required")
+		return apperr.New(apperr.Invalid, "VALIDATION", "positive revision required")
 	}
 	if n.Revision != *expected {
-		return rpc.Fault(codes.FailedPrecondition, "REVISION_MISMATCH", "revision mismatch")
+		return apperr.New(apperr.Precondition, "REVISION_MISMATCH", "revision mismatch")
 	}
 	return nil
 }
@@ -75,17 +73,17 @@ func databaseError(err error) error {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
-	if _, ok := status.FromError(err); ok {
+	if _, ok := apperr.As(err); ok {
 		return err
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
-		return rpc.Fault(codes.NotFound, "NOT_FOUND", "resource not found")
+		return apperr.New(apperr.Missing, "NOT_FOUND", "resource not found")
 	}
 	var pg *pgconn.PgError
 	if errors.As(err, &pg) && pg.Code == "23505" {
-		return rpc.Fault(codes.AlreadyExists, "NAME_CONFLICT", "name already exists")
+		return apperr.New(apperr.Exists, "NAME_CONFLICT", "name already exists")
 	}
-	return rpc.Fault(codes.Unavailable, "DEPENDENCY_UNAVAILABLE", "database unavailable")
+	return apperr.New(apperr.Unavailable, "DEPENDENCY_UNAVAILABLE", "database unavailable")
 }
 
 type session struct {
@@ -131,14 +129,14 @@ func (s *Store) openSessionState(ctx context.Context, fs uuid.UUID, write, allow
 		return nil, databaseError(err)
 	}
 	if state != "active" && !allowInactive {
-		return nil, rpc.Fault(codes.Aborted, "BUCKET_FROZEN", "bucket is frozen")
+		return nil, apperr.New(apperr.Conflict, "BUCKET_FROZEN", "bucket is frozen")
 	}
 	var root *uuid.UUID
 	if err = tx.QueryRow(ctx, fsSQL, fs).Scan(&root, &state); err != nil {
 		return nil, databaseError(err)
 	}
 	if !allowInactive && (state != "active" || root == nil) {
-		return nil, rpc.Fault(codes.NotFound, "NOT_FOUND", "resource not found")
+		return nil, apperr.New(apperr.Missing, "NOT_FOUND", "resource not found")
 	}
 	if root != nil {
 		result.root = *root
@@ -187,7 +185,7 @@ func (s *Store) readNode(ctx context.Context, fs uuid.UUID, mounts []Mount, loca
 	defer session.tx.Rollback(ctx)
 	node, err := session.resolveOne(ctx, mounts, locator)
 	if err == nil && locator.ExpectedNodeID != nil && *locator.ExpectedNodeID != node.ID {
-		err = rpc.Fault(codes.Aborted, "TARGET_MISMATCH", "target mismatch")
+		err = apperr.New(apperr.Conflict, "TARGET_MISMATCH", "target mismatch")
 	}
 	return node, err
 }
@@ -214,7 +212,7 @@ func page(scope string, cursor *string, limit *int32) (uuid.UUID, int32, error) 
 	if limit != nil {
 		count = *limit
 	}
-	invalid := rpc.Fault(codes.InvalidArgument, "VALIDATION", "invalid page limit or cursor")
+	invalid := apperr.New(apperr.Invalid, "VALIDATION", "invalid page limit or cursor")
 	if count < 1 || count > 100 {
 		return uuid.Nil, 0, invalid
 	}
@@ -244,7 +242,7 @@ func (s *Store) ListNodes(ctx context.Context, fs uuid.UUID, mounts []Mount, par
 		return NodePage{}, err
 	}
 	if parent.ExpectedNodeID != nil && *parent.ExpectedNodeID != node.ID {
-		return NodePage{}, rpc.Fault(codes.Aborted, "TARGET_MISMATCH", "target mismatch")
+		return NodePage{}, apperr.New(apperr.Conflict, "TARGET_MISMATCH", "target mismatch")
 	}
 	scope := "list/" + fs.String() + "/" + node.ID.String()
 	after, count, err := page(scope, cursor, limit)

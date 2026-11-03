@@ -11,12 +11,16 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"github.com/qninhdt/openlet/packages/go/identity"
 	"io"
 	"math/big"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,68 +35,87 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-func TestIntegrationEnvoyPublicIdentityAndPrivateRPCIsolation(t *testing.T) {
-	backend, f := transportServer(t, "127.0.0.1:0")
+func TestIntegrationEnvoyPublicHTTPAndPrivateRPCIsolation(t *testing.T) {
+	started, stopped := make(chan struct{}), make(chan struct{})
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		principal, err := identity.AuthenticateGateway(r.Header, fixtureGateway, false)
+		if err != nil || principal.ActorID.String() != transportActor {
+			w.WriteHeader(401)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/slow") {
+			close(started)
+			<-r.Context().Done()
+			close(stopped)
+			return
+		}
+		_, _ = w.Write(transportBytes)
+	}))
+	t.Cleanup(backend.Close)
 	address, key := envoyProof(t, backend.URL)
-	connection, err := grpc.NewClient(address, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, connection.Close()) })
-	client := letfsv1.NewFilesystemServiceClient(connection)
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
 	jwt := fixtureJWT(t, key, transportActor)
-	verified := metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer "+jwt))
-	response, err := client.GetDownload(verified, &letfsv1.GetDownloadRequest{FilesystemId: "drive", NodeId: "node"})
-	require.NoError(t, err)
-	require.Equal(t, transportBytes, response.Download.GetInlineContent())
-
-	spoofed := metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer "+jwt,
-		"x-openlet-user-id", "019a3b66-0000-7000-8000-000000000099", "x-openlet-user-id", "invalid",
-		"x-openlet-service", "workspace", "x-gateway-token", "spoofed"))
-	_, err = client.GetNode(spoofed, &letfsv1.GetNodeRequest{FilesystemId: "drive", NodeId: "node"})
-	require.NoError(t, err, "gateway must replace spoofed headers with the verified JWT actor")
-	_, err = client.GetNode(ctx, &letfsv1.GetNodeRequest{FilesystemId: "drive", NodeId: "node"})
-	require.Equal(t, codes.Unauthenticated, status.Code(err))
-	withoutActor := metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer "+fixtureJWT(t, key, ""), "x-openlet-user-id", transportActor))
-	_, err = client.GetNode(withoutActor, &letfsv1.GetNodeRequest{FilesystemId: "drive", NodeId: "node"})
-	require.Equal(t, codes.PermissionDenied, status.Code(err), "spoofed header cannot repair a missing JWT claim")
-	_, err = letfsv1.NewStorageAdministrationServiceClient(connection).CreateBucket(verified, &letfsv1.CreateBucketRequest{BucketId: "private"})
-	require.Equal(t, codes.Unimplemented, status.Code(err), "private native method must not have an ingress route")
-	_, err = letfsv1.NewIngestServiceClient(connection).PrepareParse(verified, &letfsv1.PrepareParseRequest{})
-	require.Equal(t, codes.Unimplemented, status.Code(err), "ingest native method must not have an ingress route")
-	archive, err := client.StreamArchive(verified, &letfsv1.StreamArchiveRequest{FilesystemId: "drive", NodeId: "node"})
-	require.NoError(t, err)
-	frame, err := archive.Recv()
-	require.NoError(t, err)
-	require.Equal(t, "application/zip", frame.GetMetadata().Mime)
-	for {
-		_, err = archive.Recv()
-		if err != nil {
-			require.ErrorIs(t, err, io.EOF)
-			break
+	get := func(token string, spoof bool) *http.Response {
+		request, err := http.NewRequestWithContext(ctx, "GET", "http://"+address+"/v1/filesystems/drive/nodes/node", nil)
+		require.NoError(t, err)
+		if token != "" {
+			request.Header.Set("Authorization", "Bearer "+token)
 		}
+		if spoof {
+			request.Header.Add("X-Openlet-User-ID", "invalid")
+			request.Header.Add("X-Openlet-User-ID", "019a3b66-0000-7000-8000-000000000099")
+			request.Header.Set("X-Gateway-Token", "spoofed")
+			request.Header.Set("X-Openlet-Service", "workspace")
+		}
+		response, err := http.DefaultClient.Do(request)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = response.Body.Close() })
+		return response
 	}
-	_, err = client.GetNode(verified, &letfsv1.GetNodeRequest{FilesystemId: "foreign", NodeId: "node"})
-	require.Equal(t, codes.NotFound, status.Code(err))
-
-	cancelable, stop := context.WithCancel(verified)
+	for _, spoof := range []bool{false, true} {
+		response := get(jwt, spoof)
+		require.Equal(t, 200, response.StatusCode)
+		data, err := io.ReadAll(response.Body)
+		require.NoError(t, err)
+		require.Equal(t, transportBytes, data, "gateway replaces untrusted identity and credentials")
+	}
+	require.Equal(t, 401, get("", false).StatusCode)
+	require.Equal(t, 403, get(fixtureJWT(t, key, ""), true).StatusCode, "headers cannot repair a missing JWT claim")
+	connection, err := grpc.NewClient(address, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, connection.Close()) })
+	verified := metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer "+jwt))
+	_, err = letfsv1.NewFilesystemServiceClient(connection).GetNode(verified, &letfsv1.GetNodeRequest{})
+	require.Equal(t, codes.Unimplemented, status.Code(err), "file gRPC has no public ingress")
+	_, err = letfsv1.NewStorageAdministrationServiceClient(connection).CreateBucket(verified, &letfsv1.CreateBucketRequest{})
+	require.Equal(t, codes.Unimplemented, status.Code(err))
+	_, err = letfsv1.NewIngestServiceClient(connection).PrepareParse(verified, &letfsv1.PrepareParseRequest{})
+	require.Equal(t, codes.Unimplemented, status.Code(err))
+	cancelable, stop := context.WithCancel(ctx)
 	defer stop()
+	request, err := http.NewRequestWithContext(cancelable, "GET", "http://"+address+"/v1/filesystems/drive/nodes/slow", nil)
+	require.NoError(t, err)
+	request.Header.Set("Authorization", "Bearer "+jwt)
 	result := make(chan error, 1)
 	go func() {
-		_, err := client.GetDownload(cancelable, &letfsv1.GetDownloadRequest{FilesystemId: "drive", NodeId: "slow"})
+		response, err := http.DefaultClient.Do(request)
+		if response != nil {
+			_ = response.Body.Close()
+		}
 		result <- err
 	}()
 	select {
-	case <-f.slowStarted:
+	case <-started:
 	case <-ctx.Done():
-		t.Fatal("Envoy did not forward native RPC")
+		t.Fatal("HTTP request never reached service")
 	}
 	stop()
-	require.Equal(t, codes.Canceled, status.Code(<-result))
+	require.Error(t, <-result)
 	select {
-	case <-f.slowStopped:
+	case <-stopped:
 	case <-ctx.Done():
-		t.Fatal("Envoy swallowed stream cancellation")
+		t.Fatal("HTTP cancellation never reached service")
 	}
 }
 
@@ -129,14 +152,7 @@ func envoyProof(t *testing.T, backendURL string) (string, *rsa.PrivateKey) {
 	listener := resources["listeners"].([]any)[0].(map[string]any)
 	manager := listener["filter_chains"].([]any)[0].(map[string]any)["filters"].([]any)[0].(map[string]any)["typed_config"].(map[string]any)
 	host := manager["route_config"].(map[string]any)["virtual_hosts"].([]any)[0].(map[string]any)
-	host["request_headers_to_add"] = []any{map[string]any{"header": map[string]any{"key": "authorization", "value": "Bearer " + fixtureGateway}, "append_action": "OVERWRITE_IF_EXISTS_OR_ADD"}}
-	routes := []any{}
-	for _, method := range []string{letfsv1.FilesystemService_GetNode_FullMethodName, letfsv1.FilesystemService_GetDownload_FullMethodName, letfsv1.FilesystemService_StreamArchive_FullMethodName} {
-		routes = append(routes, map[string]any{"match": map[string]any{"path": method}, "route": map[string]any{"cluster": "letfs", "timeout": "10s"}})
-	}
-	host["routes"] = append(routes,
-		map[string]any{"match": map[string]any{"prefix": "/v1/filesystems/"}, "route": map[string]any{"cluster": "letfs", "timeout": "10s"}},
-		map[string]any{"match": map[string]any{"prefix": "/"}, "direct_response": map[string]any{"status": 404}})
+	host["request_headers_to_add"].([]any)[0].(map[string]any)["header"].(map[string]any)["value"] = fixtureGateway
 	for _, value := range manager["http_filters"].([]any) {
 		filter := value.(map[string]any)
 		typed := filter["typed_config"].(map[string]any)
@@ -157,10 +173,14 @@ func envoyProof(t *testing.T, backendURL string) (string, *rsa.PrivateKey) {
 	require.NoError(t, err)
 	port, err := strconv.Atoi(backend.Port())
 	require.NoError(t, err)
-	resources["clusters"] = []any{map[string]any{"name": "letfs", "type": "STRICT_DNS", "connect_timeout": "3s", "http2_protocol_options": map[string]any{},
-		"load_assignment": map[string]any{"cluster_name": "letfs", "endpoints": []any{map[string]any{"lb_endpoints": []any{map[string]any{
-			"endpoint": map[string]any{"address": map[string]any{"socket_address": map[string]any{"address": testcontainers.HostInternal, "port_value": port}}},
-		}}}}}}}
+	clusters := []any{}
+	for _, name := range []string{"letfs", "account", "workspace"} {
+		clusters = append(clusters, map[string]any{"name": name, "type": "STRICT_DNS", "connect_timeout": "3s",
+			"load_assignment": map[string]any{"cluster_name": name, "endpoints": []any{map[string]any{"lb_endpoints": []any{map[string]any{
+				"endpoint": map[string]any{"address": map[string]any{"socket_address": map[string]any{"address": testcontainers.HostInternal, "port_value": port}}},
+			}}}}}})
+	}
+	resources["clusters"] = clusters
 	encoded, err := json.Marshal(config)
 	require.NoError(t, err)
 	proxy, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{Started: true, ContainerRequest: testcontainers.ContainerRequest{

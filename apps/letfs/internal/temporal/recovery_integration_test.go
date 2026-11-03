@@ -5,6 +5,7 @@ package temporal
 import (
 	"context"
 	"fmt"
+	"github.com/qninhdt/openlet/packages/go/apperr"
 	"os"
 	"path/filepath"
 	"testing"
@@ -24,8 +25,7 @@ import (
 	sdktemporal "go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
+
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
@@ -137,7 +137,7 @@ func TestIntegrationCopyRecoveryContinuationAndDeletionReplay(t *testing.T) {
 	})
 	deadline, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
-	var result CopyState
+	var result filesystem.CopyState
 	require.NoError(t, tc.GetWorkflow(deadline, copyWorkflowID(fs, admission.ID), "").Get(deadline, &result))
 	require.Equal(t, "succeeded", result.Status)
 	require.EqualValues(t, 41, result.CommittedNodes)
@@ -156,7 +156,7 @@ func TestIntegrationCopyRecoveryContinuationAndDeletionReplay(t *testing.T) {
 	require.NoError(t, err, "completed progress does not need a running worker")
 	require.Equal(t, "succeeded", progress.Status)
 	_, err = jobs.Copy(ctx, fs, admission.ID, uuid.New(), false)
-	require.Equal(t, codes.NotFound, status.Code(err))
+	require.Equal(t, apperr.Missing, apperr.KindOf(err))
 	_, err = jobs.Copy(ctx, fs, admission.ID, uuid.New(), true)
 	require.NoError(t, err)
 	copy, err := s.GetNode(ctx, fs, mounts, filesystem.Locator{NodeID: &admission.Root.Destination})
@@ -165,7 +165,7 @@ func TestIntegrationCopyRecoveryContinuationAndDeletionReplay(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.PrepareTrashPurge(ctx, fs, entry.ID)
 	require.NoError(t, err)
-	purge := DeletionInput{FilesystemID: fs, EntryID: &entry.ID}
+	purge := filesystem.DeletionInput{FilesystemID: fs, EntryID: &entry.ID}
 	require.NoError(t, jobs.StartDeletion(ctx, purge))
 	require.NoError(t, tc.CancelWorkflow(ctx, purge.WorkflowID(), ""))
 	third := worker.New(tc, Queue, worker.Options{WorkerStopTimeout: time.Second})
@@ -181,7 +181,7 @@ func TestIntegrationCopyRecoveryContinuationAndDeletionReplay(t *testing.T) {
 	require.NoError(t, db.QueryRow(ctx, `SELECT used_bytes FROM quota_buckets WHERE id=$1`, bucket).Scan(&bytes))
 	require.EqualValues(t, 40, bytes)
 	require.NoError(t, s.PrepareFilesystemDeletion(owner, fs))
-	deletion := DeletionInput{FilesystemID: fs}
+	deletion := filesystem.DeletionInput{FilesystemID: fs}
 	require.NoError(t, jobs.StartDeletion(ctx, deletion))
 	var deleted uuid.UUID
 	require.NoError(t, tc.GetWorkflow(deadline, deletion.WorkflowID(), "").Get(deadline, &deleted))

@@ -2,21 +2,20 @@ package filesystem
 
 import (
 	"context"
+	"github.com/qninhdt/openlet/packages/go/apperr"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/qninhdt/openlet/packages/go/identity"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 func TestProvisioningRequiresServiceBeforeStorage(t *testing.T) {
 	s := &Store{}
 	for _, ctx := range []context.Context{t.Context(), identity.WithPrincipal(t.Context(), identity.Principal{Service: "gateway", Gateway: true})} {
 		_, err := s.CreateBucket(ctx, uuid.New(), CreateBucket{ID: uuid.Must(uuid.NewV7()), LimitBytes: 100})
-		require.Equal(t, codes.PermissionDenied, status.Code(err))
+		require.Equal(t, apperr.Forbidden, apperr.KindOf(err))
 	}
 }
 
