@@ -1,6 +1,7 @@
 package http
 
 import (
+	"crypto/sha256"
 	"github.com/gin-gonic/gin"
 	"net/http"
 
@@ -84,12 +85,8 @@ func (s *Server) changeMember(c *gin.Context) {
 		failure(w, r, e)
 		return
 	}
-	if e = s.Store.ChangeMember(r.Context(), ws, actorID(r), target, in.Role, remove, revision); e != nil {
+	if _, e = worker.Mutate(r.Context(), s.Temporal, worker.Mutation{Kind: "member", WorkspaceID: ws, ActorID: actorID(r), TargetID: target, Role: in.Role, Remove: remove, Revision: revision}); e != nil {
 		failure(w, r, e)
-		return
-	}
-	if e = worker.SyncRelationships(r.Context(), s.Temporal, s.Store, ws); e != nil {
-		Error(w, r, 503, "DEPENDENCY_UNAVAILABLE", "membership change committed; authorization synchronization incomplete")
 		return
 	}
 	w.WriteHeader(204)
@@ -184,18 +181,14 @@ func (s *Server) acceptInvitation(c *gin.Context) {
 		failure(w, r, workspace.Fault{Code: "INVITATION_INVALID"})
 		return
 	}
-	emails, e := s.User.VerifiedEmails(r.Context(), actorID(r))
+	hash := sha256.Sum256([]byte(in.Token))
+	ws, e := s.Store.InvitationWorkspace(r.Context(), hash)
 	if e != nil {
 		failure(w, r, e)
 		return
 	}
-	ws, e := s.Store.AcceptInvite(r.Context(), actorID(r), in.Token, emails)
-	if e != nil {
+	if _, e = worker.Mutate(r.Context(), s.Temporal, worker.Mutation{Kind: "invite", WorkspaceID: ws, ActorID: actorID(r), InvitationHash: hash}); e != nil {
 		failure(w, r, e)
-		return
-	}
-	if e = worker.SyncRelationships(r.Context(), s.Temporal, s.Store, ws); e != nil {
-		Error(w, r, 503, "DEPENDENCY_UNAVAILABLE", "membership accepted; authorization synchronization incomplete")
 		return
 	}
 	resource, e := s.Store.Authorize(r.Context(), ws, actorID(r), authz.MemberRead)

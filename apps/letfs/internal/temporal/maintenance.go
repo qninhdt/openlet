@@ -21,13 +21,10 @@ const StorageMaintenanceName = "StorageMaintenance"
 func StorageMaintenance(ctx workflow.Context) error {
 	short := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{StartToCloseTimeout: 30 * time.Second, RetryPolicy: &sdktemporal.RetryPolicy{MaximumAttempts: 3}})
 	bounded := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{StartToCloseTimeout: 240 * time.Second, HeartbeatTimeout: 30 * time.Second, RetryPolicy: &sdktemporal.RetryPolicy{MaximumAttempts: 3}})
-	if err := workflow.ExecuteActivity(short, "expire_uploads_batch").Get(short, nil); err != nil {
-		return err
-	}
-	if err := workflow.ExecuteActivity(bounded, "reconcile_resources_batch").Get(bounded, nil); err != nil {
-		return err
-	}
-	return workflow.ExecuteActivity(bounded, "delete_objects_batch").Get(bounded, nil)
+	expiryErr := workflow.ExecuteActivity(short, "expire_uploads_batch").Get(short, nil)
+	recoveryErr := workflow.ExecuteActivity(bounded, "reconcile_resources_batch").Get(bounded, nil)
+	cleanupErr := workflow.ExecuteActivity(bounded, "delete_objects_batch").Get(bounded, nil)
+	return errors.Join(expiryErr, recoveryErr, cleanupErr)
 }
 
 func EnsureSchedule(ctx context.Context, tc client.Client) error {

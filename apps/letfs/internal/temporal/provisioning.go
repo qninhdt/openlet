@@ -13,6 +13,7 @@ import (
 )
 
 const (
+	CreateStorageActivity             = "CreateStorage"
 	CreateBucketActivity              = "CreateBucket"
 	CreateFilesystemActivity          = "CreateFilesystem"
 	ReleaseProvisioningActivity       = "ReleaseProvisioning"
@@ -174,4 +175,19 @@ func (a *Activities) PrepareFilesystemDeletion(ctx context.Context, caller strin
 
 func bucketResult(value filesystem.Bucket) *letfsv1.Bucket {
 	return &letfsv1.Bucket{Id: value.ID.String(), LimitBytes: value.LimitBytes, UsedBytes: value.UsedBytes, State: value.State}
+}
+
+func (a *Activities) CreateStorage(ctx context.Context, caller string, input *letfsv1.CreateStorageRequest) (*letfsv1.CreateStorageResponse, error) {
+	if input.GetBucket().GetBucketId() != input.GetFilesystem().GetBucketId() {
+		return nil, activityError(rpc.Fault(codes.InvalidArgument, "VALIDATION", "storage scope mismatch"))
+	}
+	bucket, err := a.CreateBucket(ctx, caller, input.GetBucket())
+	if err != nil {
+		return nil, err
+	}
+	fs, err := a.CreateFilesystem(ctx, caller, input.GetFilesystem())
+	if err != nil {
+		return nil, err
+	}
+	return &letfsv1.CreateStorageResponse{Bucket: bucket, Filesystem: fs}, nil
 }

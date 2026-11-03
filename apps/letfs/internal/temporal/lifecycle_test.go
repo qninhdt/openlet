@@ -27,10 +27,6 @@ func TestDeletionCancellationDoesNotStrandAdmittedCleanup(t *testing.T) {
 			input.EntryID, identity, execute = &entry, entry, PurgeTrash
 		}
 		var batches int
-		env.RegisterActivityWithOptions(func(_ context.Context, in DeletionInput) error {
-			require.Equal(t, input, in)
-			return nil
-		}, activity.RegisterOptions{Name: "begin_deletion"})
 		env.RegisterActivityWithOptions(func(ctx context.Context, in DeletionInput) (bool, error) {
 			require.NoError(t, ctx.Err())
 			require.Equal(t, input, in)
@@ -57,7 +53,6 @@ func TestDeletionContinuationPreservesLogicalIdentity(t *testing.T) {
 	entry := uuid.New()
 	input := DeletionInput{FilesystemID: uuid.New(), EntryID: &entry}
 	var batches int
-	env.RegisterActivityWithOptions(func(context.Context, DeletionInput) error { return nil }, activity.RegisterOptions{Name: "begin_deletion"})
 	env.RegisterActivityWithOptions(func(context.Context, DeletionInput) (bool, error) { batches++; return false, nil }, activity.RegisterOptions{Name: "delete_nodes_batch"})
 	env.ExecuteWorkflow(PurgeTrash, input)
 	var continued *workflow.ContinueAsNewError
@@ -73,9 +68,9 @@ func TestDeletionContinuationPreservesLogicalIdentity(t *testing.T) {
 func TestDeletionRejectsInvalidAdmissionBeforeDeleting(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
-	env.RegisterActivityWithOptions(func(context.Context, DeletionInput) error {
-		return temporal.NewNonRetryableApplicationError("not admitted", "FILESYSTEM_NOT_DELETING", nil)
-	}, activity.RegisterOptions{Name: "begin_deletion"})
+	env.RegisterActivityWithOptions(func(context.Context, DeletionInput) (bool, error) {
+		return false, temporal.NewNonRetryableApplicationError("not admitted", "FILESYSTEM_NOT_DELETING", nil)
+	}, activity.RegisterOptions{Name: "delete_nodes_batch"})
 	env.SetTestTimeout(time.Second)
 	env.ExecuteWorkflow(DeleteFilesystem, DeletionInput{FilesystemID: uuid.New()})
 	var application *temporal.ApplicationError

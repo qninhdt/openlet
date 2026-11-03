@@ -39,7 +39,7 @@ func TestIntegrationWorkspaceListScansDeniedCandidates(t *testing.T) {
 		ids = append(ids, id)
 	}
 	for _, id := range []uuid.UUID{ids[0], ids[2]} {
-		require.NoError(t, store.SyncRelationships(ctx, graph, id))
+		require.NoError(t, store.RebuildWorkspaceRelationships(ctx, graph, id))
 	}
 	secret := strings.Repeat("g", 32)
 	app := &Server{Store: store, DB: db, Config: config.Config{GatewayToken: secret, WorkspaceToken: strings.Repeat("w", 32)}}

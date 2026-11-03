@@ -13,9 +13,9 @@ func TestRecordedWorkspaceWorkflows(t *testing.T) {
 	replayer := worker.NewWorkflowReplayer()
 	replayer.RegisterWorkflow(CreateWorkspace)
 	replayer.RegisterWorkflow(DeleteWorkspace)
-	replayer.RegisterWorkflow(SyncWorkspace)
-	replayer.RegisterWorkflow(ReconcileWorkspaces)
-	for _, name := range []string{"CreateWorkspace", "DeleteWorkspace", "SyncWorkspace", "ReconcileWorkspaces"} {
+	replayer.RegisterWorkflow(WorkspacePermissions)
+	replayer.RegisterWorkflow(WorkspaceMaintenance)
+	for _, name := range []string{"CreateWorkspace", "DeleteWorkspace", "WorkspacePermissions", "WorkspaceMaintenance"} {
 		if e := replayer.ReplayWorkflowHistoryFromJSONFile(nil, filepath.Join(os.Getenv("OPENLET_HISTORY_DIR"), name+".json")); e != nil {
 			t.Fatal(e)
 		}

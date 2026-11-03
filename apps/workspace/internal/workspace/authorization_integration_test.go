@@ -4,6 +4,7 @@ package workspace
 
 import (
 	"context"
+	"crypto/sha256"
 	"sync"
 	"testing"
 	"time"
@@ -37,13 +38,13 @@ func TestIntegrationActionAdmissionUsesGraphAndRechecksCanonicalRevision(t *test
 	syncGraph(t, &store, id)
 	_, token, err := store.Invite(ctx, id, owner, "viewer@example.test", "viewer")
 	require.NoError(t, err)
-	_, err = store.AcceptInvite(ctx, viewer, token, []string{"viewer@example.test"})
+	_, err = store.AcceptInvite(ctx, viewer, sha256.Sum256([]byte(token)), []string{"viewer@example.test"}, MutationReceipt{})
 	require.NoError(t, err)
 	syncGraph(t, &store, id)
 	current, err := store.Get(ctx, id, owner)
 	require.NoError(t, err)
 	name := "Graph owns actions"
-	_, err = store.Update(ctx, id, viewer, current.Revision, UpdateInput{Name: &name})
+	_, err = store.Update(ctx, id, viewer, current.Revision, UpdateInput{Name: &name}, MutationReceipt{})
 	require.EqualError(t, err, "FORBIDDEN")
 
 	// Changing only native action tuples changes admission; the SQL roles stay unchanged.
@@ -52,16 +53,16 @@ func TestIntegrationActionAdmissionUsesGraphAndRechecksCanonicalRevision(t *test
 		graphUpdate(v1.RelationshipUpdate_OPERATION_TOUCH, "role", "viewer", "workspace_update", "user", "*"),
 	}})
 	require.NoError(t, err)
-	_, err = store.Update(ctx, id, owner, current.Revision, UpdateInput{Name: &name})
+	_, err = store.Update(ctx, id, owner, current.Revision, UpdateInput{Name: &name}, MutationReceipt{})
 	require.EqualError(t, err, "FORBIDDEN", "canonical Owner is not a permission fallback")
-	updated, err := store.Update(ctx, id, viewer, current.Revision, UpdateInput{Name: &name})
+	updated, err := store.Update(ctx, id, viewer, current.Revision, UpdateInput{Name: &name}, MutationReceipt{})
 	require.NoError(t, err, "a graph-granted action does not require a local Owner role")
 	require.Equal(t, "viewer", updated.Role)
 	syncGraph(t, &store, id)
-	_, err = store.Update(ctx, id, viewer, updated.Revision, UpdateInput{Name: &name, OwnerID: &owner})
+	_, err = store.Update(ctx, id, viewer, updated.Revision, UpdateInput{Name: &name, OwnerID: &owner}, MutationReceipt{})
 	require.EqualError(t, err, "FORBIDDEN", "combined name/ownership update requires both actions")
-	require.EqualError(t, store.ChangeMember(ctx, id, viewer, owner, "editor", false, updated.Revision), "FORBIDDEN")
-	require.EqualError(t, store.ChangeMember(ctx, id, owner, owner, "", true, updated.Revision), "OWNER_TRANSFER_REQUIRED")
+	require.EqualError(t, store.ChangeMember(ctx, id, viewer, owner, "editor", false, updated.Revision, MutationReceipt{}), "FORBIDDEN")
+	require.EqualError(t, store.ChangeMember(ctx, id, owner, owner, "", true, updated.Revision, MutationReceipt{}), "OWNER_TRANSFER_REQUIRED")
 	_, err = store.Authorize(ctx, id, viewer, authz.MemberRead)
 	require.NoError(t, err)
 	_, err = store.Authorize(ctx, id, viewer, authz.MemberManage)
@@ -80,7 +81,7 @@ func TestIntegrationActionAdmissionUsesGraphAndRechecksCanonicalRevision(t *test
 		return response, err
 	}}
 	name = "Must not commit"
-	_, err = store.Update(ctx, id, viewer, updated.Revision, UpdateInput{Name: &name})
+	_, err = store.Update(ctx, id, viewer, updated.Revision, UpdateInput{Name: &name}, MutationReceipt{})
 	require.EqualError(t, err, "REVISION_MISMATCH")
 	actual, err := store.Get(ctx, id, viewer)
 	require.NoError(t, err)
@@ -90,14 +91,14 @@ func TestIntegrationActionAdmissionUsesGraphAndRechecksCanonicalRevision(t *test
 	// A canceled native check also cannot change the canonical profile or member role.
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()
-	_, err = store.Update(canceled, id, viewer, actual.Revision, UpdateInput{Name: &name})
+	_, err = store.Update(canceled, id, viewer, actual.Revision, UpdateInput{Name: &name}, MutationReceipt{})
 	require.Error(t, err)
 	actual, err = store.Get(ctx, id, viewer)
 	require.NoError(t, err)
 	require.Equal(t, updated.Name, actual.Name)
 
 	require.NoError(t, server.Stop(ctx, nil))
-	_, err = store.Update(ctx, id, viewer, actual.Revision, UpdateInput{Name: &name})
+	_, err = store.Update(ctx, id, viewer, actual.Revision, UpdateInput{Name: &name}, MutationReceipt{})
 	require.Error(t, err, "graph outage cannot fall back to SQL membership")
 	actual, err = store.Get(ctx, id, viewer)
 	require.NoError(t, err)
@@ -126,7 +127,7 @@ func TestIntegrationConcurrentOwnershipAndMemberChangesPreserveOneOwner(t *testi
 			var workers sync.WaitGroup
 			workers.Go(func() {
 				<-start
-				_, err := store.Update(ctx, id, owner, current.Revision, UpdateInput{OwnerID: &first})
+				_, err := store.Update(ctx, id, owner, current.Revision, UpdateInput{OwnerID: &first}, MutationReceipt{})
 				results <- err
 			})
 			workers.Go(func() {
@@ -134,11 +135,11 @@ func TestIntegrationConcurrentOwnershipAndMemberChangesPreserveOneOwner(t *testi
 				var err error
 				switch competing {
 				case "transfer":
-					_, err = store.Update(ctx, id, owner, current.Revision, UpdateInput{OwnerID: &second})
+					_, err = store.Update(ctx, id, owner, current.Revision, UpdateInput{OwnerID: &second}, MutationReceipt{})
 				case "leave":
-					err = store.ChangeMember(ctx, id, first, first, "", true, current.Revision)
+					err = store.ChangeMember(ctx, id, first, first, "", true, current.Revision, MutationReceipt{})
 				case "remove":
-					err = store.ChangeMember(ctx, id, owner, first, "", true, current.Revision)
+					err = store.ChangeMember(ctx, id, owner, first, "", true, current.Revision, MutationReceipt{})
 				}
 				results <- err
 			})

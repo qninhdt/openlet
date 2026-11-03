@@ -146,18 +146,14 @@ func run() error {
 		return errors.New("RPC listener unavailable")
 	}
 	defer rpcListener.Close()
-	activities := &worker.Activities{Store: store, Clerk: clerkClient, Temporal: tc, Graph: graph}
+	activities := &worker.Activities{Store: store, Clerk: clerkClient, Graph: graph}
 	owner := temporalworker.New(tc, worker.Queue, temporalworker.Options{MaxConcurrentActivityExecutionSize: 16, WorkerStopTimeout: 20 * time.Second})
 	owner.RegisterWorkflow(worker.OnboardUser)
-	owner.RegisterWorkflow(worker.ReconcileAccounts)
 	owner.RegisterActivity(activities)
 	if e = owner.Start(); e != nil {
 		return errors.New("worker startup failed")
 	}
 	defer owner.Stop()
-	if e = worker.EnsureReconciliation(startupCtx, tc); e != nil {
-		return errors.New("account reconciliation schedule unavailable")
-	}
 	app := &api.Server{Graph: graph, GraphReady: graphReady, Config: cfg, DB: db, Temporal: tc, Store: store, Clerk: clerkClient}
 	srv := &http.Server{Addr: cfg.Listen, Handler: app.Router(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 125 * time.Second, WriteTimeout: 125 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32768}
 	defer srv.Close()

@@ -70,6 +70,16 @@ service StorageAdministrationService {
   rpc CompleteBucketDeletion(CompleteBucketDeletionRequest) returns (CompleteBucketDeletionResponse);
   rpc ReleaseProvisioning(ReleaseProvisioningRequest) returns (ReleaseProvisioningResponse);
 }
+
+// Composite provisioning is one retryable letfs activity; each create retains its own receipt.
+message CreateStorageRequest {
+  CreateBucketRequest bucket = 1;
+  CreateFilesystemRequest filesystem = 2;
+}
+message CreateStorageResponse {
+  Bucket bucket = 1;
+  Filesystem filesystem = 2;
+}
 message Node {
   string id = 1;
   string filesystem_id = 2;

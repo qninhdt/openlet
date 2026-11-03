@@ -121,11 +121,7 @@ func (s *Store) RevokeInvite(ctx context.Context, ws, actor, id uuid.UUID) error
 	}
 	return tx.Commit(ctx)
 }
-func (s *Store) AcceptInvite(ctx context.Context, actor uuid.UUID, token string, verifiedEmails []string) (uuid.UUID, error) {
-	if len(token) != 43 {
-		return uuid.Nil, Fault{"INVITATION_INVALID"}
-	}
-	hash := sha256.Sum256([]byte(token))
+func (s *Store) AcceptInvite(ctx context.Context, actor uuid.UUID, hash [32]byte, verifiedEmails []string, receipt MutationReceipt) (uuid.UUID, error) {
 	var ws uuid.UUID
 	// Discover scope without locking; validity and email are rechecked under the workspace lock.
 	if e := s.DB.QueryRow(ctx, `SELECT workspace_id FROM workspace_invitations WHERE token_hash=$1`, hash[:]).Scan(&ws); errors.Is(e, pgx.ErrNoRows) {
@@ -205,5 +201,17 @@ func (s *Store) AcceptInvite(ctx context.Context, actor uuid.UUID, token string,
 	if e != nil {
 		return uuid.Nil, e
 	}
+	if e = saveMutationReceipt(ctx, tx, receipt, actor, ws); e != nil {
+		return uuid.Nil, e
+	}
 	return ws, tx.Commit(ctx)
+}
+
+func (s *Store) InvitationWorkspace(ctx context.Context, hash [32]byte) (uuid.UUID, error) {
+	var id uuid.UUID
+	err := s.DB.QueryRow(ctx, `SELECT workspace_id FROM workspace_invitations WHERE token_hash=$1`, hash[:]).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return id, Fault{"INVITATION_INVALID"}
+	}
+	return id, err
 }

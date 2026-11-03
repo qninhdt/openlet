@@ -37,8 +37,7 @@ func TestIntegrationAccountLookupsRequireWorkspaceService(t *testing.T) {
 	ctx := t.Context()
 	active, err := store.EnsureUser(ctx, "trusted-active-subject")
 	require.NoError(t, err)
-	require.NoError(t, store.SaveWorkspace(ctx, "trusted-active-subject", uuid.Must(uuid.NewV7())))
-	require.NoError(t, store.Complete(ctx, "trusted-active-subject"))
+	require.NoError(t, store.Complete(ctx, "trusted-active-subject", uuid.Must(uuid.NewV7())))
 	name, avatar := "Việt Nam", "https://example.test/avatar.png"
 	_, err = store.UpdateProfile(ctx, active.UserID, &name, &avatar)
 	require.NoError(t, err)

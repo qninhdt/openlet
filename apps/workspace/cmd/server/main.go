@@ -14,6 +14,7 @@ import (
 	"github.com/qninhdt/openlet/apps/workspace/internal/workspace"
 	"github.com/qninhdt/openlet/packages/go/authz"
 	accountv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/account/v1"
+	letfsv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/letfs/v1"
 	sharedrpc "github.com/qninhdt/openlet/packages/go/rpc"
 	"github.com/qninhdt/openlet/packages/go/telemetry"
 	"go.opentelemetry.io/otel/propagation"
@@ -124,19 +125,25 @@ func run() error {
 	if e != nil || accountHealth.GetStatus() != healthv1.HealthCheckResponse_SERVING {
 		return errors.New("Account RPC unavailable")
 	}
-	activities := &worker.Activities{Store: store, Temporal: tc, Graph: graph}
+	storageConnection, e := sharedrpc.Dial(cfg.LetfsRPCAddress, cfg.WorkspaceToken, sharedrpc.Transport{AllowPlaintext: cfg.AllowPlaintextRPC})
+	if e != nil {
+		return e
+	}
+	defer storageConnection.Close()
+	accountClient := user.Client{API: accountv1.NewAccountServiceClient(accountConnection)}
+	activities := &worker.Activities{Store: store, Graph: graph, Storage: letfsv1.NewStorageAdministrationServiceClient(storageConnection), User: accountClient}
 	owner := temporalworker.New(tc, worker.Queue, temporalworker.Options{MaxConcurrentActivityExecutionSize: 16, WorkerStopTimeout: 20 * time.Second})
 	owner.RegisterWorkflow(worker.CreateWorkspace)
 	owner.RegisterWorkflow(worker.DeleteWorkspace)
-	owner.RegisterWorkflow(worker.ReconcileWorkspaces)
-	owner.RegisterWorkflow(worker.SyncWorkspace)
+	owner.RegisterWorkflow(worker.WorkspaceMaintenance)
+	owner.RegisterWorkflow(worker.WorkspacePermissions)
 	owner.RegisterActivity(activities)
 	if e = owner.Start(); e != nil {
 		return errors.New("worker startup failed")
 	}
 	defer owner.Stop()
-	if e = worker.EnsureReconciliation(startupCtx, tc); e != nil {
-		return errors.New("reconciliation schedule unavailable")
+	if e = worker.EnsureMaintenance(startupCtx, tc); e != nil {
+		return errors.New("maintenance schedule unavailable")
 	}
 	app := &api.Server{GraphReady: graphReady, Config: cfg, DB: db, Temporal: tc, Store: store, User: user.Client{API: accountv1.NewAccountServiceClient(accountConnection)}}
 	srv := &http.Server{Addr: cfg.Listen, Handler: app.Router(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 125 * time.Second, WriteTimeout: 125 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32768}

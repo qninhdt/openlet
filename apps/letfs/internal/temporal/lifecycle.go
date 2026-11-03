@@ -30,9 +30,6 @@ func deleteNodes(ctx workflow.Context, input DeletionInput, name string) (uuid.U
 	ctx, cancel := workflow.NewDisconnectedContext(ctx)
 	defer cancel()
 	ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{StartToCloseTimeout: 30 * time.Second})
-	if err := workflow.ExecuteActivity(ctx, "begin_deletion", input).Get(ctx, nil); err != nil {
-		return uuid.Nil, err
-	}
 	for range 200 {
 		var done bool
 		if err := workflow.ExecuteActivity(ctx, "delete_nodes_batch", input).Get(ctx, &done); err != nil {

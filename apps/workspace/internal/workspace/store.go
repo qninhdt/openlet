@@ -231,7 +231,7 @@ type UpdateInput struct {
 	OwnerID *uuid.UUID `json:"owner_id"`
 }
 
-func (s *Store) Update(ctx context.Context, ws, actor uuid.UUID, revision string, in UpdateInput) (Workspace, error) {
+func (s *Store) Update(ctx context.Context, ws, actor uuid.UUID, revision string, in UpdateInput, receipt MutationReceipt) (Workspace, error) {
 	if in.Name == nil && in.OwnerID == nil {
 		return Workspace{}, Fault{"VALIDATION"}
 	}
@@ -314,6 +314,9 @@ func (s *Store) Update(ctx context.Context, ws, actor uuid.UUID, revision string
 		return value, err
 	}
 	value.Revision = strconv.FormatInt(next, 10)
+	if err = saveMutationReceipt(ctx, tx, receipt, actor, ws); err != nil {
+		return value, err
+	}
 	return value, tx.Commit(ctx)
 }
 
@@ -338,7 +341,7 @@ func (s *Store) Members(ctx context.Context, ws, after uuid.UUID, limit int) ([]
 	}
 	return out, rows.Err()
 }
-func (s *Store) ChangeMember(ctx context.Context, ws, actor, target uuid.UUID, role string, remove bool, revision string) error {
+func (s *Store) ChangeMember(ctx context.Context, ws, actor, target uuid.UUID, role string, remove bool, revision string, receipt MutationReceipt) error {
 	if !remove && role != "editor" && role != "viewer" {
 		return Fault{"VALIDATION"}
 	}
@@ -382,10 +385,30 @@ func (s *Store) ChangeMember(ctx context.Context, ws, actor, target uuid.UUID, r
 	if _, e = tx.Exec(ctx, `UPDATE workspaces SET revision=revision+1,updated_at=now() WHERE id=$1`, ws); e != nil {
 		return e
 	}
+	if e = saveMutationReceipt(ctx, tx, receipt, actor, ws); e != nil {
+		return e
+	}
 	return tx.Commit(ctx)
 }
 
-func (s *Store) CompleteCreation(ctx context.Context, id uuid.UUID) error {
-	_, err := s.DB.Exec(ctx, `UPDATE idempotency_keys SET expires_at=COALESCE(expires_at,now()+interval '24 hours') WHERE workspace_id=$1 AND EXISTS(SELECT 1 FROM workspaces WHERE id=$1 AND status IN ('active','deleting','deleted'))`, id)
+func (s *Store) CompleteCreation(ctx context.Context, in CreateInput) error {
+	_, err := s.DB.Exec(ctx, `UPDATE idempotency_keys k SET expires_at=COALESCE(k.expires_at,now()+interval '24 hours') WHERE k.actor_id=$1 AND k.request_key=$2 AND k.request_hash=$3 AND EXISTS(SELECT 1 FROM workspaces w WHERE w.id=k.workspace_id AND w.status IN ('active','deleting','deleted'))`, in.ActorID, in.Key, Fingerprint(in))
 	return err
+}
+
+func (s *Store) FindCreation(ctx context.Context, in CreateInput) (Workspace, bool, error) {
+	var id uuid.UUID
+	var hash string
+	err := s.DB.QueryRow(ctx, `SELECT workspace_id,request_hash FROM idempotency_keys WHERE actor_id=$1 AND request_key=$2 AND (expires_at IS NULL OR expires_at>now())`, in.ActorID, in.Key).Scan(&id, &hash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Workspace{}, false, nil
+	}
+	if err != nil {
+		return Workspace{}, false, err
+	}
+	if hash != Fingerprint(in) {
+		return Workspace{}, false, Fault{"IDEMPOTENCY_CONFLICT"}
+	}
+	value, err := s.Get(ctx, id, in.ActorID)
+	return value, true, err
 }

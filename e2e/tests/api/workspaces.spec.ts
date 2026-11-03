@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { test, expect, onboard, inline } from '../../fixtures/api-test.ts';
-import { recordWorkflowHistory, setTemporalRunning, temporalIsHealthy, triggerWorkspaceReconciliation } from '../../fixtures/temporal-control.ts';
+import { recordWorkflowHistory, setTemporalRunning, temporalIsHealthy } from '../../fixtures/temporal-control.ts';
 
 test('concurrent workspace admission replays one resource and rejects changed input', async ({ session }) => {
   const key = randomUUID();
@@ -9,7 +9,7 @@ test('concurrent workspace admission replays one resource and rejects changed in
   })));
   const ids: string[] = [];
   for (const response of responses) {
-    expect(response.status()).toBe(202);
+    expect([200, 202]).toContain(response.status());
     const body = await response.json();
     expect(response.headers().location).toBe(`/v1/workspaces/${body.id}`);
     ids.push(body.id);
@@ -35,7 +35,7 @@ test('ownership transfer atomically changes privileges and rejects the previous 
     const transferred = await session.api.patch(base, { headers: { 'if-match': current.headers().etag }, data: { owner_id: successor.userId } });
     expect(transferred.status()).toBe(200);
     expect(transferred.headers().etag).not.toBe(current.headers().etag);
-    await recordWorkflowHistory('SyncWorkspace', `sync-workspace/${session.workspaceId}/${transferred.headers().etag.slice(1, -1)}/active`);
+    await recordWorkflowHistory('WorkspacePermissions', `workspace-permissions/${session.workspaceId}`, false, true);
     const members = await successor.api.get(`${base}/members`);
     expect(members.status()).toBe(200);
     const owners = (await members.json()).items.filter((member: { role: string }) => member.role === 'owner');
@@ -81,29 +81,28 @@ test('invitation token is returned once and current membership controls file acc
   } finally { await guest.api.dispose(); }
 });
 
-test('Workspace admission survives a Temporal outage and its owner schedule dispatches it', async ({ session }) => {
+test('Workspace admission requires Temporal before changing canonical state', async ({ session }) => {
   const key = randomUUID();
-  let id: string;
   await setTemporalRunning(false);
   try {
-    const admitted = await session.api.post('/v1/workspaces', { headers: { 'idempotency-key': key }, data: { name: 'Deferred creation' } });
-    expect(admitted.status()).toBe(202);
-    const body = await admitted.json();
-    expect(body).toMatchObject({ id: expect.any(String), status: 'provisioning' });
-    id = body.id;
-    expect(admitted.headers().location).toBe(`/v1/workspaces/${id}`);
+    const rejected = await session.api.post('/v1/workspaces', { headers: { 'idempotency-key': key }, data: { name: 'Retry creation' } });
+    expect(rejected.status()).toBe(503);
+    const workspaces = await session.api.get('/v1/workspaces');
+    expect((await workspaces.json()).items.map((item: { id: string }) => item.id)).toEqual([session.workspaceId]);
   } finally { await setTemporalRunning(true); }
   await expect.poll(temporalIsHealthy, { timeout: 90_000 }).toBe(true);
-  await triggerWorkspaceReconciliation();
+  const admitted = await session.api.post('/v1/workspaces', { headers: { 'idempotency-key': key }, data: { name: 'Retry creation' } });
+  expect([200, 202]).toContain(admitted.status());
+  const { id } = await admitted.json();
   await expect.poll(async () => (await (await session.api.get(`/v1/workspaces/${id}`)).json()).status).toBe('active');
-  const replay = await session.api.post('/v1/workspaces', { headers: { 'idempotency-key': key }, data: { name: 'Deferred creation' } });
+  const replay = await session.api.post('/v1/workspaces', { headers: { 'idempotency-key': key }, data: { name: 'Retry creation' } });
   expect(replay.status()).toBe(200);
   expect(await replay.json()).toMatchObject({ id, status: 'active' });
   const workspaces = await session.api.get('/v1/workspaces');
   expect((await workspaces.json()).items.map((item: { id: string }) => item.id).sort()).toEqual([session.workspaceId, id].sort());
 });
 
-test('a committed role change reports incomplete sync during Temporal outage and reconciliation finishes it', async ({ session, controls, playwright }) => {
+test('a Temporal outage prevents role mutation and retry updates only its member', async ({ session, controls, playwright }) => {
   const identity = await (await controls.post('/control/users', { data: { email: `${randomUUID()}@example.test` } })).json();
   const guest = await onboard(controls, identity, playwright.request);
   const base = `/v1/workspaces/${session.workspaceId}`;
@@ -119,13 +118,15 @@ test('a committed role change reports incomplete sync during Temporal outage and
         headers: { 'if-match': current.headers().etag }, data: { role: 'editor' },
       });
       expect(change.status()).toBe(503);
-      expect((await change.json()).detail).toContain('committed');
       const members = await (await session.api.get(`${base}/members`)).json();
-      expect(members.items).toContainEqual(expect.objectContaining({ user: expect.objectContaining({ id: guest.userId }), role: 'editor' }));
+      expect(members.items).toContainEqual(expect.objectContaining({ user: expect.objectContaining({ id: guest.userId }), role: 'viewer' }));
       expect((await guest.api.get(upload)).status()).toBe(403);
     } finally { await setTemporalRunning(true); }
     await expect.poll(temporalIsHealthy, { timeout: 90_000 }).toBe(true);
-    await triggerWorkspaceReconciliation();
+    const retried = await session.api.patch(`${base}/members/${guest.userId}`, {
+      headers: { 'if-match': current.headers().etag }, data: { role: 'editor' },
+    });
+    expect(retried.status()).toBe(204);
     await expect.poll(async () => (await guest.api.get(upload)).status()).toBe(404);
     const refreshed = await session.api.get(base);
     expect(refreshed.headers().etag).not.toBe(current.headers().etag);

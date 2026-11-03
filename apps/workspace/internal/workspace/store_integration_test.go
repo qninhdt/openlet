@@ -3,6 +3,7 @@
 package workspace
 
 import (
+	"crypto/sha256"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/testcontainers/testcontainers-go"
 	"sync"
@@ -30,7 +31,7 @@ func setupGraph(t *testing.T, store *Store) testcontainers.Container {
 
 func syncGraph(t *testing.T, store *Store, id uuid.UUID) {
 	t.Helper()
-	require.NoError(t, store.SyncRelationships(t.Context(), store.Graph, id))
+	require.NoError(t, store.RebuildWorkspaceRelationships(t.Context(), store.Graph, id))
 }
 
 func TestIntegrationWorkspaceCollaboration(t *testing.T) {
@@ -58,20 +59,20 @@ func TestIntegrationWorkspaceCollaboration(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, invitation.ID)
 	require.NotEmpty(t, token)
-	_, err = store.AcceptInvite(ctx, member, token, []string{"other@example.com"})
+	_, err = store.AcceptInvite(ctx, member, sha256.Sum256([]byte(token)), []string{"other@example.com"}, MutationReceipt{})
 	require.EqualError(t, err, "INVITATION_EMAIL_MISMATCH")
-	accepted, err := store.AcceptInvite(ctx, member, token, []string{"MEMBER@example.com"})
+	accepted, err := store.AcceptInvite(ctx, member, sha256.Sum256([]byte(token)), []string{"MEMBER@example.com"}, MutationReceipt{})
 	require.NoError(t, err)
 	require.Equal(t, ws, accepted)
 	syncGraph(t, &store, ws)
-	_, err = store.AcceptInvite(ctx, member, token, []string{"member@example.com"})
+	_, err = store.AcceptInvite(ctx, member, sha256.Sum256([]byte(token)), []string{"member@example.com"}, MutationReceipt{})
 	require.NoError(t, err)
 	_, err = store.Authorize(ctx, ws, member, authz.MemberRead)
 	require.NoError(t, err)
 	current, err := store.Authorize(ctx, ws, owner, authz.WorkspaceTransfer)
 	require.NoError(t, err)
-	require.EqualError(t, store.ChangeMember(ctx, ws, owner, owner, "", true, current.Revision), "OWNER_TRANSFER_REQUIRED")
-	transferred, err := store.Update(ctx, ws, owner, current.Revision, UpdateInput{OwnerID: &member})
+	require.EqualError(t, store.ChangeMember(ctx, ws, owner, owner, "", true, current.Revision, MutationReceipt{}), "OWNER_TRANSFER_REQUIRED")
+	transferred, err := store.Update(ctx, ws, owner, current.Revision, UpdateInput{OwnerID: &member}, MutationReceipt{})
 	require.NoError(t, err)
 	require.NotEqual(t, current.Revision, transferred.Revision)
 	syncGraph(t, &store, ws)
@@ -80,14 +81,14 @@ func TestIntegrationWorkspaceCollaboration(t *testing.T) {
 	current, err = store.Authorize(ctx, ws, member, authz.WorkspaceTransfer)
 	require.NoError(t, err)
 	name := "Renamed"
-	renamed, err := store.Update(ctx, ws, member, current.Revision, UpdateInput{Name: &name})
+	renamed, err := store.Update(ctx, ws, member, current.Revision, UpdateInput{Name: &name}, MutationReceipt{})
 	require.NoError(t, err)
-	_, err = store.Update(ctx, ws, member, current.Revision, UpdateInput{Name: &name})
+	_, err = store.Update(ctx, ws, member, current.Revision, UpdateInput{Name: &name}, MutationReceipt{})
 	require.EqualError(t, err, "REVISION_MISMATCH")
-	require.NoError(t, store.ChangeMember(ctx, ws, member, owner, "", true, renamed.Revision))
+	require.NoError(t, store.ChangeMember(ctx, ws, member, owner, "", true, renamed.Revision, MutationReceipt{}))
 	current, err = store.Get(ctx, ws, member)
 	require.NoError(t, err)
-	_, err = store.AcceptInvite(ctx, owner, token, []string{"member@example.com"})
+	_, err = store.AcceptInvite(ctx, owner, sha256.Sum256([]byte(token)), []string{"member@example.com"}, MutationReceipt{})
 	require.EqualError(t, err, "INVITATION_INVALID")
 	deletion := DeleteInput{ActorID: member, WorkspaceID: ws, Revision: current.Revision}
 	begun, err := store.BeginDeletion(ctx, deletion)
@@ -95,10 +96,7 @@ func TestIntegrationWorkspaceCollaboration(t *testing.T) {
 	repeated, err := store.BeginDeletion(ctx, deletion)
 	require.NoError(t, err)
 	require.Equal(t, begun.ID, repeated.ID)
-	pending, err := store.Pending(ctx)
-	require.NoError(t, err)
-	require.Len(t, pending, 1)
-	require.Equal(t, "deleting", pending[0].Status)
+	require.Equal(t, "deleting", repeated.Status)
 	_, err = store.Authorize(ctx, ws, member, authz.WorkspaceTransfer)
 	require.EqualError(t, err, "WORKSPACE_DELETING")
 	require.NoError(t, store.CompleteDeletion(ctx, ws))
@@ -272,12 +270,12 @@ func TestIntegrationConcurrentInvitationsReturnOneToken(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, next.ID, renewed.ID)
 	guest := uuid.Must(uuid.NewV7())
-	_, err = store.AcceptInvite(t.Context(), guest, token, []string{"guest@example.com"})
+	_, err = store.AcceptInvite(t.Context(), guest, sha256.Sum256([]byte(token)), []string{"guest@example.com"}, MutationReceipt{})
 	require.NoError(t, err)
 	current, err := store.Get(t.Context(), provision.ID, owner)
 	require.NoError(t, err)
-	require.NoError(t, store.ChangeMember(t.Context(), current.ID, owner, guest, "", true, current.Revision))
-	_, err = store.AcceptInvite(t.Context(), guest, token, []string{"guest@example.com"})
+	require.NoError(t, store.ChangeMember(t.Context(), current.ID, owner, guest, "", true, current.Revision, MutationReceipt{}))
+	_, err = store.AcceptInvite(t.Context(), guest, sha256.Sum256([]byte(token)), []string{"guest@example.com"}, MutationReceipt{})
 	require.EqualError(t, err, "INVITATION_ALREADY_USED")
 }
 
@@ -308,10 +306,10 @@ func TestIntegrationWorkspaceReceiptAdmissionAndExpiry(t *testing.T) {
 		require.Equal(t, admitted.ID, value.value.ID)
 		require.Nil(t, value.value.BucketID)
 	}
-	pending, err := store.Pending(ctx)
+	saved, found, err := store.FindCreation(ctx, in)
 	require.NoError(t, err)
-	require.Len(t, pending, 1)
-	require.Equal(t, Pending{ID: admitted.ID, Status: "provisioning"}, pending[0])
+	require.True(t, found)
+	require.Equal(t, admitted.ID, saved.ID)
 	require.NoError(t, store.PruneReceipts(ctx))
 	var count int
 	require.NoError(t, store.DB.QueryRow(ctx, `SELECT count(*) FROM idempotency_keys`).Scan(&count))
@@ -320,21 +318,21 @@ func TestIntegrationWorkspaceReceiptAdmissionAndExpiry(t *testing.T) {
 	require.EqualError(t, store.Activate(ctx, Storage{WorkspaceID: admitted.ID}), "VALIDATION")
 	assigned := mapping(admitted.ID)
 	require.NoError(t, store.Activate(ctx, assigned))
-	unreleased, err := store.UnreleasedProvisioning(ctx)
+	pendingKey := uuid.New()
+	_, err = store.DB.Exec(ctx, `INSERT INTO idempotency_keys(actor_id,request_key,request_hash,workspace_id) VALUES($1,$2,'pending-mutation',$3)`, in.ActorID, pendingKey, admitted.ID)
 	require.NoError(t, err)
-	require.Equal(t, []Storage{assigned}, unreleased)
-	require.NoError(t, store.CompleteCreation(ctx, assigned.WorkspaceID))
-	unreleased, err = store.UnreleasedProvisioning(ctx)
-	require.NoError(t, err)
-	require.Empty(t, unreleased)
+	require.NoError(t, store.CompleteCreation(ctx, in))
+	var pending bool
+	require.NoError(t, store.DB.QueryRow(ctx, `SELECT expires_at IS NULL FROM idempotency_keys WHERE request_key=$1`, pendingKey).Scan(&pending))
+	require.True(t, pending, "creation completion cannot expire an unrelated in-flight mutation")
 	var expiresInWindow bool
-	require.NoError(t, store.DB.QueryRow(ctx, `SELECT expires_at BETWEEN now()+interval '23 hours 59 minutes' AND now()+interval '24 hours 1 minute' FROM idempotency_keys`).Scan(&expiresInWindow))
+	require.NoError(t, store.DB.QueryRow(ctx, `SELECT expires_at BETWEEN now()+interval '23 hours 59 minutes' AND now()+interval '24 hours 1 minute' FROM idempotency_keys WHERE request_key=$1`, in.Key).Scan(&expiresInWindow))
 	require.True(t, expiresInWindow)
 	require.NoError(t, store.Activate(ctx, assigned))
 	different := assigned
 	different.BucketID = uuid.New()
 	require.EqualError(t, store.Activate(ctx, different), "STATE_CONFLICT")
-	// An expired client key admits new work independently of the existing resource workflow.
+	// Completed receipts release their keys after the documented TTL.
 	_, err = store.DB.Exec(ctx, `UPDATE idempotency_keys SET expires_at=now()-interval '1 hour'`)
 	require.NoError(t, err)
 	require.NoError(t, store.PruneReceipts(ctx))

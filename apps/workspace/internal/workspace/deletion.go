@@ -2,9 +2,7 @@ package workspace
 
 import (
 	"context"
-	"errors"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/qninhdt/openlet/packages/go/authz"
 )
 
@@ -12,10 +10,6 @@ type DeleteInput struct {
 	ActorID     uuid.UUID `json:"actor_id"`
 	WorkspaceID uuid.UUID `json:"workspace_id"`
 	Revision    string    `json:"revision"`
-}
-type Deletion struct {
-	Workspace Workspace `json:"workspace"`
-	ActorID   uuid.UUID `json:"actor_id"`
 }
 
 func (s *Store) BeginDeletion(ctx context.Context, in DeleteInput) (Workspace, error) {
@@ -52,18 +46,6 @@ func (s *Store) BeginDeletion(ctx context.Context, in DeleteInput) (Workspace, e
 	}
 	value.Status = "deleting"
 	return value, tx.Commit(ctx)
-}
-func (s *Store) Deletion(ctx context.Context, id uuid.UUID) (Deletion, error) {
-	var actor uuid.UUID
-	err := s.DB.QueryRow(ctx, `SELECT m.user_id FROM workspace_members m JOIN workspaces w ON w.id=m.workspace_id WHERE w.id=$1 AND m.role='owner' AND w.status IN ('deleting','deleted')`, id).Scan(&actor)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Deletion{}, Fault{"NOT_FOUND"}
-	}
-	if err != nil {
-		return Deletion{}, err
-	}
-	value, err := s.Get(ctx, id, actor)
-	return Deletion{Workspace: value, ActorID: actor}, err
 }
 func (s *Store) CompleteDeletion(ctx context.Context, id uuid.UUID) error {
 	tx, err := s.DB.Begin(ctx)

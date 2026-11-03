@@ -83,7 +83,9 @@ func CopyNode(ctx workflow.Context, state CopyState) (CopyState, error) {
 				if item != nil {
 					state.Pending = item
 				} else {
-					err = workflow.ExecuteActivity(short, "finish_copy_file", input).Get(short, nil)
+					if frame.Item.Kind == "file" && !frame.Item.Derived {
+						err = workflow.ExecuteActivity(short, "finish_copy_file", input).Get(short, nil)
+					}
 					if err == nil {
 						state.Frames = state.Frames[:len(state.Frames)-1]
 					}

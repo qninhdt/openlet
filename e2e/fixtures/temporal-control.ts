@@ -38,10 +38,10 @@ export async function terminateWorkspaceDeletion(workspaceId: string) {
   await temporal(['workflow', 'terminate', '--workflow-id', `delete-workspace/${workspaceId}`, '--reason', 'API recovery verification']);
 }
 
-export async function recordLifecycleHistories(subject: string, workspaceId: string) {
+export async function recordLifecycleHistories(subject: string, workspaceId: string, userId: string) {
   const workflows: Record<string, string> = {
     OnboardUser: `onboard/${subject}`,
-    CreateWorkspace: `create-workspace/${workspaceId}`,
+    CreateWorkspace: `create-workspace/${userId}/${userId}`,
     DeleteWorkspace: `delete-workspace/${workspaceId}`,
   };
   for (const name of ['OnboardUser', 'CreateWorkspace', 'DeleteWorkspace', 'DeleteFilesystem']) {
@@ -62,9 +62,9 @@ export async function recordLifecycleHistories(subject: string, workspaceId: str
     return maintenanceId;
   }).not.toBe('');
   await recordWorkflowHistory('StorageMaintenance', maintenanceId);
-  for (const [name, queue] of [['ReconcileAccounts', 'openlet-account'], ['ReconcileWorkspaces', 'openlet-workspace']]) {
+  for (const [name, queue] of [['WorkspaceMaintenance', 'openlet-workspace']]) {
     const workflowId = `replay/${name}/${randomUUID()}`;
-    await temporal(['workflow', 'execute', '--workflow-id', workflowId, '--type', name, '--task-queue', queue, '--input', '{}']);
+    await temporal(['workflow', 'execute', '--workflow-id', workflowId, '--type', name, '--task-queue', queue]);
     await recordWorkflowHistory(name, workflowId);
   }
 }
@@ -77,11 +77,6 @@ export async function temporalIsHealthy(): Promise<boolean> {
   try { await temporal(['operator', 'cluster', 'health']); return true; }
   catch { return false; }
 }
-export async function triggerWorkspaceReconciliation() {
-  // A running scan may already have passed the record changed by this test.
-  await temporal(['schedule', 'trigger', '--schedule-id', 'workspace-reconciliation', '--overlap-policy', 'BufferOne']);
-}
-
 export async function recordCopyHistory(name: 'CopyNode' | 'CopyNodeRecovery', filesystemId: string, copyId: string, continued = false) {
   const directory = join(state, 'histories');
   const workflowId = `copy/${filesystemId}/${copyId}`;
@@ -99,9 +94,9 @@ export async function triggerStorageMaintenance() {
   await temporal(['schedule', 'trigger', '--schedule-id', 'openlet-storage-maintenance']);
 }
 
-export async function recordWorkflowHistory(name: string, workflowId: string, failed = false) {
+export async function recordWorkflowHistory(name: string, workflowId: string, failed = false, running = false) {
   let output = '';
-  const terminal = failed ? 'EVENT_TYPE_WORKFLOW_EXECUTION_FAILED' : 'EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED';
+  const terminal = running ? 'EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_COMPLETED' : failed ? 'EVENT_TYPE_WORKFLOW_EXECUTION_FAILED' : 'EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED';
   await expect.poll(async () => {
     output = await temporal(['workflow', 'show', '--workflow-id', workflowId, '--output', 'json']);
     return JSON.parse(output).events.map((event: { eventType: string }) => event.eventType);

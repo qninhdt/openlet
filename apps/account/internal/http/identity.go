@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	temporalerr "go.temporal.io/sdk/temporal"
 	"io"
-	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -36,6 +36,10 @@ func respond(w http.ResponseWriter, status int, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 func failure(w http.ResponseWriter, r *http.Request, e error) {
+	var application *temporalerr.ApplicationError
+	if errors.As(e, &application) && application.NonRetryable() {
+		e = user.Fault{Code: application.Type()}
+	}
 	var f user.Fault
 	if errors.As(e, &f) {
 		status := 400
@@ -61,21 +65,28 @@ func (s *Server) onboardingGet(c *gin.Context) {
 	writeOnboarding(c.Writer, http.StatusOK, value)
 }
 func (s *Server) onboardingPut(c *gin.Context) {
-	value, err := s.Store.EnsureUser(c.Request.Context(), c.GetHeader("X-Clerk-Sub"))
-	if err != nil {
+	subject := c.GetHeader("X-Clerk-Sub")
+	value, err := s.Store.Onboarding(c.Request.Context(), subject)
+	if err == nil && value.Status != "provisioning" {
+		writeOnboarding(c.Writer, http.StatusOK, value)
+		return
+	}
+	var fault user.Fault
+	if err != nil && (!errors.As(err, &fault) || fault.Code != "NOT_FOUND") {
 		failure(c.Writer, c.Request, err)
 		return
 	}
-	status := http.StatusOK
-	if value.Status == "provisioning" {
-		status = http.StatusAccepted
-		dispatch, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
-		defer cancel()
-		if err = worker.StartOnboarding(dispatch, s.Temporal, c.GetHeader("X-Clerk-Sub")); err != nil {
-			slog.WarnContext(c.Request.Context(), "onboarding admitted; workflow dispatch deferred")
+	value, err = worker.StartOnboarding(c.Request.Context(), s.Temporal, subject)
+	if err != nil {
+		existing, lookupErr := s.Store.Onboarding(c.Request.Context(), subject)
+		if lookupErr == nil && existing.Status != "provisioning" {
+			writeOnboarding(c.Writer, http.StatusOK, existing)
+			return
 		}
+		failure(c.Writer, c.Request, err)
+		return
 	}
-	writeOnboarding(c.Writer, status, value)
+	writeOnboarding(c.Writer, http.StatusAccepted, value)
 }
 func (s *Server) me(c *gin.Context) {
 	w, r := c.Writer, c.Request

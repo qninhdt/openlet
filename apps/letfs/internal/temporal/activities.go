@@ -73,10 +73,6 @@ func (a *Activities) CompleteCopy(ctx context.Context, admission filesystem.Copy
 	return activityError(a.Store.CompleteCopy(ctx, admission))
 }
 
-func (a *Activities) BeginDeletion(ctx context.Context, input DeletionInput) error {
-	return activityError(a.Store.CheckDeletionAdmission(ctx, input.FilesystemID, input.EntryID))
-}
-
 func (a *Activities) DeleteNodesBatch(ctx context.Context, input DeletionInput) (bool, error) {
 	done, err := a.Store.DeletionBatch(ctx, input.FilesystemID, input.EntryID)
 	return done, activityError(err)

@@ -28,11 +28,14 @@ func provisionRoundtrip(ctx workflow.Context, bucket, fs, key uuid.UUID) (*letfs
 	if err := workflow.ExecuteActivity(ctx, CreateBucketActivity, "resource-owner", input).Get(ctx, &created); err != nil {
 		return created, err
 	}
-	var storage *letfsv1.Filesystem
-	if err := workflow.ExecuteActivity(ctx, CreateFilesystemActivity, "resource-owner", &letfsv1.CreateFilesystemRequest{
-		FilesystemId: fs.String(), BucketId: bucket.String(), IdempotencyKey: key.String(), RootName: "files"}).Get(ctx, &storage); err != nil {
-		return created, err
+	var response *letfsv1.CreateStorageResponse
+	request := &letfsv1.CreateStorageRequest{Bucket: input, Filesystem: &letfsv1.CreateFilesystemRequest{FilesystemId: fs.String(), BucketId: bucket.String(), IdempotencyKey: key.String(), RootName: "files"}}
+	for range 2 {
+		if err := workflow.ExecuteActivity(ctx, CreateStorageActivity, "resource-owner", request).Get(ctx, &response); err != nil {
+			return created, err
+		}
 	}
+	storage := response.Filesystem
 	if err := workflow.ExecuteActivity(ctx, ReleaseProvisioningActivity, "resource-owner", &letfsv1.ReleaseProvisioningRequest{
 		BucketId: bucket.String(), FilesystemId: fs.String(), RootId: storage.RootId}).Get(ctx, nil); err != nil {
 		return created, err

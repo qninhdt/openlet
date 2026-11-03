@@ -179,41 +179,11 @@ func (s *session) deletionLeaves(ctx context.Context, root uuid.UUID) ([]uuid.UU
 	return ids, nil
 }
 
-// CheckDeletionAdmission consumes a durable admission, without checking user authority again.
-func (s *Store) CheckDeletionAdmission(ctx context.Context, fs uuid.UUID, entryID *uuid.UUID) error {
-	if fs == uuid.Nil || entryID != nil && *entryID == uuid.Nil {
-		return rpc.Fault(codes.InvalidArgument, "VALIDATION", "deletion identities required")
-	}
-	session, err := s.lifecycleSession(ctx, fs)
-	if err != nil {
-		return err
-	}
-	defer session.tx.Rollback(ctx)
-	if entryID != nil {
-		entry, err := session.trashEntry(ctx, *entryID, false)
-		if errorReason(err) == "NOT_FOUND" {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if entry.Status != "purging" {
-			return rpc.Fault(codes.Aborted, "TRASH_NOT_PURGING", "trash entry is not purging")
-		}
-		return nil
-	}
-	var state string
-	if err := session.tx.QueryRow(ctx, `SELECT state FROM filesystems WHERE id=$1`, fs).Scan(&state); err != nil {
-		return databaseError(err)
-	}
-	if state != "deleting" && state != "deleted" {
-		return rpc.Fault(codes.Aborted, "FILESYSTEM_NOT_DELETING", "filesystem is not deleting")
-	}
-	return nil
-}
-
 // DeletionBatch is local workflow state work, never a public operation.
 func (s *Store) DeletionBatch(ctx context.Context, fs uuid.UUID, entryID *uuid.UUID) (bool, error) {
+	if fs == uuid.Nil || entryID != nil && *entryID == uuid.Nil {
+		return false, rpc.Fault(codes.InvalidArgument, "VALIDATION", "deletion identities required")
+	}
 	session, err := s.lifecycleSession(ctx, fs)
 	if err != nil {
 		return false, err

@@ -67,9 +67,9 @@ Filesystem and bucket permissions additionally require workspace `enabled` in th
 |---|---|---|
 | `account:<id>#subject@user:<id>` | Account user record; Account Temporal worker | User self relationship |
 | `role:<id>#<action>@user:*` | Repository `roles.json`; deployment policy initializer | Built-in role capabilities; no SQL catalog |
-| `role_grant:<workspace>/<revision>/<status>/<role>#role@role:<id>` | Workspace's existing business revision/lifecycle and membership role; Workspace Temporal worker | Immutable role group for one canonical state; no extra SQL revision or graph marker |
-| `role_grant:<workspace>/<revision>/<status>/<role>#member@user:<id>` | Workspace membership; Workspace Temporal worker | Stage canonical members before publishing their groups |
-| `workspace:<id>#grant@role_grant:<id>` | Workspace membership; Workspace Temporal worker | Atomic native-preconditioned switch to the staged role groups; role changes/transfer cannot be partially published |
+| `role_grant:<workspace>/<role>#role@role:<id>` | Repository role IDs and Workspace identity; Workspace Temporal worker | Three stable groups per Workspace; no revision/status snapshots |
+| `role_grant:<workspace>/<role>#member@user:<id>` | Workspace membership; Workspace Temporal worker | Touch the affected member role and delete its other role tuples |
+| `workspace:<id>#grant@role_grant:<id>` | Workspace membership; Workspace Temporal worker | Stable group links created during provisioning; owner transfer writes both members atomically |
 | `workspace:<id>#enabled@user:*` | Workspace lifecycle; Workspace Temporal worker | Active storage access |
 | `filesystem:<id>#workspace@workspace:<id>` | Workspace storage references; Workspace Temporal worker | Filesystem inheritance |
 | `quota_bucket:<id>#workspace@workspace:<id>` | Workspace storage references; Workspace Temporal worker | Bucket inheritance |

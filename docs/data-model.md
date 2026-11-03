@@ -16,7 +16,7 @@ Non-natural creation admissions retain scoped key/hash and immutable result iden
 | Workspace `workspaces` | ID, name, `provisioning/active/failed/deleting/deleted` lifecycle, revision, owner-generated storage mapping and limit |
 | Workspace `workspace_members` | PK workspace/user, role `owner/editor/viewer`; unique partial index allows at most one Owner |
 | Workspace `workspace_invitations` | ID, workspace/email, role restricted to editor/viewer, unique token hash, expiry, revoked/accepted state, accepted user |
-| Workspace `idempotency_keys` | Actor/key/request hash and admitted workspace identity; completed receipts expire after 24 hours |
+| Workspace `idempotency_keys` | Actor/key/request hash and workspace identity for creation and serialized authorization mutations; pinned through graph publication, then expire after 24 hours |
 
 Exactly one Owner is preserved by creating the workspace/member together and serializing all member/owner mutations on the workspace row. Check the specific SpiceDB action before acquiring the row lock, then re-read canonical actor membership, revision and lifecycle under the lock. No graph RPC runs while holding that lock. Transfer demotes the old Owner and promotes an existing member in the same transaction; the partial index blocks duplicates. Owner cannot leave/be removed until transferred, except final workspace deletion. No duplicated owner column or custom owner-consistency trigger.
 

@@ -2,30 +2,34 @@ package temporal
 
 import (
 	"context"
-	"errors"
 	"github.com/google/uuid"
 	"github.com/qninhdt/openlet/apps/workspace/internal/letfs"
 	"github.com/qninhdt/openlet/apps/workspace/internal/workspace"
 	letfsv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/letfs/v1"
 	"go.temporal.io/api/enums/v1"
-	"go.temporal.io/api/serviceerror"
-	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 	"time"
 )
 
 type DeleteWorkflowInput struct {
-	WorkspaceID uuid.UUID `json:"workspace_id"`
-	Cursor      uuid.UUID `json:"cursor"`
+	Workspace workspace.Workspace `json:"workspace"`
+	Cursor    uuid.UUID           `json:"cursor"`
 }
 
-func (a *Activities) GetDeletion(ctx context.Context, id uuid.UUID) (workspace.Deletion, error) {
-	value, err := a.Store.Deletion(ctx, id)
-	return value, businessError(err)
+func (a *Activities) PrepareWorkspaceDeletion(ctx context.Context, in workspace.DeleteInput) (workspace.Workspace, error) {
+	value, err := a.Store.BeginDeletion(ctx, in)
+	if err != nil {
+		return value, businessError(err)
+	}
+	err = a.Store.PublishStorageRelationships(ctx, a.Graph, value.ID)
+	return value, err
 }
 func (a *Activities) CompleteWorkspaceDeletion(ctx context.Context, id uuid.UUID) error {
-	return businessError(a.Store.CompleteDeletion(ctx, id))
+	if err := a.Store.CompleteDeletion(ctx, id); err != nil {
+		return businessError(err)
+	}
+	return a.Store.DeleteMemberRelationships(ctx, a.Graph, id)
 }
 func DeleteWorkspace(ctx workflow.Context, in DeleteWorkflowInput) (uuid.UUID, error) {
 	ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{StartToCloseTimeout: 30 * time.Second, RetryPolicy: &temporal.RetryPolicy{InitialInterval: time.Second, MaximumInterval: 30 * time.Second}})
@@ -33,14 +37,7 @@ func DeleteWorkspace(ctx workflow.Context, in DeleteWorkflowInput) (uuid.UUID, e
 	ctx, cancel := workflow.NewDisconnectedContext(ctx)
 	defer cancel()
 	var a *Activities
-	var deletion workspace.Deletion
-	if err := workflow.ExecuteActivity(ctx, a.GetDeletion, in.WorkspaceID).Get(ctx, &deletion); err != nil {
-		return in.WorkspaceID, err
-	}
-	value := deletion.Workspace
-	if err := workflow.ExecuteActivity(ctx, a.SyncWorkspaceRelationships, value.ID).Get(ctx, nil); err != nil {
-		return value.ID, err
-	}
+	value := in.Workspace
 	if value.Status == "deleted" {
 		return value.ID, nil
 	}
@@ -101,35 +98,5 @@ func DeleteWorkspace(ctx workflow.Context, in DeleteWorkflowInput) (uuid.UUID, e
 	if err := workflow.ExecuteActivity(ctx, a.CompleteWorkspaceDeletion, value.ID).Get(ctx, nil); err != nil {
 		return value.ID, err
 	}
-	return value.ID, workflow.ExecuteActivity(ctx, a.SyncWorkspaceRelationships, value.ID).Get(ctx, nil)
-}
-func StartDelete(ctx context.Context, tc client.Client, store *workspace.Store, id uuid.UUID) error {
-	// A closed execution may resume only while the durable resource is still deleting.
-	deletion, err := store.Deletion(ctx, id)
-	if err != nil {
-		return err
-	}
-	if deletion.Workspace.Status == "deleted" {
-		return nil
-	}
-	workflowID := "delete-workspace/" + id.String()
-	policy := enums.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE
-	description, err := tc.DescribeWorkflowExecution(ctx, workflowID, "")
-	var missing *serviceerror.NotFound
-	if err != nil && !errors.As(err, &missing) {
-		return err
-	}
-	if err == nil {
-		switch description.WorkflowExecutionInfo.Status {
-		case enums.WORKFLOW_EXECUTION_STATUS_COMPLETED, enums.WORKFLOW_EXECUTION_STATUS_FAILED, enums.WORKFLOW_EXECUTION_STATUS_CANCELED, enums.WORKFLOW_EXECUTION_STATUS_TERMINATED, enums.WORKFLOW_EXECUTION_STATUS_TIMED_OUT:
-			if err = store.FailDeletion(ctx, id); err != nil {
-				return err
-			}
-			policy = enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE
-		default:
-			return nil
-		}
-	}
-	_, err = tc.ExecuteWorkflow(ctx, client.StartWorkflowOptions{ID: workflowID, TaskQueue: Queue, WorkflowIDConflictPolicy: enums.WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING, WorkflowIDReusePolicy: policy, WorkflowExecutionTimeout: 7 * 24 * time.Hour}, DeleteWorkspace, DeleteWorkflowInput{WorkspaceID: id})
-	return err
+	return value.ID, nil
 }

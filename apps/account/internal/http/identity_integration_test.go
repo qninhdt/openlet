@@ -26,8 +26,7 @@ func TestIntegrationProfileRequiresNativeSelfPermission(t *testing.T) {
 	ctx := t.Context()
 	account, err := store.EnsureUser(ctx, "profile-test")
 	require.NoError(t, err)
-	require.NoError(t, store.SaveWorkspace(ctx, "profile-test", uuid.New()))
-	require.NoError(t, store.Complete(ctx, "profile-test"))
+	require.NoError(t, store.Complete(ctx, "profile-test", uuid.New()))
 	secret := strings.Repeat("g", 32)
 	app := &Server{Store: store, DB: db, Graph: graph, Config: config.Config{GatewayToken: secret}}
 	router := app.Router()

@@ -1,12 +1,8 @@
 package http
 
 import (
-	"context"
 	"github.com/gin-gonic/gin"
 	worker "github.com/qninhdt/openlet/apps/workspace/internal/temporal"
-	"github.com/qninhdt/openlet/apps/workspace/internal/workspace"
-	"log/slog"
-	"time"
 )
 
 func (s *Server) deleteWorkspace(c *gin.Context) {
@@ -21,7 +17,7 @@ func (s *Server) deleteWorkspace(c *gin.Context) {
 		failure(w, r, err)
 		return
 	}
-	value, err := s.Store.BeginDeletion(r.Context(), workspace.DeleteInput{ActorID: actorID(r), WorkspaceID: id, Revision: revision})
+	value, err := worker.Mutate(r.Context(), s.Temporal, worker.Mutation{Kind: "delete", WorkspaceID: id, ActorID: actorID(r), Revision: revision})
 	if err != nil {
 		failure(w, r, err)
 		return
@@ -29,11 +25,6 @@ func (s *Server) deleteWorkspace(c *gin.Context) {
 	if value.Status == "deleted" {
 		w.WriteHeader(204)
 		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-	defer cancel()
-	if err = worker.StartDelete(ctx, s.Temporal, s.Store, id); err != nil {
-		slog.WarnContext(r.Context(), "workspace deletion dispatch deferred", "workspace_id", id, "reason", err.Error())
 	}
 	w.Header().Set("Location", "/v1/workspaces/"+id.String())
 	w.Header().Set("ETag", "\""+value.Revision+"\"")

@@ -5,7 +5,6 @@ package workspace
 import (
 	"context"
 	"os"
-	"sync"
 	"testing"
 	"time"
 
@@ -16,8 +15,6 @@ import (
 	"github.com/qninhdt/openlet/packages/go/testfixture"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 type publishingClient struct {
@@ -26,131 +23,87 @@ type publishingClient struct {
 }
 
 func (c publishingClient) WriteRelationships(ctx context.Context, request *v1.WriteRelationshipsRequest, options ...grpc.CallOption) (*v1.WriteRelationshipsResponse, error) {
-	if len(request.OptionalPreconditions) > 0 {
-		return c.publish(ctx, request)
-	}
-	return c.PermissionsServiceClient.WriteRelationships(ctx, request, options...)
+	return c.publish(ctx, request)
 }
 
-func TestIntegrationRelationshipSyncFencesOldGrantsAndLifecycle(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
-	defer cancel()
+func TestIntegrationTargetedRelationshipsAndLifecycle(t *testing.T) {
+	ctx := t.Context()
 	store := Store{DB: postgres(t), MaxWorkspaces: 10, MaxMembers: 10, QuotaLimit: 1024, InviteTTL: time.Hour}
-	graph, address, _ := testfixture.SpiceDB(t, "../../../../packages/contracts/authz/schema.zed")
-	store.Graph = graph
-	independent := testfixture.SpiceDBClient(t, address)
-	data, err := os.ReadFile("../../../../packages/contracts/authz/roles.json")
-	require.NoError(t, err)
-	policy, err := authz.ParseRolePolicy(data)
-	require.NoError(t, err)
-	require.NoError(t, authz.InitializeRolePolicy(ctx, graph, policy))
-	owner, member := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
-	created, err := store.EnsureWorkspace(ctx, CreateInput{ActorID: owner, Key: uuid.Must(uuid.NewV7()), Name: "Team"})
+	setupGraph(t, &store)
+	graph := store.Graph
+	owner, member, unrelated := uuid.New(), uuid.New(), uuid.New()
+	created, err := store.EnsureWorkspace(ctx, CreateInput{ActorID: owner, Key: uuid.New(), Name: "Team"})
 	require.NoError(t, err)
 	id := created.ID
-	storage := mapping(id)
-	require.NoError(t, store.Activate(ctx, storage))
-	require.NoError(t, store.SyncRelationships(ctx, graph, id))
-	_, token, err := store.Invite(ctx, id, owner, "member@example.com", "editor")
+	storage, err := store.ReserveStorage(ctx, id)
 	require.NoError(t, err)
-	_, err = store.AcceptInvite(ctx, member, token, []string{"member@example.com"})
-	require.NoError(t, err)
-	require.NoError(t, store.SyncRelationships(ctx, graph, id))
+	storage.RootID = uuid.New()
+	require.NoError(t, store.InitializeRelationships(ctx, graph, id))
 	check := func(actor uuid.UUID, action authz.Action, resource authz.Resource, want bool) {
 		t.Helper()
-		allowed, err := authz.Check(ctx, independent, actor.String(), action, resource)
+		allowed, err := authz.Check(ctx, graph, actor.String(), action, resource)
 		require.NoError(t, err)
-		require.Equal(t, want, allowed, "%s %s", actor, action)
+		require.Equal(t, want, allowed)
 	}
 	fs := authz.Resource{Type: "filesystem", ID: storage.FilesystemID.String()}
 	ws := authz.Resource{Type: "workspace", ID: id.String()}
+	check(owner, authz.WorkspaceRead, ws, true)
+	check(owner, authz.ContentWrite, fs, false)
+	require.NoError(t, store.PublishActivationRelationships(ctx, graph, id))
+	require.NoError(t, store.Activate(ctx, storage))
+	_, err = store.DB.Exec(ctx, `INSERT INTO workspace_members(workspace_id,user_id,role) VALUES($1,$2,'editor'),($1,$3,'viewer')`, id, member, unrelated)
+	require.NoError(t, err)
+	require.NoError(t, store.WriteMemberRelationships(ctx, graph, id, member, unrelated))
 	check(member, authz.ContentWrite, fs, true)
-
-	// Delay a real native write at the SDK boundary, after its old state was read/staged.
-	delay := func() (func(), <-chan error) {
-		t.Helper()
-		entered, release, result := make(chan struct{}), make(chan struct{}), make(chan error, 1)
-		var worker sync.WaitGroup
-		worker.Go(func() {
-			client := publishingClient{PermissionsServiceClient: graph, publish: func(ctx context.Context, request *v1.WriteRelationshipsRequest) (*v1.WriteRelationshipsResponse, error) {
-				close(entered)
-				select {
-				case <-release:
-					return graph.WriteRelationships(ctx, request)
-				case <-ctx.Done():
-					return nil, ctx.Err()
-				}
-			}}
-			result <- store.SyncRelationships(ctx, client, id)
-		})
-		resume := sync.OnceFunc(func() { close(release) })
-		t.Cleanup(func() { resume(); worker.Wait() })
-		select {
-		case <-entered:
-		case <-ctx.Done():
-			t.Fatal("old write never reached publication")
-		}
-		return resume, result
-	}
-	release, old := delay()
 	current, err := store.Get(ctx, id, owner)
 	require.NoError(t, err)
-	require.NoError(t, store.ChangeMember(ctx, id, owner, member, "viewer", false, current.Revision))
-	require.NoError(t, store.SyncRelationships(ctx, graph, id))
+	receipt := MutationReceipt{Key: uuid.New(), Hash: "change member"}
+	require.NoError(t, store.ChangeMember(ctx, id, owner, member, "viewer", false, current.Revision, receipt))
+	applied, err := store.MutationApplied(ctx, owner, id, receipt)
+	require.NoError(t, err)
+	require.True(t, applied)
+	client := publishingClient{PermissionsServiceClient: graph, publish: func(ctx context.Context, r *v1.WriteRelationshipsRequest) (*v1.WriteRelationshipsResponse, error) {
+		require.Len(t, r.Updates, 3)
+		for _, u := range r.Updates {
+			require.Equal(t, member.String(), u.Relationship.Subject.Object.ObjectId)
+		}
+		return graph.WriteRelationships(ctx, r)
+	}}
+	require.NoError(t, store.WriteMemberRelationships(ctx, client, id, member))
+	require.NoError(t, store.WriteMemberRelationships(ctx, client, id, member))
 	check(member, authz.ContentWrite, fs, false)
-	release()
-	require.Equal(t, codes.FailedPrecondition, status.Code(<-old))
-	check(member, authz.ContentWrite, fs, false)
-
-	release, old = delay()
+	check(unrelated, authz.NodeRead, fs, true)
 	current, err = store.Get(ctx, id, owner)
 	require.NoError(t, err)
-	_, err = store.Update(ctx, id, owner, current.Revision, UpdateInput{OwnerID: &member})
+	_, err = store.Update(ctx, id, owner, current.Revision, UpdateInput{OwnerID: &member}, MutationReceipt{})
 	require.NoError(t, err)
-	require.NoError(t, store.SyncRelationships(ctx, graph, id))
+	transfer := publishingClient{PermissionsServiceClient: graph, publish: func(ctx context.Context, r *v1.WriteRelationshipsRequest) (*v1.WriteRelationshipsResponse, error) {
+		require.Len(t, r.Updates, 6)
+		return graph.WriteRelationships(ctx, r)
+	}}
+	require.NoError(t, store.WriteMemberRelationships(ctx, transfer, id, owner, member))
 	check(owner, authz.WorkspaceTransfer, ws, false)
 	check(member, authz.WorkspaceTransfer, ws, true)
-	release()
-	require.Equal(t, codes.FailedPrecondition, status.Code(<-old))
-	check(owner, authz.WorkspaceTransfer, ws, false)
-
-	// Lost acknowledgment cannot turn retry into replay of the previous grant command.
-	var ambiguous *v1.WriteRelationshipsRequest
-	lost := publishingClient{PermissionsServiceClient: graph, publish: func(ctx context.Context, request *v1.WriteRelationshipsRequest) (*v1.WriteRelationshipsResponse, error) {
-		_, err := graph.WriteRelationships(ctx, request)
-		if err != nil {
-			return nil, err
-		}
-		ambiguous = request
-		return nil, status.Error(codes.DeadlineExceeded, "response lost")
-	}}
-	require.Equal(t, codes.DeadlineExceeded, status.Code(store.SyncRelationships(ctx, lost, id)))
 	current, err = store.Get(ctx, id, member)
 	require.NoError(t, err)
-	require.NoError(t, store.ChangeMember(ctx, id, member, owner, "", true, current.Revision))
-	require.NoError(t, store.SyncRelationships(ctx, graph, id))
-	_, err = graph.WriteRelationships(ctx, ambiguous)
-	require.Equal(t, codes.FailedPrecondition, status.Code(err))
-	require.NoError(t, store.SyncRelationships(ctx, graph, id), "retry derives current SQL facts")
+	require.NoError(t, store.ChangeMember(ctx, id, member, owner, "", true, current.Revision, MutationReceipt{}))
+	require.NoError(t, store.WriteMemberRelationships(ctx, graph, id, owner))
 	check(owner, authz.NodeRead, fs, false)
-
 	current, err = store.Get(ctx, id, member)
 	require.NoError(t, err)
 	_, err = store.BeginDeletion(ctx, DeleteInput{ActorID: member, WorkspaceID: id, Revision: current.Revision})
 	require.NoError(t, err)
-	require.NoError(t, store.SyncRelationships(ctx, graph, id))
+	require.NoError(t, store.PublishStorageRelationships(ctx, graph, id))
 	check(member, authz.NodeRead, fs, false)
 	check(member, authz.WorkspaceRead, ws, true)
-	release, old = delay()
+	require.EqualError(t, store.PublishActivationRelationships(ctx, graph, id), "STATE_CONFLICT")
 	require.NoError(t, store.CompleteDeletion(ctx, id))
-	require.NoError(t, store.SyncRelationships(ctx, graph, id))
-	release()
-	require.Equal(t, codes.FailedPrecondition, status.Code(<-old), "lifecycle identity also fences transitions without an existing revision increment")
-	check(member, authz.NodeRead, fs, false)
+	require.NoError(t, store.DeleteMemberRelationships(ctx, graph, id))
+	check(unrelated, authz.WorkspaceRead, ws, false)
 	check(member, authz.WorkspaceRead, ws, true)
 }
 
-func TestIntegrationRelationshipSyncLargeMembershipAndFencedRebuild(t *testing.T) {
+func TestIntegrationOfflineRebuildPagesLargeMembership(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
 	store := Store{DB: postgres(t), MaxWorkspaces: 10, MaxMembers: 1200, QuotaLimit: 1024}
@@ -182,13 +135,7 @@ func TestIntegrationRelationshipSyncLargeMembershipAndFencedRebuild(t *testing.T
 	store.MaxMembers = 10 // Lowering the admission limit cannot discard existing members during synchronization.
 	actor := members[len(members)-1][1].(uuid.UUID).String()
 	resource := authz.Resource{Type: "filesystem", ID: storage.FilesystemID.String()}
-	client := publishingClient{PermissionsServiceClient: graph, publish: func(ctx context.Context, request *v1.WriteRelationshipsRequest) (*v1.WriteRelationshipsResponse, error) {
-		allowed, err := authz.Check(ctx, independent, actor, authz.NodeRead, resource)
-		require.NoError(t, err)
-		require.False(t, allowed, "staged groups cannot expose partially populated membership")
-		return graph.WriteRelationships(ctx, request)
-	}}
-	require.NoError(t, store.SyncRelationships(ctx, client, id), "large existing configured member limits do not exceed a native atomic write")
+	require.NoError(t, store.RebuildWorkspaceRelationships(ctx, graph, id))
 	allowed, err := authz.Check(ctx, independent, actor, authz.NodeRead, resource)
 	require.NoError(t, err)
 	require.True(t, allowed)
@@ -201,8 +148,8 @@ func TestIntegrationRelationshipSyncLargeMembershipAndFencedRebuild(t *testing.T
 	allowed, err = authz.Check(ctx, independent, actor, authz.NodeRead, resource)
 	require.NoError(t, err)
 	require.False(t, allowed)
-	require.NoError(t, store.SyncRelationships(ctx, graph, id))
-	require.NoError(t, store.SyncRelationships(ctx, graph, id))
+	require.NoError(t, store.RebuildWorkspaceRelationships(ctx, graph, id))
+	require.NoError(t, store.RebuildWorkspaceRelationships(ctx, graph, id))
 	allowed, err = authz.Check(ctx, independent, actor, authz.NodeRead, resource)
 	require.NoError(t, err)
 	require.True(t, allowed, "canonical business rows rebuild the projection without a ledger or epoch")

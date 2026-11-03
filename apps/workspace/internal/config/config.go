@@ -12,19 +12,19 @@ import (
 )
 
 type Config struct {
-	Listen, DatabaseURL, TemporalAddress, TemporalNamespace, GatewayToken, WorkspaceToken, AccountRPCAddress string
-	SpiceDBAddress, SpiceDBKey                                                                               string
-	AllowPlaintextRPC                                                                                        bool
-	MaxWorkspaces, MaxMembers                                                                                int
-	QuotaLimit                                                                                               int64
-	InviteTTL                                                                                                time.Duration
+	Listen, DatabaseURL, TemporalAddress, TemporalNamespace, GatewayToken, WorkspaceToken, AccountRPCAddress, LetfsRPCAddress string
+	SpiceDBAddress, SpiceDBKey                                                                                                string
+	AllowPlaintextRPC                                                                                                         bool
+	MaxWorkspaces, MaxMembers                                                                                                 int
+	QuotaLimit                                                                                                                int64
+	InviteTTL                                                                                                                 time.Duration
 }
 
 func Load() (Config, error) {
 	return Parse(sharedconfig.Secret)
 }
 func Parse(get func(string) string) (Config, error) {
-	c := Config{Listen: get("LISTEN_ADDR"), DatabaseURL: get("DATABASE_URL"), TemporalAddress: get("TEMPORAL_ADDRESS"), TemporalNamespace: get("TEMPORAL_NAMESPACE"), GatewayToken: get("GATEWAY_TOKEN"), WorkspaceToken: get("WORKSPACE_SERVICE_TOKEN"), AccountRPCAddress: get("ACCOUNT_RPC_ADDRESS")}
+	c := Config{Listen: get("LISTEN_ADDR"), DatabaseURL: get("DATABASE_URL"), TemporalAddress: get("TEMPORAL_ADDRESS"), TemporalNamespace: get("TEMPORAL_NAMESPACE"), GatewayToken: get("GATEWAY_TOKEN"), WorkspaceToken: get("WORKSPACE_SERVICE_TOKEN"), AccountRPCAddress: get("ACCOUNT_RPC_ADDRESS"), LetfsRPCAddress: get("LETFS_RPC_ADDRESS")}
 	plaintext := get("ALLOW_PLAINTEXT_RPC")
 	if plaintext != "" && plaintext != "false" && plaintext != "true" {
 		return c, errors.New("ALLOW_PLAINTEXT_RPC must be true or false")
@@ -36,6 +36,9 @@ func Parse(get func(string) string) (Config, error) {
 	}
 	if host, port, err := net.SplitHostPort(c.AccountRPCAddress); err != nil || host == "" || port == "" {
 		return c, errors.New("invalid ACCOUNT_RPC_ADDRESS")
+	}
+	if host, port, err := net.SplitHostPort(c.LetfsRPCAddress); err != nil || host == "" || port == "" {
+		return c, errors.New("invalid LETFS_RPC_ADDRESS")
 	}
 	c.MaxWorkspaces = 100
 	c.MaxMembers = 100

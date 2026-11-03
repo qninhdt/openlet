@@ -47,7 +47,7 @@ Check public HTTP OpenAPI and generated protobuf contracts against handlers and 
 
 ## Workflow and system coverage
 
-SDK tests cover branches, retry classifications, timers and replay. Real Temporal tests cover worker/server restart, commit followed by response loss, checkpoint continuation and retained partial-copy results. SDK activity mocks do not prove storage recovery. File bytes stay out of history. API journeys capture fresh `SyncWorkspace`, `ReconcileAccounts` and `ReconcileWorkspaces` histories alongside onboarding and storage workflows for native replay.
+SDK tests cover branches, retry classifications, timers and replay. Real Temporal tests cover worker/server restart, commit followed by response loss, checkpoint continuation and retained partial-copy results. SDK activity mocks do not prove storage recovery. File bytes stay out of history. API journeys capture fresh `WorkspacePermissions` (running Update history) and `WorkspaceMaintenance` histories alongside onboarding and storage workflows for native replay.
 
 The new Playwright API suite under `e2e/` was authored from scratch before
 business refactoring. It covers gateway boundaries and target onboarding,

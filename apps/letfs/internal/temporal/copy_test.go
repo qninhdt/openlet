@@ -81,7 +81,7 @@ func TestCopyNodeKeepsPartialProgressAndBusinessFailure(t *testing.T) {
 				require.Zero(t, result.CommittedBytes)
 				require.Equal(t, &child, result.Pending)
 			} else {
-				require.Equal(t, []string{"copy directory", "next directory", "copy file", "next file", "finish file", "next directory", "finish directory", "complete"}, calls)
+				require.Equal(t, []string{"copy directory", "next directory", "copy file", "next file", "finish file", "next directory", "complete"}, calls)
 				require.Equal(t, "succeeded", result.Status)
 				require.Nil(t, result.ErrorCode)
 				require.EqualValues(t, 2, result.CommittedNodes)
@@ -113,6 +113,24 @@ func TestCopyNodeRejectsBudgetBeforeIO(t *testing.T) {
 		require.Equal(t, "RESOURCE_LIMIT", *result.ErrorCode)
 		require.Equal(t, input.Pending, result.Pending)
 	}
+}
+
+func TestCopyNodeSkipsProcessingForDerivedFile(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	input := copyInput()
+	input.Admission.Root.Kind = "file"
+	input.Admission.Root.Derived = true
+	env.RegisterActivityWithOptions(func(context.Context, CopyStep) error { return nil }, activity.RegisterOptions{Name: "copy_item"})
+	env.RegisterActivityWithOptions(func(context.Context, CopyNext) (*filesystem.CopyItem, error) { return nil, nil }, activity.RegisterOptions{Name: "next_copy_item"})
+	env.RegisterActivityWithOptions(func(context.Context, filesystem.CopyAdmission) error { return nil }, activity.RegisterOptions{Name: "complete_copy"})
+
+	env.ExecuteWorkflow(CopyNode, input)
+
+	require.NoError(t, env.GetWorkflowError())
+	var result CopyState
+	require.NoError(t, env.GetWorkflowResult(&result))
+	require.Equal(t, "succeeded", result.Status)
 }
 
 func TestCopyNodeContinuesWithBoundedTraversalState(t *testing.T) {

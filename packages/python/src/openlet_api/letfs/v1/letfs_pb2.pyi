@@ -10,6 +10,22 @@ from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
+class CreateStorageRequest(_message.Message):
+    __slots__ = ("bucket", "filesystem")
+    BUCKET_FIELD_NUMBER: _ClassVar[int]
+    FILESYSTEM_FIELD_NUMBER: _ClassVar[int]
+    bucket: CreateBucketRequest
+    filesystem: CreateFilesystemRequest
+    def __init__(self, bucket: _Optional[_Union[CreateBucketRequest, _Mapping]] = ..., filesystem: _Optional[_Union[CreateFilesystemRequest, _Mapping]] = ...) -> None: ...
+
+class CreateStorageResponse(_message.Message):
+    __slots__ = ("bucket", "filesystem")
+    BUCKET_FIELD_NUMBER: _ClassVar[int]
+    FILESYSTEM_FIELD_NUMBER: _ClassVar[int]
+    bucket: Bucket
+    filesystem: Filesystem
+    def __init__(self, bucket: _Optional[_Union[Bucket, _Mapping]] = ..., filesystem: _Optional[_Union[Filesystem, _Mapping]] = ...) -> None: ...
+
 class Node(_message.Message):
     __slots__ = ("id", "filesystem_id", "parent_id", "name", "kind", "revision", "size_bytes", "media_type", "created_at", "updated_at", "title", "description", "semantic_type", "context")
     ID_FIELD_NUMBER: _ClassVar[int]

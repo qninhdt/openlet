@@ -5,8 +5,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	temporalerr "go.temporal.io/sdk/temporal"
 	"io"
-	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -45,6 +45,10 @@ func respond(w http.ResponseWriter, status int, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 func failure(w http.ResponseWriter, r *http.Request, e error) {
+	var application *temporalerr.ApplicationError
+	if errors.As(e, &application) && application.NonRetryable() {
+		e = workspace.Fault{Code: application.Type()}
+	}
 	var f workspace.Fault
 	if errors.As(e, &f) {
 		status := 409
@@ -137,16 +141,29 @@ func (s *Server) startCreate(w http.ResponseWriter, r *http.Request, in workspac
 		return
 	}
 	in.Key = key
-	admission, err := s.Store.EnsureWorkspace(r.Context(), in)
+	if err = workspace.ValidateName(in.Name); err != nil {
+		failure(w, r, err)
+		return
+	}
+	admission, found, err := s.Store.FindCreation(r.Context(), in)
 	if err != nil {
 		failure(w, r, err)
 		return
 	}
-	if admission.Status == "provisioning" {
-		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-		defer cancel()
-		if err = worker.StartCreate(ctx, s.Temporal, admission.ID); err != nil {
-			slog.WarnContext(r.Context(), "workspace dispatch deferred", "workspace_id", admission.ID, "reason", err.Error())
+	if !found {
+		admission, err = worker.StartCreate(r.Context(), s.Temporal, in)
+		if err != nil {
+			// The initial execution may finish between the receipt read and Update-With-Start.
+			existing, ok, lookupErr := s.Store.FindCreation(r.Context(), in)
+			if lookupErr != nil {
+				failure(w, r, lookupErr)
+				return
+			}
+			if !ok {
+				failure(w, r, err)
+				return
+			}
+			admission = existing
 		}
 	}
 	w.Header().Set("Location", "/v1/workspaces/"+admission.ID.String())
@@ -239,16 +256,15 @@ func (s *Server) updateWorkspace(c *gin.Context) {
 		failure(w, r, e)
 		return
 	}
-	v, e := s.Store.Update(r.Context(), id, actorID(r), revision, in)
+	var v workspace.Workspace
+	if in.OwnerID != nil {
+		v, e = worker.Mutate(r.Context(), s.Temporal, worker.Mutation{Kind: "update", WorkspaceID: id, ActorID: actorID(r), Revision: revision, Update: in})
+	} else {
+		v, e = s.Store.Update(r.Context(), id, actorID(r), revision, in, workspace.MutationReceipt{})
+	}
 	if e != nil {
 		failure(w, r, e)
 		return
-	}
-	if in.OwnerID != nil {
-		if e = worker.SyncRelationships(r.Context(), s.Temporal, s.Store, id); e != nil {
-			Error(w, r, 503, "DEPENDENCY_UNAVAILABLE", "workspace change committed; authorization synchronization incomplete")
-			return
-		}
 	}
 	w.Header().Set("ETag", "\""+v.Revision+"\"")
 	respond(w, 200, v)

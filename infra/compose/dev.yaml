@@ -155,6 +155,7 @@ services:
       WORKSPACE_SERVICE_TOKEN_FILE: /run/secrets/workspace_service_token
       DATABASE_URL_FILE: /run/secrets/workspace_database_url
       ACCOUNT_RPC_ADDRESS: account:9090
+      LETFS_RPC_ADDRESS: letfs:9090
       ALLOW_PLAINTEXT_RPC: 'true'
       SPICEDB_ADDRESS: spicedb:50051
       SPICEDB_GRPC_PRESHARED_KEY_FILE: /run/secrets/spicedb_key

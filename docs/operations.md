@@ -32,6 +32,8 @@ data may prevent reaching the target; evicted cache must be rebuilt when needed.
 
 `openlet-storage-maintenance` is a native Temporal Schedule running every five minutes with overlap Skip. Each run makes finite upload-expiry, resource/processing reconciliation, detached-forest and object/index cleanup passes. It never ages user trash. Ambiguous writes retain their key evidence and get periodic deletion attempts even after NotFound. Configure incomplete-multipart cleanup and version retention with the chosen provider; key deletion alone does not remove historical object versions.
 
+`workspace-maintenance` only expires completed Workspace receipts. Account has no maintenance schedule; neither owner periodically scans SpiceDB membership. Terminal authorization/provisioning executions require explicit inspection in Temporal; a terminated run cannot execute its SQL failure handler. Retry admitted Workspace deletion through DELETE to resume a closed child.
+
 Do not reactivate deleting resources or repair counters manually. Workspace deletion retries use its original identity/revision; purge retries use its trash-entry identity. Durable deleting/purging resources and remaining nodes preserve progress, without operation/checkpoint tables. Current owner authorization still applies. Unknown workflow status does not authorize destructive cleanup. Lost responses do not undo committed effects; failed copies retain ordinary partial content.
 
 Workflow replay remains app-owned. [Testing](testing.md) documents fresh histories

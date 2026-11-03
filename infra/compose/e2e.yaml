@@ -252,6 +252,7 @@ services:
       <<: [*telemetry-env, *go-environment]
       DATABASE_URL_FILE: /run/secrets/workspace_database_url
       ACCOUNT_RPC_ADDRESS: account:9090
+      LETFS_RPC_ADDRESS: letfs:9090
       DEFAULT_QUOTA_BYTES: '20971520'
     secrets: [workspace_database_url, gateway_token, workspace_service_token, spicedb_key]
     healthcheck: *go-health

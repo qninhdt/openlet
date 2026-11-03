@@ -48,18 +48,11 @@ func (s *Store) EnsureUser(ctx context.Context, subject string) (Onboarding, err
 	}
 	return s.Onboarding(ctx, subject)
 }
-func (s *Store) SaveWorkspace(ctx context.Context, subject string, workspaceID uuid.UUID) error {
+func (s *Store) Complete(ctx context.Context, subject string, workspaceID uuid.UUID) error {
 	if workspaceID == uuid.Nil {
 		return Fault{"VALIDATION"}
 	}
-	result, err := s.DB.Exec(ctx, `UPDATE users SET initial_workspace_id=$2,updated_at=now() WHERE clerk_id=$1 AND status='provisioning' AND (initial_workspace_id IS NULL OR initial_workspace_id=$2)`, subject, workspaceID)
-	if err == nil && result.RowsAffected() != 1 {
-		return Fault{"STATE_CONFLICT"}
-	}
-	return err
-}
-func (s *Store) Complete(ctx context.Context, subject string) error {
-	result, err := s.DB.Exec(ctx, `UPDATE users SET status='active',updated_at=now() WHERE clerk_id=$1 AND status IN ('provisioning','active') AND initial_workspace_id IS NOT NULL`, subject)
+	result, err := s.DB.Exec(ctx, `UPDATE users SET initial_workspace_id=$2,status='active',updated_at=now() WHERE clerk_id=$1 AND status IN ('provisioning','active') AND (initial_workspace_id IS NULL OR initial_workspace_id=$2)`, subject, workspaceID)
 	if err == nil && result.RowsAffected() != 1 {
 		return Fault{"STATE_CONFLICT"}
 	}
@@ -68,22 +61,6 @@ func (s *Store) Complete(ctx context.Context, subject string) error {
 func (s *Store) Fail(ctx context.Context, subject string) error {
 	_, err := s.DB.Exec(ctx, `UPDATE users SET status='failed',updated_at=now() WHERE clerk_id=$1 AND status='provisioning'`, subject)
 	return err
-}
-func (s *Store) Pending(ctx context.Context) ([]string, error) {
-	rows, err := s.DB.Query(ctx, `WITH pending AS (SELECT id FROM users WHERE status='provisioning' ORDER BY updated_at,id LIMIT 100) UPDATE users u SET updated_at=now() FROM pending p WHERE u.id=p.id RETURNING u.clerk_id`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var subjects []string
-	for rows.Next() {
-		var subject string
-		if err = rows.Scan(&subject); err != nil {
-			return nil, err
-		}
-		subjects = append(subjects, subject)
-	}
-	return subjects, rows.Err()
 }
 func (s *Store) Profile(ctx context.Context, id uuid.UUID) (Profile, error) {
 	var p Profile

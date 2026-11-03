@@ -115,7 +115,7 @@ test('workspace deletion remains admitted after the client stops polling', async
   const workspaces = await session.api.get('/v1/workspaces');
   expect((await workspaces.json()).items).not.toContainEqual(expect.objectContaining({ id: session.workspaceId }));
   expect((await session.api.get(`/v1/filesystems/${session.filesystemId}/nodes/${session.rootId}`)).status()).toBe(403);
-  await recordLifecycleHistories(identity.id, session.workspaceId);
+  await recordLifecycleHistories(identity.id, session.workspaceId, session.userId);
 });
 
 test('a terminated Workspace parent resumes cleanup while its filesystem child remains active', async ({ session }) => {
