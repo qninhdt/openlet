@@ -1,6 +1,6 @@
 # Openlet backend architecture
 
-Current architecture and implementation contract. The [research](../plans/reports/research-261029-1220-production-patterns.md) distinguishes upstream evidence from Openlet adaptations; the [foundation migration plan](../plans/261102-1059-go-grpc-filesystem-authorization/plan.md) records current delivery evidence.
+Current architecture and implementation contract. The [research](../plans/reports/research-261029-1220-production-patterns.md) distinguishes upstream evidence from Openlet adaptations; the [service refactor decision](../plans/261103-1348-service-refactor/tmp-refactor-decision.md) records the current service and shared-package boundaries.
 
 ## Outcome and scope
 
@@ -27,8 +27,9 @@ flowchart LR
     Client --> Envoy
     Envoy --> Account
     Envoy --> Workspace
-    Envoy -->|direct HTTP / public gRPC| letfs
-    Workspace -->|storage administration gRPC / Temporal| letfs
+    Envoy -->|HTTP| letfs
+    Workspace -->|storage administration gRPC| letfs
+    Account -->|initial workspace gRPC| Workspace
     Workspace -->|gRPC batch profiles / verified email| Account
     Account --> Clerk
     Account --> AccountDB[(Account DB)]
@@ -59,7 +60,7 @@ Only Envoy exposes the public API. Public routing must never expose `/internal/*
 
 Account profile and Workspace operations check explicit actions against SpiceDB with fully consistent reads. Canonical membership identifies scope and list candidates; it does not substitute for graph permission. Mutation admission checks the graph before taking SQL locks, then rechecks the observed business revision/lifecycle under lock. Lists bulk-check bounded candidates and advance past denied entries. LetFS checks storage actions at the operation boundary for both public HTTP and native gRPC, then validates lifecycle, revisions and initiating-actor constraints. Workspace has no file facade; LetFS has no reverse business dependency.
 
-Role/action definitions live in `packages/contracts/authz/schema.zed` and `roles.json`, initialized directly in SpiceDB. Owner Temporal work synchronizes relationships from business records. Role/ownership changes report normal success after graph synchronization; a post-commit timeout reports incomplete synchronization while durable work continues. A per-workspace Temporal Update workflow serializes authorization mutations and targeted graph writes across worker instances; retries reuse the existing SQL receipt. Stable role groups replace staged snapshots. Graph outages fail closed. Previously admitted requests and signed URLs retain their existing bounded lifetimes.
+Role/action definitions live in `packages/contracts/authz/schema.zed` and `roles.json`, initialized directly in SpiceDB. Contract generation derives Go and Python action/resource validation from the schema, so the two runtimes cannot maintain independent action lists. Owner Temporal work synchronizes relationships from business records. Role/ownership changes report normal success after graph synchronization; a post-commit timeout reports incomplete synchronization while durable work continues. A per-workspace Temporal Update workflow serializes authorization mutations and targeted graph writes across worker instances; retries reuse the existing SQL receipt. Stable role groups replace staged snapshots. Graph outages fail closed. Previously admitted requests and signed URLs retain their existing bounded lifetimes.
 
 ## Workspaces and collaboration
 
@@ -98,13 +99,51 @@ scripts/
 packages/
   contracts/         # Protobuf, generated HTTP references and authorization schema
   go/                # Shared Go infrastructure and generated Go bindings
-  python/            # Independent openlet-python wheel with generated RPC bindings
+  python/            # Independent wheel: generated openlet_api + handwritten openlet runtime
 docs/  plans/
 go.work  pyproject.toml  uv.lock
 package.json  pnpm-workspace.yaml  pnpm-lock.yaml  turbo.json
 ```
 
-Keep ecosystem filename conventions in Go and Python. HTTP handlers and activity adapters reuse application functions. Use explicit HTTP DTOs; no shared database models, generic repository framework, schema registry, custom gateway, sidecar or cross-language Temporal bridge.
+Each application has the following concrete boundaries (directories contain implementation, not forwarding layers):
+
+```text
+apps/account/
+  cmd/server/main.go
+  internal/{config,user,temporal,testfixture}/
+  internal/transport/{http,grpc}/
+  internal/clients/clerk/
+  migrations/
+apps/workspace/
+  cmd/server/main.go
+  internal/{config,workspace,temporal,testfixture}/
+  internal/transport/{http,grpc}/
+  migrations/
+apps/letfs/
+  cmd/server/
+  internal/{config,filesystem,temporal,testfixture}/
+  internal/transport/{http,grpc}/
+  internal/clients/{search,storage}/
+  migrations/
+apps/letfs-ingest/src/letfs_ingest/
+  worker.py  config.py
+  temporal/activities.py
+  processing/
+  parser/
+  clients/                     # model/search providers
+packages/go/
+  gen/  clients/{account,workspace,letfs}/
+  apperr/ authz/ config/ httpapi/ identity/ rpc/ telemetry/ temporal/ testfixture/
+packages/python/src/
+  openlet_api/                 # generated, replaced by codegen
+  openlet/                     # handwritten shared runtime
+    clients/                   # account.py, workspace.py, letfs.py
+    authz.py config.py errors.py httpapi.py identity.py rpc.py telemetry.py temporal.py
+```
+
+Feature packages own operations, authorization and SQL transactions. Their scheduler ports are implemented by `internal/temporal`; workflows coordinate, activities invoke business steps, and composition roots register workers and close resources. There is no `app` or `jobs` layer. HTTP uses explicit DTOs; protobuf and gRPC errors stay inside generated bindings, shared clients, gRPC adapters and composition roots. Shared clients are named for their destination and return native values; applications do not duplicate them. External-provider clients stay with the owning service.
+
+Go and Python shared packages expose equivalent infrastructure and client capabilities through idiomatic APIs. They share protocol/schema authority, not SQL models or business decisions. RPC authenticates service identity separately from an acting user. Delegation requires an explicit credential capability; resource owners still check permissions. Transport does not automatically retry ambiguous mutations. Shared Temporal helpers provide tracing/error conversion; workflows, queues and retry policy belong to the owner. Import-boundary tests protect this dependency direction.
 
 ## Infrastructure, configuration and operation
 

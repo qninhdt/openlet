@@ -1,6 +1,6 @@
 # Openlet backend documentation
 
-Status: Go filesystem, direct gRPC/HTTP APIs, shared Go/Python contracts and SpiceDB authorization are implemented. All required local gates passed in the completed migration plan; historical provider checks do not establish acceptance of this source.
+Public HTTP and private gRPC adapters share native business services. Go and Python packages provide reusable clients and infrastructure. The [current refactor record](../plans/261103-1348-service-refactor/tmp-refactor-decision.md) owns this round’s verification; historical checks do not establish acceptance of changed source.
 
 - [Architecture and scope](architecture.md): stack, ownership, identity, repository layout and operation.
 - [Setup and verification](setup.md): foundation configuration, local commands and test isolation.

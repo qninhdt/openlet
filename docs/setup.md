@@ -5,7 +5,7 @@ The backend services implement onboarding, collaboration, generic file operation
 ## Requirements
 
 - Docker with Compose, Make and Python 3.10+ for the existing development setup. API E2E requires Node.js 24, pnpm 12.9.1 and the Linux `flock` utility; install its locked dependencies with `pnpm install --frozen-lockfile`.
-- Go 1.27.3 for native verification and protobuf Go tools, plus `protoc` for contract generation. Go modules and tool versions are pinned in the workspace.
+- Go 1.27.3 for native verification and protobuf Go tools, plus `protoc` for contract generation. Go modules and tool versions are pinned in the workspace. Put the toolchain bin directory on `PATH` so both `go` and `gofmt` are available (for this environment: `export PATH=/usr/local/go/bin:$PATH`).
 - Native ingest checks need `uv` and Python 3.12 or 3.13; the worker image supplies its own locked Python environment.
 
 ## Configure and start
@@ -22,7 +22,7 @@ External issuer/JWKS URLs require HTTPS. The generator renders native Envoy, Tem
 
 Only Envoy binds a host port, `127.0.0.1:8080`. Application, database, Temporal and admin-tool ports stay private. External access requires the deployment's trusted HTTPS termination. Temporal's no-authorizer setting is confined to the private backend network; do not publish its port.
 
-Account uses Temporal for Workspace orchestration. Workspace calls Account gRPC at `ACCOUNT_RPC_ADDRESS` and LetFS storage administration at `LETFS_RPC_ADDRESS`; ingest also uses `LETFS_RPC_ADDRESS`. Native listeners use `RPC_LISTEN_ADDR` (default `:9090`). RPC requires TLS by default using `RPC_TLS_CERT_PATH` and `RPC_TLS_KEY_PATH`; Compose explicitly enables `ALLOW_PLAINTEXT_RPC=true` on its private backend network. Internal listeners are not published. Envoy exposes only public filesystem RPC methods and public HTTP; private storage administration and ingest remain inaccessible from ingress.
+Account calls Workspace gRPC at `WORKSPACE_RPC_ADDRESS` with `ACCOUNT_SERVICE_TOKEN`. Workspace calls Account gRPC at `ACCOUNT_RPC_ADDRESS` and letfs storage administration at `LETFS_RPC_ADDRESS` with its distinct `WORKSPACE_SERVICE_TOKEN`; ingest uses `LETFS_RPC_ADDRESS` and `INGEST_SERVICE_TOKEN`. Each secret also accepts `_FILE`. Owner-local Temporal Activities make these calls. Native listeners use `RPC_LISTEN_ADDR` (default `:9090`). RPC requires TLS by default using `RPC_TLS_CERT_PATH` and `RPC_TLS_KEY_PATH`; Compose explicitly enables `ALLOW_PLAINTEXT_RPC=true` on its private backend network. Internal listeners are not published. Envoy exposes public HTTP only. All native gRPC, including filesystem operations, storage administration and ingest, stays on the backend network.
 
 All Go services start their owner Temporal workers and check required dependencies during readiness. LetFS configuration is owned by [config.go](../apps/letfs/internal/config/config.go). Clients discover filesystem/root/bucket references through Workspace, then call LetFS directly; no Workspace filesystem proxy remains.
 
@@ -223,7 +223,7 @@ the controls' visible text is retained.
 `ARCHIVE_*` values in [.env.example](../.env.example) bound entries, source/output bytes, per-process concurrency and runtime. Letfs streams ZIP64 directly over HTTP with a 64 KiB pipe and no temporary ZIP object. Runtime defaults to 1200 seconds and is capped at 1800; only the direct archive gateway route have extended write/route deadlines. Other request timeouts remain bounded as before. Preserve provider incomplete-multipart abort rules for uploads and never age-expire `objects/`.
 
 ```sh
-go -C apps/letfs test -race -tags integration ./internal/filesystem ./internal/grpc -run Archive -count=1
+go -C apps/letfs test -race -tags integration ./internal/filesystem ./internal/transport/grpc -run Archive -count=1
 ```
 
 ## AI enrichment and search
@@ -241,5 +241,5 @@ docker compose -f infra/compose/dev.yaml exec -T letfs letfs --backfill-processi
 Pass `--after UUID` to resume. Rebuild skips currently running workflows and retains committed enrichment; rerun from the beginning after those workflows close. It marks index readiness pending. Vector-space reconciliation records old generation/space cleanup intent before adopting the new model/collection/dimension, and dispatches index-only work. Search immediately rejects old-space results; bounded maintenance deletes obsolete points without touching current ones. Qdrant may be recreated and rebuilt from authoritative source/artifact content. Filename search remains available during AI/index outages.
 
 ```sh
-go -C apps/letfs test -race -tags integration ./internal/filesystem ./internal/grpc -run Search -count=1
+go -C apps/letfs test -race -tags integration ./internal/filesystem ./internal/transport/grpc -run Search -count=1
 ```

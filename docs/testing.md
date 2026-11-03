@@ -8,7 +8,7 @@ Status: native service integration uses Testcontainers; system E2E/recovery uses
 |---|---|---|
 | Unit | No infrastructure | Validation, path/name logic, role rules, checked arithmetic, transfer protocol shapes |
 | Integration | One service and real relevant dependencies | SQL/transactions, HTTP contracts, storage and trust boundaries |
-| System E2E | Public HTTP/native gRPC through real Envoy/Compose stack | A small set of complete backend journeys |
+| System E2E | Public HTTP through real Envoy/Compose stack; native gRPC on private test listeners | A small set of complete backend journeys |
 
 Workflow decision/replay checks belong to their native unit or integration scope; they are not a fourth level. Security, concurrency, contract, recovery and efficiency are scenario categories, not extra frameworks. No arbitrary coverage percentages, test-count targets or unmotivated load/soak suite.
 
@@ -55,7 +55,7 @@ collaboration, byte/revision/quota contracts, uploads, partial copy, trash, ZIP,
 processing/search and worker recovery. Coordinated recovery calls the permanent
 operations CLI. The recovery project runs before the API project so adversarial
 upload cases cannot leave open capabilities that invalidate its backup precondition.
-Full-suite results and external-provider limits live in the [foundation migration acceptance record](../plans/261102-1059-go-grpc-filesystem-authorization/reports/acceptance.md). No old Go E2E source/history is retained as coverage.
+Current refactor checks and external-provider limits live in the [service refactor verification record](../plans/261103-1348-service-refactor/verification.md); the [foundation migration acceptance record](../plans/261102-1059-go-grpc-filesystem-authorization/reports/acceptance.md) preserves earlier delivery evidence. No old Go E2E source/history is retained as coverage.
 
 ```sh
 pnpm check:e2e
@@ -174,7 +174,7 @@ PRs run unit tests, compilation, lint and relevant integration/workflow checks. 
 
 ## AI search verification
 
-`go -C apps/letfs test -race -tags integration ./internal/filesystem ./internal/grpc` uses PostgreSQL and Qdrant v1.20.0 with controlled provider responses. It checks original-file grouping, current/readiness gating, foreign evidence rejection before rerank, filters/cursor binding, dependency failures, rerank degradation, trash/restore, replacement, rebuild cleanup/retry, purge and filesystem deletion. The new API suite must cover create/upload through the real Temporal/Python chain, filename search during failed/pending processing, current semantic results, and membership revocation before final acceptance. Paid model quality is evaluated separately with supplied credentials; test responses exercise API contracts and orchestration.
+`go -C apps/letfs test -race -tags integration ./internal/filesystem ./internal/transport/grpc` uses PostgreSQL and Qdrant v1.20.0 with controlled provider responses. It checks original-file grouping, current/readiness gating, foreign evidence rejection before rerank, filters/cursor binding, dependency failures, rerank degradation, trash/restore, replacement, rebuild cleanup/retry, purge and filesystem deletion. The new API suite must cover create/upload through the real Temporal/Python chain, filename search during failed/pending processing, current semantic results, and membership revocation before final acceptance. Paid model quality is evaluated separately with supplied credentials; test responses exercise API contracts and orchestration.
 
 The API journeys export fresh Account/Workspace lifecycle, Go filesystem/purge,
 copy continuation/partial failure and processing success/failure/restart histories

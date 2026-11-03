@@ -1,6 +1,6 @@
 # Durable execution
 
-Service-owned workflows use pinned Go/Python SDKs. File parsing, semantic enrichment and search indexing run as three whole-source Python activities scheduled by letfs. Implementation reports and the [completed plan](../plans/261031-1758-simplify-backend-refactor/plan.md) record verification evidence and remaining external release checks.
+Service-owned workflows use pinned Go/Python SDKs. File parsing, semantic enrichment and search indexing run as three whole-source Python activities scheduled by letfs. The [service refactor decision](../plans/261103-1348-service-refactor/tmp-refactor-decision.md) records the current boundaries and acceptance criteria.
 
 ## Ownership and communication
 
@@ -8,11 +8,11 @@ Service-owned workflows use pinned Go/Python SDKs. File parsing, semantic enrich
 |---|---|---|
 | Account | `apps/account/internal/temporal/` | `internal/user/` |
 | Workspace | `apps/workspace/internal/temporal/` | `internal/workspace/` |
-| letfs | `apps/letfs/internal/temporal/` | `internal/filesystem/`, `internal/storage/` |
+| letfs | `apps/letfs/internal/temporal/` | `internal/filesystem/`, `internal/clients/storage/` |
 
-Official Go SDK workers run inside the corresponding service. One private namespace per environment, explicit owner queues. Workflow code is deterministic and performs I/O only through activities. HTTP/activity adapters reuse application functions. No file bytes, credentials or growing traversal arrays in history.
+Official Go SDK workers run inside the corresponding service. One private namespace per environment, explicit owner queues. Workflow code is deterministic and performs I/O only through activities. HTTP and gRPC adapters reuse feature services. Activities invoke the same business steps. Shared Temporal helpers own trace/error conversion; they contain no workflows or business retry policy. No file bytes, credentials or growing traversal arrays in history.
 
-Account and Workspace submit commands with Temporal Update-With-Start before writing business rows. The admission Update waits for the first Activity result; losing the HTTP connection does not cancel accepted work. Temporal unavailability before acceptance returns 503 without a business mutation. Account awaits one Workspace child; Workspace schedules one grouped `CreateStorage` Activity on `openlet-letfs`. There are no Account/Workspace graph-scan or dispatch-reconciliation schedules. Workspace retains only a receipt-expiry schedule. letfs retains recovery for SQL intents committed by direct filesystem APIs.
+Account and Workspace submit commands with Temporal Update-With-Start before writing business rows. The admission Update waits for the first Activity result; losing the HTTP connection does not cancel accepted work. Temporal unavailability before acceptance returns 503 without a business mutation. Account executes a local Activity calling Workspace gRPC and polls durable initial-workspace admission. Workspace executes its own storage Activities through the shared letfs gRPC client. There are no Account/Workspace graph-scan or dispatch-reconciliation schedules. Workspace retains only a receipt-expiry schedule. letfs retains recovery for SQL intents committed by direct filesystem APIs.
 
 ## Catalogue
 
@@ -37,19 +37,19 @@ Direct operations: auth, profile and invitation mutations, path/stat/list, mkdir
 
 ### OnboardUser
 
-`OnboardUser` executes `EnsureUser` (unique Clerk subject plus self relationship), awaits `CreateWorkspace` on `openlet-workspace`, then executes `PublishClerkUserID` and `CompleteOnboarding`. The final Activity saves the initial workspace ID and activates the user together. The child receives the caller and creation key; Account does not create a Workspace through a separate admission Activity. Completed onboarding never recreates a later-deleted initial workspace.
+`OnboardUser` executes `EnsureUser` (unique Clerk subject plus self relationship), then its local `EnsureInitialWorkspace` Activity calls Workspace's authenticated gRPC admission. The workflow polls the same stable request until Workspace reports active, then executes `PublishClerkUserID` and `CompleteOnboarding`. The final Activity saves the initial workspace ID and activates the user together. Completed onboarding never recreates a later-deleted initial workspace. After 100 pending polls, Continue-As-New starts a fresh history and preserves the same request identity. Account does not reference Workspace workflow names, queues or Activity implementations.
 
 ### CreateWorkspace
 
-`PrepareWorkspace` checks limits, commits Workspace/Owner and the existing receipt, reserves stable bucket/filesystem IDs, and grants owner status access. `CreateStorage` on the letfs queue calls its existing naturally idempotent bucket/filesystem creation methods. `CompleteWorkspace` publishes storage inheritance while SQL still blocks membership/deletion, then saves the root and activates, releases letfs provisioning receipts through gRPC, and starts the creation receipt TTL. An already-active retry skips activation graph writes so it cannot re-enable a later deletion. There are no letfs business mappings or provision keys. Handled permanent failures mark provisioning failed; partial storage remains deletable by its owner.
+`PrepareWorkspace` checks limits, commits Workspace/Owner and the existing receipt, reserves stable bucket/filesystem IDs, and grants owner status access. The Workspace-local `CreateStorage` Activity calls letfs administration gRPC, which invokes naturally idempotent bucket/filesystem operations. `CompleteWorkspace` publishes storage inheritance while SQL still blocks membership/deletion, then saves the root and activates, releases letfs provisioning receipts through gRPC, and starts the 24-hour receipt TTL for ordinary creation. Initial-workspace receipts do not expire, so delayed Account recovery cannot create a second initial workspace. An already-active retry skips activation graph writes so it cannot re-enable a later deletion. There are no letfs business mappings or provision keys. Handled permanent failures mark provisioning failed; partial storage remains deletable by its owner.
 
-The workflow ID is `create-workspace/<actor>/<request-key>`. Concurrent admissions validate the same input in the Update handler. Existing receipts replay the same Workspace; changed input conflicts. Closed IDs allow a new execution so receipt expiry can release a key without depending on Temporal history retention. SQL uniqueness and the pinned receipt protect unfinished work.
+The workflow ID is `create-workspace/<actor>/<request-key>`. Concurrent admissions validate the same input in the Update handler. Existing receipts replay the same Workspace; changed input conflicts. Closed IDs allow a new execution so receipt expiry can release a key without depending on Temporal history retention. SQL uniqueness and the pinned receipt protect unfinished work. Initial creation reserves `actor_id == request_key`; public creation rejects that reserved key.
 
 ### DeleteWorkspace
 
 A serialized `WorkspacePermissions` Update executes `PrepareWorkspaceDeletion`: authorize the action, recheck lifecycle/revision under lock, commit deleting, then disable inherited storage access. Only then does it start the `DeleteWorkspace` child with ABANDON parent-close policy and return 202. Repeated DELETE uses the running child; a closed failed/terminated child can be restarted explicitly with the same resource identity.
 
-`DeleteWorkspace` freezes the bucket, enumerates filesystems with a bounded keyset cursor, awaits `DeleteFilesystem` children, completes the bucket, then executes `CompleteWorkspaceDeletion`. This final Activity commits the tombstone/removes nonowner memberships and deletes their graph tuples, retaining owner status access. Continue-As-New carries the remaining cursor; cancellation uses a disconnected scope. A recovery run uses distinct child execution IDs and skips already-deleted filesystems.
+`DeleteWorkspace` freezes the bucket, enumerates filesystems with a bounded keyset cursor, polls authenticated `DeleteFilesystem` gRPC admissions until letfs-owned cleanup completes, completes the bucket, then executes `CompleteWorkspaceDeletion`. This final Activity commits the tombstone/removes nonowner memberships and deletes their graph tuples, retaining owner status access. After 100 pending polls or completed filesystem steps, Continue-As-New carries the last completed cursor and resumes unfinished deletion; cancellation uses a disconnected scope. A recovery run reuses stable filesystem deletion identity and skips already-deleted filesystems.
 
 Temporal execution failures, timeouts and operator termination remain visible in Temporal history. Handled provisioning failures also update SQL lifecycle. Termination cannot execute failure handlers: inspect the execution and perform explicit deletion retry or operator recovery. No periodic reconciliation silently restarts terminal workflows.
 
