@@ -3,7 +3,7 @@
 package user
 
 import (
-	"openlet/apps/account/internal/testfixture"
+	"github.com/qninhdt/openlet/apps/account/internal/testfixture"
 	"sync"
 	"testing"
 

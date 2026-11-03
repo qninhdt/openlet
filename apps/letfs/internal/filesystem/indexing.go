@@ -5,8 +5,8 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/qninhdt/openlet/packages/go/rpc"
 	"google.golang.org/grpc/codes"
-	"openlet/packages/go/rpc"
 )
 
 type VectorSpace struct {

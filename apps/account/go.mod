@@ -1,4 +1,4 @@
-module openlet/apps/account
+module github.com/qninhdt/openlet/apps/account
 
 go 1.27.3
 
@@ -8,6 +8,7 @@ require (
 	github.com/gin-gonic/gin v1.12.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.8.0
+	github.com/qninhdt/openlet/packages/go v0.0.0
 	github.com/stretchr/testify v1.11.1
 	go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin v0.69.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.69.0
@@ -18,7 +19,6 @@ require (
 	go.temporal.io/sdk v1.50.0
 	go.temporal.io/sdk/contrib/opentelemetry v0.8.1
 	google.golang.org/grpc v1.83.2
-	openlet/packages/go v0.0.0
 )
 
 require (
@@ -130,4 +130,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace openlet/packages/go => ../../packages/go
+replace github.com/qninhdt/openlet/packages/go => ../../packages/go

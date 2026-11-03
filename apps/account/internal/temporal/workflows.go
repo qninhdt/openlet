@@ -7,13 +7,13 @@ import (
 
 	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/google/uuid"
+	"github.com/qninhdt/openlet/apps/account/internal/clerk"
+	"github.com/qninhdt/openlet/apps/account/internal/user"
 	"go.temporal.io/api/enums/v1"
 	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
-	"openlet/apps/account/internal/clerk"
-	"openlet/apps/account/internal/user"
 )
 
 const Queue = "openlet-account"

@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"openlet/apps/letfs/internal/storage"
+	"github.com/qninhdt/openlet/apps/letfs/internal/storage"
 )
 
 func (s *Store) expireUpload(ctx context.Context, fs, id uuid.UUID) error {

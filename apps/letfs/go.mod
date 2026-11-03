@@ -1,4 +1,4 @@
-module openlet/apps/letfs
+module github.com/qninhdt/openlet/apps/letfs
 
 go 1.27.3
 
@@ -11,6 +11,7 @@ require (
 	github.com/exaring/otelpgx v0.10.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.8.0
+	github.com/qninhdt/openlet/packages/go v0.0.0
 	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go v0.44.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.69.0
@@ -21,7 +22,6 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa
 	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.11
-	openlet/packages/go v0.0.0
 )
 
 require (
@@ -117,4 +117,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace openlet/packages/go => ../../packages/go
+replace github.com/qninhdt/openlet/packages/go => ../../packages/go

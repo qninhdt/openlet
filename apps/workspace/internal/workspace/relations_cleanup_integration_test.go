@@ -12,10 +12,10 @@ import (
 
 	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/google/uuid"
+	"github.com/qninhdt/openlet/packages/go/authz"
+	"github.com/qninhdt/openlet/packages/go/testfixture"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
-	"openlet/packages/go/authz"
-	"openlet/packages/go/testfixture"
 )
 
 type cleaningClient struct {

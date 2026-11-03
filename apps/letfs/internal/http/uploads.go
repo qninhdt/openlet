@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	letfsv1 "openlet/packages/go/gen/openlet_api/letfs/v1"
+	letfsv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/letfs/v1"
 )
 
 func (s *Server) createUpload(w http.ResponseWriter, r *http.Request) error {

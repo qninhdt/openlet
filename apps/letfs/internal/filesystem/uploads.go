@@ -9,10 +9,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/qninhdt/openlet/apps/letfs/internal/storage"
+	"github.com/qninhdt/openlet/packages/go/authz"
+	"github.com/qninhdt/openlet/packages/go/rpc"
 	"google.golang.org/grpc/codes"
-	"openlet/apps/letfs/internal/storage"
-	"openlet/packages/go/authz"
-	"openlet/packages/go/rpc"
 )
 
 type UploadDestination struct {

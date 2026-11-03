@@ -15,7 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"openlet/packages/go/authz"
+	"github.com/qninhdt/openlet/packages/go/authz"
 )
 
 type Fault struct{ Code string }

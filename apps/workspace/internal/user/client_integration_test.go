@@ -11,11 +11,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	accountv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/account/v1"
+	sharedrpc "github.com/qninhdt/openlet/packages/go/rpc"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	accountv1 "openlet/packages/go/gen/openlet_api/account/v1"
-	sharedrpc "openlet/packages/go/rpc"
 )
 
 type accountFixture struct {

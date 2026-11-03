@@ -8,14 +8,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/qninhdt/openlet/apps/letfs/internal/filesystem"
+	"github.com/qninhdt/openlet/apps/letfs/internal/testfixture"
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
 	sdktemporal "go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/worker"
-	"openlet/apps/letfs/internal/filesystem"
-	"openlet/apps/letfs/internal/testfixture"
 )
 
 func TestIntegrationProcessingQueuesRetriesFailuresAndReplay(t *testing.T) {

@@ -13,13 +13,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/qninhdt/openlet/apps/account/internal/clerk"
+	"github.com/qninhdt/openlet/apps/account/internal/config"
+	"github.com/qninhdt/openlet/apps/account/internal/user"
+	"github.com/qninhdt/openlet/packages/go/identity"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"go.opentelemetry.io/otel/propagation"
 	"go.temporal.io/sdk/client"
-	"openlet/apps/account/internal/clerk"
-	"openlet/apps/account/internal/config"
-	"openlet/apps/account/internal/user"
-	"openlet/packages/go/identity"
 )
 
 type Server struct {

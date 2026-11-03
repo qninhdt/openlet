@@ -5,10 +5,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/qninhdt/openlet/packages/go/authz"
+	"github.com/qninhdt/openlet/packages/go/identity"
+	"github.com/qninhdt/openlet/packages/go/rpc"
 	"google.golang.org/grpc/codes"
-	"openlet/packages/go/authz"
-	"openlet/packages/go/identity"
-	"openlet/packages/go/rpc"
 )
 
 func (s *Store) authorize(ctx context.Context, id uuid.UUID, kind string, action authz.Action) (uuid.UUID, error) {

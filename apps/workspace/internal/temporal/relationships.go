@@ -5,11 +5,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/qninhdt/openlet/apps/workspace/internal/workspace"
 	"go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
-	"openlet/apps/workspace/internal/workspace"
 )
 
 func SyncWorkspace(ctx workflow.Context, id uuid.UUID) error {

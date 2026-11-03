@@ -9,12 +9,12 @@ import (
 	"unicode"
 
 	"github.com/google/uuid"
+	"github.com/qninhdt/openlet/apps/letfs/internal/storage"
+	"github.com/qninhdt/openlet/packages/go/authz"
+	"github.com/qninhdt/openlet/packages/go/rpc"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"openlet/apps/letfs/internal/storage"
-	"openlet/packages/go/authz"
-	"openlet/packages/go/rpc"
 )
 
 func multipartEvidence(parts []storage.PartReceipt, expected int32) error {

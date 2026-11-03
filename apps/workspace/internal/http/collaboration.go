@@ -5,10 +5,10 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
-	worker "openlet/apps/workspace/internal/temporal"
-	"openlet/apps/workspace/internal/user"
-	"openlet/apps/workspace/internal/workspace"
-	"openlet/packages/go/authz"
+	worker "github.com/qninhdt/openlet/apps/workspace/internal/temporal"
+	"github.com/qninhdt/openlet/apps/workspace/internal/user"
+	"github.com/qninhdt/openlet/apps/workspace/internal/workspace"
+	"github.com/qninhdt/openlet/packages/go/authz"
 )
 
 func (s *Server) members(c *gin.Context) {

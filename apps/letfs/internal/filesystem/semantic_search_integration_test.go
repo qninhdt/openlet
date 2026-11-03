@@ -20,14 +20,14 @@ import (
 
 	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/google/uuid"
+	"github.com/qninhdt/openlet/apps/letfs/internal/search"
+	"github.com/qninhdt/openlet/apps/letfs/internal/testfixture"
+	"github.com/qninhdt/openlet/packages/go/authz"
+	"github.com/qninhdt/openlet/packages/go/identity"
+	sharedfixture "github.com/qninhdt/openlet/packages/go/testfixture"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"openlet/apps/letfs/internal/search"
-	"openlet/apps/letfs/internal/testfixture"
-	"openlet/packages/go/authz"
-	"openlet/packages/go/identity"
-	sharedfixture "openlet/packages/go/testfixture"
 )
 
 func TestIntegrationSemanticSearchWithOpenRouterSDKAndCurrentFacts(t *testing.T) {

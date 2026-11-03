@@ -12,9 +12,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	worker "openlet/apps/account/internal/temporal"
-	"openlet/apps/account/internal/user"
-	"openlet/packages/go/authz"
+	worker "github.com/qninhdt/openlet/apps/account/internal/temporal"
+	"github.com/qninhdt/openlet/apps/account/internal/user"
+	"github.com/qninhdt/openlet/packages/go/authz"
 )
 
 func decode(w http.ResponseWriter, r *http.Request, out any) error {

@@ -110,7 +110,7 @@ go -C apps/letfs test -race -tags integration ./internal/filesystem ./internal/g
 cargo test --locked --package letfs --test integration workspace_provisioning -- --ignored --test-threads=1
 ```
 
-The Phase 1 proof uses the actual target `openlet/apps/letfs` module, generic provisioning implementation, generated administration server and the single baseline SQL. Phase 4 extends this implementation; there is no separate prototype module or duplicate storage schema.
+The Phase 1 proof uses the actual target `github.com/qninhdt/openlet/apps/letfs` module, generic provisioning implementation, generated administration server and the single baseline SQL. Phase 4 extends this implementation; there is no separate prototype module or duplicate storage schema.
 
 Observed with fresh owned PostgreSQL fixtures:
 

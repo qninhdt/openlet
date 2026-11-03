@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/qninhdt/openlet/apps/letfs/internal/testfixture"
 	"github.com/stretchr/testify/require"
-	"openlet/apps/letfs/internal/testfixture"
 )
 
 func TestIntegrationSignedTransfersAndControl(t *testing.T) {

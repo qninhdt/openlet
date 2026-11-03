@@ -2,9 +2,9 @@ package http
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/qninhdt/openlet/apps/workspace/internal/config"
+	"github.com/qninhdt/openlet/packages/go/identity"
 	"net/http/httptest"
-	"openlet/apps/workspace/internal/config"
-	"openlet/packages/go/identity"
 	"strings"
 	"testing"
 

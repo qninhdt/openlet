@@ -19,12 +19,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/qninhdt/openlet/apps/letfs/internal/storage"
+	"github.com/qninhdt/openlet/apps/letfs/internal/testfixture"
+	"github.com/qninhdt/openlet/packages/go/authz"
+	"github.com/qninhdt/openlet/packages/go/identity"
+	sharedfixture "github.com/qninhdt/openlet/packages/go/testfixture"
 	"github.com/stretchr/testify/require"
-	"openlet/apps/letfs/internal/storage"
-	"openlet/apps/letfs/internal/testfixture"
-	"openlet/packages/go/authz"
-	"openlet/packages/go/identity"
-	sharedfixture "openlet/packages/go/testfixture"
 )
 
 func TestIntegrationCopyPublicationReconcilesRetriesAndRetainsPartialEffects(t *testing.T) {

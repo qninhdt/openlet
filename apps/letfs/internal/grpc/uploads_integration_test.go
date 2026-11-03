@@ -21,6 +21,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/qninhdt/openlet/apps/letfs/internal/filesystem"
+	"github.com/qninhdt/openlet/apps/letfs/internal/storage"
+	"github.com/qninhdt/openlet/apps/letfs/internal/testfixture"
+	"github.com/qninhdt/openlet/packages/go/authz"
+	letfsv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/letfs/v1"
+	"github.com/qninhdt/openlet/packages/go/identity"
+	"github.com/qninhdt/openlet/packages/go/rpc"
+	sharedfixture "github.com/qninhdt/openlet/packages/go/testfixture"
 	"github.com/stretchr/testify/require"
 	grpcgo "google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -28,14 +36,6 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
-	"openlet/apps/letfs/internal/filesystem"
-	"openlet/apps/letfs/internal/storage"
-	"openlet/apps/letfs/internal/testfixture"
-	"openlet/packages/go/authz"
-	letfsv1 "openlet/packages/go/gen/openlet_api/letfs/v1"
-	"openlet/packages/go/identity"
-	"openlet/packages/go/rpc"
-	sharedfixture "openlet/packages/go/testfixture"
 )
 
 func TestIntegrationUploadPublicationOverAuthenticatedRPC(t *testing.T) {

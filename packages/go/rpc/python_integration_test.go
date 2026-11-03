@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	letfsv1 "openlet/packages/go/gen/openlet_api/letfs/v1"
-	"openlet/packages/go/identity"
+	letfsv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/letfs/v1"
+	"github.com/qninhdt/openlet/packages/go/identity"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"

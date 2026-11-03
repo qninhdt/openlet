@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"strings"
 
+	letfsv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/letfs/v1"
+	"github.com/qninhdt/openlet/packages/go/rpc"
 	"google.golang.org/grpc/codes"
-	letfsv1 "openlet/packages/go/gen/openlet_api/letfs/v1"
-	"openlet/packages/go/rpc"
 )
 
 func singleRange(values []string, size int64) (start, end int64, partial bool, err error) {

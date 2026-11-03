@@ -9,9 +9,9 @@ import (
 
 	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	authzed "github.com/authzed/authzed-go/v1"
+	"github.com/qninhdt/openlet/packages/go/testfixture"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
-	"openlet/packages/go/testfixture"
 )
 
 func TestIntegrationRoleCapabilitiesAndInheritedFreshness(t *testing.T) {

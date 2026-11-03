@@ -278,7 +278,7 @@ const file_openlet_api_account_v1_account_proto_rawDesc = "" +
 	"\x06emails\x18\x01 \x03(\tR\x06emails2\x81\x02\n" +
 	"\x0eAccountService\x12u\n" +
 	"\x10GetUserSummaries\x12/.openlet_api.account.v1.GetUserSummariesRequest\x1a0.openlet_api.account.v1.GetUserSummariesResponse\x12x\n" +
-	"\x11GetVerifiedEmails\x120.openlet_api.account.v1.GetVerifiedEmailsRequest\x1a1.openlet_api.account.v1.GetVerifiedEmailsResponseB:Z8openlet/packages/go/gen/openlet_api/account/v1;accountv1b\x06proto3"
+	"\x11GetVerifiedEmails\x120.openlet_api.account.v1.GetVerifiedEmailsRequest\x1a1.openlet_api.account.v1.GetVerifiedEmailsResponseBMZKgithub.com/qninhdt/openlet/packages/go/gen/openlet_api/account/v1;accountv1b\x06proto3"
 
 var (
 	file_openlet_api_account_v1_account_proto_rawDescOnce sync.Once

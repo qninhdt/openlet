@@ -3,9 +3,9 @@ package http
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/qninhdt/openlet/apps/account/internal/config"
+	"github.com/qninhdt/openlet/packages/go/identity"
 	"net/http/httptest"
-	"openlet/apps/account/internal/config"
-	"openlet/packages/go/identity"
 	"strings"
 	"testing"
 )

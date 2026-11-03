@@ -19,6 +19,16 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/qninhdt/openlet/apps/letfs/internal/filesystem"
+	"github.com/qninhdt/openlet/apps/letfs/internal/search"
+	"github.com/qninhdt/openlet/apps/letfs/internal/storage"
+	fstemporal "github.com/qninhdt/openlet/apps/letfs/internal/temporal"
+	"github.com/qninhdt/openlet/apps/letfs/internal/testfixture"
+	"github.com/qninhdt/openlet/packages/go/authz"
+	letfsv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/letfs/v1"
+	"github.com/qninhdt/openlet/packages/go/identity"
+	"github.com/qninhdt/openlet/packages/go/rpc"
+	sharedfixture "github.com/qninhdt/openlet/packages/go/testfixture"
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/api/enums/v1"
 	historypb "go.temporal.io/api/history/v1"
@@ -31,16 +41,6 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
-	"openlet/apps/letfs/internal/filesystem"
-	"openlet/apps/letfs/internal/search"
-	"openlet/apps/letfs/internal/storage"
-	fstemporal "openlet/apps/letfs/internal/temporal"
-	"openlet/apps/letfs/internal/testfixture"
-	"openlet/packages/go/authz"
-	letfsv1 "openlet/packages/go/gen/openlet_api/letfs/v1"
-	"openlet/packages/go/identity"
-	"openlet/packages/go/rpc"
-	sharedfixture "openlet/packages/go/testfixture"
 )
 
 func TestIntegrationPythonActivitiesProcessEnrichIndexAndReplay(t *testing.T) {

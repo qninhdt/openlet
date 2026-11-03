@@ -8891,7 +8891,7 @@ const file_openlet_api_letfs_v1_letfs_proto_rawDesc = "" +
 	"\fFreezeBucket\x12).openlet_api.letfs.v1.FreezeBucketRequest\x1a*.openlet_api.letfs.v1.FreezeBucketResponse\x12\x80\x01\n" +
 	"\x15ListBucketFilesystems\x122.openlet_api.letfs.v1.ListBucketFilesystemsRequest\x1a3.openlet_api.letfs.v1.ListBucketFilesystemsResponse\x12\x83\x01\n" +
 	"\x16CompleteBucketDeletion\x123.openlet_api.letfs.v1.CompleteBucketDeletionRequest\x1a4.openlet_api.letfs.v1.CompleteBucketDeletionResponse\x12z\n" +
-	"\x13ReleaseProvisioning\x120.openlet_api.letfs.v1.ReleaseProvisioningRequest\x1a1.openlet_api.letfs.v1.ReleaseProvisioningResponseB6Z4openlet/packages/go/gen/openlet_api/letfs/v1;letfsv1b\x06proto3"
+	"\x13ReleaseProvisioning\x120.openlet_api.letfs.v1.ReleaseProvisioningRequest\x1a1.openlet_api.letfs.v1.ReleaseProvisioningResponseBIZGgithub.com/qninhdt/openlet/packages/go/gen/openlet_api/letfs/v1;letfsv1b\x06proto3"
 
 var (
 	file_openlet_api_letfs_v1_letfs_proto_rawDescOnce sync.Once

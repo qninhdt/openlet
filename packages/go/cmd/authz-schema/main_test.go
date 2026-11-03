@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"openlet/packages/go/authz"
+	"github.com/qninhdt/openlet/packages/go/authz"
 
 	"github.com/stretchr/testify/require"
 )

@@ -6,10 +6,10 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/qninhdt/openlet/packages/go/identity"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"openlet/packages/go/identity"
 )
 
 func TestProvisioningRequiresServiceBeforeStorage(t *testing.T) {

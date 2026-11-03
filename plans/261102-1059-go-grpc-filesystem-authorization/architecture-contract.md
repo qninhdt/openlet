@@ -53,7 +53,7 @@ Workspace owns its existing workspace-to-bucket/filesystem references and projec
 
 | Path to create | Contract |
 |---|---|
-| `packages/go/go.mod` | One shared module, `openlet/packages/go`; add to `go.work` and build/test discovery |
+| `packages/go/go.mod` | One shared module, `github.com/qninhdt/openlet/packages/go`; add to `go.work` and build/test discovery |
 | `packages/go/identity/` | Verified public/service principals and delegated actor/job context |
 | `packages/go/rpc/` | Authentication interceptors, deadlines, errors and trace propagation |
 | `packages/go/authz/` | Official SpiceDB client setup, typed actions/resources, consistency selection; no role evaluator |
@@ -64,7 +64,7 @@ Workspace owns its existing workspace-to-bucket/filesystem references and projec
 | `packages/python/package.json` | Thin `@openlet/python` Turbo tasks with explicit contracts dependency; Python dependencies remain managed by uv |
 | `packages/contracts/buf.yaml`, `packages/contracts/buf.gen.yaml` | Pinned standard code generation/lint configuration, finalized by Phase 1 proof |
 | `packages/contracts/authz/schema.zed`, `roles.json` | Version-controlled graph schema and built-in role/action policy; initialize/verify directly in SpiceDB |
-| `apps/letfs/go.mod`, `apps/letfs/cmd/server/` | Module `openlet/apps/letfs`, Go server/worker entry point matching existing app conventions |
+| `apps/letfs/go.mod`, `apps/letfs/cmd/server/` | Module `github.com/qninhdt/openlet/apps/letfs`, Go server/worker entry point matching existing app conventions |
 
 Python code generation always targets `packages/python/src/openlet_api/`, including before and after the ingest rename. Register `packages/python` in the root uv workspace; the current processor and later renamed ingest declare an `openlet-python` workspace dependency. Build a separate shared wheel with required protobuf/gRPC runtime dependencies. App wheels contain their own modules and depend on the shared distribution; they never vendor generated stubs or import another app. Wire actual package dependencies so Turbo orders contracts generation before shared Python checks/builds and consuming app tasks. Docker build contexts, workspace metadata, lockfiles and CI caches include the shared package. Prove wheel installation/imports outside the repository so editable imports and ambient `PYTHONPATH` cannot hide missing packaging.
 

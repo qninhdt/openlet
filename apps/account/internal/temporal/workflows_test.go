@@ -7,13 +7,13 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/qninhdt/openlet/apps/account/internal/user"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/workflow"
-	"openlet/apps/account/internal/user"
 )
 
 func registerWorkspace(env *testsuite.TestWorkflowEnvironment) {

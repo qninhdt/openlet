@@ -5,9 +5,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/qninhdt/openlet/packages/go/authz"
+	"github.com/qninhdt/openlet/packages/go/rpc"
 	"google.golang.org/grpc/codes"
-	"openlet/packages/go/authz"
-	"openlet/packages/go/rpc"
 )
 
 type TrashEntry struct {

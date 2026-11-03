@@ -12,7 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
-	"openlet/packages/go/authz"
+	"github.com/qninhdt/openlet/packages/go/authz"
 )
 
 type SearchFilters struct {

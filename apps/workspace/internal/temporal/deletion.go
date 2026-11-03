@@ -4,14 +4,14 @@ import (
 	"context"
 	"errors"
 	"github.com/google/uuid"
+	"github.com/qninhdt/openlet/apps/workspace/internal/letfs"
+	"github.com/qninhdt/openlet/apps/workspace/internal/workspace"
+	letfsv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/letfs/v1"
 	"go.temporal.io/api/enums/v1"
 	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
-	"openlet/apps/workspace/internal/letfs"
-	"openlet/apps/workspace/internal/workspace"
-	letfsv1 "openlet/packages/go/gen/openlet_api/letfs/v1"
 	"time"
 )
 

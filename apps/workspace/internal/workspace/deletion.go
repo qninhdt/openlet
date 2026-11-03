@@ -5,7 +5,7 @@ import (
 	"errors"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"openlet/packages/go/authz"
+	"github.com/qninhdt/openlet/packages/go/authz"
 )
 
 type DeleteInput struct {

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/qninhdt/openlet/packages/go/authz"
+	"github.com/qninhdt/openlet/packages/go/testfixture"
 	"github.com/stretchr/testify/require"
-	"openlet/packages/go/authz"
-	"openlet/packages/go/testfixture"
 )
 
 func TestIntegrationInitializerConfigurationAndFailures(t *testing.T) {

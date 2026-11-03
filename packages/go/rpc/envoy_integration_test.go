@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	letfsv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/letfs/v1"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -28,7 +29,6 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
-	letfsv1 "openlet/packages/go/gen/openlet_api/letfs/v1"
 )
 
 func TestIntegrationEnvoyPublicIdentityAndPrivateRPCIsolation(t *testing.T) {

@@ -12,11 +12,11 @@ import (
 
 	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/google/uuid"
+	"github.com/qninhdt/openlet/apps/account/internal/config"
+	"github.com/qninhdt/openlet/apps/account/internal/testfixture"
+	"github.com/qninhdt/openlet/apps/account/internal/user"
+	sharedfixture "github.com/qninhdt/openlet/packages/go/testfixture"
 	"github.com/stretchr/testify/require"
-	"openlet/apps/account/internal/config"
-	"openlet/apps/account/internal/testfixture"
-	"openlet/apps/account/internal/user"
-	sharedfixture "openlet/packages/go/testfixture"
 )
 
 func TestIntegrationProfileRequiresNativeSelfPermission(t *testing.T) {

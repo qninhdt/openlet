@@ -1,4 +1,4 @@
-module openlet/packages/go
+module github.com/qninhdt/openlet/packages/go
 
 go 1.27.3
 

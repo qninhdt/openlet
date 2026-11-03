@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	accountv1 "openlet/packages/go/gen/openlet_api/account/v1"
+	accountv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/account/v1"
 )
 
 type Client struct {

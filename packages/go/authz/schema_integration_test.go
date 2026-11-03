@@ -11,12 +11,12 @@ import (
 	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	authzed "github.com/authzed/authzed-go/v1"
 	"github.com/authzed/grpcutil"
+	"github.com/qninhdt/openlet/packages/go/testfixture"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
-	"openlet/packages/go/testfixture"
 )
 
 func TestIntegrationSchemaInitializationAndReadiness(t *testing.T) {

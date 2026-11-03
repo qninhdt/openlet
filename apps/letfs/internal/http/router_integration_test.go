@@ -13,13 +13,13 @@ import (
 
 	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/google/uuid"
+	"github.com/qninhdt/openlet/apps/letfs/internal/filesystem"
+	handlers "github.com/qninhdt/openlet/apps/letfs/internal/grpc"
+	"github.com/qninhdt/openlet/apps/letfs/internal/testfixture"
+	"github.com/qninhdt/openlet/packages/go/authz"
+	"github.com/qninhdt/openlet/packages/go/identity"
+	sharedfixture "github.com/qninhdt/openlet/packages/go/testfixture"
 	"github.com/stretchr/testify/require"
-	"openlet/apps/letfs/internal/filesystem"
-	handlers "openlet/apps/letfs/internal/grpc"
-	"openlet/apps/letfs/internal/testfixture"
-	"openlet/packages/go/authz"
-	"openlet/packages/go/identity"
-	sharedfixture "openlet/packages/go/testfixture"
 )
 
 func TestIntegrationDirectHTTPUsesFilesystemActionsAndExactBytes(t *testing.T) {

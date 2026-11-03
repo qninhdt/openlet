@@ -5,7 +5,7 @@ import (
 	"log/slog"
 
 	"github.com/google/uuid"
-	letfsv1 "openlet/packages/go/gen/openlet_api/letfs/v1"
+	letfsv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/letfs/v1"
 )
 
 func (s *Filesystem) dispatchPending(ctx context.Context, file uuid.UUID) {

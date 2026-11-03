@@ -4,13 +4,13 @@ package temporal
 
 import (
 	"github.com/google/uuid"
+	"github.com/qninhdt/openlet/apps/workspace/internal/workspace"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/workflow"
-	"openlet/apps/workspace/internal/workspace"
 	"testing"
 )
 

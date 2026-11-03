@@ -41,7 +41,7 @@ Create the isolated Go `letfs` application core and storage implementation with 
 
 ## Requirements
 
-- Module path is `openlet/apps/letfs`; use Go 1.27.3 and compatible versions already established by `go.work` and phase 2. Any new direct S3 dependency/version requires verification against installed types or current official documentation.
+- Module path is `github.com/qninhdt/openlet/apps/letfs`; use Go 1.27.3 and compatible versions already established by `go.work` and phase 2. Any new direct S3 dependency/version requires verification against installed types or current official documentation.
 - New application layout is `cmd/server` and `internal/{filesystem,storage,search,temporal,grpc,http,config,telemetry}`. Phase 4 owns `filesystem`, `storage`, the minimum `grpc/config/telemetry/cmd` composition needed for isolated tests, and no phase-5 behavior beyond interfaces.
 - Use caller-preallocated UUIDv7 storage IDs and idempotency receipts; remove provision keys and business-resource bindings. Preserve frozen/deleting/deleted fences, bounded keyset enumeration, root tombstones, and dev-reset semantics.
 - Preserve path/name/locator limits: 4096-byte paths, 255-byte segments, depth 128, at most 100 locators, 1-32 trusted mounts, exact segment matching, root-only canonical UUID alias, and expected identity guards.
@@ -55,7 +55,7 @@ Create the isolated Go `letfs` application core and storage implementation with 
 
 | Action | Absolute path | Current/New | Rough size | Test impact |
 |---|---|---|---:|---|
-| Extend | `/home/qninh/projects/openlet/apps/letfs/go.mod` | Actual `openlet/apps/letfs` module initialized by the Phase 1 provisioning proof | S | Native Go build/test and remaining dependencies |
+| Extend | `/home/qninh/projects/openlet/apps/letfs/go.mod` | Actual `github.com/qninhdt/openlet/apps/letfs` module initialized by the Phase 1 provisioning proof | S | Native Go build/test and remaining dependencies |
 | Modify | `/home/qninh/projects/openlet/go.work` | Current; phase 2 may already add `packages/go` | S | Workspace resolves `apps/letfs` |
 | Create | `/home/qninh/projects/openlet/apps/letfs/cmd/server/main.go` | New Go composition; Rust `src/main.rs` remains | M | Startup/config/readiness tests |
 | Create | `/home/qninh/projects/openlet/apps/letfs/internal/config/` | New; parity with `src/config.rs` | M | Config validation and secret-file tests |

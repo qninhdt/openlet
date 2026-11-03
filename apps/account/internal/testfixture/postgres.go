@@ -4,7 +4,7 @@ package testfixture
 
 import (
 	"github.com/jackc/pgx/v5/pgxpool"
-	sharedfixture "openlet/packages/go/testfixture"
+	sharedfixture "github.com/qninhdt/openlet/packages/go/testfixture"
 	"testing"
 )
 

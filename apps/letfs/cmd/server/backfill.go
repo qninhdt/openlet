@@ -6,7 +6,7 @@ import (
 	"io"
 
 	"github.com/google/uuid"
-	"openlet/apps/letfs/internal/temporal"
+	"github.com/qninhdt/openlet/apps/letfs/internal/temporal"
 )
 
 func backfillOptions(args []string) (*temporal.BackfillOptions, error) {

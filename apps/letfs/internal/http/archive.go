@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/qninhdt/openlet/apps/letfs/internal/filesystem"
+	"github.com/qninhdt/openlet/packages/go/rpc"
 	"google.golang.org/grpc/codes"
-	"openlet/apps/letfs/internal/filesystem"
-	"openlet/packages/go/rpc"
 )
 
 func writeArchive(w http.ResponseWriter, deadline time.Time, name string, source io.Reader) error {

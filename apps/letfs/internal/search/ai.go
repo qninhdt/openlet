@@ -11,9 +11,9 @@ import (
 	openrouter "github.com/OpenRouterTeam/go-sdk"
 	"github.com/OpenRouterTeam/go-sdk/models/operations"
 	"github.com/OpenRouterTeam/go-sdk/retry"
+	"github.com/qninhdt/openlet/packages/go/rpc"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"google.golang.org/grpc/codes"
-	"openlet/packages/go/rpc"
 )
 
 type AIConfig struct {

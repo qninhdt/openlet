@@ -7,8 +7,8 @@ import (
 
 	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/google/uuid"
+	"github.com/qninhdt/openlet/packages/go/authz"
 	"github.com/stretchr/testify/require"
-	"openlet/packages/go/authz"
 )
 
 // Grant uses the production schema without introducing owner facts into the letfs database.

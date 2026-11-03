@@ -15,14 +15,14 @@ import (
 	"testing"
 	"time"
 
+	letfsv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/letfs/v1"
+	"github.com/qninhdt/openlet/packages/go/identity"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
-	letfsv1 "openlet/packages/go/gen/openlet_api/letfs/v1"
-	"openlet/packages/go/identity"
 )
 
 const transportActor = "019a3b66-0000-7000-8000-000000000001"

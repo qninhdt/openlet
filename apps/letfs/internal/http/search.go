@@ -4,10 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/qninhdt/openlet/apps/letfs/internal/filesystem"
+	letfsv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/letfs/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	"openlet/apps/letfs/internal/filesystem"
-	letfsv1 "openlet/packages/go/gen/openlet_api/letfs/v1"
 )
 
 func searchFilters(value filesystem.SearchFilters) (*letfsv1.SearchFilters, error) {

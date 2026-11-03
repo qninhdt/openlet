@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"openlet/apps/letfs/internal/filesystem"
-	"openlet/apps/letfs/internal/search"
-	"openlet/apps/letfs/internal/storage"
-	sharedconfig "openlet/packages/go/config"
+	"github.com/qninhdt/openlet/apps/letfs/internal/filesystem"
+	"github.com/qninhdt/openlet/apps/letfs/internal/search"
+	"github.com/qninhdt/openlet/apps/letfs/internal/storage"
+	sharedconfig "github.com/qninhdt/openlet/packages/go/config"
 )
 
 type Config struct {

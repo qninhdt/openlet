@@ -3,12 +3,12 @@ package grpc
 import (
 	"context"
 
+	"github.com/qninhdt/openlet/apps/letfs/internal/filesystem"
+	"github.com/qninhdt/openlet/apps/letfs/internal/storage"
+	letfsv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/letfs/v1"
+	"github.com/qninhdt/openlet/packages/go/rpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	"openlet/apps/letfs/internal/filesystem"
-	"openlet/apps/letfs/internal/storage"
-	letfsv1 "openlet/packages/go/gen/openlet_api/letfs/v1"
-	"openlet/packages/go/rpc"
 )
 
 func signedUploadMessage(value storage.SignedUpload) *letfsv1.SignedUpload {

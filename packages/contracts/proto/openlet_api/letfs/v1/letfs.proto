@@ -4,7 +4,7 @@ package openlet_api.letfs.v1;
 import "google/api/annotations.proto";
 import "google/protobuf/timestamp.proto";
 
-option go_package = "openlet/packages/go/gen/openlet_api/letfs/v1;letfsv1";
+option go_package = "github.com/qninhdt/openlet/packages/go/gen/openlet_api/letfs/v1;letfsv1";
 
 service FilesystemService {
   rpc GetFilesystem(GetFilesystemRequest) returns (GetFilesystemResponse);

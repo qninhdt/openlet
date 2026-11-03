@@ -12,11 +12,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/qninhdt/openlet/apps/workspace/internal/config"
+	"github.com/qninhdt/openlet/apps/workspace/internal/workspace"
+	"github.com/qninhdt/openlet/packages/go/authz"
+	"github.com/qninhdt/openlet/packages/go/testfixture"
 	"github.com/stretchr/testify/require"
-	"openlet/apps/workspace/internal/config"
-	"openlet/apps/workspace/internal/workspace"
-	"openlet/packages/go/authz"
-	"openlet/packages/go/testfixture"
 )
 
 func TestIntegrationWorkspaceListScansDeniedCandidates(t *testing.T) {

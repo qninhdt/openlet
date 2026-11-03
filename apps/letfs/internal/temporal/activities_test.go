@@ -5,11 +5,11 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/qninhdt/openlet/packages/go/rpc"
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/sdk/temporal"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"openlet/packages/go/rpc"
 )
 
 func TestActivityErrorClassificationDoesNotLeakDependencyDetails(t *testing.T) {

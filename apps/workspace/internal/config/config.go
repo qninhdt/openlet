@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	sharedconfig "openlet/packages/go/config"
+	sharedconfig "github.com/qninhdt/openlet/packages/go/config"
 )
 
 type Config struct {

@@ -11,10 +11,10 @@ import (
 	"time"
 
 	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
+	"github.com/qninhdt/openlet/packages/go/authz"
+	"github.com/qninhdt/openlet/packages/go/config"
+	"github.com/qninhdt/openlet/packages/go/rpc"
 	"google.golang.org/grpc/status"
-	"openlet/packages/go/authz"
-	"openlet/packages/go/config"
-	"openlet/packages/go/rpc"
 )
 
 func main() {

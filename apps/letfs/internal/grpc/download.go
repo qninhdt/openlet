@@ -3,7 +3,7 @@ package grpc
 import (
 	"context"
 
-	letfsv1 "openlet/packages/go/gen/openlet_api/letfs/v1"
+	letfsv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/letfs/v1"
 )
 
 func (s *Filesystem) GetDownload(ctx context.Context, input *letfsv1.GetDownloadRequest) (*letfsv1.GetDownloadResponse, error) {

@@ -4,11 +4,11 @@ import (
 	"errors"
 	"io"
 
+	letfsv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/letfs/v1"
+	"github.com/qninhdt/openlet/packages/go/rpc"
 	grpcgo "google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	letfsv1 "openlet/packages/go/gen/openlet_api/letfs/v1"
-	"openlet/packages/go/rpc"
 )
 
 func (s *Filesystem) StreamArchive(input *letfsv1.StreamArchiveRequest, stream grpcgo.ServerStreamingServer[letfsv1.StreamArchiveResponse]) error {

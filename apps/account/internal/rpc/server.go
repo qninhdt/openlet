@@ -5,14 +5,14 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
+	"github.com/qninhdt/openlet/apps/account/internal/clerk"
+	"github.com/qninhdt/openlet/apps/account/internal/user"
+	accountv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/account/v1"
+	"github.com/qninhdt/openlet/packages/go/identity"
+	sharedrpc "github.com/qninhdt/openlet/packages/go/rpc"
 	"google.golang.org/grpc/codes"
 	healthv1 "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
-	"openlet/apps/account/internal/clerk"
-	"openlet/apps/account/internal/user"
-	accountv1 "openlet/packages/go/gen/openlet_api/account/v1"
-	"openlet/packages/go/identity"
-	sharedrpc "openlet/packages/go/rpc"
 )
 
 type Server struct {

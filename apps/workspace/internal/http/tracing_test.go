@@ -10,14 +10,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	accountv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/account/v1"
+	sharedrpc "github.com/qninhdt/openlet/packages/go/rpc"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc/metadata"
-	accountv1 "openlet/packages/go/gen/openlet_api/account/v1"
-	sharedrpc "openlet/packages/go/rpc"
 )
 
 type tracedAccount struct {

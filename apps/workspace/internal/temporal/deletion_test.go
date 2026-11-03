@@ -4,15 +4,15 @@ package temporal
 
 import (
 	"github.com/google/uuid"
+	"github.com/qninhdt/openlet/apps/workspace/internal/letfs"
+	"github.com/qninhdt/openlet/apps/workspace/internal/workspace"
+	letfsv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/letfs/v1"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/workflow"
-	"openlet/apps/workspace/internal/letfs"
-	"openlet/apps/workspace/internal/workspace"
-	letfsv1 "openlet/packages/go/gen/openlet_api/letfs/v1"
 	"slices"
 	"testing"
 )

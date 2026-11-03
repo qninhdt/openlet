@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"openlet/packages/go/authz"
+	"github.com/qninhdt/openlet/packages/go/authz"
 )
 
 func (s *Store) Authorize(ctx context.Context, ws, actor uuid.UUID, action authz.Action) (Workspace, error) {

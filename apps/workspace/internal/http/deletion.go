@@ -3,9 +3,9 @@ package http
 import (
 	"context"
 	"github.com/gin-gonic/gin"
+	worker "github.com/qninhdt/openlet/apps/workspace/internal/temporal"
+	"github.com/qninhdt/openlet/apps/workspace/internal/workspace"
 	"log/slog"
-	worker "openlet/apps/workspace/internal/temporal"
-	"openlet/apps/workspace/internal/workspace"
 	"time"
 )
 

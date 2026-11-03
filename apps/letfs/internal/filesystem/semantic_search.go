@@ -9,8 +9,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
-	"openlet/apps/letfs/internal/search"
-	"openlet/packages/go/authz"
+	"github.com/qninhdt/openlet/apps/letfs/internal/search"
+	"github.com/qninhdt/openlet/packages/go/authz"
 )
 
 func excerpt(text, query string, limit int) string {

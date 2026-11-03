@@ -11,9 +11,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/qninhdt/openlet/packages/go/authz"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"openlet/packages/go/authz"
 )
 
 func (g Generation) WorkflowID() string {

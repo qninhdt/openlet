@@ -8,13 +8,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/qninhdt/openlet/apps/letfs/internal/filesystem"
+	"github.com/qninhdt/openlet/apps/letfs/internal/testfixture"
+	"github.com/qninhdt/openlet/packages/go/identity"
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
-	"openlet/apps/letfs/internal/filesystem"
-	"openlet/apps/letfs/internal/testfixture"
-	"openlet/packages/go/identity"
 )
 
 func TestIntegrationMaintenanceRecoversDispatchAndReplays(t *testing.T) {

@@ -8,10 +8,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/qninhdt/openlet/packages/go/rpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
-	"openlet/packages/go/rpc"
 )
 
 const maxJSONBody = 8 * 1024 * 1024
