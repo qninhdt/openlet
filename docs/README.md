@@ -1,6 +1,6 @@
 # Openlet backend documentation
 
-Status: backend simplification is implemented and its local acceptance checks pass. The completed plan records verification and external-provider/remote CI limits; historical provider checks do not establish acceptance of the refactored source.
+Status: Go filesystem, direct gRPC/HTTP APIs, shared Go/Python contracts and SpiceDB authorization are implemented. All required local gates passed in the completed migration plan; historical provider checks do not establish acceptance of this source.
 
 - [Architecture and scope](architecture.md): stack, ownership, identity, repository layout and operation.
 - [Setup and verification](setup.md): foundation configuration, local commands and test isolation.
@@ -12,6 +12,7 @@ Status: backend simplification is implemented and its local acceptance checks pa
 - [Testing](testing.md): native unit/integration and Playwright API E2E, with concrete correctness gates.
 - [Production-pattern research](../plans/reports/research-261029-1220-production-patterns.md): upstream evidence versus Openlet adaptations.
 - [File-operation retry research](../plans/reports/research-261029-1344-file-operation-retries.md): conditional/state recovery versus stored response replay.
-- [Completed implementation plan](../plans/261031-1758-simplify-backend-refactor/plan.md): API E2E rewrite, schema and lifecycle simplification, Gin/OpenTelemetry, processing and final acceptance evidence.
+- [Completed foundation migration](../plans/261102-1059-go-grpc-filesystem-authorization/plan.md): Go letfs, shared contracts, SpiceDB, direct filesystem access and recovery acceptance.
+- [Previous implementation plan](../plans/261031-1758-simplify-backend-refactor/plan.md): API E2E rewrite, schema and lifecycle simplification, Gin/OpenTelemetry, processing and final acceptance evidence.
 
 These documents supersede the discarded plan's specifications. Historical research/journals retain context, not current architecture authority. Redis, shared content/refcounts, source snapshots/epochs, custom gateway/leases and SDK experiments are not MVP requirements.

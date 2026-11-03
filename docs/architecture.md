@@ -1,12 +1,12 @@
 # Openlet backend architecture
 
-Current architecture and implementation contract. The [research](../plans/reports/research-261029-1220-production-patterns.md) distinguishes upstream evidence from Openlet adaptations; the [refactor plan](../plans/261031-1758-simplify-backend-refactor/plan.md) records delivery evidence.
+Current architecture and implementation contract. The [research](../plans/reports/research-261029-1220-production-patterns.md) distinguishes upstream evidence from Openlet adaptations; the [foundation migration plan](../plans/261102-1059-go-grpc-filesystem-authorization/plan.md) records current delivery evidence.
 
 ## Outcome and scope
 
 Deliver a backend cloud drive with onboarding, profiles, collaborative workspaces, generic filesystems, ID/path access, editable text, object uploads/downloads, copy/move, trash/restore/purge and workspace storage quota. Preserve data and accounting across concurrent requests, retries and worker restarts.
 
-Use Go/Gin for Account and Workspace, Rust/Axum for letfs, Clerk, Envoy, PostgreSQL, Temporal and Docker Compose. UUIDv7 is the default entity ID; copy destinations derive stable UUIDs from copy/source identity. Invitation/service secrets use cryptographic randomness, independently of entity IDs.
+Use Go/Gin for Account and Workspace, Go HTTP/gRPC for letfs, Python for letfs-ingest, Clerk, Envoy, PostgreSQL, SpiceDB, Temporal and Docker Compose. UUIDv7 is the default entity ID; copy destinations derive stable UUIDs from copy/source identity. Invitation/service secrets use cryptographic randomness, independently of entity IDs.
 
 Excluded: frontend, billing/Stripe, agent runtime, public sharing, user-visible revision history, cross-filesystem copy/move, automatic invitation email and automatic age-based trash purge. Document processing belongs to letfs and uses one Python application with separate CPU and I/O Activity workers. No Redis or profile cache is required.
 
@@ -16,26 +16,31 @@ Excluded: frontend, billing/Stripe, agent runtime, public sharing, user-visible 
 |---|---|
 | Envoy, configuration only | Native JWT verification/JWKS caching, trusted identity forwarding, routing, request limits and basic configurable local rate limiting (per Envoy instance, not a global distributed quota) |
 | Account, Go/Gin | Internal account, Clerk mapping, profile, onboarding and backend-owned Clerk user-ID publication |
-| Workspace, Go/Gin | Workspace lifecycle, memberships, manual invitations, authorization, public file facade and workspace-to-storage mapping |
-| letfs, Rust/Axum | Generic quota buckets, filesystems, tree/path/mount semantics, file data, accounting, trash and storage lifecycle |
+| Workspace, Go/Gin | Workspace lifecycle, memberships, manual invitations, storage references and their derived authorization relationships |
+| letfs, Go HTTP/gRPC | Generic quota buckets, filesystems, tree/path/mount semantics, file data, accounting, trash and storage lifecycle |
 | Temporal | Durable execution of service-owned workflows; not data authority or a distributed transaction |
 
-One PostgreSQL instance hosts separate Account, Workspace, letfs and Temporal persistence/visibility databases, with separate credentials. No cross-service SQL/FKs. An opaque letfs quota bucket is an accounting record, not a physical S3 bucket. Many filesystems can share it. Workspace maps its storage to one bucket and initially one drive filesystem.
+One PostgreSQL instance hosts separate Account, Workspace, letfs and Temporal persistence/visibility databases, with separate credentials. SpiceDB uses its own database/user. Application PostgreSQL owns identities, memberships, assigned roles and storage references; SpiceDB holds derived relationships and repository-defined role capabilities. No cross-service SQL/FKs. An opaque letfs quota bucket is an accounting record, not a physical S3 bucket. Many filesystems can share it. Workspace maps its storage to one bucket and initially one drive filesystem.
 
 ```mermaid
 flowchart LR
     Client --> Envoy
     Envoy --> Account
     Envoy --> Workspace
-    Workspace -->|internal HTTP| letfs
-    Workspace -->|batch profiles / verified email| Account
+    Envoy -->|direct HTTP / public gRPC| letfs
+    Workspace -->|storage administration gRPC / Temporal| letfs
+    Workspace -->|gRPC batch profiles / verified email| Account
     Account --> Clerk
     Account --> AccountDB[(Account DB)]
     Workspace --> WorkspaceDB[(Workspace DB)]
+    Account -->|self-resource actions| SpiceDB
+    Workspace -->|workspace / storage actions| SpiceDB
+    letfs -->|filesystem / bucket actions| SpiceDB
+    SpiceDB --> GraphDB[(SpiceDB DB)]
     letfs --> LetfsDB[(letfs DB)]
     letfs --> S3
     Client <-->|direct signed object bytes| S3
-    Processor[Python CPU / IO workers] <-->|scoped metadata and bounded inline| letfs
+    Processor[letfs-ingest CPU / IO workers] <-->|generation-scoped gRPC| letfs
     Processor <-->|direct signed object bytes| S3
     Processor <--> Temporal
     Account <--> Temporal
@@ -50,9 +55,11 @@ First login uses a verified Clerk subject to onboard. Account ensures an interna
 
 Envoy uses its native JWT filter with Clerk JWKS. Verify signature, issuer, expiry and configured audience/authorized-party constraints. Strip incoming trusted identity and internal credential headers before setting authenticated values. Tokens without an internal ID may access only caller-scoped onboarding routes; ordinary routes require the internal claim. Services validate required identity shape but do not repeat JWT cryptography or query Clerk-to-UUID mapping per request.
 
-Only Envoy exposes the public API. Public routing must never expose `/internal/*`. Protect internal HTTP with per-caller random service credentials and route allowlists; do not treat network placement or a user-ID header alone as authentication. Mount credentials as secrets, exclude them from logs and use encrypted transport when crossing an untrusted network. Restrict Temporal/admin endpoints to the trusted backend control plane; queues are not authorization boundaries.
+Only Envoy exposes the public API. Public routing must never expose `/internal/*`. Protect internal gRPC with per-caller random service credentials and method allowlists; do not treat network placement or a user-ID header alone as authentication. Mount credentials as secrets, exclude them from logs and use encrypted transport when crossing an untrusted network. Restrict Temporal/admin endpoints to the trusted backend control plane; queues are not authorization boundaries.
 
-Workspace checks current membership, role and active state for every public workspace request. letfs validates caller identity, allowed filesystem scope, lifecycle and revisions, but has no Clerk/workspace/role logic. Revocation blocks subsequent admissions; a previously authorized request can complete while membership changes. This is not instantaneous revocation of an in-flight request.
+Account profile and Workspace operations check explicit actions against SpiceDB with fully consistent reads. Canonical membership identifies scope and list candidates; it does not substitute for graph permission. Mutation admission checks the graph before taking SQL locks, then rechecks the observed business revision/lifecycle under lock. Lists bulk-check bounded candidates and advance past denied entries. LetFS checks storage actions at the operation boundary for both public HTTP and native gRPC, then validates lifecycle, revisions and initiating-actor constraints. Workspace has no file facade; LetFS has no reverse business dependency.
+
+Role/action definitions live in `packages/contracts/authz/schema.zed` and `roles.json`, initialized directly in SpiceDB. Owner Temporal work synchronizes relationships from business records. Role/ownership changes report normal success after graph synchronization; a post-commit timeout reports incomplete synchronization while durable work continues. Native relationship preconditions fence older delayed publications. Graph outages fail closed. Previously admitted requests and signed URLs retain their existing bounded lifetimes.
 
 ## Workspaces and collaboration
 
@@ -62,11 +69,11 @@ Invitation links are email-bound, expiring, manually shared and stored as hashes
 
 ## Storage and consistency
 
-The canonical tree is an adjacency list with stable node IDs and indexed parent/name lookup. Resolve a path with one recursive SQL statement. Mount context exposes authorized filesystem roots only; the public client cannot choose arbitrary filesystem IDs or mount tables. Materialized paths, hardlinks, symlinks and FUSE are unnecessary now.
+The canonical tree is an adjacency list with stable node IDs and indexed parent/name lookup. Resolve a path with one recursive SQL statement. Each request names its filesystem and must pass its action check. Native callers supply bounded mount descriptors; HTTP callers choose a `mount_path` label (default `/`) for the requested filesystem. Labels grant no access and letfs never looks up business mounts. Materialized paths, hardlinks, symlinks and FUSE are unnecessary now.
 
 Each file owns exactly one data row: caller-selected bounded inline bytes or an independent immutable S3-compatible object. Inline may be binary; text editing separately validates strings. Object upload/download bytes travel directly between caller and storage. Copy creates independent bytes/objects. S3 provider/endpoints are configurable; external endpoints require TLS verification, private objects and least-privilege credentials; plaintext is limited to explicit local development/test profiles.
 
-A file may also contain generated read-only children through the same parent edges: `/drive/report.pdf/artifacts/1-intro.md`. The source retains its original payload and own byte size. Batched resolution derives strict file-ancestor provenance for both paths and IDs. Root-relative `@<uuid>` aliases remain filesystem-scoped. Replacing source bytes detaches old children for existing maintenance; their usage remains charged until removal. A Rust workflow schedules parsing, enrichment and indexing on separate CPU/I/O queues. Shared uploads prove byte transfer before atomic artifact publication. README files own directory semantics; generation fences guard publication and index readiness. Python uses scoped letfs APIs and direct storage URLs, without database or S3 credentials.
+A file may also contain generated read-only children through the same parent edges: `/drive/report.pdf/1-intro.md`. The source retains its original payload and own byte size. Batched resolution derives strict file-ancestor provenance for both paths and IDs. Root-relative `@<uuid>` aliases remain filesystem-scoped. Replacing source bytes detaches old children for existing maintenance; their usage remains charged until removal. A Go workflow schedules parsing, enrichment and indexing on separate CPU/I/O queues. Shared uploads prove byte transfer before atomic artifact publication. README files own directory semantics; generation fences guard publication and index readiness. Python uses scoped letfs APIs and direct storage URLs, without database or S3 credentials.
 
 Quota is a commit-time hard logical byte limit. Metadata publication and byte delta commit together in letfs PostgreSQL. Trash counts; purge frees usage. No reservations, soft cap or grace allowance. Transfer can finish before quota rejection. Physical staging/cleanup bytes are separate from logical usage.
 
@@ -78,8 +85,8 @@ Use short filesystem-row locks for mutations and bucket-before-filesystem order 
 apps/
   account/           # Go module, Dockerfile, native tests and migrations
   workspace/         # Go module, Dockerfile, native tests and migrations
-  letfs/             # Rust workspace member, Dockerfile and migrations
-  letfs-processing/  # uv workspace member, parser/worker and Dockerfile
+  letfs/             # Go module, HTTP/gRPC, native tests and migrations
+  letfs-ingest/      # uv workspace member, parser/worker and Dockerfile
 e2e/                 # Fresh Playwright API suite and owned fixtures
 infra/
   compose/           # dev.yaml, e2e.yaml
@@ -88,12 +95,16 @@ infra/
 scripts/
   bootstrap/         # Private configuration generation
   operations/        # Coordinated backup, isolated restore, explicit resume
-contracts/  docs/  plans/
-go.work  Cargo.toml  Cargo.lock  pyproject.toml  uv.lock
+packages/
+  contracts/         # Protobuf, generated HTTP references and authorization schema
+  go/                # Shared Go infrastructure and generated Go bindings
+  python/            # Independent openlet-python wheel with generated RPC bindings
+docs/  plans/
+go.work  pyproject.toml  uv.lock
 package.json  pnpm-workspace.yaml  pnpm-lock.yaml  turbo.json
 ```
 
-Keep ecosystem filename conventions in Go/Rust. HTTP handlers and activity adapters reuse application functions. Use explicit HTTP DTOs; no shared database models, generic repository framework, schema registry, custom gateway, sidecar or cross-language Temporal bridge.
+Keep ecosystem filename conventions in Go and Python. HTTP handlers and activity adapters reuse application functions. Use explicit HTTP DTOs; no shared database models, generic repository framework, schema registry, custom gateway, sidecar or cross-language Temporal bridge.
 
 ## Infrastructure, configuration and operation
 
@@ -103,11 +114,19 @@ Dependencies and images are pinned. Configure inline/file/body limits, path dept
 
 Object bytes transfer directly between the caller and private S3/R2 using signed URLs; Workspace/letfs carry authorization, metadata and bounded inline bytes. Safe attachment headers are the default. Use liveness/readiness checks, graceful shutdown and logs containing request/operation/resource IDs, with secrets/file bodies excluded. Expose lock waits, quota failures, workflow errors and cleanup backlog through ordinary logs/metrics; do not add an observability platform dependency.
 
-Go HTTP uses Gin with native OpenTelemetry middleware; Rust keeps Axum and Python
-keeps Activity workers. Each app owns its providers and bounded shutdown. SDK-native
+Account/Workspace use Gin and letfs uses Go HTTP/gRPC with native OpenTelemetry middleware. Python runs Activity workers. Each app owns its providers and bounded shutdown. SDK-native
 Temporal tracing carries W3C trace context across languages without baggage or
 business-payload trace fields. JSON stdout logs correlate active spans; optional
 OTLP configuration and supported sampler settings are documented in [setup](setup.md#opentelemetry).
+
+Account and Workspace use `packages/go/config` for file-backed configuration loading,
+`packages/go/identity` for verified HTTP gateway principals and `packages/go/telemetry`
+for provider initialization; validation and shutdown ownership stay in each application.
+Only Account's GET/PUT onboarding admits a subject-only principal; ordinary routes require
+an internal user ID. Shared gRPC transport and authorization-schema readiness are
+implemented and tested under `packages/go`. Development Compose now includes native
+SpiceDB migration, health and schema initialization with its own PostgreSQL database.
+All application RPC uses generated gRPC contracts; public HTTP remains at Envoy. Client file requests go directly to letfs. Workspace returns stable filesystem/root/bucket references and owns their lifecycle and graph inheritance. letfs checks actions against storage resources without calling business owners or writing relationships. The [migration plan](../plans/261102-1059-go-grpc-filesystem-authorization/plan.md) tracks final removal and recovery acceptance.
 
 Backups must retain a consistent metadata/object recovery point. For MVP use a documented maintenance window: reject ALL mutating public/internal HTTP (including direct text/move/finalize/trash/purge, not only workflow starts), pause schedules, drain requests/transactions/activities and storage writes, then stop service workers and Temporal Server writers. Verify no writers remain, dump application/Temporal DBs and preserve matching immutable objects before resuming. Test a restore to an isolated stack. Before phase-6 acceptance select and document the deployment provider's exact versioned-copy/snapshot or guarded-copy procedure and restore commands. A DB dump or generic untested shell script is insufficient. No routine `down -v` rollback or destructive production tests.
 

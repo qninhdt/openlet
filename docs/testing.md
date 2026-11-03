@@ -8,11 +8,16 @@ Status: native service integration uses Testcontainers; system E2E/recovery uses
 |---|---|---|
 | Unit | No infrastructure | Validation, path/name logic, role rules, checked arithmetic, transfer protocol shapes |
 | Integration | One service and real relevant dependencies | SQL/transactions, HTTP contracts, storage and trust boundaries |
-| System E2E | Public HTTP through real Envoy/Compose stack | A small set of complete backend journeys |
+| System E2E | Public HTTP/native gRPC through real Envoy/Compose stack | A small set of complete backend journeys |
 
 Workflow decision/replay checks belong to their native unit or integration scope; they are not a fourth level. Security, concurrency, contract, recovery and efficiency are scenario categories, not extra frameworks. No arbitrary coverage percentages, test-count targets or unmotivated load/soak suite.
 
 ## Required checks
+
+CI runs native build, check, unit, workflow and integration targets in one Turbo
+graph with concurrency 1, so shared build prerequisites run once. The contracts
+`check` target verifies committed generated code; compiling it does not regenerate
+it. Script lint and tests run once separately, followed by native history replay.
 
 | Risk | Lowest reliable proof |
 |---|---|
@@ -38,11 +43,11 @@ Clerk error handling uses controlled HTTP responses. A separate development-inst
 
 S3 tests use a dedicated compatible server and bucket. Before release verify the selected provider's actual put/copy/range/delete/version behavior, valid TLS, rejected anonymous reads and object-only credential permissions; local-emulator success is not universal compatibility. Real restart tests use PostgreSQL-backed Temporal.
 
-Check public/internal OpenAPI against handlers and explicit Go/Rust DTOs: UUIDs, decimal counters/revisions, optional/null values, timestamps, errors and ETags. No schema registry or custom test framework.
+Check public HTTP OpenAPI and generated protobuf contracts against handlers and explicit Go/Python DTOs: UUIDs, decimal counters/revisions, optional/null values, timestamps, errors and ETags. No schema registry or custom test framework.
 
 ## Workflow and system coverage
 
-SDK tests cover branches, retry classifications, timers and replay. Real Temporal tests cover worker/server restart, commit followed by response loss, checkpoint continuation and retained partial-copy results. SDK activity mocks do not prove storage recovery. File bytes stay out of history.
+SDK tests cover branches, retry classifications, timers and replay. Real Temporal tests cover worker/server restart, commit followed by response loss, checkpoint continuation and retained partial-copy results. SDK activity mocks do not prove storage recovery. File bytes stay out of history. API journeys capture fresh `SyncWorkspace`, `ReconcileAccounts` and `ReconcileWorkspaces` histories alongside onboarding and storage workflows for native replay.
 
 The new Playwright API suite under `e2e/` was authored from scratch before
 business refactoring. It covers gateway boundaries and target onboarding,
@@ -50,8 +55,7 @@ collaboration, byte/revision/quota contracts, uploads, partial copy, trash, ZIP,
 processing/search and worker recovery. Coordinated recovery calls the permanent
 operations CLI. The recovery project runs before the API project so adversarial
 upload cases cannot leave open capabilities that invalidate its backup precondition.
-Full-suite results and external-provider limits live in the completed plan's validation
-record. No old Go E2E source/history is retained as coverage.
+Full-suite results and external-provider limits live in the [foundation migration acceptance record](../plans/261102-1059-go-grpc-filesystem-authorization/reports/acceptance.md). No old Go E2E source/history is retained as coverage.
 
 ```sh
 pnpm check:e2e
@@ -67,6 +71,20 @@ The runner collects redacted service logs before deleting only its own resources
 No browser suite or browser CORS claim exists until frontend integration.
 
 ## Environment and recovery checks
+
+The focused development graph check uses the actual bootstrap generator and Compose
+PostgreSQL/SpiceDB services with disposable resources and no published service ports:
+
+```sh
+uv run --locked --package letfs-ingest pytest scripts/bootstrap -q
+```
+
+It checks dedicated database ownership, native datastore migration and gRPC health,
+schema initialization/check/repeated initialization, rejection of an incorrect schema
+credential, a failed migration keeping the graph server stopped, and cleanup after canceling graph readiness. It removes its
+own containers/volumes in `finally`; diagnostics
+redact generated fixture credentials. CI runs this check separately from API E2E.
+API E2E starts the real graph, includes it in coordinated recovery and rebuilds relationships through canonical owners before reopening API admission. The recovery test waits for Account and filesystem routes before handing the source stack to the next project. It erases the isolated graph, interrupts rebuilding between canonical owners, and repeats the rebuild before checking retained owner access, revoked membership, deleted resources, exact inline/object bytes and current semantic search.
 
 `node --test --test-concurrency=1 e2e/setup/environment.test.ts e2e/setup/recovery.test.ts`
 checks owner-safe lifecycle and the permanent operations CLI with real infrastructure.
@@ -89,16 +107,47 @@ NOT RUN; the default local suite does not load provider credentials. The native
 
 ## Placement and execution
 
-Go: standard `testing`/`httptest` near packages, with app-owned PostgreSQL
-Testcontainers fixtures behind the `integration` tag. Rust storage integration is
-`apps/letfs/tests/integration.rs`; `tests/telemetry.rs` runs a real Temporal server
-and proves trace continuity across Continue-As-New, then replays both runs without
-exporting duplicate spans. Each uses fresh containers and the app's single
-baseline SQL; no shared module or migration shell script remains. Turbo invokes
-native commands from minimal app package manifests; native commands work alone.
-Integration tasks run sequentially across apps and Rust cases to bound resources.
-The letfs S3 fixture uses a 256 MiB tmpfs. Docker absence fails a requested run;
-no test implicitly loads development/provider credentials.
+Shared Go infrastructure lives in `packages/go`. Its default tests exercise real local
+gRPC connections, TLS verification, authentication, message bounds, deadlines,
+cancellation and trace propagation without Docker. Integration-tagged tests exercise
+PostgreSQL-backed SpiceDB schema readiness/projection and Envoy. Run
+`go -C packages/go test ./...` and `go -C packages/go test -tags integration ./... -count=1`.
+Generated Go/Python drift is checked with `pnpm contracts:check`; the Python wheel
+consumer tests run through `pnpm --filter @openlet/python test:integration`.
+
+Go uses standard `testing`/`httptest` near packages, with app-owned Testcontainers fixtures behind the `integration` tag. Each fixture owns disposable dependencies and applies the app's baseline SQL. Turbo invokes native commands from minimal package manifests; integration tasks run sequentially across apps to bound resources. LetFS fixtures build the pinned MinIO source image from `infra/minio/Dockerfile`. Docker absence fails a requested run; tests never load development/provider credentials.
+
+```sh
+pnpm --filter @openlet/letfs check
+pnpm --filter @openlet/letfs build
+pnpm --filter @openlet/letfs test
+pnpm --filter @openlet/letfs test:workflow
+pnpm --filter @openlet/letfs test:integration
+```
+
+The integration command enables the race detector and tests actual authenticated
+gRPC composition, PostgreSQL, SpiceDB, MinIO, Qdrant and disposable Temporal servers.
+Copy recovery deliberately loses an activity acknowledgment after the database
+commit, replaces the worker, crosses Continue-As-New, checks exact accounting,
+and replays each Go-created run. Purge/delete checks include cancellation after
+admission. Generic provisioning uses shared protobuf payloads and checks creator
+scope; processing workflow checks verify CPU/I/O queues, timeouts, retries and
+stage ordering. The cross-language fixture runs the actual Python activities
+and Docling Word parser against Go gRPC, signed MinIO transfers and Qdrant,
+with controlled model responses. It checks committed-response loss, native
+error classification, cancellation, index-only replay and public semantic search.
+The deployed `letfs-ingest` entrypoint uses generated gRPC only; no application HTTP binding remains.
+
+`OPENLET_HISTORY_DIR` retains fresh histories for a separate native replay check:
+
+```sh
+OPENLET_HISTORY_DIR="$PWD/.local/go-histories" pnpm --filter @openlet/letfs test:integration
+OPENLET_HISTORY_DIR="$PWD/.local/go-histories" pnpm --filter @openlet/letfs test:replay
+```
+
+Replay requires the copy continuation/recovery, purge, deletion, maintenance,
+processing success/failure/retry/index-only and Python activity histories; missing
+coverage fails the command. CI runs native integration before replay; the [migration plan](../plans/261102-1059-go-grpc-filesystem-authorization/plan.md) records whole-system acceptance.
 
 Workflow tests stay with their owning application. The new suite exports current
 lifecycle, copy, purge and processing histories; deleted E2E histories are not
@@ -125,17 +174,15 @@ PRs run unit tests, compilation, lint and relevant integration/workflow checks. 
 
 ## AI search verification
 
-`cargo test --locked --package letfs --test integration search -- --ignored --test-threads=1` uses PostgreSQL and Qdrant v1.20.0 with controlled provider responses. It checks original-file grouping, current/readiness gating, foreign evidence rejection before rerank, filters/cursor binding, dependency failures, rerank degradation, trash/restore, replacement, rebuild cleanup/retry, purge and filesystem deletion. The new API suite must cover create/upload through the real Temporal/Python chain, filename search during failed/pending processing, current semantic results, and membership revocation before final acceptance. Paid model quality is evaluated separately with supplied credentials; test responses exercise API contracts and orchestration.
+`go -C apps/letfs test -race -tags integration ./internal/filesystem ./internal/grpc` uses PostgreSQL and Qdrant v1.20.0 with controlled provider responses. It checks original-file grouping, current/readiness gating, foreign evidence rejection before rerank, filters/cursor binding, dependency failures, rerank degradation, trash/restore, replacement, rebuild cleanup/retry, purge and filesystem deletion. The new API suite must cover create/upload through the real Temporal/Python chain, filename search during failed/pending processing, current semantic results, and membership revocation before final acceptance. Paid model quality is evaluated separately with supplied credentials; test responses exercise API contracts and orchestration.
 
-The API journeys export fresh Account/Workspace lifecycle, Rust filesystem/purge,
+The API journeys export fresh Account/Workspace lifecycle, Go filesystem/purge,
 copy continuation/partial failure and processing success/failure/restart histories
-to `.local/api-e2e/histories/`. Run the complete suite first. The Go owner uses
-official protobuf JSON/binary APIs to convert CLI histories before the Rust replay:
+to `.local/api-e2e/histories/`. Run the complete suite first. Each Go owner replays the fresh histories with its native SDK:
 
 ```sh
 pnpm --dir e2e exec playwright test --project=api
-OPENLET_HISTORY_DIR="$PWD/.local/api-e2e/histories" go test -tags replay ./apps/account/internal/temporal ./apps/workspace/internal/temporal
-OPENLET_HISTORY_DIR="$PWD/.local/api-e2e/histories" cargo test --locked --package letfs --test workflow-replay -- --ignored
+OPENLET_HISTORY_DIR="$PWD/.local/api-e2e/histories" pnpm test:replay
 ```
 
 Processing replay also checks CPU/I/O task queues, Activity order, heartbeat and

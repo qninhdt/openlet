@@ -1,12 +1,12 @@
 Project Openlet {
   database_type: 'PostgreSQL'
   Note: '''
-    Monolith view of the implemented Openlet application data model, 2026-10-31.
+    Monolith view of the implemented Openlet application data model, 2026-11-02.
     Application tables share one namespace in this view. Workspace and Letfs receipt tables are named by owner.
     Blue references are logical application relationships; other references are physical foreign keys.
     Partial-index predicates and descending index order are preserved in index notes. This diagram is not a migration script.
     Qdrant stores derived vectors with payload filesystem_id, source_id, file_id, generation, embedding_model, vector_dimension and text. PostgreSQL owns metadata and visibility.
-    S3 stores object payloads. ZIP downloads stream over HTTP without stored archives. Temporal persistence and migration-runner bookkeeping are infrastructure-managed and are outside the application ERD.
+    S3 stores object payloads. ZIP downloads stream over HTTP without stored archives. SpiceDB stores derived authorization relationships and repository-defined role/action policy; canonical membership stays in application tables. Temporal persistence and migration-runner bookkeeping are infrastructure-managed and are outside the application ERD.
   '''
 }
 
@@ -72,7 +72,7 @@ Table "workspace_idempotency_keys" {
 }
 
 Table "letfs_idempotency_keys" {
-  Note: 'Provisioning receipts committed with owner-generated resources. Null completion/expiry pins a result until Workspace records its mapping.'
+  Note: 'Provisioning receipts committed with owner-generated resources. Null completion/expiry pins a result until its creating service releases the receipt.'
   "scope" text [not null]
   "operation" text [not null]
   "request_key" text [not null]
@@ -130,7 +130,6 @@ Table "files" {
   "accepted_attempt_id" uuid
   "publication_status" text [not null, default: 'not_required']
   "published_generation" bigint
-  "artifact_root_id" uuid
   "parse_manifest_hash" text
   "publication_manifest_hash" text
   "index_status" text [not null, default: 'not_required']
@@ -156,7 +155,7 @@ Table "filesystems" {
 
   "id" uuid [pk, not null]
   "bucket_id" uuid [not null]
-  "provision_key" text [unique, not null]
+  "create_fingerprint" text [check: `length(create_fingerprint) = 64`]
   "root_id" uuid
   "state" text [not null, default: `'active'::text`]
   "node_count" bigint [not null, default: 1]
@@ -167,7 +166,7 @@ Table "filesystems" {
     `((state <> 'active'::text) OR (root_id IS NOT NULL))` [name: 'filesystem_live_root']
     `((max_nodes > 0) AND (node_count <= max_nodes))` [name: 'filesystems_check']
     `(node_count >= 0)` [name: 'filesystems_node_count_check']
-    `((length(provision_key) >= 1) AND (length(provision_key) <= 200))` [name: 'filesystems_provision_key_check']
+    `(create_fingerprint IS NOT NULL OR state <> 'active')` [name: 'filesystem_create_identity']
     `(state = ANY (ARRAY['active'::text, 'deleting'::text, 'deleted'::text]))` [name: 'filesystems_state_check']
   }
 
@@ -243,7 +242,8 @@ Table "quota_buckets" {
   Note: 'Logical storage quota and usage accounting. A frozen bucket rejects growth while deletion drains its filesystems.'
 
   "id" uuid [pk, not null]
-  "provision_key" text [unique, not null]
+  "creator_service" text
+  "create_fingerprint" text [check: `length(create_fingerprint) = 64`]
   "limit_bytes" bigint [not null]
   "used_bytes" bigint [not null, default: 0]
   "state" text [not null, default: `'active'::text`]
@@ -251,7 +251,7 @@ Table "quota_buckets" {
 
   Checks {
     `(limit_bytes >= 0)` [name: 'quota_buckets_limit_bytes_check']
-    `((length(provision_key) >= 1) AND (length(provision_key) <= 200))` [name: 'quota_buckets_provision_key_check']
+    `(creator_service IS NOT NULL AND (create_fingerprint IS NOT NULL OR state IN ('frozen','deleted')))` [name: 'quota_bucket_create_identity']
     `(state = ANY (ARRAY['active'::text, 'frozen'::text, 'deleted'::text]))` [name: 'quota_buckets_state_check']
     `(used_bytes >= 0)` [name: 'quota_buckets_used_bytes_check']
   }

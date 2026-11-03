@@ -5,9 +5,8 @@ The backend services implement onboarding, collaboration, generic file operation
 ## Requirements
 
 - Docker with Compose, Make and Python 3.10+ for the existing development setup. API E2E requires Node.js 24, pnpm 12.9.1 and the Linux `flock` utility; install its locked dependencies with `pnpm install --frozen-lockfile`.
-- Go 1.27.3 and Rust 1.96.1 for native verification. Rust is pinned by `rust-toolchain.toml`; dependencies are locked at the repository root.
-- Native Rust builds need a C/C++ toolchain, CMake, `protoc` and protobuf headers. Container builds install these dependencies.
-- Native processor checks need `uv` and Python 3.12 or 3.13; the worker image supplies its own locked Python environment.
+- Go 1.27.3 for native verification and protobuf Go tools, plus `protoc` for contract generation. Go modules and tool versions are pinned in the workspace.
+- Native ingest checks need `uv` and Python 3.12 or 3.13; the worker image supplies its own locked Python environment.
 
 ## Configure and start
 
@@ -17,17 +16,19 @@ Export Clerk/JWT, S3 and OpenRouter settings using the non-secret examples in `.
 make up
 ```
 
-External issuer/JWKS URLs require HTTPS. The generator renders native Envoy and Temporal configuration and generates random credentials under ignored `.local/`. Its parent directory is private; individual mounted secret files are readable by the non-root containers. It preserves existing credentials across repeated setup. Never commit or publish that directory or rendered configuration. Changing credential files alone does not rotate an existing database role.
+External issuer/JWKS URLs require HTTPS. The generator renders native Envoy, Temporal and SpiceDB configuration and generates random credentials under ignored `.local/`. Its parent directory is private; individual mounted secret files are readable by the non-root containers. It preserves existing credentials across repeated setup. Never commit or publish that directory or rendered configuration. Changing credential files alone does not rotate an existing database role.
 
 `OPENROUTER_REASONING_EFFORT` optionally controls generation/vision reasoning: `none`, `minimal`, `low`, `medium`, `high`, or `xhigh`. Leave it empty to use the selected model's default; the selected model must support the requested effort. Set `none` for GPT-6 Luna generation without reasoning tokens.
 
 Only Envoy binds a host port, `127.0.0.1:8080`. Application, database, Temporal and admin-tool ports stay private. External access requires the deployment's trusted HTTPS termination. Temporal's no-authorizer setting is confined to the private backend network; do not publish its port.
 
-Account uses Temporal for Workspace orchestration. Compose supplies
-`ACCOUNT_URL`/`LETFS_URL` for Workspace resource HTTP calls. Native startup requires those
-URLs; a service does not require its own URL or an unused downstream URL.
+Account uses Temporal for Workspace orchestration. Workspace calls Account gRPC at `ACCOUNT_RPC_ADDRESS`; ingest calls LetFS at `LETFS_RPC_ADDRESS`. Native listeners use `RPC_LISTEN_ADDR` (default `:9090`). RPC requires TLS by default using `RPC_TLS_CERT_PATH` and `RPC_TLS_KEY_PATH`; Compose explicitly enables `ALLOW_PLAINTEXT_RPC=true` on its private backend network. Internal listeners are not published. Envoy exposes only public filesystem RPC methods and public HTTP; private storage administration and ingest remain inaccessible from ingress.
+
+All Go services start their owner Temporal workers and check required dependencies during readiness. LetFS configuration is owned by [config.go](../apps/letfs/internal/config/config.go). Clients discover filesystem/root/bucket references through Workspace, then call LetFS directly; no Workspace filesystem proxy remains.
 
 `make up` builds the app-owned Dockerfiles and initializes a fresh deployment using native Goose application-migration jobs and upstream Temporal schema/namespace tools. Each application owns one baseline migration. There is no upgrade chain for the old schema: retain a verified backup before an intentional reset, and never apply the new baseline over existing development data. Startup does not automatically back up existing databases.
+
+The development Compose definition also starts pinned SpiceDB on the private backend network, with a dedicated `openlet_spicedb` database/user on the same PostgreSQL instance. Datastore migration must succeed before gRPC health becomes ready; the `authz-schema` job initializes a missing schema or verifies the existing expected schema. Unknown schema is rejected. The same deployment job loads built-in role capabilities from [roles.json](../packages/contracts/authz/roles.json) directly into SpiceDB; application PostgreSQL keeps membership role assignments and other business records, with no permission catalog. Run this initializer while application/graph writers are fenced. Its `--check` mode verifies both schema and role policy without repairing drift. No SpiceDB port is published, Watch is disabled and read/write pools are capped at eight connections each. Existing PostgreSQL volumes do not rerun init SQL or automatically acquire the new database. Account and Workspace require `SPICEDB_ADDRESS` and `SPICEDB_GRPC_PRESHARED_KEY` (or its `_FILE` secret). Their images include the expected schema and role policy under `/contracts`; startup and readiness verify both without repairing drift. Account profile access uses native self-resource checks. Final recovery acceptance is tracked in the [active migration plan](../plans/261102-1059-go-grpc-filesystem-authorization/plan.md).
 
 Use `make down` to stop the stack while preserving its named volume. Do not remove volumes as routine rollback. To migrate an existing deployment, stop application/Temporal writers before applying a schema upgrade and retain the pre-change backups.
 
@@ -35,7 +36,7 @@ Use `make down` to stop the stack while preserving its named volume. Do not remo
 
 The API suite under `e2e/` was written from scratch; the previous Go harness,
 issuer, browser launcher and custom contract recorder are deleted.
-See [testing](testing.md) for scenarios and the [completed plan](../plans/261031-1758-simplify-backend-refactor/plan.md) for execution evidence.
+See [testing](testing.md) for scenarios and the [foundation migration plan](../plans/261102-1059-go-grpc-filesystem-authorization/plan.md) for execution evidence.
 
 ```sh
 pnpm install --frozen-lockfile
@@ -49,7 +50,7 @@ make test-workflow
 ```
 
 Playwright setup builds current sources and starts a dedicated Compose project from
-`infra/compose/e2e.yaml`. It owns real PostgreSQL, persistent Temporal, SeaweedFS,
+`infra/compose/e2e.yaml`. It owns real PostgreSQL, persistent Temporal, MinIO,
 Qdrant and application containers. Newly written Clerk/model boundary doubles
 provide deterministic external responses; they do not replace application behavior.
 
@@ -68,14 +69,10 @@ Native integration uses app-owned Testcontainers and the same baseline SQL. The 
 
 ## OpenTelemetry
 
-Account and Workspace use native Gin handlers with `otelgin`, outbound `otelhttp`,
-pgx instrumentation and Temporal's Go interceptor. Letfs connects Axum/tracing to
-OpenTelemetry and the pinned Temporal Rust 1.1.0 native tracing plugin. That
-plugin remains experimental. Python instruments both HTTPX and HTTPX2 (used by
-OpenAI 3), plus Temporal Activities using its supported contrib integration.
+Account and Workspace use Gin `otelgin`; LetFS uses Go HTTP `otelhttp`. All Go services use native gRPC `otelgrpc`, pgx instrumentation and Temporal's Go interceptor. Python instruments HTTPX/HTTPX2 provider traffic, generated gRPC calls and Temporal Activities.
 
 Every app writes JSON logs to stdout with `trace_id` and `span_id` when a span
-is active. W3C `traceparent`/`tracestate` propagate through HTTP and Temporal;
+is active. W3C `traceparent`/`tracestate` propagate through HTTP, gRPC and Temporal;
 arbitrary baggage is excluded. Signed URL queries, request bodies, SQL parameters
 and model prompts are excluded from application telemetry.
 
@@ -130,31 +127,23 @@ TLS certificate verification stays enabled. Configure incomplete multipart-uploa
 expiry in the provider and select its version-retention/restore policy before release.
 Logical deletion is separate from physical version cleanup on versioned providers.
 
-Only the isolated API E2E configuration starts SeaweedFS internally. Its
+Only the isolated API E2E configuration starts MinIO internally. Its image is built
+from the fixed upstream source release in [infra/minio/Dockerfile](../infra/minio/Dockerfile);
+Go integration fixtures use the same image. The community edition is
+unmaintained and source-only, so upstream maintenance remains an operational limitation. Its
 presigned endpoint is reachable by the host at `http://127.0.0.1:18202`;
 internal control requests use the boundary proxy on the private network.
 Do not rewrite signed hostnames. Plaintext storage/provider exceptions are
 confined to the isolated E2E configuration. The local storage volume is owned
 by the test run; external S3 remains the normal development route.
 
-Clients choose `inline` or `object`; the backend does not classify bytes. Read
-`GET /v1/workspaces/{ws}/usage` for effective `upload_limits`. Defaults are
-256 KiB inline, 100 MiB max file, 16 MiB multipart threshold and 8 MiB parts.
-Inline accepts arbitrary bytes, including empty/binary data; text editing remains
-a separate validated string API.
+Clients choose bounded inline node/content APIs or object upload sessions. Read `GET /v1/quota-buckets/{bucket}` for `{bucket,upload_limits}`. Defaults are 256 KiB inline, 100 MiB max file, 16 MiB multipart threshold and 8 MiB parts. Inline content accepts arbitrary bytes, including empty/binary data.
 
-Prepare with `POST /files/uploads`, a UUID `Idempotency-Key`, `storage`, decimal
-`size_bytes`, and destination parent/name (or locator plus `If-Match` for overwrite).
-Object single PUT additionally requires base64 `content_md5`. Repeating the same
-request key/parameters returns the same session; changed parameters conflict.
-Inline uses the bounded `/uploads/{id}/bytes` receiver. Object bytes go directly
-to the returned signed URL with its required headers. Browsers set Content-Length
-automatically; do not try to set it from JavaScript. The old object-body relay is
-removed. Upload URLs default to fifteen minutes, bounded by session expiry.
+Prepare with `POST /v1/filesystems/{filesystem}/uploads`, a UUID `Idempotency-Key`, decimal `size_bytes`, `media_type`, and destination parent/name (or `node_id` plus `If-Match` for overwrite). Public upload sessions always use object storage. Single PUT additionally requires base64 `content_md5`. Repeating the same request key/parameters returns the same session; changed parameters conflict. Object bytes go directly to the returned signed URL with required headers. Browsers set Content-Length automatically. Upload URLs default to fifteen minutes, bounded by session expiry.
 
 For native multipart, prepare returns the part size/count. Sign batches of up to
-64 part numbers/checksums via `/uploads/{id}/parts`, PUT directly to each URL,
-and submit ordered `{part_number,etag}` receipts to `/uploads/{id}/finalize`.
+64 part numbers via `/uploads/{id}/parts`, PUT directly to each URL,
+and submit ordered `{part_number,etag}` receipts to `/uploads/{id}/completion`.
 Only letfs completes/aborts native multipart. Completion freezes receipts, checks
 provider evidence, then publishes atomically under quota/revision/lifecycle locks.
 The old file stays visible until publication; overwrite always uses a fresh key.
@@ -182,21 +171,21 @@ models. The CPU process runs one conversion at a time with CPU, memory and
 scratch limits from `infra/compose/dev.yaml`; no runtime model download is required.
 The locked `docling[rapidocr]` dependency supplies the ONNX OCR runtime; the CPU worker
 checks that it imports before connecting to Temporal and accepting activities.
-`PROCESSOR_IMAGE` selects a prebuilt image; use a registry digest and Compose
-`up --no-build` when deploying that image. Compose starts `processor-cpu` and `processor-io` from the same image using the `cpu` and `io` worker arguments. CPU parsing polls `openlet-letfs-cpu`; enrichment/indexing polls `openlet-letfs-io`. The I/O process starts without model/OCR preflight. Both use the dedicated Letfs token and trace propagation; only I/O work uses OpenRouter/Qdrant credentials.
+`INGEST_IMAGE` selects a prebuilt image; use a registry digest and Compose
+`up --no-build` when deploying that image. Compose starts `ingest-cpu` and `ingest-io` from the same image using the `cpu` and `io` worker arguments. CPU parsing polls `openlet-letfs-cpu`; enrichment/indexing polls `openlet-letfs-io`. The I/O process starts without model/OCR preflight. Both use the dedicated Letfs token and trace propagation; only I/O work uses OpenRouter/Qdrant credentials.
 
 For native parser verification, download models explicitly before the offline run:
 
 ```sh
-uv sync --locked --package openlet-processor
-uv run --locked --package openlet-processor python -m openlet_processor.prefetch_models "$PWD/.local/processor-models"
-DOCLING_MODELS_PATH="$PWD/.local/processor-models" uv run --locked --package openlet-processor pytest apps/letfs-processing/tests
+uv sync --locked --package letfs-ingest
+uv run --locked --package letfs-ingest python -m letfs_ingest.prefetch_models "$PWD/.local/ingest-models"
+DOCLING_MODELS_PATH="$PWD/.local/ingest-models" uv run --locked --package letfs-ingest pytest apps/letfs-ingest/tests
 ```
 
 Run the API suite before native workflow replay; [testing](testing.md) documents
-history capture and conversion commands.
+fresh history capture and native replay commands.
 
-`pnpm check` and `pnpm test` include processor lint, formatting and tests without model-dependent
+`pnpm check` and `pnpm test` include ingest lint, formatting and tests without model-dependent
 parser cases. `PROCESSING_MAX_OUTPUTS` and `PROCESSING_MAX_OUTPUT_BYTES` bound one
 job's published tree. Input/resource bounds are defined in the processor; output
 transport reuses the same configured inline/multipart limits as user uploads.
@@ -231,10 +220,10 @@ the controls' visible text is retained.
 
 ### ZIP downloads
 
-`ARCHIVE_*` values in [.env.example](../.env.example) bound entries, source/output bytes, per-process concurrency and runtime. Letfs streams ZIP64 directly over HTTP with a 64 KiB pipe and no temporary ZIP object. Runtime defaults to 1200 seconds and is capped at 1800; only the archive proxy/gateway routes have extended write/route deadlines. Other request timeouts remain bounded as before. Preserve provider incomplete-multipart abort rules for uploads and never age-expire `objects/`.
+`ARCHIVE_*` values in [.env.example](../.env.example) bound entries, source/output bytes, per-process concurrency and runtime. Letfs streams ZIP64 directly over HTTP with a 64 KiB pipe and no temporary ZIP object. Runtime defaults to 1200 seconds and is capped at 1800; only the direct archive gateway route have extended write/route deadlines. Other request timeouts remain bounded as before. Preserve provider incomplete-multipart abort rules for uploads and never age-expire `objects/`.
 
 ```sh
-cargo test --locked --package letfs --test integration artifacts::archive -- --ignored --test-threads=1
+go -C apps/letfs test -race -tags integration ./internal/filesystem ./internal/grpc -run Archive -count=1
 ```
 
 ## AI enrichment and search
@@ -252,5 +241,5 @@ docker compose -f infra/compose/dev.yaml exec -T letfs letfs --backfill-processi
 Pass `--after UUID` to resume. Rebuild skips currently running workflows and retains committed enrichment; rerun from the beginning after those workflows close. It marks index readiness pending. Vector-space reconciliation records old generation/space cleanup intent before adopting the new model/collection/dimension, and dispatches index-only work. Search immediately rejects old-space results; bounded maintenance deletes obsolete points without touching current ones. Qdrant may be recreated and rebuilt from authoritative source/artifact content. Filename search remains available during AI/index outages.
 
 ```sh
-cargo test --locked --package letfs --test integration search -- --ignored --test-threads=1
+go -C apps/letfs test -race -tags integration ./internal/filesystem ./internal/grpc -run Search -count=1
 ```
