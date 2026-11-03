@@ -4,33 +4,39 @@ import (
 	"errors"
 	"net"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	sharedconfig "openlet/packages/go/config"
 )
 
 type Config struct {
-	Listen, DatabaseURL, TemporalAddress, TemporalNamespace, GatewayToken, WorkspaceToken, AccountURL, LetfsURL string
-	MaxWorkspaces, MaxMembers                                                                                   int
-	QuotaLimit                                                                                                  int64
-	InviteTTL                                                                                                   time.Duration
+	Listen, DatabaseURL, TemporalAddress, TemporalNamespace, GatewayToken, WorkspaceToken, AccountRPCAddress string
+	SpiceDBAddress, SpiceDBKey                                                                               string
+	AllowPlaintextRPC                                                                                        bool
+	MaxWorkspaces, MaxMembers                                                                                int
+	QuotaLimit                                                                                               int64
+	InviteTTL                                                                                                time.Duration
 }
 
 func Load() (Config, error) {
-	return Parse(func(k string) string {
-		if p := os.Getenv(k + "_FILE"); p != "" {
-			b, e := os.ReadFile(p)
-			if e != nil {
-				return ""
-			}
-			return strings.TrimSpace(string(b))
-		}
-		return os.Getenv(k)
-	})
+	return Parse(sharedconfig.Secret)
 }
 func Parse(get func(string) string) (Config, error) {
-	c := Config{Listen: get("LISTEN_ADDR"), DatabaseURL: get("DATABASE_URL"), TemporalAddress: get("TEMPORAL_ADDRESS"), TemporalNamespace: get("TEMPORAL_NAMESPACE"), GatewayToken: get("GATEWAY_TOKEN"), WorkspaceToken: get("WORKSPACE_SERVICE_TOKEN"), AccountURL: get("ACCOUNT_URL"), LetfsURL: get("LETFS_URL")}
+	c := Config{Listen: get("LISTEN_ADDR"), DatabaseURL: get("DATABASE_URL"), TemporalAddress: get("TEMPORAL_ADDRESS"), TemporalNamespace: get("TEMPORAL_NAMESPACE"), GatewayToken: get("GATEWAY_TOKEN"), WorkspaceToken: get("WORKSPACE_SERVICE_TOKEN"), AccountRPCAddress: get("ACCOUNT_RPC_ADDRESS")}
+	plaintext := get("ALLOW_PLAINTEXT_RPC")
+	if plaintext != "" && plaintext != "false" && plaintext != "true" {
+		return c, errors.New("ALLOW_PLAINTEXT_RPC must be true or false")
+	}
+	c.AllowPlaintextRPC = plaintext == "true"
+	c.SpiceDBAddress, c.SpiceDBKey = get("SPICEDB_ADDRESS"), get("SPICEDB_GRPC_PRESHARED_KEY")
+	if host, port, err := net.SplitHostPort(c.SpiceDBAddress); err != nil || host == "" || port == "" {
+		return c, errors.New("invalid SPICEDB_ADDRESS")
+	}
+	if host, port, err := net.SplitHostPort(c.AccountRPCAddress); err != nil || host == "" || port == "" {
+		return c, errors.New("invalid ACCOUNT_RPC_ADDRESS")
+	}
 	c.MaxWorkspaces = 100
 	c.MaxMembers = 100
 	c.QuotaLimit = 10737418240
@@ -74,17 +80,11 @@ func Parse(get func(string) string) (Config, error) {
 	if _, _, e = net.SplitHostPort(c.TemporalAddress); e != nil || c.TemporalNamespace == "" {
 		return c, errors.New("invalid Temporal address or namespace")
 	}
-	for _, t := range []string{c.GatewayToken, c.WorkspaceToken} {
+	for _, t := range []string{c.GatewayToken, c.WorkspaceToken, c.SpiceDBKey} {
 		if len(t) < 32 || strings.IndexFunc(t, func(r rune) bool {
 			return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_')
 		}) >= 0 {
 			return c, errors.New("invalid service token")
-		}
-	}
-	for _, s := range []string{c.AccountURL, c.LetfsURL} {
-		u, e := url.Parse(s)
-		if e != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
-			return c, errors.New("invalid service URL")
 		}
 	}
 	return c, nil

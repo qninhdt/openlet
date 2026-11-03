@@ -1,0 +1,13 @@
+{
+  "name": "@openlet/go",
+  "private": true,
+  "scripts": {
+    "build": "go build ./...",
+    "check": "test -z \"$(gofmt -l .)\" && go vet -tags integration ./...",
+    "test": "go test ./...",
+    "test:integration": "go test -tags integration ./... -count=1"
+  },
+  "devDependencies": {
+    "@openlet/contracts": "workspace:*"
+  }
+}

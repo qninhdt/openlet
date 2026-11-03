@@ -3,21 +3,16 @@
 package user
 
 import (
-	"context"
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/wait"
-	"path/filepath"
+	"openlet/apps/account/internal/testfixture"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
 func TestIntegrationIdentityAndProfile(t *testing.T) {
-	db := postgres(t)
+	db := testfixture.Postgres(t)
 	store := Store{DB: db}
 	ctx := t.Context()
 	// Concurrent first-login calls must converge on every persisted identity.
@@ -86,34 +81,4 @@ func TestIntegrationIdentityAndProfile(t *testing.T) {
 	require.Equal(t, &workspaceID, after.WorkspaceID)
 	require.Equal(t, "active", after.Status)
 	require.True(t, after.RefreshSession)
-}
-
-func postgres(t *testing.T) *pgxpool.Pool {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
-	defer cancel()
-	baseline, err := filepath.Abs("../../migrations/0001_initial.sql")
-	require.NoError(t, err)
-	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: testcontainers.ContainerRequest{
-			Image:        "postgres:18.6-trixie@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336",
-			Env:          map[string]string{"POSTGRES_USER": "owner", "POSTGRES_DB": "application", "POSTGRES_PASSWORD": "isolated-test-password"},
-			ExposedPorts: []string{"5432/tcp"},
-			Files:        []testcontainers.ContainerFile{{HostFilePath: baseline, ContainerFilePath: "/docker-entrypoint-initdb.d/10-baseline.sql", FileMode: 0o444}},
-			WaitingFor:   wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(time.Minute),
-		}, Started: true,
-	})
-	if container != nil {
-		testcontainers.CleanupContainer(t, container)
-	}
-	require.NoError(t, err)
-	host, err := container.Host(ctx)
-	require.NoError(t, err)
-	port, err := container.MappedPort(ctx, "5432/tcp")
-	require.NoError(t, err)
-	db, err := pgxpool.New(ctx, "postgres://owner:isolated-test-password@"+host+":"+port.Port()+"/application?sslmode=disable")
-	require.NoError(t, err)
-	t.Cleanup(db.Close)
-	require.NoError(t, db.Ping(ctx))
-	return db
 }

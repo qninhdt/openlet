@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/exaring/otelpgx"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -11,14 +12,19 @@ import (
 	temporalotel "go.temporal.io/sdk/contrib/opentelemetry"
 	"go.temporal.io/sdk/interceptor"
 	temporalworker "go.temporal.io/sdk/worker"
+	"google.golang.org/grpc"
+	healthv1 "google.golang.org/grpc/health/grpc_health_v1"
 	"log/slog"
 	"net/http"
 	"openlet/apps/workspace/internal/config"
 	api "openlet/apps/workspace/internal/http"
-	"openlet/apps/workspace/internal/telemetry"
 	worker "openlet/apps/workspace/internal/temporal"
 	"openlet/apps/workspace/internal/user"
 	"openlet/apps/workspace/internal/workspace"
+	"openlet/packages/go/authz"
+	accountv1 "openlet/packages/go/gen/openlet_api/account/v1"
+	sharedrpc "openlet/packages/go/rpc"
+	"openlet/packages/go/telemetry"
 	"os"
 	"os/signal"
 	"syscall"
@@ -80,6 +86,26 @@ func run() error {
 	if e = db.Ping(startupCtx); e != nil {
 		return errors.New("database unavailable")
 	}
+	graphConnection, e := sharedrpc.Dial(cfg.SpiceDBAddress, cfg.SpiceDBKey, sharedrpc.Transport{AllowPlaintext: cfg.AllowPlaintextRPC})
+	if e != nil {
+		return errors.New("authorization transport configuration rejected")
+	}
+	defer graphConnection.Close()
+	graph := v1.NewPermissionsServiceClient(graphConnection)
+	contract, e := authz.LoadContract("/contracts/schema.zed", "/contracts/roles.json")
+	if e != nil {
+		return e
+	}
+	graphReady := func(ctx context.Context) error {
+		return contract.Verify(ctx, v1.NewSchemaServiceClient(graphConnection), graph)
+	}
+	if e = graphReady(startupCtx); e != nil {
+		return errors.New("authorization schema or role policy unavailable")
+	}
+	store := &workspace.Store{DB: db, Graph: graph, MaxWorkspaces: cfg.MaxWorkspaces, MaxMembers: cfg.MaxMembers, QuotaLimit: cfg.QuotaLimit, InviteTTL: cfg.InviteTTL}
+	if len(os.Args) == 2 && os.Args[1] == "--rebuild-authorization" {
+		return store.RebuildRelationships(ctx, graph)
+	}
 	tracing, e := temporalotel.NewTracingInterceptor(temporalotel.TracerOptions{DisableBaggage: true, TextMapPropagator: propagation.TraceContext{}})
 	if e != nil {
 		return errors.New("Temporal tracing configuration rejected")
@@ -89,12 +115,21 @@ func run() error {
 		return errors.New("Temporal unavailable")
 	}
 	defer tc.Close()
-	store := &workspace.Store{DB: db, MaxWorkspaces: cfg.MaxWorkspaces, MaxMembers: cfg.MaxMembers, QuotaLimit: cfg.QuotaLimit, InviteTTL: cfg.InviteTTL}
-	activities := &worker.Activities{Store: store, Temporal: tc}
+	accountConnection, e := sharedrpc.Dial(cfg.AccountRPCAddress, cfg.WorkspaceToken, sharedrpc.Transport{AllowPlaintext: cfg.AllowPlaintextRPC})
+	if e != nil {
+		return e
+	}
+	defer accountConnection.Close()
+	accountHealth, e := healthv1.NewHealthClient(accountConnection).Check(startupCtx, &healthv1.HealthCheckRequest{Service: accountv1.AccountService_ServiceDesc.ServiceName}, grpc.WaitForReady(true))
+	if e != nil || accountHealth.GetStatus() != healthv1.HealthCheckResponse_SERVING {
+		return errors.New("Account RPC unavailable")
+	}
+	activities := &worker.Activities{Store: store, Temporal: tc, Graph: graph}
 	owner := temporalworker.New(tc, worker.Queue, temporalworker.Options{MaxConcurrentActivityExecutionSize: 16, WorkerStopTimeout: 20 * time.Second})
 	owner.RegisterWorkflow(worker.CreateWorkspace)
 	owner.RegisterWorkflow(worker.DeleteWorkspace)
 	owner.RegisterWorkflow(worker.ReconcileWorkspaces)
+	owner.RegisterWorkflow(worker.SyncWorkspace)
 	owner.RegisterActivity(activities)
 	if e = owner.Start(); e != nil {
 		return errors.New("worker startup failed")
@@ -103,7 +138,7 @@ func run() error {
 	if e = worker.EnsureReconciliation(startupCtx, tc); e != nil {
 		return errors.New("reconciliation schedule unavailable")
 	}
-	app := &api.Server{Config: cfg, DB: db, Temporal: tc, Store: store, User: user.Client{BaseURL: cfg.AccountURL, Token: cfg.WorkspaceToken}}
+	app := &api.Server{GraphReady: graphReady, Config: cfg, DB: db, Temporal: tc, Store: store, User: user.Client{API: accountv1.NewAccountServiceClient(accountConnection)}}
 	srv := &http.Server{Addr: cfg.Listen, Handler: app.Router(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 125 * time.Second, WriteTimeout: 125 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32768}
 	errch := make(chan error, 1)
 	go func() { slog.Info("HTTP listening", "address", cfg.Listen); errch <- srv.ListenAndServe() }()

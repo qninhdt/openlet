@@ -1,17 +1,16 @@
-FROM rust:1.96.1-bookworm@sha256:a339861ae23e9abb272cea45dfafde21760d2ce6577a70f8a926153677902663 AS build
-RUN apt-get update && apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev && rm -rf /var/lib/apt/lists/*
-WORKDIR /build
-COPY Cargo.toml Cargo.lock ./
-COPY apps/letfs/Cargo.toml apps/letfs/Cargo.toml
-# Cargo checks mtimes; source can predate the cached compiler output after a checkout.
-RUN --mount=type=bind,source=apps/letfs/src,target=/build/apps/letfs/src,rw \
-    --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/build/target,sharing=locked \
-    find apps/letfs/src -type f -exec touch {} + && cargo build --release --locked && cp /build/target/release/letfs /letfs
+FROM golang:1.27.3-bookworm@sha256:d9b6a1beb9474adc2a1ce842573639b44b2a0dd49b6669f51d3821baf9ec37c9 AS build
+WORKDIR /build/apps/letfs
+COPY apps/letfs/go.mod apps/letfs/go.sum ./
+COPY packages/go/go.mod packages/go/go.sum /build/packages/go/
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+RUN --mount=type=bind,source=apps/letfs/cmd,target=./cmd \
+    --mount=type=bind,source=apps/letfs/internal,target=./internal \
+    --mount=type=bind,source=packages/go,target=/build/packages/go \
+    --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build -trimpath -o /server ./cmd/server
 
-FROM debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=build /letfs /usr/local/bin/letfs
-USER 65532:65532
-ENTRYPOINT ["letfs"]
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:18f4cc26c9ffa7f20a359298be7deadac5c607c8e03a02b8119f1a5fc2f82c99
+COPY --from=build /server /server
+COPY packages/contracts/authz/schema.zed packages/contracts/authz/roles.json /contracts/
+ENTRYPOINT ["/server"]

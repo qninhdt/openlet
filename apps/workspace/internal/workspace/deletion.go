@@ -5,6 +5,7 @@ import (
 	"errors"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"openlet/packages/go/authz"
 )
 
 type DeleteInput struct {
@@ -21,26 +22,20 @@ func (s *Store) BeginDeletion(ctx context.Context, in DeleteInput) (Workspace, e
 	if in.ActorID == uuid.Nil || in.WorkspaceID == uuid.Nil || in.Revision == "" {
 		return Workspace{}, Fault{"VALIDATION"}
 	}
+	observed, err := s.Authorize(ctx, in.WorkspaceID, in.ActorID, authz.WorkspaceDelete)
+	if err != nil {
+		return observed, err
+	}
 	tx, err := s.DB.Begin(ctx)
 	if err != nil {
 		return Workspace{}, err
 	}
 	defer tx.Rollback(ctx)
-	var status string
-	err = tx.QueryRow(ctx, `SELECT status FROM workspaces WHERE id=$1 FOR UPDATE`, in.WorkspaceID).Scan(&status)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Workspace{}, Fault{"NOT_FOUND"}
-	}
-	if err != nil {
-		return Workspace{}, err
-	}
-	value, err := s.getInTransaction(ctx, tx, in.WorkspaceID, in.ActorID)
+	value, err := s.lockAdmission(ctx, tx, observed, in.ActorID)
 	if err != nil {
 		return value, err
 	}
-	if value.Role != "owner" {
-		return value, Fault{"FORBIDDEN"}
-	}
+	status := value.Status
 	// A repeated DELETE of this tombstone cannot re-admit or recreate the resource.
 	if status == "deleting" || status == "deleted" {
 		return value, nil

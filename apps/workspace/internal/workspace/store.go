@@ -11,9 +11,11 @@ import (
 	"time"
 	"unicode/utf8"
 
+	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"openlet/packages/go/authz"
 )
 
 type Fault struct{ Code string }
@@ -21,6 +23,7 @@ type Fault struct{ Code string }
 func (e Fault) Error() string { return e.Code }
 
 type Store struct {
+	Graph                     v1.PermissionsServiceClient
 	DB                        *pgxpool.Pool
 	MaxWorkspaces, MaxMembers int
 	QuotaLimit                int64
@@ -148,6 +151,24 @@ func (s *Store) getInTransaction(ctx context.Context, tx pgx.Tx, id, actor uuid.
 	}
 	return v, err
 }
+
+// ReserveStorage persists caller-owned IDs before the Go storage workflow sends remote creates.
+func (s *Store) ReserveStorage(ctx context.Context, id uuid.UUID) (Storage, error) {
+	var result Storage
+	if id == uuid.Nil {
+		return result, Fault{"VALIDATION"}
+	}
+	err := s.DB.QueryRow(ctx, `UPDATE workspaces
+		SET quota_bucket_id=COALESCE(quota_bucket_id,$2),filesystem_id=COALESCE(filesystem_id,$3)
+		WHERE id=$1 AND status IN ('provisioning','active')
+		RETURNING id,quota_bucket_id,filesystem_id,COALESCE(root_id,'00000000-0000-0000-0000-000000000000'::uuid),limit_bytes::text`,
+		id, uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())).Scan(&result.WorkspaceID, &result.BucketID, &result.FilesystemID, &result.RootID, &result.LimitBytes)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return result, Fault{"STATE_CONFLICT"}
+	}
+	return result, err
+}
+
 func (s *Store) Activate(ctx context.Context, mapping Storage) error {
 	if mapping.WorkspaceID == uuid.Nil || mapping.BucketID == uuid.Nil || mapping.FilesystemID == uuid.Nil || mapping.RootID == uuid.Nil {
 		return Fault{"VALIDATION"}
@@ -157,7 +178,10 @@ func (s *Store) Activate(ctx context.Context, mapping Storage) error {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	result, err := tx.Exec(ctx, `UPDATE workspaces SET status='active',quota_bucket_id=$2,filesystem_id=$3,root_id=$4,updated_at=now() WHERE id=$1 AND (status='provisioning' OR (status='active' AND quota_bucket_id=$2 AND filesystem_id=$3 AND root_id=$4))`, mapping.WorkspaceID, mapping.BucketID, mapping.FilesystemID, mapping.RootID)
+	result, err := tx.Exec(ctx, `UPDATE workspaces SET status='active',quota_bucket_id=$2,filesystem_id=$3,root_id=$4,updated_at=now()
+		WHERE id=$1 AND status IN ('provisioning','active')
+		AND (quota_bucket_id IS NULL OR quota_bucket_id=$2) AND (filesystem_id IS NULL OR filesystem_id=$3)
+		AND (root_id IS NULL OR root_id=$4)`, mapping.WorkspaceID, mapping.BucketID, mapping.FilesystemID, mapping.RootID)
 	if err != nil {
 		return err
 	}
@@ -181,37 +205,12 @@ func (s *Store) Fail(ctx context.Context, id uuid.UUID) error {
 	return tx.Commit(ctx)
 }
 
-func authorize(ctx context.Context, tx pgx.Tx, ws, actor uuid.UUID, minimum string) (Workspace, error) {
-	var v Workspace
-	var revision int64
-	e := tx.QueryRow(ctx, `SELECT id,name,status,revision,quota_bucket_id,filesystem_id,root_id,limit_bytes::text,error_code FROM workspaces WHERE id=$1 FOR UPDATE`, ws).Scan(&v.ID, &v.Name, &v.Status, &revision, &v.BucketID, &v.FilesystemID, &v.RootID, &v.LimitBytes, &v.ErrorCode)
-	if errors.Is(e, pgx.ErrNoRows) {
-		return v, Fault{"NOT_FOUND"}
-	}
-	if e != nil {
-		return v, e
-	}
-	// Read current membership only after acquiring the workspace lock.
-	e = tx.QueryRow(ctx, `SELECT role FROM workspace_members WHERE workspace_id=$1 AND user_id=$2`, ws, actor).Scan(&v.Role)
-	if errors.Is(e, pgx.ErrNoRows) {
-		return v, Fault{"NOT_FOUND"}
-	}
-	if e != nil {
-		return v, e
-	}
-	v.Revision = strconv.FormatInt(revision, 10)
-	return v, v.checkAccess(minimum)
-}
-
-func (v Workspace) checkAccess(minimum string) error {
+func (v Workspace) checkActive() error {
 	if v.Status == "deleted" {
 		return Fault{"NOT_FOUND"}
 	}
 	if v.Status != "active" {
 		return Fault{"WORKSPACE_DELETING"}
-	}
-	if (minimum == "owner" && v.Role != "owner") || (minimum == "editor" && v.Role == "viewer") {
-		return Fault{"FORBIDDEN"}
 	}
 	return nil
 }
@@ -229,19 +228,7 @@ func (s *Store) Get(ctx context.Context, ws, actor uuid.UUID) (Workspace, error)
 	v.Revision = strconv.FormatInt(revision, 10)
 	return v, nil
 }
-func (s *Store) Authorize(ctx context.Context, ws, actor uuid.UUID, minimum string) (Workspace, error) {
-	v, err := s.Get(ctx, ws, actor)
-	if err != nil {
-		return v, err
-	}
-	return v, v.checkAccess(minimum)
-}
-func (s *Store) Storage(ctx context.Context, ws uuid.UUID) (Storage, error) {
-	var v Storage
-	v.WorkspaceID = ws
-	e := s.DB.QueryRow(ctx, `SELECT quota_bucket_id,filesystem_id,root_id,limit_bytes::text FROM workspaces WHERE id=$1`, ws).Scan(&v.BucketID, &v.FilesystemID, &v.RootID, &v.LimitBytes)
-	return v, e
-}
+
 func (s *Store) List(ctx context.Context, actor, after uuid.UUID, limit int) ([]Workspace, error) {
 	rows, e := s.DB.Query(ctx, `SELECT w.id,w.name,w.status,w.revision,m.role,w.quota_bucket_id,w.filesystem_id,w.root_id,w.limit_bytes::text,w.error_code FROM workspaces w JOIN workspace_members m ON m.workspace_id=w.id WHERE m.user_id=$1 AND w.status!='deleted' AND w.id>$2 ORDER BY w.id LIMIT $3`, actor, after, limit)
 	if e != nil {
@@ -278,12 +265,30 @@ func (s *Store) Update(ctx context.Context, ws, actor uuid.UUID, revision string
 	if in.OwnerID != nil && *in.OwnerID == uuid.Nil {
 		return Workspace{}, Fault{"VALIDATION"}
 	}
+	var observed Workspace
+	var err error
+	if in.Name != nil {
+		observed, err = s.Authorize(ctx, ws, actor, authz.WorkspaceUpdate)
+		if err != nil {
+			return observed, err
+		}
+	}
+	if in.OwnerID != nil {
+		transfer, err := s.Authorize(ctx, ws, actor, authz.WorkspaceTransfer)
+		if err != nil {
+			return transfer, err
+		}
+		if in.Name != nil && (transfer.Revision != observed.Revision || transfer.Status != observed.Status) {
+			return transfer, Fault{"REVISION_MISMATCH"}
+		}
+		observed = transfer
+	}
 	tx, err := s.DB.Begin(ctx)
 	if err != nil {
 		return Workspace{}, err
 	}
 	defer tx.Rollback(ctx)
-	value, err := authorize(ctx, tx, ws, actor, "owner")
+	value, err := s.lockAdmission(ctx, tx, observed, actor)
 	if err != nil {
 		return value, err
 	}
@@ -292,7 +297,11 @@ func (s *Store) Update(ctx context.Context, ws, actor uuid.UUID, revision string
 	}
 	if in.OwnerID != nil {
 		target := *in.OwnerID
-		if target == actor {
+		var previousOwner uuid.UUID
+		if err = tx.QueryRow(ctx, `SELECT user_id FROM workspace_members WHERE workspace_id=$1 AND role='owner'`, ws).Scan(&previousOwner); err != nil {
+			return value, err
+		}
+		if target == actor || target == previousOwner {
 			return value, Fault{"VALIDATION"}
 		}
 		if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, target.String()); err != nil {
@@ -312,13 +321,15 @@ func (s *Store) Update(ctx context.Context, ws, actor uuid.UUID, revision string
 		if !exists {
 			return value, Fault{"NOT_FOUND"}
 		}
-		if _, err = tx.Exec(ctx, `UPDATE workspace_members SET role='editor' WHERE workspace_id=$1 AND user_id=$2`, ws, actor); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE workspace_members SET role='editor' WHERE workspace_id=$1 AND user_id=$2`, ws, previousOwner); err != nil {
 			return value, err
 		}
 		if _, err = tx.Exec(ctx, `UPDATE workspace_members SET role='owner' WHERE workspace_id=$1 AND user_id=$2`, ws, target); err != nil {
 			return value, err
 		}
-		value.Role = "editor"
+		if actor == previousOwner {
+			value.Role = "editor"
+		}
 	}
 	var next int64
 	if err = tx.QueryRow(ctx, `UPDATE workspaces SET name=COALESCE($2,name),revision=revision+1,updated_at=now() WHERE id=$1 RETURNING name,revision`, ws, in.Name).Scan(&value.Name, &next); err != nil {
@@ -353,20 +364,25 @@ func (s *Store) ChangeMember(ctx context.Context, ws, actor, target uuid.UUID, r
 	if !remove && role != "editor" && role != "viewer" {
 		return Fault{"VALIDATION"}
 	}
+	action := authz.MemberManage
+	if remove && actor == target {
+		action = authz.MemberLeave
+	}
+	observed, e := s.Authorize(ctx, ws, actor, action)
+	if e != nil {
+		return e
+	}
 	tx, e := s.DB.Begin(ctx)
 	if e != nil {
 		return e
 	}
 	defer tx.Rollback(ctx)
-	v, e := authorize(ctx, tx, ws, actor, "viewer")
+	v, e := s.lockAdmission(ctx, tx, observed, actor)
 	if e != nil {
 		return e
 	}
 	if v.Revision != revision {
 		return Fault{"REVISION_MISMATCH"}
-	}
-	if v.Role != "owner" && (!remove || actor != target) {
-		return Fault{"FORBIDDEN"}
 	}
 	var old string
 	if e = tx.QueryRow(ctx, `SELECT role FROM workspace_members WHERE workspace_id=$1 AND user_id=$2`, ws, target).Scan(&old); errors.Is(e, pgx.ErrNoRows) {

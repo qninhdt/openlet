@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	worker "openlet/apps/workspace/internal/temporal"
 	"openlet/apps/workspace/internal/workspace"
+	"openlet/packages/go/authz"
 )
 
 func decode(w http.ResponseWriter, r *http.Request, out any) error {
@@ -175,15 +176,34 @@ func (s *Server) listWorkspaces(c *gin.Context) {
 		failure(w, r, e)
 		return
 	}
-	items, e := s.Store.List(r.Context(), actorID(r), after, limit+1)
+	items, e := s.Store.List(r.Context(), actorID(r), after, limit)
 	if e != nil {
 		failure(w, r, e)
 		return
 	}
 	var next *string
-	if len(items) > limit {
-		items = items[:limit]
+	if len(items) == limit {
 		next = cursor(scope, items[len(items)-1].ID)
+	}
+	resources := make([]authz.Resource, len(items))
+	for i, item := range items {
+		resources[i] = authz.Resource{Type: "workspace", ID: item.ID.String()}
+	}
+	if len(items) > 0 {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		allowed, err := authz.BulkCheck(ctx, s.Store.Graph, actorID(r).String(), authz.WorkspaceRead, resources)
+		if err != nil {
+			failure(w, r, err)
+			return
+		}
+		visible := items[:0]
+		for i, item := range items {
+			if allowed[i] {
+				visible = append(visible, item)
+			}
+		}
+		items = visible
 	}
 	respond(w, 200, map[string]any{"items": items, "next_cursor": next})
 }
@@ -194,7 +214,7 @@ func (s *Server) getWorkspace(c *gin.Context) {
 		failure(w, r, e)
 		return
 	}
-	v, e := s.Store.Get(r.Context(), id, actorID(r))
+	v, e := s.Store.Authorize(r.Context(), id, actorID(r), authz.WorkspaceRead)
 	if e != nil {
 		failure(w, r, e)
 		return
@@ -223,6 +243,12 @@ func (s *Server) updateWorkspace(c *gin.Context) {
 	if e != nil {
 		failure(w, r, e)
 		return
+	}
+	if in.OwnerID != nil {
+		if e = worker.SyncRelationships(r.Context(), s.Temporal, s.Store, id); e != nil {
+			Error(w, r, 503, "DEPENDENCY_UNAVAILABLE", "workspace change committed; authorization synchronization incomplete")
+			return
+		}
 	}
 	w.Header().Set("ETag", "\""+v.Revision+"\"")
 	respond(w, 200, v)

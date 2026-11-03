@@ -2,7 +2,6 @@ package http
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
@@ -15,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	worker "openlet/apps/account/internal/temporal"
 	"openlet/apps/account/internal/user"
+	"openlet/packages/go/authz"
 )
 
 func decode(w http.ResponseWriter, r *http.Request, out any) error {
@@ -84,10 +84,20 @@ func (s *Server) me(c *gin.Context) {
 		failure(w, r, e)
 		return
 	}
+	if !s.authorizeAccount(c, authz.AccountRead) {
+		return
+	}
 	respond(w, 200, v)
 }
 func (s *Server) updateMe(c *gin.Context) {
 	w, r := c.Writer, c.Request
+	if _, err := s.Store.Profile(r.Context(), identityID(r)); err != nil {
+		failure(w, r, err)
+		return
+	}
+	if !s.authorizeAccount(c, authz.AccountUpdate) {
+		return
+	}
 	var in struct {
 		Name   *string `json:"display_name"`
 		Avatar *string `json:"avatar_url"`
@@ -107,61 +117,22 @@ func (s *Server) updateMe(c *gin.Context) {
 	}
 	respond(w, 200, v)
 }
-func (s *Server) internal(c *gin.Context) {
-	r := c.Request
-	if len(r.Header.Values("Authorization")) != 1 || subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+s.Config.WorkspaceToken)) != 1 {
-		Error(c.Writer, r, 401, "UNAUTHENTICATED", "service authentication required")
-		c.Abort()
-	}
-}
 
-func (s *Server) summaries(c *gin.Context) {
-	w, r := c.Writer, c.Request
-	values := r.URL.Query()["ids"]
-	if len(values) != 1 || values[0] == "" {
-		failure(w, r, user.Fault{Code: "VALIDATION"})
-		return
+func (s *Server) authorizeAccount(c *gin.Context, action authz.Action) bool {
+	if s.Graph == nil {
+		Error(c.Writer, c.Request, 503, "DEPENDENCY_UNAVAILABLE", "authorization unavailable")
+		return false
 	}
-	var ids []uuid.UUID
-	for _, value := range strings.Split(values[0], ",") {
-		id, err := uuid.Parse(value)
-		if err != nil {
-			failure(w, r, user.Fault{Code: "VALIDATION"})
-			return
-		}
-		ids = append(ids, id)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+	defer cancel()
+	id := identityID(c.Request).String()
+	allowed, err := authz.Check(ctx, s.Graph, id, action, authz.Resource{Type: "account", ID: id})
+	if err != nil {
+		failure(c.Writer, c.Request, err)
+		return false
 	}
-	seen := map[uuid.UUID]bool{}
-	for _, id := range ids {
-		if id == uuid.Nil || seen[id] {
-			failure(w, r, user.Fault{Code: "VALIDATION"})
-			return
-		}
-		seen[id] = true
+	if !allowed {
+		Error(c.Writer, c.Request, 403, "FORBIDDEN", "permission denied")
 	}
-	v, e := s.Store.Summaries(r.Context(), ids)
-	if e != nil {
-		failure(w, r, e)
-		return
-	}
-	respond(w, 200, map[string]any{"items": v})
-}
-func (s *Server) verifiedEmails(c *gin.Context) {
-	w, r := c.Writer, c.Request
-	id, e := uuid.Parse(c.Param("id"))
-	if e != nil || id == uuid.Nil {
-		failure(w, r, user.Fault{Code: "VALIDATION"})
-		return
-	}
-	subject, e := s.Store.Subject(r.Context(), id)
-	if e != nil {
-		failure(w, r, e)
-		return
-	}
-	emails, e := s.Clerk.VerifiedEmails(r.Context(), subject)
-	if e != nil {
-		failure(w, r, e)
-		return
-	}
-	respond(w, 200, map[string]any{"emails": emails})
+	return allowed
 }

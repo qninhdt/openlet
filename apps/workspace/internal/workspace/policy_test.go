@@ -6,34 +6,17 @@ import (
 	"testing"
 )
 
-func TestWorkspaceAccess(t *testing.T) {
-	for _, c := range []struct {
-		role, minimum, state, code string
-	}{
-		{"owner", "owner", "active", ""},
-		{"owner", "editor", "active", ""},
-		{"owner", "viewer", "active", ""},
-		{"editor", "owner", "active", "FORBIDDEN"},
-		{"editor", "editor", "active", ""},
-		{"editor", "viewer", "active", ""},
-		{"viewer", "owner", "active", "FORBIDDEN"},
-		{"viewer", "editor", "active", "FORBIDDEN"},
-		{"viewer", "viewer", "active", ""},
-		{"owner", "viewer", "provisioning", "WORKSPACE_DELETING"},
-		{"owner", "viewer", "deleting", "WORKSPACE_DELETING"},
-		{"owner", "viewer", "deleted", "NOT_FOUND"},
-		{"viewer", "owner", "deleting", "WORKSPACE_DELETING"},
+func TestWorkspaceActiveLifecycle(t *testing.T) {
+	for _, c := range []struct{ state, code string }{
+		{"active", ""}, {"provisioning", "WORKSPACE_DELETING"}, {"failed", "WORKSPACE_DELETING"}, {"deleting", "WORKSPACE_DELETING"}, {"deleted", "NOT_FOUND"},
 	} {
-		t.Run(c.role+"/"+c.minimum+"/"+c.state, func(t *testing.T) {
-			var want error
-			if c.code != "" {
-				want = Fault{c.code}
-			}
-			err := (Workspace{Status: c.state, Role: c.role}).checkAccess(c.minimum)
-			if !errors.Is(err, want) {
-				t.Fatalf("got %v; want %v", err, want)
-			}
-		})
+		var want error
+		if c.code != "" {
+			want = Fault{c.code}
+		}
+		if err := (Workspace{Status: c.state}).checkActive(); !errors.Is(err, want) {
+			t.Fatalf("%s: got %v want %v", c.state, err, want)
+		}
 	}
 }
 

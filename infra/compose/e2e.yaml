@@ -3,6 +3,9 @@ name: openlet-api-e2e
 x-go-environment: &go-environment
   TEMPORAL_ADDRESS: temporal:7233
   TEMPORAL_NAMESPACE: openlet
+  ALLOW_PLAINTEXT_RPC: 'true'
+  SPICEDB_ADDRESS: spicedb:50051
+  SPICEDB_GRPC_PRESHARED_KEY_FILE: /run/secrets/spicedb_key
   GATEWAY_TOKEN_FILE: /run/secrets/gateway_token
   WORKSPACE_SERVICE_TOKEN_FILE: /run/secrets/workspace_service_token
 
@@ -50,6 +53,56 @@ x-telemetry-env: &telemetry-env
   OTEL_RESOURCE_ATTRIBUTES: ${OTEL_RESOURCE_ATTRIBUTES:-}
   OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-false}
 services:
+  spicedb-migrate:
+    image: &spicedb-image authzed/spicedb:v1.57.0@sha256:2e0cd20aa923ccfd96eb285756ec10a5d7bbe387e4b29c26bd6447435d2328de
+    working_dir: /config
+    command: [datastore, migrate, head, --skip-release-check]
+    volumes: ['${OPENLET_E2E_STATE}/spicedb.env:/config/spicedb.env:ro']
+    depends_on:
+      postgres: {condition: service_healthy}
+    labels: *labels
+    networks: [backend]
+
+  spicedb:
+    image: *spicedb-image
+    working_dir: /config
+    command:
+      - serve
+      - --skip-release-check
+      - --telemetry-endpoint=
+      - --http-enabled=false
+      - --datastore-disable-watch-support
+      - --datastore-conn-pool-read-min-open=1
+      - --datastore-conn-pool-read-max-open=8
+      - --datastore-conn-pool-write-min-open=1
+      - --datastore-conn-pool-write-max-open=8
+    volumes: ['${OPENLET_E2E_STATE}/spicedb.env:/config/spicedb.env:ro']
+    depends_on:
+      spicedb-migrate: {condition: service_completed_successfully}
+    healthcheck:
+      test: [CMD, /usr/local/bin/grpc_health_probe, -addr=localhost:50051, -rpc-timeout=2s]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+    stop_grace_period: 30s
+    labels: *labels
+    networks: [backend]
+
+  authz-schema:
+    build: {context: ../.., dockerfile: infra/bootstrap/Dockerfile}
+    image: openlet-migrations:local
+    entrypoint: [/usr/local/bin/authz-schema]
+    environment:
+      SPICEDB_ADDRESS: spicedb:50051
+      SPICEDB_GRPC_PRESHARED_KEY_FILE: /run/secrets/spicedb_key
+      ALLOW_PLAINTEXT_RPC: 'true'
+    secrets: [spicedb_key]
+    depends_on:
+      spicedb: {condition: service_healthy}
+    profiles: [setup]
+    labels: *labels
+    networks: [backend]
+
   postgres:
     image: postgres:18.6-trixie@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
     command: [postgres, -c, max_connections=200]
@@ -136,13 +189,15 @@ services:
     command: [operator, namespace, create, --namespace, openlet, --retention, 168h]
 
   storage:
-    image: chrislusf/seaweedfs:4.19@sha256:90e181977effc58a303a1b21a0d581314e142b09543a712ff739c79ed78f42cf
-    command: [server, -dir=/data, -ip=storage, -ip.bind=0.0.0.0, -s3, -s3.config=/etc/s3.json, -master.volumeSizeLimitMB=64, -volume.max=8, -volume.minFreeSpace=512MiB]
-    volumes:
-      - storage:/data
-      - ${OPENLET_E2E_STATE}/storage.json:/etc/s3.json:ro
+    build: {context: ../minio}
+    image: openlet-minio:RELEASE.2025-10-15T17-29-55Z
+    environment:
+      MINIO_ROOT_USER_FILE: /run/secrets/s3_access_key_id
+      MINIO_ROOT_PASSWORD_FILE: /run/secrets/s3_secret_access_key
+    secrets: [s3_access_key_id, s3_secret_access_key]
+    volumes: [storage:/data]
     healthcheck:
-      test: [CMD, wget, -q, -O, /dev/null, 'http://127.0.0.1:8888/']
+      test: [CMD, curl, --fail, --silent, 'http://127.0.0.1:9000/minio/health/ready']
       interval: 2s
       timeout: 3s
       retries: 60
@@ -156,7 +211,7 @@ services:
     secrets: [fixture_control_token, clerk_secret_key, openrouter_api_key]
     ports:
       - 127.0.0.1:${OPENLET_E2E_CONTROL_PORT}:8080
-      - 127.0.0.1:${OPENLET_E2E_STORAGE_PORT}:8333
+      - 127.0.0.1:${OPENLET_E2E_STORAGE_PORT}:9000
     labels: *labels
     networks: [backend, ingress]
 
@@ -170,6 +225,8 @@ services:
     networks: [backend]
 
   account:
+    depends_on:
+      spicedb: {condition: service_healthy}
     build: {context: ../.., dockerfile: apps/account/Dockerfile}
     environment:
       <<: [*telemetry-env, *go-environment]
@@ -177,7 +234,7 @@ services:
       CLERK_API_URL: http://boundary:8080/v1
       CLERK_SECRET_KEY_FILE: /run/secrets/clerk_secret_key
       ALLOW_TEST_HTTP: 'true'
-    secrets: [account_database_url, gateway_token, workspace_service_token, clerk_secret_key]
+    secrets: [account_database_url, gateway_token, workspace_service_token, clerk_secret_key, spicedb_key]
     healthcheck: &go-health
       test: [CMD, /server, --healthcheck]
       interval: 2s
@@ -188,29 +245,32 @@ services:
     networks: [backend]
 
   workspace:
+    depends_on:
+      spicedb: {condition: service_healthy}
     build: {context: ../.., dockerfile: apps/workspace/Dockerfile}
     environment:
       <<: [*telemetry-env, *go-environment]
       DATABASE_URL_FILE: /run/secrets/workspace_database_url
-      ACCOUNT_URL: http://account:8080
-      LETFS_URL: http://letfs:8080
+      ACCOUNT_RPC_ADDRESS: account:9090
       DEFAULT_QUOTA_BYTES: '20971520'
-    secrets: [workspace_database_url, gateway_token, workspace_service_token]
+    secrets: [workspace_database_url, gateway_token, workspace_service_token, spicedb_key]
     healthcheck: *go-health
     stop_grace_period: 40s
     labels: *labels
     networks: [backend]
 
   letfs:
+    depends_on:
+      spicedb: {condition: service_healthy}
     build: {context: ../.., dockerfile: apps/letfs/Dockerfile}
     environment:
-      <<: [*telemetry-env, *model-environment]
+      <<: [*telemetry-env, *model-environment, *go-environment]
       DATABASE_URL_FILE: /run/secrets/letfs_database_url
       WORKSPACE_SERVICE_TOKEN_FILE: /run/secrets/workspace_service_token
-      PROCESSOR_SERVICE_TOKEN_FILE: /run/secrets/processor_service_token
-      TEMPORAL_ADDRESS: http://temporal:7233
+      INGEST_SERVICE_TOKEN_FILE: /run/secrets/ingest_service_token
+      TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_NAMESPACE: openlet
-      S3_ENDPOINT: http://boundary:8333
+      S3_ENDPOINT: http://boundary:9000
       S3_SIGNING_ENDPOINT: http://127.0.0.1:${OPENLET_E2E_STORAGE_PORT}
       S3_REGION: us-east-1
       S3_BUCKET: openlet-e2e
@@ -218,9 +278,9 @@ services:
       S3_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_secret_access_key
       ALLOW_LOCAL_S3: 'true'
       MAX_COPY_NODES: '64'
-    secrets: [letfs_database_url, workspace_service_token, processor_service_token, openrouter_api_key, qdrant_api_key, s3_access_key_id, s3_secret_access_key]
+    secrets: [letfs_database_url, gateway_token, spicedb_key, workspace_service_token, ingest_service_token, openrouter_api_key, qdrant_api_key, s3_access_key_id, s3_secret_access_key]
     healthcheck:
-      test: [CMD, letfs, --healthcheck]
+      test: [CMD, /server, --healthcheck]
       interval: 2s
       timeout: 5s
       retries: 60
@@ -228,16 +288,17 @@ services:
     labels: *labels
     networks: [backend]
 
-  processor-cpu: &processor
+  ingest-cpu: &ingest
     command: [cpu]
-    build: {context: ../.., dockerfile: apps/letfs-processing/Dockerfile}
+    build: {context: ../.., dockerfile: apps/letfs-ingest/Dockerfile}
     environment:
       <<: [*telemetry-env, *model-environment]
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_NAMESPACE: openlet
-      LETFS_URL: http://letfs:8080
-      PROCESSOR_SERVICE_TOKEN_FILE: /run/secrets/processor_service_token
-    secrets: [processor_service_token, openrouter_api_key, qdrant_api_key]
+      LETFS_RPC_ADDRESS: letfs:9090
+      ALLOW_PLAINTEXT_RPC: 'true'
+      INGEST_SERVICE_TOKEN_FILE: /run/secrets/ingest_service_token
+    secrets: [ingest_service_token, openrouter_api_key, qdrant_api_key]
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
@@ -249,8 +310,8 @@ services:
     labels: *labels
     networks: [backend]
 
-  processor-io:
-    <<: *processor
+  ingest-io:
+    <<: *ingest
     command: [io]
     cpus: 1
     mem_limit: 1g
@@ -271,6 +332,7 @@ volumes:
   storage: {labels: *labels}
   qdrant: {labels: *labels}
 secrets:
+  spicedb_key: {file: '${OPENLET_E2E_STATE}/secrets/spicedb_key'}
   postgres_password: {file: '${OPENLET_E2E_STATE}/secrets/postgres_password'}
   temporal_db_password: {file: '${OPENLET_E2E_STATE}/secrets/temporal_db_password'}
   temporal_visibility_db_password: {file: '${OPENLET_E2E_STATE}/secrets/temporal_visibility_db_password'}
@@ -279,7 +341,7 @@ secrets:
   letfs_database_url: {file: '${OPENLET_E2E_STATE}/secrets/letfs_database_url'}
   gateway_token: {file: '${OPENLET_E2E_STATE}/secrets/gateway_token'}
   workspace_service_token: {file: '${OPENLET_E2E_STATE}/secrets/workspace_service_token'}
-  processor_service_token: {file: '${OPENLET_E2E_STATE}/secrets/processor_service_token'}
+  ingest_service_token: {file: '${OPENLET_E2E_STATE}/secrets/ingest_service_token'}
   clerk_secret_key: {file: '${OPENLET_E2E_STATE}/secrets/clerk_secret_key'}
   fixture_control_token: {file: '${OPENLET_E2E_STATE}/secrets/fixture_control_token'}
   openrouter_api_key: {file: '${OPENLET_E2E_STATE}/secrets/openrouter_api_key'}

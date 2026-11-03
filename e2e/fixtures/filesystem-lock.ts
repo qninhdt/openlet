@@ -6,7 +6,7 @@ import { project, root, state } from '../setup/settings.ts';
 
 const execute = promisify(execFile);
 
-export async function lockFilesystem(filesystemId: string): Promise<() => Promise<void>> {
+export async function lockFilesystemRoot(filesystemId: string): Promise<() => Promise<void>> {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(filesystemId)) throw new Error('Invalid filesystem ID');
   const admission = JSON.parse(await readFile(join(state, 'environment.json'), 'utf8'));
   if (admission.project !== project || admission.root !== root || typeof admission.run !== 'string') throw new Error('Lock environment ownership mismatch');
@@ -37,7 +37,8 @@ export async function lockFilesystem(filesystemId: string): Promise<() => Promis
         if (output.includes('filesystem-lock-ready')) { clearTimeout(timer); resolve(); }
       });
       exited.finally(() => clearTimeout(timer)).catch(() => {});
-      process.stdin.write(`BEGIN;\nSELECT id FROM filesystems WHERE id='${filesystemId}' FOR UPDATE;\n\\echo filesystem-lock-ready\n`);
+      // Block child deletion after the owner has durably admitted filesystem cleanup.
+      process.stdin.write(`BEGIN;\nSELECT n.id FROM nodes n JOIN filesystems f ON f.root_id=n.id WHERE f.id='${filesystemId}' FOR UPDATE OF n;\n\\echo filesystem-lock-ready\n`);
     }), exited.then(() => { throw new Error('Filesystem lock closed before readiness'); })]);
     return release;
   } catch (error) { await release().catch(() => {}); throw error; }

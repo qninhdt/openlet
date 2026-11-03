@@ -2,13 +2,14 @@ package http
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
+	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -18,14 +19,17 @@ import (
 	"openlet/apps/account/internal/clerk"
 	"openlet/apps/account/internal/config"
 	"openlet/apps/account/internal/user"
+	"openlet/packages/go/identity"
 )
 
 type Server struct {
-	Config   config.Config
-	DB       *pgxpool.Pool
-	Temporal client.Client
-	Store    *user.Store
-	Clerk    clerk.Client
+	Graph      v1.PermissionsServiceClient
+	GraphReady func(context.Context) error
+	Config     config.Config
+	DB         *pgxpool.Pool
+	Temporal   client.Client
+	Store      *user.Store
+	Clerk      clerk.Client
 }
 
 func (s *Server) Router() *gin.Engine {
@@ -39,15 +43,13 @@ func (s *Server) Router() *gin.Engine {
 		path := c.Request.URL.Path
 		if path == "/v1" || strings.HasPrefix(path, "/v1/") {
 			s.Gateway(c)
-		} else if path == "/internal/v1" || strings.HasPrefix(path, "/internal/v1/") {
-			s.internal(c)
 		}
 	})
 	r.GET("/live", func(c *gin.Context) { c.Status(http.StatusNoContent) })
 	r.GET("/ready", func(c *gin.Context) {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 		defer cancel()
-		if s.DB.Ping(ctx) != nil {
+		if s.GraphReady == nil || s.GraphReady(ctx) != nil || s.DB.Ping(ctx) != nil {
 			c.Status(http.StatusServiceUnavailable)
 			return
 		}
@@ -58,14 +60,11 @@ func (s *Server) Router() *gin.Engine {
 		c.Status(http.StatusNoContent)
 	})
 	public := r.Group("/v1")
-	internal := r.Group("/internal/v1")
 
 	public.PUT("/me/onboarding", s.onboardingPut)
 	public.GET("/me/onboarding", s.onboardingGet)
 	public.GET("/me", s.me)
 	public.PATCH("/me", s.updateMe)
-	internal.GET("/users", s.summaries)
-	internal.GET("/users/:id/verified-emails", s.verifiedEmails)
 	r.NoRoute(func(c *gin.Context) {
 		Error(c.Writer, c.Request, 404, "NOT_FOUND", "resource not found")
 	})
@@ -81,23 +80,18 @@ func Error(w http.ResponseWriter, r *http.Request, status int, code, message str
 
 func (s *Server) Gateway(c *gin.Context) {
 	r := c.Request
-	if len(r.Header.Values("X-Gateway-Token")) != 1 || subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Gateway-Token")), []byte(s.Config.GatewayToken)) != 1 {
-		Error(c.Writer, r, 401, "UNAUTHENTICATED", "gateway authentication required")
-		c.Abort()
-		return
-	}
-	if len(r.Header.Values("X-Clerk-Sub")) != 1 || r.Header.Get("X-Clerk-Sub") == "" {
-		Error(c.Writer, r, 401, "UNAUTHENTICATED", "verified subject required")
-		c.Abort()
-		return
-	}
-	if r.URL.Path != "/v1/me/onboarding" {
-		id, err := uuid.Parse(r.Header.Get("X-Openlet-User-ID"))
-		if len(r.Header.Values("X-Openlet-User-ID")) != 1 || err != nil || id == uuid.Nil {
-			Error(c.Writer, r, 401, "ONBOARDING_REQUIRED", "refresh an onboarded session")
-			c.Abort()
+	bootstrap := r.URL.Path == "/v1/me/onboarding" && (r.Method == http.MethodGet || r.Method == http.MethodPut)
+	principal, err := identity.AuthenticateGateway(r.Header, s.Config.GatewayToken, bootstrap)
+	if err != nil {
+		code := "UNAUTHENTICATED"
+		if errors.Is(err, identity.ErrOnboardingRequired) {
+			code = "ONBOARDING_REQUIRED"
 		}
+		Error(c.Writer, r, http.StatusUnauthorized, code, err.Error())
+		c.Abort()
+		return
 	}
+	c.Request = r.WithContext(identity.WithPrincipal(r.Context(), principal))
 }
 
 func observe(c *gin.Context) {

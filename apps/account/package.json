@@ -1,6 +1,9 @@
 {
   "name": "@openlet/account",
   "private": true,
+  "dependencies": {
+    "@openlet/go": "workspace:*"
+  },
   "scripts": {
     "build": "go build -o bin/account ./cmd/server",
     "check": "gofmt -l . | awk '{print} END {exit NR != 0}' && go vet -tags integration ./...",

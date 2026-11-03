@@ -1,0 +1,13 @@
+{
+  "name": "@openlet/python",
+  "private": true,
+  "scripts": {
+    "build": "uv build --package openlet-python",
+    "check": "uv run --locked --package openlet-python ruff check tests && uv run --locked --package openlet-python ruff format --check tests",
+    "test": "uv run --locked --package openlet-python pytest tests -m \"not integration\"",
+    "test:integration": "uv run --locked --package openlet-python pytest tests -m integration"
+  },
+  "devDependencies": {
+    "@openlet/contracts": "workspace:*"
+  }
+}

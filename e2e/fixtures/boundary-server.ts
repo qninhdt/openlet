@@ -151,13 +151,14 @@ async function serve(request: IncomingMessage, response: ServerResponse) {
     if (url.pathname.endsWith('/embeddings')) {
       if (failures.embeddings > 0) { failures.embeddings--; return reply(response, 503, { error: 'injected embedding outage' }); }
       const dimension = Number(body.dimensions ?? 8);
-      if (!Number.isInteger(dimension) || dimension < 1 || dimension > 4096 || !Array.isArray(body.input)) return reply(response, 400, { error: 'invalid embedding input' });
-      return reply(response, 200, { object: 'list', model: body.model, data: body.input.map((_, index) => ({ object: 'embedding', index, embedding: Array.from({ length: dimension }, (_value, i) => i === index % dimension ? 1 : 0.1) })), usage: { prompt_tokens: 1, total_tokens: 1 } });
+      const input = typeof body.input === 'string' ? [body.input] : body.input;
+      if (!Number.isInteger(dimension) || dimension < 1 || dimension > 4096 || !Array.isArray(input)) return reply(response, 400, { error: 'invalid embedding input' });
+      return reply(response, 200, { object: 'list', model: body.model, data: input.map((_, index) => ({ object: 'embedding', index, embedding: Array.from({ length: dimension }, (_value, i) => i === index % dimension ? 1 : 0.1) })), usage: { prompt_tokens: 1, total_tokens: 1 } });
     }
     if (url.pathname.endsWith('/rerank')) {
       if (failures.rerank > 0) { failures.rerank--; return reply(response, 503, { error: 'injected rerank outage' }); }
       if (!Array.isArray(body.documents)) return reply(response, 400, { error: 'documents required' });
-      return reply(response, 200, { results: body.documents.map((_, index) => ({ index, relevance_score: 1 / (index + 1) })) });
+      return reply(response, 200, { model: body.model, results: body.documents.map((_, index) => ({ index, relevance_score: 1 / (index + 1) })) });
     }
     if (url.pathname.endsWith('/chat/completions')) {
       if (failures.generation > 0) { failures.generation--; return reply(response, 503, { error: 'injected model outage' }); }
@@ -197,7 +198,7 @@ async function proxyStorage(request: IncomingMessage, response: ServerResponse) 
       if (response.destroyed) return;
     }
   }
-  const upstream = upstreamRequest({ hostname: 'storage', port: 8333, method: request.method, path: request.url, headers: request.headers }, result => {
+  const upstream = upstreamRequest({ hostname: 'storage', port: 9000, method: request.method, path: request.url, headers: request.headers }, result => {
     if (selected?.mode === 'drop-response') {
       const drop = () => response.destroy();
       result.once('end', drop);
@@ -228,7 +229,7 @@ const storage = createServer((request, response) => {
 });
 
 api.listen(8080, '0.0.0.0');
-storage.listen(8333, '0.0.0.0');
+storage.listen(9000, '0.0.0.0');
 let shuttingDown = false;
 for (const signal of ['SIGTERM', 'SIGINT'] as const) process.once(signal, () => {
   if (shuttingDown) return;

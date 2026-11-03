@@ -1,0 +1,47 @@
+{
+  "version": "v2",
+  "plugins": [
+    {
+      "local": [
+        "go",
+        "-C",
+        "../go",
+        "tool",
+        "protoc-gen-go"
+      ],
+      "out": "../go/gen",
+      "opt": "paths=source_relative"
+    },
+    {
+      "local": [
+        "go",
+        "-C",
+        "../go",
+        "tool",
+        "protoc-gen-go-grpc"
+      ],
+      "out": "../go/gen",
+      "opt": "paths=source_relative"
+    },
+    {
+      "local": [
+        "go",
+        "-C",
+        "../go",
+        "tool",
+        "protoc-gen-connect-openapi"
+      ],
+      "out": "generated",
+      "strategy": "all",
+      "opt": [
+        "features=google.api.http",
+        "base=../contracts/openapi-base.yaml",
+        "services=openlet_api.letfs.v1.FilesystemService",
+        "trim-unused-types",
+        "with-proto-names",
+        "format=json",
+        "path=letfs.openapi.json"
+      ]
+    }
+  ]
+}

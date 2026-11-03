@@ -1,6 +1,8 @@
 package http
 
 import (
+	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,7 +15,24 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
+	"google.golang.org/grpc/metadata"
+	accountv1 "openlet/packages/go/gen/openlet_api/account/v1"
+	sharedrpc "openlet/packages/go/rpc"
 )
+
+type tracedAccount struct {
+	accountv1.UnimplementedAccountServiceServer
+	t *testing.T
+}
+
+func (s tracedAccount) GetVerifiedEmails(ctx context.Context, _ *accountv1.GetVerifiedEmailsRequest) (*accountv1.GetVerifiedEmailsResponse, error) {
+	parent := trace.SpanContextFromContext(ctx)
+	md, _ := metadata.FromIncomingContext(ctx)
+	if parent.TraceID().String() != "1234567890abcdef1234567890abcdef" || len(md.Get("baggage")) != 0 {
+		s.t.Error("outbound request lost W3C context or forwarded private baggage")
+	}
+	return &accountv1.GetVerifiedEmailsResponse{}, nil
+}
 
 func TestGinPropagatesHTTPTraceWithoutBaggage(t *testing.T) {
 	exporter := tracetest.NewInMemoryExporter()
@@ -27,18 +46,36 @@ func TestGinPropagatesHTTPTraceWithoutBaggage(t *testing.T) {
 		_ = provider.Shutdown(t.Context())
 	})
 	const traceID = "1234567890abcdef1234567890abcdef"
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		parent := trace.SpanContextFromContext(propagation.TraceContext{}.Extract(r.Context(), propagation.HeaderCarrier(r.Header)))
-		if parent.TraceID().String() != traceID || r.Header.Get("Baggage") != "" {
-			t.Error("outbound request lost W3C context or forwarded private baggage")
+	token := strings.Repeat("w", 32)
+	authentication, err := sharedrpc.NewAuthenticator([]sharedrpc.Credential{{Service: "workspace", Token: token, Methods: []string{accountv1.AccountService_GetVerifiedEmails_FullMethodName}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream, err := sharedrpc.NewServer(authentication, sharedrpc.Transport{AllowPlaintext: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	accountv1.RegisterAccountServiceServer(upstream, tracedAccount{t: t})
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopped := make(chan error, 1)
+	go func() { stopped <- upstream.Serve(listener) }()
+	t.Cleanup(func() {
+		upstream.Stop()
+		if err := <-stopped; err != nil {
+			t.Error(err)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"emails":[]}`))
-	}))
-	defer upstream.Close()
+	})
+	connection, err := sharedrpc.Dial(listener.Addr().String(), token, sharedrpc.Transport{AllowPlaintext: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = connection.Close() })
 	s := Server{}
 	s.Config.GatewayToken = strings.Repeat("x", 43)
-	s.User.BaseURL = upstream.URL
+	s.User.API = accountv1.NewAccountServiceClient(connection)
 	router := s.Router()
 	router.GET("/v1/probe/:id", func(c *gin.Context) {
 		if _, err := s.User.VerifiedEmails(c.Request.Context(), uuid.New()); err != nil {
@@ -60,21 +97,20 @@ func TestGinPropagatesHTTPTraceWithoutBaggage(t *testing.T) {
 		t.Fatalf("request failed: %d", response.Code)
 	}
 	spans := exporter.GetSpans()
-	if len(spans) != 2 {
-		t.Fatalf("want inbound and outbound spans, got %d", len(spans))
+	if len(spans) != 3 {
+		t.Fatalf("want HTTP inbound and gRPC client/server spans, got %d", len(spans))
 	}
-	var inbound, outbound tracetest.SpanStub
+	var inbound, outbound, account tracetest.SpanStub
 	for _, span := range spans {
-		if span.SpanKind == trace.SpanKindServer {
+		if span.SpanKind == trace.SpanKindServer && span.Name == "GET /v1/probe/:id" {
 			inbound = span
-			if span.Name != "GET /v1/probe/:id" {
-				t.Fatalf("raw path span name: %s", span.Name)
-			}
+		} else if span.SpanKind == trace.SpanKindServer {
+			account = span
 		} else if span.SpanKind == trace.SpanKindClient {
 			outbound = span
 		}
 		for _, attribute := range span.Attributes {
-			if strings.Contains(attribute.Value.Emit(), "must-not-export") || strings.Contains(attribute.Value.Emit(), s.Config.GatewayToken) {
+			if strings.Contains(attribute.Value.String(), "must-not-export") || strings.Contains(attribute.Value.String(), s.Config.GatewayToken) {
 				t.Fatalf("sensitive telemetry attribute: %s", attribute.Key)
 			}
 		}
@@ -84,5 +120,8 @@ func TestGinPropagatesHTTPTraceWithoutBaggage(t *testing.T) {
 	}
 	if outbound.Parent.SpanID() != inbound.SpanContext.SpanID() {
 		t.Fatal("outbound span is not a child of inbound HTTP")
+	}
+	if account.Parent.SpanID() != outbound.SpanContext.SpanID() {
+		t.Fatal("Account span is not a child of outbound RPC")
 	}
 }

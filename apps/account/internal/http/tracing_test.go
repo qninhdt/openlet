@@ -74,7 +74,7 @@ func TestGinPropagatesHTTPTraceWithoutBaggage(t *testing.T) {
 			outbound = span
 		}
 		for _, attribute := range span.Attributes {
-			if strings.Contains(attribute.Value.Emit(), "must-not-export") || strings.Contains(attribute.Value.Emit(), s.Config.GatewayToken) {
+			if strings.Contains(attribute.Value.String(), "must-not-export") || strings.Contains(attribute.Value.String(), s.Config.GatewayToken) {
 				t.Fatalf("sensitive telemetry attribute: %s", attribute.Key)
 			}
 		}

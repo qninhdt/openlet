@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { test, expect, inline } from '../../fixtures/api-test.ts';
 
 test('single object upload finalizes once and preserves exact download and Range bytes', async ({ session, playwright }) => {
-  const base = `/v1/workspaces/${session.workspaceId}`;
+  const base = `/v1/filesystems/${session.filesystemId}`;
   const bytes = Buffer.alloc(300_000, 0xab);
   bytes.write('direct upload with exact binary bytes');
   const key = randomUUID();
@@ -35,12 +35,12 @@ test('single object upload finalizes once and preserves exact download and Range
     const range = await storage.get(redirect.headers().location, { headers: { range: 'bytes=17-31' } });
     expect(range.status()).toBe(206);
     expect(await range.body()).toEqual(bytes.subarray(17, 32));
-    expect((await (await session.api.get(`${base}/storage`)).json()).used_bytes).toBe(String(bytes.length));
+    expect((await (await session.api.get(`/v1/quota-buckets/${session.bucketId}`)).json()).bucket.used_bytes).toBe(String(bytes.length));
   } finally { await storage.dispose(); }
 });
 
 test('stale object replacement preserves the intervening content and quota', async ({ session, playwright }) => {
-  const base = `/v1/workspaces/${session.workspaceId}`;
+  const base = `/v1/filesystems/${session.filesystemId}`;
   const original = await inline(session, 'replace.bin', Buffer.from('original'));
   const selected = await session.api.get(`${base}/nodes/${original.id}`);
   const candidate = Buffer.alloc(300_000, 0x63);
@@ -57,13 +57,13 @@ test('stale object replacement preserves the intervening content and quota', asy
     const rejected = await session.api.put(`${base}/uploads/${upload.id}/completion`, { data: {} });
     expect(rejected.status()).toBe(412);
     expect(await (await session.api.get(`${base}/nodes/${original.id}/content`)).body()).toEqual(intervening);
-    expect((await (await session.api.get(`${base}/storage`)).json()).used_bytes).toBe(String(intervening.length));
+    expect((await (await session.api.get(`/v1/quota-buckets/${session.bucketId}`)).json()).bucket.used_bytes).toBe(String(intervening.length));
     expect((await session.api.delete(`${base}/uploads/${upload.id}`)).status()).toBe(204);
   } finally { await storage.dispose(); }
 });
 
 test('native multipart completion reconciles a lost S3 acknowledgment without republishing or charging twice', async ({ session, controls, playwright }) => {
-  const base = `/v1/workspaces/${session.workspaceId}`;
+  const base = `/v1/filesystems/${session.filesystemId}`;
   const bytes = Buffer.alloc(17 * 1024 * 1024, 0x6d);
   const prepared = await session.api.post(`${base}/uploads`, { headers: { 'idempotency-key': randomUUID() },
     data: { parent_id: session.rootId, name: 'multipart.bin', media_type: 'application/octet-stream', size_bytes: String(bytes.length) } });
@@ -95,13 +95,13 @@ test('native multipart completion reconciles a lost S3 acknowledgment without re
     expect(replay.status()).toBe(200);
     expect(await replay.json()).toEqual(result);
     const status = await session.api.get(`${base}/uploads/${upload.id}`);
-    expect(await status.json()).toMatchObject({ status: 'finalized', result: { node_id: result.node_id } });
+    expect(await status.json()).toMatchObject({ status: 'finalized', publication: { node_id: result.node_id } });
     const redirect = await session.api.get(`${base}/nodes/${result.node_id}/content`, { maxRedirects: 0 });
     expect(redirect.status()).toBe(307);
     const downloaded = await storage.get(redirect.headers().location);
     expect(downloaded.status()).toBe(200);
     expect(await downloaded.body()).toEqual(bytes);
-    expect((await (await session.api.get(`${base}/storage`)).json()).used_bytes).toBe(String(bytes.length));
+    expect((await (await session.api.get(`/v1/quota-buckets/${session.bucketId}`)).json()).bucket.used_bytes).toBe(String(bytes.length));
   } finally {
     await controls.delete('/control/storage');
     await storage.dispose();
@@ -109,7 +109,7 @@ test('native multipart completion reconciles a lost S3 acknowledgment without re
 });
 
 test('quota rejection at publication retains the committed file and does not charge the candidate', async ({ session, playwright }) => {
-  const base = `/v1/workspaces/${session.workspaceId}`;
+  const base = `/v1/filesystems/${session.filesystemId}`;
   const storage = await playwright.request.newContext();
   const bytes = Buffer.alloc(12 * 1024 * 1024, 0x71);
   try {
@@ -129,7 +129,7 @@ test('quota rejection at publication retains the committed file and does not cha
     expect(await rejected.json()).toMatchObject({ code: 'QUOTA_EXCEEDED' });
     const nodes = await session.api.get(`${base}/nodes`, { params: { parent_id: session.rootId } });
     expect((await nodes.json()).items.map((node: { name: string }) => node.name)).toEqual(['first.bin']);
-    expect((await (await session.api.get(`${base}/storage`)).json()).used_bytes).toBe(String(bytes.length));
+    expect((await (await session.api.get(`/v1/quota-buckets/${session.bucketId}`)).json()).bucket.used_bytes).toBe(String(bytes.length));
     const content = await session.api.get(`${base}/nodes/${(await published.json()).node_id}/content`, { maxRedirects: 0 });
     expect(content.status()).toBe(307);
     expect(await (await storage.get(content.headers().location)).body()).toEqual(bytes);

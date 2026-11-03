@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { test, expect, onboard, inline } from '../../fixtures/api-test.ts';
-import { setTemporalRunning, temporalIsHealthy, triggerWorkspaceReconciliation } from '../../fixtures/temporal-control.ts';
+import { recordWorkflowHistory, setTemporalRunning, temporalIsHealthy, triggerWorkspaceReconciliation } from '../../fixtures/temporal-control.ts';
 
 test('concurrent workspace admission replays one resource and rejects changed input', async ({ session }) => {
   const key = randomUUID();
@@ -35,6 +35,7 @@ test('ownership transfer atomically changes privileges and rejects the previous 
     const transferred = await session.api.patch(base, { headers: { 'if-match': current.headers().etag }, data: { owner_id: successor.userId } });
     expect(transferred.status()).toBe(200);
     expect(transferred.headers().etag).not.toBe(current.headers().etag);
+    await recordWorkflowHistory('SyncWorkspace', `sync-workspace/${session.workspaceId}/${transferred.headers().etag.slice(1, -1)}/active`);
     const members = await successor.api.get(`${base}/members`);
     expect(members.status()).toBe(200);
     const owners = (await members.json()).items.filter((member: { role: string }) => member.role === 'owner');
@@ -63,9 +64,9 @@ test('invitation token is returned once and current membership controls file acc
     expect(joined.status()).toBe(201);
     expect(await joined.json()).toMatchObject({ user: { id: guest.userId }, role: 'viewer' });
     expect((await guest.api.get(base)).status()).toBe(200);
-    expect((await guest.api.post(`${base}/nodes`, { headers: { 'idempotency-key': randomUUID() }, data: { kind: 'directory', parent_id: session.rootId, name: 'forbidden' } })).status()).toBe(403);
+    expect((await guest.api.post(`/v1/filesystems/${session.filesystemId}/nodes`, { headers: { 'idempotency-key': randomUUID() }, data: { kind: 'directory', parent_id: session.rootId, name: 'forbidden' } })).status()).toBe(403);
     const source = await inline(session, 'monitor-source.bin', Buffer.from('copy'));
-    const admitted = await session.api.post(`${base}/nodes`, { headers: { 'idempotency-key': randomUUID(), 'if-match': '"1"' }, data: { source_id: source.id, parent_id: session.rootId, name: 'monitor-result.bin' } });
+    const admitted = await session.api.post(`/v1/filesystems/${session.filesystemId}/nodes`, { headers: { 'idempotency-key': randomUUID(), 'if-match': '"1"' }, data: { source_id: source.id, parent_id: session.rootId, name: 'monitor-result.bin' } });
     expect(admitted.status()).toBe(202);
     const monitor = admitted.headers().location;
     await expect.poll(async () => (await (await session.api.get(monitor)).json()).status).toBe('succeeded');
@@ -73,8 +74,8 @@ test('invitation token is returned once and current membership controls file acc
     const current = await session.api.get(base);
     const removed = await session.api.delete(`${base}/members/${guest.userId}`, { headers: { 'if-match': current.headers().etag } });
     expect(removed.status()).toBe(204);
-    expect((await guest.api.get(`${base}/nodes/${session.rootId}`)).status()).toBe(404);
-    expect((await guest.api.get(monitor)).status()).toBe(404);
+    expect((await guest.api.get(`/v1/filesystems/${session.filesystemId}/nodes/${session.rootId}`)).status()).toBe(403);
+    expect((await guest.api.get(monitor)).status()).toBe(403);
     const replay = await guest.api.post('/v1/memberships', { data: { token: invitation.token } });
     expect(replay.status()).toBe(409);
   } finally { await guest.api.dispose(); }
@@ -100,4 +101,33 @@ test('Workspace admission survives a Temporal outage and its owner schedule disp
   expect(await replay.json()).toMatchObject({ id, status: 'active' });
   const workspaces = await session.api.get('/v1/workspaces');
   expect((await workspaces.json()).items.map((item: { id: string }) => item.id).sort()).toEqual([session.workspaceId, id].sort());
+});
+
+test('a committed role change reports incomplete sync during Temporal outage and reconciliation finishes it', async ({ session, controls, playwright }) => {
+  const identity = await (await controls.post('/control/users', { data: { email: `${randomUUID()}@example.test` } })).json();
+  const guest = await onboard(controls, identity, playwright.request);
+  const base = `/v1/workspaces/${session.workspaceId}`;
+  const upload = `/v1/filesystems/${session.filesystemId}/uploads/${randomUUID()}`;
+  try {
+    const invitation = await (await session.api.post(`${base}/invitations`, { data: { email: identity.email, role: 'viewer' } })).json();
+    expect((await guest.api.post('/v1/memberships', { data: { token: invitation.token } })).status()).toBe(201);
+    expect((await guest.api.get(upload)).status()).toBe(403);
+    const current = await session.api.get(base);
+    await setTemporalRunning(false);
+    try {
+      const change = await session.api.patch(`${base}/members/${guest.userId}`, {
+        headers: { 'if-match': current.headers().etag }, data: { role: 'editor' },
+      });
+      expect(change.status()).toBe(503);
+      expect((await change.json()).detail).toContain('committed');
+      const members = await (await session.api.get(`${base}/members`)).json();
+      expect(members.items).toContainEqual(expect.objectContaining({ user: expect.objectContaining({ id: guest.userId }), role: 'editor' }));
+      expect((await guest.api.get(upload)).status()).toBe(403);
+    } finally { await setTemporalRunning(true); }
+    await expect.poll(temporalIsHealthy, { timeout: 90_000 }).toBe(true);
+    await triggerWorkspaceReconciliation();
+    await expect.poll(async () => (await guest.api.get(upload)).status()).toBe(404);
+    const refreshed = await session.api.get(base);
+    expect(refreshed.headers().etag).not.toBe(current.headers().etag);
+  } finally { await guest.api.dispose(); }
 });

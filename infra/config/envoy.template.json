@@ -92,18 +92,6 @@
                           {
                             "match": {
                               "safe_regex": {
-                                "regex": "/v1/workspaces/[^/]+/nodes/[^/]+/archive"
-                              }
-                            },
-                            "route": {
-                              "cluster": "workspace",
-                              "timeout": "1815s",
-                              "idle_timeout": "120s"
-                            }
-                          },
-                          {
-                            "match": {
-                              "safe_regex": {
                                 "regex": "/v1/workspaces(/.*)?"
                               }
                             },
@@ -120,6 +108,66 @@
                               "cluster": "workspace",
                               "timeout": "120s"
                             }
+                          },
+                          {
+                            "match": {
+                              "safe_regex": {
+                                "regex": "/v1/filesystems/[^/]+/nodes/[^/]+/archive"
+                              }
+                            },
+                            "route": {
+                              "cluster": "letfs",
+                              "timeout": "1815s",
+                              "idle_timeout": "120s"
+                            }
+                          },
+                          {
+                            "match": {
+                              "safe_regex": {
+                                "regex": "/v1/(filesystems|quota-buckets)(/.*)?"
+                              }
+                            },
+                            "route": {
+                              "cluster": "letfs",
+                              "timeout": "120s"
+                            }
+                          },
+                          {
+                            "match": {
+                              "path": "/openlet_api.letfs.v1.FilesystemService/StreamArchive"
+                            },
+                            "route": {
+                              "cluster": "letfs-rpc",
+                              "timeout": "1815s",
+                              "idle_timeout": "120s"
+                            },
+                            "request_headers_to_add": [
+                              {
+                                "header": {
+                                  "key": "authorization",
+                                  "value": "Bearer __GATEWAY_TOKEN__"
+                                },
+                                "append_action": "OVERWRITE_IF_EXISTS_OR_ADD"
+                              }
+                            ]
+                          },
+                          {
+                            "match": {
+                              "prefix": "/openlet_api.letfs.v1.FilesystemService/"
+                            },
+                            "route": {
+                              "cluster": "letfs-rpc",
+                              "timeout": "120s"
+                            },
+                            "request_headers_to_add": [
+                              {
+                                "header": {
+                                  "key": "authorization",
+                                  "value": "Bearer __GATEWAY_TOKEN__"
+                                },
+                                "append_action": "OVERWRITE_IF_EXISTS_OR_ADD"
+                              }
+                            ]
                           },
                           {
                             "match": {
@@ -154,6 +202,15 @@
                             },
                             {
                               "remove": "x-internal-token"
+                            },
+                            {
+                              "remove": "x-openlet-service"
+                            },
+                            {
+                              "remove": "x-actor-id"
+                            },
+                            {
+                              "remove": "x-workspace-role"
                             }
                           ]
                         }
@@ -328,6 +385,55 @@
             }
           ]
         }
+      },
+      {
+        "name": "letfs",
+        "type": "STRICT_DNS",
+        "connect_timeout": "3s",
+        "load_assignment": {
+          "cluster_name": "letfs",
+          "endpoints": [
+            {
+              "lb_endpoints": [
+                {
+                  "endpoint": {
+                    "address": {
+                      "socket_address": {
+                        "address": "letfs",
+                        "port_value": 8080
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "name": "letfs-rpc",
+        "type": "STRICT_DNS",
+        "connect_timeout": "3s",
+        "load_assignment": {
+          "cluster_name": "letfs-rpc",
+          "endpoints": [
+            {
+              "lb_endpoints": [
+                {
+                  "endpoint": {
+                    "address": {
+                      "socket_address": {
+                        "address": "letfs",
+                        "port_value": 9090
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "http2_protocol_options": {}
       },
       {
         "name": "jwks",

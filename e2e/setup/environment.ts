@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { chmod, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -119,15 +119,16 @@ export default async function setup() {
       });
     }
     await mkdir(join(state, 'secrets'), { recursive: true, mode: 0o700 });
+    await rm(join(state, 'histories'), { recursive: true, force: true });
     await chmod(state, 0o700);
     await chmod(join(state, 'secrets'), 0o700);
     for (const name of ['postgres_password', 'account_db_password', 'workspace_db_password', 'letfs_db_password',
-      'temporal_db_password', 'temporal_visibility_db_password', 'gateway_token',
-      'workspace_service_token', 'processor_service_token', 'clerk_secret_key', 'fixture_control_token',
+      'temporal_db_password', 'temporal_visibility_db_password', 'spicedb_db_password', 'spicedb_key', 'gateway_token',
+      'workspace_service_token', 'ingest_service_token', 'clerk_secret_key', 'fixture_control_token',
       'openrouter_api_key', 'qdrant_api_key', 's3_access_key_id', 's3_secret_access_key']) {
       secrets[name] = randomBytes(32).toString('base64url');
     }
-    for (const app of ['account', 'workspace', 'letfs']) {
+    for (const app of ['account', 'workspace', 'letfs', 'spicedb']) {
       secrets[`${app}_database_url`] = `postgres://openlet_${app}:${secrets[`${app}_db_password`]}@postgres:5432/openlet_${app}`;
     }
     for (const [name, value] of Object.entries(secrets)) {
@@ -137,13 +138,16 @@ export default async function setup() {
       await writeFile(path, value, { mode: 0o644 });
     }
     let sql = '\\set ON_ERROR_STOP on\n';
-    for (const app of ['account', 'workspace', 'letfs', 'temporal', 'temporal_visibility']) {
+    for (const app of ['account', 'workspace', 'letfs', 'temporal', 'temporal_visibility', 'spicedb']) {
       const role = `openlet_${app}`;
       sql += `CREATE ROLE ${role} LOGIN PASSWORD '${secrets[`${app}_db_password`]}';\n`;
       sql += `ALTER ROLE ${role} SET statement_timeout = '15s';\nALTER ROLE ${role} SET lock_timeout = '5s';\n`;
       sql += `CREATE DATABASE ${role} OWNER ${role};\nREVOKE ALL ON DATABASE ${role} FROM PUBLIC;\n`;
     }
     await writeFile(join(state, 'init.sql'), sql, { mode: 0o644 });
+    await writeFile(join(state, 'spicedb.env'),
+      `SPICEDB_DATASTORE_ENGINE=postgres\nSPICEDB_DATASTORE_CONN_URI=${secrets.spicedb_database_url}?sslmode=disable\nSPICEDB_GRPC_PRESHARED_KEY=${secrets.spicedb_key}\n`,
+      { mode: 0o644 });
     const temporal = JSON.parse(await readFile(join(root, 'infra/config/temporal.template.json'), 'utf8'));
     temporal.persistence.datastores.default.sql.password = secrets.temporal_db_password;
     temporal.persistence.datastores.visibility.sql.password = secrets.temporal_visibility_db_password;
@@ -154,9 +158,6 @@ export default async function setup() {
     const jwks = envoy.static_resources.clusters.find((cluster: { name: string }) => cluster.name === 'jwks');
     jwks.load_assignment.endpoints[0].lb_endpoints[0].endpoint.address.socket_address = { address: 'boundary', port_value: 8080 };
     await writeFile(join(state, 'envoy.json'), JSON.stringify(envoy), { mode: 0o644 });
-    await writeFile(join(state, 'storage.json'), JSON.stringify({ identities: [{ name: 'api-e2e',
-      credentials: [{ accessKey: secrets.s3_access_key_id, secretKey: secrets.s3_secret_access_key }],
-      actions: ['Read', 'Write', 'List', 'Tagging', 'Admin'] }] }), { mode: 0o644 });
 
     await compose(['config', '--quiet']);
     console.log('API E2E: building current application sources');
@@ -168,6 +169,8 @@ export default async function setup() {
     }
     ownsEnvironment = true;
     await compose(['up', '--detach', '--wait', '--wait-timeout', '120', 'postgres', 'storage', 'qdrant', 'boundary']);
+    await compose(['up', '--detach', '--wait', '--wait-timeout', '120', 'spicedb']);
+    await compose(['run', '--rm', '--no-deps', 'authz-schema']);
     await compose(['up', '--detach', 'temporal']);
     for (const app of ['account', 'workspace', 'letfs']) await compose(['run', '--rm', `${app}-migrate`]);
     await waitFor('Temporal', async () => {
@@ -175,9 +178,10 @@ export default async function setup() {
       catch { return false; }
     });
     await compose(['run', '--rm', '--no-deps', 'temporal-init']);
-    const bucket = await compose(['exec', '--no-TTY', 'storage', 'weed', 'shell', '-master=storage:9333', '-filer=storage:8888'], 30_000, 's3.bucket.create -name openlet-e2e\n');
-    if (!bucket.includes('created bucket openlet-e2e')) throw new Error('Real S3 bucket initialization was not acknowledged');
-    await compose(['up', '--detach', '--wait', '--wait-timeout', '120', 'account', 'workspace', 'letfs', 'processor-cpu', 'processor-io', 'envoy']);
+    await compose(['exec', '--no-TTY', 'storage', 'curl', '--fail', '--silent', '--show-error',
+      '--aws-sigv4', 'aws:amz:us-east-1:s3', '--config', '-', '--request', 'PUT', 'http://127.0.0.1:9000/openlet-e2e'],
+    30_000, `user = "${secrets.s3_access_key_id}:${secrets.s3_secret_access_key}"\n`);
+    await compose(['up', '--detach', '--wait', '--wait-timeout', '120', 'account', 'workspace', 'letfs', 'ingest-cpu', 'ingest-io', 'envoy']);
     await waitFor('External-boundary fixtures', async () => {
       try { return (await fetch(`${control}/live`, { signal: AbortSignal.timeout(3000) })).ok; }
       catch { return false; }

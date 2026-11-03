@@ -3,19 +3,32 @@
   "tasks": {
     "build": {
       "outputs": [],
-      "cache": false
+      "cache": false,
+      "dependsOn": [
+        "^build"
+      ]
     },
     "check": {
       "outputs": [],
-      "cache": false
+      "cache": false,
+      "dependsOn": [
+        "^build"
+      ]
     },
     "test": {
       "outputs": [],
-      "cache": false
+      "cache": false,
+      "dependsOn": [
+        "^build"
+      ]
     },
     "test:integration": {
+      "passThroughEnv": ["OPENLET_HISTORY_DIR"],
       "outputs": [],
-      "cache": false
+      "cache": false,
+      "dependsOn": [
+        "^build"
+      ]
     },
     "test:replay": {
       "outputs": [],

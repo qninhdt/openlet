@@ -1,0 +1,158 @@
+definition account {
+	relation subject: user
+	permission account_read = subject
+	permission account_update = subject
+}
+
+definition filesystem {
+	relation workspace: workspace
+	permission node_list = workspace->node_list
+	permission node_read = workspace->node_read
+	permission node_resolve = workspace->node_resolve
+	permission node_create = workspace->node_create
+	permission node_update = workspace->node_update
+	permission node_trash = workspace->node_trash
+	permission content_read = workspace->content_read
+	permission content_write = workspace->content_write
+	permission trash_read = workspace->trash_read
+	permission trash_restore = workspace->trash_restore
+	permission trash_purge = workspace->trash_purge
+	permission upload_create = workspace->upload_create
+	permission upload_read = workspace->upload_read
+	permission upload_sign = workspace->upload_sign
+	permission upload_complete = workspace->upload_complete
+	permission upload_abort = workspace->upload_abort
+	permission copy_create = workspace->copy_create
+	permission copy_read = workspace->copy_read
+	permission copy_inspect_any = workspace->copy_inspect_any
+	permission processing_read = workspace->processing_read
+	permission processing_run = workspace->processing_run
+	permission search = workspace->search
+	permission archive = workspace->archive
+}
+
+definition quota_bucket {
+	relation workspace: workspace
+	permission bucket_read = workspace->bucket_read
+	permission bucket_admin = workspace->bucket_admin
+}
+
+definition role {
+	relation workspace_read: user:*
+	relation workspace_update: user:*
+	relation workspace_delete: user:*
+	relation workspace_transfer: user:*
+	relation member_read: user:*
+	relation member_manage: user:*
+	relation member_leave: user:*
+	relation invitation_read: user:*
+	relation invitation_create: user:*
+	relation invitation_revoke: user:*
+	relation node_list: user:*
+	relation node_read: user:*
+	relation node_resolve: user:*
+	relation node_create: user:*
+	relation node_update: user:*
+	relation node_trash: user:*
+	relation content_read: user:*
+	relation content_write: user:*
+	relation trash_read: user:*
+	relation trash_restore: user:*
+	relation trash_purge: user:*
+	relation upload_create: user:*
+	relation upload_read: user:*
+	relation upload_sign: user:*
+	relation upload_complete: user:*
+	relation upload_abort: user:*
+	relation copy_create: user:*
+	relation copy_read: user:*
+	relation copy_inspect_any: user:*
+	relation processing_read: user:*
+	relation processing_run: user:*
+	relation search: user:*
+	relation archive: user:*
+	relation bucket_read: user:*
+	relation bucket_admin: user:*
+}
+
+definition role_grant {
+	relation member: user
+	relation role: role
+	permission workspace_read = member & role->workspace_read
+	permission workspace_update = member & role->workspace_update
+	permission workspace_delete = member & role->workspace_delete
+	permission workspace_transfer = member & role->workspace_transfer
+	permission member_read = member & role->member_read
+	permission member_manage = member & role->member_manage
+	permission member_leave = member & role->member_leave
+	permission invitation_read = member & role->invitation_read
+	permission invitation_create = member & role->invitation_create
+	permission invitation_revoke = member & role->invitation_revoke
+	permission node_list = member & role->node_list
+	permission node_read = member & role->node_read
+	permission node_resolve = member & role->node_resolve
+	permission node_create = member & role->node_create
+	permission node_update = member & role->node_update
+	permission node_trash = member & role->node_trash
+	permission content_read = member & role->content_read
+	permission content_write = member & role->content_write
+	permission trash_read = member & role->trash_read
+	permission trash_restore = member & role->trash_restore
+	permission trash_purge = member & role->trash_purge
+	permission upload_create = member & role->upload_create
+	permission upload_read = member & role->upload_read
+	permission upload_sign = member & role->upload_sign
+	permission upload_complete = member & role->upload_complete
+	permission upload_abort = member & role->upload_abort
+	permission copy_create = member & role->copy_create
+	permission copy_read = member & role->copy_read
+	permission copy_inspect_any = member & role->copy_inspect_any
+	permission processing_read = member & role->processing_read
+	permission processing_run = member & role->processing_run
+	permission search = member & role->search
+	permission archive = member & role->archive
+	permission bucket_read = member & role->bucket_read
+	permission bucket_admin = member & role->bucket_admin
+}
+
+definition user {}
+
+definition workspace {
+	relation grant: role_grant
+	relation enabled: user:*
+	permission workspace_read = grant->workspace_read
+	permission workspace_update = grant->workspace_update
+	permission workspace_delete = grant->workspace_delete
+	permission workspace_transfer = grant->workspace_transfer
+	permission member_read = grant->member_read
+	permission member_manage = grant->member_manage
+	permission member_leave = grant->member_leave
+	permission invitation_read = grant->invitation_read
+	permission invitation_create = grant->invitation_create
+	permission invitation_revoke = grant->invitation_revoke
+	permission node_list = grant->node_list & enabled
+	permission node_read = grant->node_read & enabled
+	permission node_resolve = grant->node_resolve & enabled
+	permission node_create = grant->node_create & enabled
+	permission node_update = grant->node_update & enabled
+	permission node_trash = grant->node_trash & enabled
+	permission content_read = grant->content_read & enabled
+	permission content_write = grant->content_write & enabled
+	permission trash_read = grant->trash_read & enabled
+	permission trash_restore = grant->trash_restore & enabled
+	permission trash_purge = grant->trash_purge & enabled
+	permission upload_create = grant->upload_create & enabled
+	permission upload_read = grant->upload_read & enabled
+	permission upload_sign = grant->upload_sign & enabled
+	permission upload_complete = grant->upload_complete & enabled
+	permission upload_abort = grant->upload_abort & enabled
+	permission copy_create = grant->copy_create & enabled
+	permission copy_read = grant->copy_read & enabled
+	permission copy_inspect_any = grant->copy_inspect_any & enabled
+	permission processing_read = grant->processing_read & enabled
+	permission processing_run = grant->processing_run & enabled
+	permission search = grant->search & enabled
+	permission archive = grant->archive & enabled
+	permission bucket_read = grant->bucket_read & enabled
+	permission bucket_admin = grant->bucket_admin & enabled
+}

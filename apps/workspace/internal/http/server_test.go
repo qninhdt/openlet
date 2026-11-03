@@ -1,15 +1,12 @@
 package http
 
 import (
-	"context"
 	"github.com/gin-gonic/gin"
-	"io"
-	"net/http"
 	"net/http/httptest"
 	"openlet/apps/workspace/internal/config"
+	"openlet/packages/go/identity"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 )
@@ -19,7 +16,13 @@ func TestTrustedIdentityBoundary(t *testing.T) {
 	s := Server{Config: config.Config{GatewayToken: secret}}
 	h := gin.New()
 	h.Use(s.Gateway)
-	h.GET("/v1/me", func(c *gin.Context) { c.Status(204) })
+	h.GET("/v1/me", func(c *gin.Context) {
+		principal, ok := identity.FromContext(c.Request.Context())
+		if !ok || !principal.Gateway || principal.ActorID == uuid.Nil || principal.Subject != "user_test" {
+			t.Fatal("handler did not receive verified user identity")
+		}
+		c.Status(204)
+	})
 	h.GET("/v1/onboarding", func(c *gin.Context) { c.Status(204) })
 	for _, c := range []struct {
 		name, path, token, id, sub string
@@ -91,105 +94,18 @@ func TestRouterUnknownPathsStillAuthenticate(t *testing.T) {
 	}
 }
 
-func TestFileDownloadRedirectDoesNotRelayObjectBytes(t *testing.T) {
-	objectRequests := 0
-	object := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		objectRequests++
-		w.Write([]byte("object bytes must never cross the workspace facade"))
-	}))
-	defer object.Close()
-	signedURL := object.URL + "/immutable-key?X-Amz-Signature=test-only"
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Range") != "bytes=1-2" {
-			t.Error("range was lost")
+func TestFileFacadeRoutesAreRemoved(t *testing.T) {
+	s := Server{Config: config.Config{GatewayToken: strings.Repeat("g", 32)}}
+	router := s.Router()
+	for _, path := range []string{"/nodes", "/uploads", "/search", "/trash-entries", "/storage", "/nodes/node/archive"} {
+		request := httptest.NewRequest("GET", "/v1/workspaces/"+uuid.NewString()+path, nil)
+		request.Header.Set("X-Gateway-Token", s.Config.GatewayToken)
+		request.Header.Set("X-Clerk-Sub", "user_test")
+		request.Header.Set("X-Openlet-User-ID", uuid.NewString())
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != 404 {
+			t.Fatalf("old facade %s remains reachable: %d", path, response.Code)
 		}
-		w.Header().Set("Location", signedURL)
-		w.Header().Set("ETag", "\"7\"")
-		w.WriteHeader(http.StatusTemporaryRedirect)
-	}))
-	defer backend.Close()
-	server := Server{Config: config.Config{LetfsURL: backend.URL}}
-	request := httptest.NewRequest(http.MethodGet, "/content?revision=7", nil)
-	request.Header.Set("X-Openlet-User-ID", "019ad06b-7d00-7000-8000-000000000001")
-	request.Header.Set("Range", "bytes=1-2")
-	response := httptest.NewRecorder()
-	router := gin.New()
-	router.GET("/content", func(c *gin.Context) {
-		server.proxyLetfs(c, http.MethodPost, "/internal/content", strings.NewReader("{}"))
-	})
-	router.ServeHTTP(response, request)
-	if response.Code != http.StatusTemporaryRedirect || response.Header().Get("Location") != signedURL || response.Header().Get("ETag") != "\"7\"" {
-		t.Fatalf("redirect changed: status=%d location=%q revision=%q", response.Code, response.Header().Get("Location"), response.Header().Get("ETag"))
-	}
-	if objectRequests != 0 || response.Body.Len() != 0 {
-		t.Fatal("workspace fetched object bytes")
-	}
-	if response.Header().Get("Cache-Control") != "no-store" {
-		t.Fatal("capability may be cached")
-	}
-}
-
-func TestArchiveProxyAbortsIncompleteBodyAndCancelsDisconnectedReads(t *testing.T) {
-	for _, mode := range []string{"failure", "disconnect"} {
-		t.Run(mode, func(t *testing.T) {
-			started := make(chan struct{})
-			canceled := make(chan struct{})
-			backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/zip")
-				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte("PK incomplete archive"))
-				w.(http.Flusher).Flush()
-				close(started)
-				if mode == "failure" {
-					panic(http.ErrAbortHandler)
-				}
-				<-r.Context().Done()
-				close(canceled)
-			}))
-			defer backend.Close()
-			app := Server{Config: config.Config{LetfsURL: backend.URL}}
-			router := gin.New()
-			router.Use(observe)
-			router.GET("/archive", func(c *gin.Context) { app.proxyLetfs(c, "POST", "/internal/archive", strings.NewReader("{}")) })
-			facade := httptest.NewServer(router)
-			defer facade.Close()
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			req, err := http.NewRequestWithContext(ctx, "GET", facade.URL+"/archive", nil)
-			req.Header.Set("X-Openlet-User-ID", "019ad06b-7d00-7000-8000-000000000001")
-			if err != nil {
-				t.Fatal(err)
-			}
-			result := make(chan error, 1)
-			go func() {
-				res, err := http.DefaultClient.Do(req)
-				if err == nil {
-					defer res.Body.Close()
-					_, err = io.ReadAll(res.Body)
-				}
-				result <- err
-			}()
-			select {
-			case <-started:
-			case <-ctx.Done():
-				t.Fatal("upstream did not start")
-			}
-			if mode == "disconnect" {
-				cancel()
-				select {
-				case <-canceled:
-				case <-time.After(5 * time.Second):
-					t.Fatal("disconnected read was not canceled")
-				}
-			}
-			select {
-			case err := <-result:
-				if err == nil {
-					t.Fatal("incomplete archive was delivered as a complete response")
-				}
-			case <-time.After(5 * time.Second):
-				t.Fatal("archive request did not finish")
-			}
-		})
 	}
 }

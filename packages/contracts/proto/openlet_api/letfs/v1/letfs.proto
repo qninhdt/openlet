@@ -1,0 +1,758 @@
+syntax = "proto3";
+package openlet_api.letfs.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "openlet/packages/go/gen/openlet_api/letfs/v1;letfsv1";
+
+service FilesystemService {
+  rpc GetFilesystem(GetFilesystemRequest) returns (GetFilesystemResponse);
+  rpc GetBucketUsage(GetBucketUsageRequest) returns (GetBucketUsageResponse);
+  rpc CreateNode(CreateNodeRequest) returns (CreateNodeResponse);
+  rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
+  rpc GetNode(GetNodeRequest) returns (GetNodeResponse) {
+    option (google.api.http) = {
+      get: "/v1/filesystems/{filesystem_id}/nodes/{node_id}"
+      response_body: "node"
+    };
+  }
+  rpc ResolveNode(ResolveNodeRequest) returns (ResolveNodeResponse);
+  rpc BatchStat(BatchStatRequest) returns (BatchStatResponse);
+  rpc UpdateNode(UpdateNodeRequest) returns (UpdateNodeResponse);
+  rpc ReplaceContent(ReplaceContentRequest) returns (ReplaceContentResponse);
+  rpc CreateCopy(CreateCopyRequest) returns (CreateCopyResponse);
+  rpc GetCopy(GetCopyRequest) returns (GetCopyResponse);
+  rpc GetProcessing(GetProcessingRequest) returns (GetProcessingResponse);
+  rpc ReprocessNode(ReprocessNodeRequest) returns (ReprocessNodeResponse);
+  rpc TrashNode(TrashNodeRequest) returns (TrashNodeResponse);
+  rpc ListTrash(ListTrashRequest) returns (ListTrashResponse);
+  rpc GetTrash(GetTrashRequest) returns (GetTrashResponse);
+  rpc RestoreTrash(RestoreTrashRequest) returns (RestoreTrashResponse);
+  rpc PurgeTrash(PurgeTrashRequest) returns (PurgeTrashResponse);
+  rpc CreateUpload(CreateUploadRequest) returns (CreateUploadResponse);
+  rpc GetUpload(GetUploadRequest) returns (GetUploadResponse);
+  rpc GetUploadParts(GetUploadPartsRequest) returns (GetUploadPartsResponse);
+  rpc CompleteUpload(CompleteUploadRequest) returns (CompleteUploadResponse);
+  rpc AbortUpload(AbortUploadRequest) returns (AbortUploadResponse);
+  rpc SearchFiles(SearchFilesRequest) returns (SearchFilesResponse);
+  rpc SemanticSearch(SemanticSearchRequest) returns (SemanticSearchResponse);
+  rpc GetDownload(GetDownloadRequest) returns (GetDownloadResponse);
+  // Metadata precedes bounded byte chunks; a non-OK terminal status invalidates a partial archive.
+  rpc StreamArchive(StreamArchiveRequest) returns (stream StreamArchiveResponse);
+}
+
+// Generation/attempt authority is validated against letfs records, independently of service authentication.
+service IngestService {
+  rpc PrepareParse(PrepareParseRequest) returns (PrepareParseResponse);
+  rpc PrepareParseOutput(PrepareParseOutputRequest) returns (PrepareParseOutputResponse);
+  rpc CompleteParse(CompleteParseRequest) returns (CompleteParseResponse);
+  rpc AbortParse(AbortParseRequest) returns (AbortParseResponse);
+  rpc PrepareEnrichment(PrepareEnrichmentRequest) returns (PrepareEnrichmentResponse);
+  rpc PrepareEnrichmentOutput(PrepareEnrichmentOutputRequest) returns (PrepareEnrichmentOutputResponse);
+  rpc CompleteEnrichment(CompleteEnrichmentRequest) returns (CompleteEnrichmentResponse);
+  rpc FailEnrichment(FailEnrichmentRequest) returns (FailEnrichmentResponse);
+  rpc PrepareIndex(PrepareIndexRequest) returns (PrepareIndexResponse);
+  rpc CompleteIndex(CompleteIndexRequest) returns (CompleteIndexResponse);
+  rpc FailIndex(FailIndexRequest) returns (FailIndexResponse);
+  rpc GetOutputUpload(GetOutputUploadRequest) returns (GetOutputUploadResponse);
+  rpc GetOutputUploadParts(GetOutputUploadPartsRequest) returns (GetOutputUploadPartsResponse);
+  rpc CompleteOutputUpload(CompleteOutputUploadRequest) returns (CompleteOutputUploadResponse);
+  rpc WriteOutputBytes(WriteOutputBytesRequest) returns (WriteOutputBytesResponse);
+}
+
+// These methods require explicit service authority, never a public user JWT.
+service StorageAdministrationService {
+  rpc CreateBucket(CreateBucketRequest) returns (CreateBucketResponse);
+  rpc CreateFilesystem(CreateFilesystemRequest) returns (CreateFilesystemResponse);
+  rpc FreezeBucket(FreezeBucketRequest) returns (FreezeBucketResponse);
+  rpc ListBucketFilesystems(ListBucketFilesystemsRequest) returns (ListBucketFilesystemsResponse);
+  rpc CompleteBucketDeletion(CompleteBucketDeletionRequest) returns (CompleteBucketDeletionResponse);
+  rpc ReleaseProvisioning(ReleaseProvisioningRequest) returns (ReleaseProvisioningResponse);
+}
+message Node {
+  string id = 1;
+  string filesystem_id = 2;
+  optional string parent_id = 3;
+  string name = 4;
+  string kind = 5;
+  int64 revision = 6;
+  int64 size_bytes = 7;
+  optional string media_type = 8;
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp updated_at = 10;
+  optional string title = 11;
+  optional string description = 12;
+  optional string semantic_type = 13;
+  // Omitted from list/search metadata; only explicitly requested detail can include context.
+  optional string context = 14;
+}
+message GetNodeRequest {
+  string filesystem_id = 1;
+  string node_id = 2;
+  PathContext path_context = 3;
+}
+message GetNodeResponse {
+  Node node = 1;
+}
+message GetDownloadRequest {
+  string filesystem_id = 1;
+  string node_id = 2;
+  optional int64 revision = 3;
+  PathContext path_context = 4;
+}
+message Download {
+  string mime = 1;
+  string filename = 2;
+  string etag = 3;
+  int64 size_bytes = 4;
+  oneof source {
+    bytes inline_content = 5;
+    string signed_url = 6;
+  }
+}
+message GetDownloadResponse {
+  Download download = 1;
+}
+message StreamArchiveRequest {
+  string filesystem_id = 1;
+  string node_id = 2;
+  PathContext path_context = 3;
+}
+message ArchiveMetadata {
+  string filename = 1;
+  string mime = 2;
+}
+message StreamArchiveResponse {
+  oneof frame {
+    ArchiveMetadata metadata = 1;
+    // Each chunk is at most 64 KiB. No archive bytes or signed URLs enter Temporal histories.
+    bytes data = 2;
+  }
+}
+message PrepareParseRequest {
+  string file_id = 1;
+  int64 generation = 2;
+  int32 attempt_number = 3;
+  string attempt_id = 4;
+}
+message ParseInput {
+  string source_id = 1;
+  string format = 2;
+  int64 size_bytes = 3;
+  int64 inline_limit_bytes = 4;
+  int64 multipart_threshold_bytes = 5;
+  int64 max_outputs = 6;
+  int64 max_output_bytes = 7;
+  oneof source {
+    bytes inline_content = 8;
+    string signed_url = 9;
+  }
+}
+message ParseComplete {
+  string source_id = 1;
+}
+message PrepareParseResponse {
+  oneof result {
+    ParseInput input = 1;
+    ParseComplete complete = 2;
+  }
+}
+message CreateBucketRequest {
+  string bucket_id = 1;
+  string idempotency_key = 2;
+  int64 limit_bytes = 3;
+}
+message Bucket {
+  string id = 1;
+  int64 limit_bytes = 2;
+  int64 used_bytes = 3;
+  string state = 4;
+}
+message CreateBucketResponse {
+  Bucket bucket = 1;
+}
+message CreateFilesystemRequest {
+  string filesystem_id = 1;
+  string bucket_id = 2;
+  string idempotency_key = 3;
+  string root_name = 4;
+}
+message Filesystem {
+  string id = 1;
+  string bucket_id = 2;
+  string root_id = 3;
+  string state = 4;
+}
+message CreateFilesystemResponse {
+  Filesystem filesystem = 1;
+}
+message FreezeBucketRequest {
+  string bucket_id = 1;
+  string idempotency_key = 2;
+}
+message FreezeBucketResponse {
+  Bucket bucket = 1;
+}
+message ListBucketFilesystemsRequest {
+  string bucket_id = 1;
+  optional string after_id = 2;
+}
+message ListBucketFilesystemsResponse {
+  repeated string filesystem_ids = 1;
+}
+message CompleteBucketDeletionRequest {
+  string bucket_id = 1;
+  string idempotency_key = 2;
+}
+message CompleteBucketDeletionResponse {
+  Bucket bucket = 1;
+}
+message ReleaseProvisioningRequest {
+  string bucket_id = 1;
+  string filesystem_id = 2;
+  string root_id = 3;
+}
+message ReleaseProvisioningResponse {}
+
+// A mount is path context for the requested filesystem, never an authorization grant.
+message Mount {
+  string path = 1;
+  string filesystem_id = 2;
+}
+message PathContext {
+  repeated Mount mounts = 1;
+}
+message PathLocator {
+  string path = 1;
+  optional string cwd_id = 2;
+}
+message Locator {
+  oneof target {
+    string node_id = 1;
+    PathLocator path = 2;
+  }
+  optional string expected_node_id = 3;
+  optional string expected_parent_id = 4;
+}
+message GetFilesystemRequest {
+  string filesystem_id = 1;
+}
+message GetFilesystemResponse {
+  Filesystem filesystem = 1;
+}
+message GetBucketUsageRequest {
+  string bucket_id = 1;
+}
+message UploadLimits {
+  int64 inline_limit_bytes = 1;
+  int64 max_file_bytes = 2;
+  int64 multipart_threshold_bytes = 3;
+  int64 multipart_part_bytes = 4;
+}
+message GetBucketUsageResponse {
+  Bucket bucket = 1;
+  UploadLimits upload_limits = 2;
+}
+message DirectoryCreation {
+  Locator parent = 1;
+  string name = 2;
+}
+message InlineFileCreation {
+  Locator parent = 1;
+  string name = 2;
+  bytes content = 3;
+  string media_type = 4;
+}
+message CreateNodeRequest {
+  string filesystem_id = 1;
+  string idempotency_key = 2;
+  PathContext path_context = 3;
+  oneof input {
+    DirectoryCreation directory = 4;
+    InlineFileCreation file = 5;
+  }
+}
+message CreateNodeResponse {
+  Node node = 1;
+}
+message ListNodesRequest {
+  string filesystem_id = 1;
+  Locator parent = 2;
+  PathContext path_context = 3;
+  optional int32 limit = 4;
+  optional string cursor = 5;
+}
+message ListNodesResponse {
+  repeated Node items = 1;
+  optional string next_cursor = 2;
+}
+message ResolveNodeRequest {
+  string filesystem_id = 1;
+  Locator locator = 2;
+  PathContext path_context = 3;
+}
+message ResolveNodeResponse {
+  Node node = 1;
+}
+
+// At most 100 locators; failure is atomic rather than returning foreign/missing metadata.
+message BatchStatRequest {
+  string filesystem_id = 1;
+  repeated Locator locators = 2;
+  PathContext path_context = 3;
+}
+message BatchStatResponse {
+  repeated Node items = 1;
+}
+message UpdateNodeRequest {
+  string filesystem_id = 1;
+  Locator locator = 2;
+  PathContext path_context = 3;
+  optional int64 revision = 4;
+  optional string name = 5;
+  Locator parent = 6;
+}
+message UpdateNodeResponse {
+  Node node = 1;
+}
+message ReplaceContentRequest {
+  string filesystem_id = 1;
+  Locator locator = 2;
+  PathContext path_context = 3;
+  optional int64 revision = 4;
+  bytes content = 5;
+  string media_type = 6;
+}
+message ReplaceContentResponse {
+  Node node = 1;
+}
+message Copy {
+  string id = 1;
+  string destination_root_id = 2;
+  string status = 3;
+  int64 committed_nodes = 4;
+  int64 committed_bytes = 5;
+  optional string error_code = 6;
+}
+message CreateCopyRequest {
+  string filesystem_id = 1;
+  string source_id = 2;
+  string parent_id = 3;
+  string name = 4;
+  optional int64 revision = 5;
+  string idempotency_key = 6;
+  PathContext path_context = 7;
+}
+message CreateCopyResponse {
+  Copy copy = 1;
+}
+message GetCopyRequest {
+  string filesystem_id = 1;
+  string copy_id = 2;
+}
+message GetCopyResponse {
+  Copy copy = 1;
+}
+message Processing {
+  int64 desired_generation = 1;
+  optional int64 published_generation = 2;
+  optional int64 indexed_generation = 3;
+  reserved 4;
+  reserved "artifact_root_id";
+  string publication_status = 5;
+  string index_status = 6;
+  optional string error_code = 7;
+  string file_id = 8;
+}
+message GetProcessingRequest {
+  string filesystem_id = 1;
+  string node_id = 2;
+  PathContext path_context = 3;
+}
+message GetProcessingResponse {
+  Processing processing = 1;
+}
+message ReprocessNodeRequest {
+  string filesystem_id = 1;
+  string node_id = 2;
+  string idempotency_key = 3;
+  PathContext path_context = 4;
+}
+message ReprocessNodeResponse {
+  string file_id = 1;
+  int64 generation = 2;
+  string workflow_id = 3;
+}
+message TrashEntry {
+  string id = 1;
+  string node_id = 2;
+  optional string parent_id = 3;
+  string name = 4;
+  string actor_id = 5;
+  string status = 6;
+  google.protobuf.Timestamp created_at = 7;
+}
+message TrashNodeRequest {
+  string filesystem_id = 1;
+  Locator locator = 2;
+  PathContext path_context = 3;
+  optional int64 revision = 4;
+}
+message TrashNodeResponse {
+  TrashEntry entry = 1;
+}
+message ListTrashRequest {
+  string filesystem_id = 1;
+  optional int32 limit = 2;
+  optional string cursor = 3;
+}
+message ListTrashResponse {
+  repeated TrashEntry items = 1;
+  optional string next_cursor = 2;
+}
+message GetTrashRequest {
+  string filesystem_id = 1;
+  string entry_id = 2;
+}
+message GetTrashResponse {
+  TrashEntry entry = 1;
+}
+message RestoreTrashRequest {
+  string filesystem_id = 1;
+  string entry_id = 2;
+}
+message RestoreTrashResponse {
+  Node node = 1;
+}
+message PurgeTrashRequest {
+  string filesystem_id = 1;
+  string entry_id = 2;
+}
+message PurgeTrashResponse {
+  // Absent after removal (HTTP 204); otherwise the durable purge admission (HTTP 202).
+  TrashEntry entry = 1;
+}
+
+message UploadDestination {
+  Locator parent = 1;
+  string name = 2;
+}
+message UploadReplacement {
+  Locator locator = 1;
+  optional int64 revision = 2;
+}
+message SignedUpload {
+  string url = 1;
+  map<string, string> headers = 2;
+  int64 content_length = 3;
+  google.protobuf.Timestamp expires_at = 4;
+}
+message UploadReceipt {
+  string id = 1;
+  string status = 2;
+  int64 size_bytes = 3;
+}
+message UploadPublication {
+  string node_id = 1;
+  string status = 2;
+  int64 revision = 3;
+}
+message Upload {
+  string id = 1;
+  string status = 2;
+  string transport = 3;
+  google.protobuf.Timestamp expires_at = 4;
+  optional int64 size_bytes = 5;
+  optional int64 part_size_bytes = 6;
+  optional int32 part_count = 7;
+  SignedUpload transfer = 8;
+  oneof result {
+    UploadPublication publication = 9;
+    UploadReceipt receipt = 10;
+  }
+}
+message CreateUploadRequest {
+  string filesystem_id = 1;
+  string idempotency_key = 2;
+  PathContext path_context = 3;
+  optional int64 size_bytes = 4;
+  string media_type = 5;
+  optional string content_md5 = 6;
+  // Public uploads are object-only; inline writes use CreateNode/ReplaceContent.
+  oneof target {
+    UploadDestination destination = 7;
+    UploadReplacement replacement = 8;
+  }
+}
+message CreateUploadResponse {
+  Upload upload = 1;
+}
+message GetUploadRequest {
+  string filesystem_id = 1;
+  string upload_id = 2;
+}
+message GetUploadResponse {
+  Upload upload = 1;
+}
+
+// At most 64 distinct part numbers, each within the admitted native multipart size.
+message GetUploadPartsRequest {
+  string filesystem_id = 1;
+  string upload_id = 2;
+  repeated int32 numbers = 3;
+}
+message UploadPart {
+  int32 part_number = 1;
+  SignedUpload transfer = 2;
+}
+message GetUploadPartsResponse {
+  repeated UploadPart items = 1;
+}
+message PartReceipt {
+  int32 part_number = 1;
+  string etag = 2;
+}
+message CompleteUploadRequest {
+  string filesystem_id = 1;
+  string upload_id = 2;
+  repeated PartReceipt parts = 3;
+}
+message CompleteUploadResponse {
+  UploadPublication publication = 1;
+}
+message AbortUploadRequest {
+  string filesystem_id = 1;
+  string upload_id = 2;
+}
+message AbortUploadResponse {}
+
+message SearchFilters {
+  Locator parent = 1;
+  optional string semantic_type = 2;
+  optional string media_type = 3;
+  google.protobuf.Timestamp created_after = 4;
+  google.protobuf.Timestamp created_before = 5;
+  google.protobuf.Timestamp updated_after = 6;
+  google.protobuf.Timestamp updated_before = 7;
+}
+message SearchFilesRequest {
+  string filesystem_id = 1;
+  string query = 2;
+  SearchFilters filters = 3;
+  optional int32 limit = 4;
+  optional string cursor = 5;
+  optional string sort = 6;
+  optional string direction = 7;
+  PathContext path_context = 8;
+}
+message Breadcrumb {
+  string node_id = 1;
+  string filename = 2;
+}
+message SearchMatch {
+  string file_id = 1;
+  repeated Breadcrumb breadcrumb = 2;
+  string snippet = 3;
+}
+message SearchResult {
+  Node node = 1;
+  string path = 2;
+  SearchMatch matched = 3;
+}
+message SearchFilesResponse {
+  repeated SearchResult items = 1;
+  optional string next_cursor = 2;
+  bool degraded = 3;
+  optional string degraded_reason = 4;
+}
+message SemanticSearchRequest {
+  string filesystem_id = 1;
+  string query = 2;
+  SearchFilters filters = 3;
+  optional int32 limit = 4;
+  optional string cursor = 5;
+  PathContext path_context = 6;
+}
+message SemanticSearchResponse {
+  repeated SearchResult items = 1;
+  optional string next_cursor = 2;
+  bool degraded = 3;
+  optional string degraded_reason = 4;
+}
+
+// Scope is checked against stored generation/attempt facts after service authentication.
+message ProcessingAttempt {
+  string file_id = 1;
+  int64 generation = 2;
+  int32 attempt_number = 3;
+  string attempt_id = 4;
+}
+message ProcessingGeneration {
+  string file_id = 1;
+  int64 generation = 2;
+}
+message OutputDescription {
+  string path = 1;
+  string storage = 2;
+  optional int64 size_bytes = 3;
+  optional string content_md5 = 4;
+}
+message PrepareParseOutputRequest {
+  ProcessingAttempt attempt = 1;
+  OutputDescription output = 2;
+}
+message PrepareParseOutputResponse {
+  Upload upload = 1;
+}
+message CompleteParseRequest {
+  ProcessingAttempt attempt = 1;
+  repeated string uploads = 2;
+  repeated string directories = 3;
+}
+message CompleteParseResponse {
+  string source_id = 1;
+}
+message AbortParseRequest {
+  ProcessingAttempt attempt = 1;
+  string error_code = 2;
+}
+message AbortParseResponse {}
+message InventoryNode {
+  string id = 1;
+  optional string parent_id = 2;
+  string path = 3;
+  string name = 4;
+  string kind = 5;
+  int64 size_bytes = 6;
+  optional string media_type = 7;
+  optional string title = 8;
+  optional string description = 9;
+  optional string context = 10;
+  oneof content {
+    bytes inline_content = 11;
+    string signed_url = 12;
+  }
+}
+message PrepareEnrichmentRequest {
+  ProcessingAttempt attempt = 1;
+}
+message EnrichmentInput {
+  string source_id = 1;
+  repeated InventoryNode nodes = 2;
+  int64 inline_limit_bytes = 3;
+  int64 multipart_threshold_bytes = 4;
+  int64 max_output_bytes = 5;
+}
+message EnrichmentComplete {
+  string source_id = 1;
+}
+message PrepareEnrichmentResponse {
+  oneof result {
+    EnrichmentInput input = 1;
+    EnrichmentComplete complete = 2;
+  }
+}
+message PrepareEnrichmentOutputRequest {
+  ProcessingAttempt attempt = 1;
+  OutputDescription output = 2;
+}
+message PrepareEnrichmentOutputResponse {
+  Upload upload = 1;
+}
+message SemanticMetadata {
+  string title = 1;
+  string description = 2;
+  string semantic_type = 3;
+  string context = 4;
+}
+message EnrichmentUpdate {
+  string id = 1;
+  string path = 2;
+  SemanticMetadata metadata = 3;
+  optional string upload_id = 4;
+}
+message CompleteEnrichmentRequest {
+  ProcessingAttempt attempt = 1;
+  repeated EnrichmentUpdate nodes = 2;
+}
+message CompleteEnrichmentResponse {
+  string source_id = 1;
+}
+message FailEnrichmentRequest {
+  ProcessingAttempt attempt = 1;
+  string error_code = 2;
+}
+message FailEnrichmentResponse {}
+message VectorSpace {
+  string model = 1;
+  string collection = 2;
+  int32 dimension = 3;
+}
+message PrepareIndexRequest {
+  ProcessingGeneration source = 1;
+}
+message IndexInput {
+  string filesystem_id = 1;
+  string source_id = 2;
+  int64 generation = 3;
+  repeated InventoryNode nodes = 4;
+  VectorSpace vector_space = 5;
+  int64 max_output_bytes = 6;
+}
+message IndexComplete {
+  string source_id = 1;
+}
+message PrepareIndexResponse {
+  oneof result {
+    IndexInput input = 1;
+    IndexComplete complete = 2;
+  }
+}
+message CompleteIndexRequest {
+  ProcessingGeneration source = 1;
+  VectorSpace vector_space = 2;
+}
+message CompleteIndexResponse {
+  string source_id = 1;
+}
+message FailIndexRequest {
+  ProcessingGeneration source = 1;
+  VectorSpace vector_space = 2;
+  string error_code = 3;
+}
+message FailIndexResponse {}
+message OutputUploadScope {
+  ProcessingAttempt attempt = 1;
+  // Only parse or enrichment; index has no writable output surface.
+  string stage = 2;
+  string upload_id = 3;
+}
+message GetOutputUploadRequest {
+  OutputUploadScope scope = 1;
+}
+message GetOutputUploadResponse {
+  Upload upload = 1;
+}
+message GetOutputUploadPartsRequest {
+  OutputUploadScope scope = 1;
+  repeated int32 numbers = 2;
+}
+message GetOutputUploadPartsResponse {
+  repeated UploadPart items = 1;
+}
+message CompleteOutputUploadRequest {
+  OutputUploadScope scope = 1;
+  repeated PartReceipt parts = 2;
+}
+message CompleteOutputUploadResponse {
+  UploadReceipt receipt = 1;
+}
+message WriteOutputBytesRequest {
+  OutputUploadScope scope = 1;
+  bytes content = 2;
+}
+message WriteOutputBytesResponse {
+  // Bytes are received but publication is separate; completion saves the immutable receipt.
+  UploadReceipt receipt = 1;
+}

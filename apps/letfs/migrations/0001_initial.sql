@@ -32,7 +32,6 @@ CREATE TABLE public.files (
     accepted_attempt_id uuid,
     publication_status text DEFAULT 'not_required' NOT NULL CHECK (publication_status IN ('not_required','pending','parsed','ready','failed')),
     published_generation bigint,
-    artifact_root_id uuid,
     parse_manifest_hash text,
     publication_manifest_hash text,
     index_status text DEFAULT 'not_required' NOT NULL CHECK (index_status IN ('not_required','pending','ready','failed')),
@@ -55,16 +54,16 @@ CREATE TABLE public.files (
 CREATE TABLE public.filesystems (
     id uuid NOT NULL,
     bucket_id uuid NOT NULL,
-    provision_key text NOT NULL,
+    create_fingerprint text CHECK (length(create_fingerprint) = 64),
     root_id uuid,
     state text DEFAULT 'active'::text NOT NULL,
     node_count bigint DEFAULT 1 NOT NULL,
     max_nodes bigint NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT filesystem_live_root CHECK (((state <> 'active'::text) OR (root_id IS NOT NULL))),
+    CONSTRAINT filesystem_create_identity CHECK (create_fingerprint IS NOT NULL OR state <> 'active'),
     CONSTRAINT filesystems_check CHECK (((max_nodes > 0) AND (node_count <= max_nodes))),
     CONSTRAINT filesystems_node_count_check CHECK ((node_count >= 0)),
-    CONSTRAINT filesystems_provision_key_check CHECK (((length(provision_key) >= 1) AND (length(provision_key) <= 200))),
     CONSTRAINT filesystems_state_check CHECK ((state = ANY (ARRAY['active'::text, 'deleting'::text, 'deleted'::text])))
 );
 
@@ -109,13 +108,14 @@ CREATE INDEX index_deletions_due ON public.index_deletions (eligible_at);
 
 CREATE TABLE public.quota_buckets (
     id uuid NOT NULL,
-    provision_key text NOT NULL,
+    creator_service text,
+    create_fingerprint text CHECK (length(create_fingerprint) = 64),
     limit_bytes bigint NOT NULL,
     used_bytes bigint DEFAULT 0 NOT NULL,
     state text DEFAULT 'active'::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT quota_buckets_limit_bytes_check CHECK ((limit_bytes >= 0)),
-    CONSTRAINT quota_buckets_provision_key_check CHECK (((length(provision_key) >= 1) AND (length(provision_key) <= 200))),
+    CONSTRAINT quota_bucket_create_identity CHECK (creator_service IS NOT NULL AND (create_fingerprint IS NOT NULL OR state IN ('frozen','deleted'))),
     CONSTRAINT quota_buckets_state_check CHECK ((state = ANY (ARRAY['active'::text, 'frozen'::text, 'deleted'::text]))),
     CONSTRAINT quota_buckets_used_bytes_check CHECK ((used_bytes >= 0))
 );
@@ -183,9 +183,6 @@ ALTER TABLE ONLY public.files
 ALTER TABLE ONLY public.filesystems
     ADD CONSTRAINT filesystems_pkey PRIMARY KEY (id);
 
-ALTER TABLE ONLY public.filesystems
-    ADD CONSTRAINT filesystems_provision_key_key UNIQUE (provision_key);
-
 ALTER TABLE ONLY public.nodes
     ADD CONSTRAINT nodes_filesystem_id_id_key UNIQUE (filesystem_id, id);
 
@@ -200,9 +197,6 @@ ALTER TABLE ONLY public.object_deletions
 
 ALTER TABLE ONLY public.quota_buckets
     ADD CONSTRAINT quota_buckets_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.quota_buckets
-    ADD CONSTRAINT quota_buckets_provision_key_key UNIQUE (provision_key);
 
 ALTER TABLE ONLY public.trash_entries
     ADD CONSTRAINT trash_entries_node_id_key UNIQUE (node_id);

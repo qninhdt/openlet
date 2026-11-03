@@ -4,7 +4,7 @@ import { recoveryGuide } from '../../fixtures/documents.ts';
 import { recordWorkflowHistory } from '../../fixtures/temporal-control.ts';
 
 test('real document parsing publishes README semantics and current searchable content', async ({ session }) => {
-  const base = `/v1/workspaces/${session.workspaceId}`;
+  const base = `/v1/filesystems/${session.filesystemId}`;
   const bytes = recoveryGuide();
   const source = await inline(session, 'recovery-guide.docx', bytes, session.rootId,
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
@@ -21,10 +21,9 @@ test('real document parsing publishes README semantics and current searchable co
   const state = await (await session.api.get(`${base}/nodes/${source.id}/processing`)).json();
   expect(state.published_generation).toBe(state.desired_generation);
   expect(state.indexed_generation).toBe(state.desired_generation);
-  const artifact = await (await session.api.get(`${base}/nodes/${state.artifact_root_id}`)).json();
-  expect(artifact.kind).toBe('directory');
-  for (const field of ['title', 'description', 'semantic_type', 'context', 'media_type']) expect(artifact).not.toHaveProperty(field);
-  const children = await (await session.api.get(`${base}/nodes`, { params: { parent_id: artifact.id } })).json();
+  expect(state).not.toHaveProperty('artifact_root_id');
+  const children = await (await session.api.get(`${base}/nodes`, { params: { parent_id: source.id } })).json();
+  expect(children.items.some((node: { name: string }) => node.name === 'artifacts')).toBe(false);
   const readme = children.items.find((node: { name: string }) => node.name === 'README.md');
   expect(readme).toBeDefined();
   const readmeDetails = await (await session.api.get(`${base}/nodes/${readme.id}`)).json();
@@ -41,7 +40,7 @@ test('real document parsing publishes README semantics and current searchable co
 });
 
 test('manual reprocessing retries admit one generation and preserve filename search during model failure', async ({ session, controls }) => {
-  const base = `/v1/workspaces/${session.workspaceId}`;
+  const base = `/v1/filesystems/${session.filesystemId}`;
   const source = await inline(session, 'retry-notes.txt', Buffer.from('Recovery notes describe durable publication and storage retry.'), session.rootId, 'text/plain');
   await expect.poll(async () => (await (await session.api.get(`${base}/nodes/${source.id}/processing`)).json()).index_status).toBe('ready');
   const before = await (await session.api.get(`${base}/nodes/${source.id}/processing`)).json();

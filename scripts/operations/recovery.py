@@ -13,16 +13,30 @@ import tempfile
 from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parents[2]
-DATABASES = ("account", "workspace", "letfs", "temporal", "temporal_visibility")
+DATABASES = (
+    "account",
+    "workspace",
+    "letfs",
+    "temporal",
+    "temporal_visibility",
+    "spicedb",
+)
 POSTGRES_IMAGE = "postgres:18.6-trixie@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336"
-CONFIGURATION = ("init.sql", "temporal.json", "envoy.json", "storage.json")
+CONFIGURATION = (
+    "init.sql",
+    "temporal.json",
+    "envoy.json",
+    "spicedb.env",
+)
 WRITERS = (
     "envoy",
     "account",
     "workspace",
     "letfs",
-    "processor-cpu",
-    "processor-io",
+    "ingest-cpu",
+    "ingest-io",
+    "authz-schema",
+    "spicedb",
     "temporal",
     "boundary",
     "storage",
@@ -184,19 +198,7 @@ class Recovery:
                 return volume
         raise ValueError("managed volume required for coordinated recovery")
 
-    def backup(self):
-        self.verify_owner()
-        storage = self.configuration["services"].get("storage", {})
-        if not storage.get("image", "").startswith("chrislusf/seaweedfs:"):
-            raise ValueError(
-                "external object recovery is not configured; coordinated backup requires managed SeaweedFS"
-            )
-        volumes = {
-            "storage": self.volume("storage", "/data"),
-            "qdrant": self.volume("qdrant", "/qdrant/storage"),
-        }
-        output = self.args.output.absolute()
-        output.mkdir(parents=True, exist_ok=False, mode=0o700)
+    def stop_writers(self):
         self.command("stop", "--timeout", "150", "envoy")
         self.command(
             "stop",
@@ -208,6 +210,21 @@ class Recovery:
                 if s != "envoy" and s in self.configuration["services"]
             ),
         )
+
+    def backup(self):
+        self.verify_owner()
+        storage = self.configuration["services"].get("storage", {})
+        if not storage.get("image", "").startswith("openlet-minio:"):
+            raise ValueError(
+                "external object recovery is not configured; coordinated backup requires managed MinIO"
+            )
+        volumes = {
+            "storage": self.volume("storage", "/data"),
+            "qdrant": self.volume("qdrant", "/qdrant/storage"),
+        }
+        output = self.args.output.absolute()
+        output.mkdir(parents=True, exist_ok=False, mode=0o700)
+        self.stop_writers()
         unfinished = (
             self.command(
                 "exec",
@@ -288,7 +305,7 @@ class Recovery:
             if p.is_file()
         }
         manifest = {
-            "version": 1,
+            "version": 3,
             "coordinated": True,
             "source_project": self.args.project,
             "databases": list(DATABASES),
@@ -308,7 +325,7 @@ class Recovery:
         manifest = json.loads(manifest_path.read_text())
         if (
             not isinstance(manifest, dict)
-            or manifest.get("version") != 1
+            or manifest.get("version") != 3
             or manifest.get("coordinated") is not True
             or manifest.get("databases") != list(DATABASES)
         ):
@@ -380,6 +397,23 @@ class Recovery:
                     f"openlet_{database}",
                     stdin=source,
                 )
+        # Logical restore preserves SpiceDB revisions, but not PostgreSQL's XID counter.
+        self.command(
+            "run",
+            "--rm",
+            "--no-deps",
+            "spicedb-migrate",
+            "datastore",
+            "repair",
+            "transaction-ids",
+            "--skip-release-check",
+            "--datastore-disable-watch-support",
+            "--datastore-conn-pool-read-min-open=1",
+            "--datastore-conn-pool-read-max-open=2",
+            "--datastore-conn-pool-write-min-open=1",
+            "--datastore-conn-pool-write-max-open=2",
+        )
+        identity["authorization"] = "transaction-ids-repaired"
         self.command("create", "storage", "qdrant")
         for service, destination in (
             ("storage", "/data"),
@@ -419,19 +453,40 @@ class Recovery:
         marker.write_text(json.dumps(identity))
         print("Isolated restore verified. Application/workflow writers remain stopped.")
 
+    def rebuild_authorization(self):
+        self.verify_owner()
+        self.stop_writers()
+        self.command(
+            "up", "--detach", "--no-deps", "--wait", "--wait-timeout", "90", "postgres"
+        )
+        self.command("up", "--detach", "--wait", "--wait-timeout", "90", "spicedb")
+        self.command("run", "--rm", "--no-deps", "authz-schema")
+        for owner in ("account", "workspace"):
+            self.command(
+                "run", "--rm", "--no-deps", "--build", owner, "--rebuild-authorization"
+            )
+        print(
+            "Canonical authorization rebuilt. Application/workflow writers remain stopped."
+        )
+
     def resume(self):
         self.verify_owner()
         marker = self.state / "restore.json"
+        restored = None
+        if marker.exists():
+            restored = json.loads(marker.read_text())
+            if not isinstance(restored, dict) or restored.get("status") != "restored":
+                raise ValueError("incomplete restore cannot resume")
         if (
-            marker.exists()
-            and json.loads(marker.read_text()).get("status") != "restored"
+            restored is not None
+            and "spicedb" in self.configuration["services"]
+            and restored.get("authorization") != "transaction-ids-repaired"
         ):
-            raise ValueError("incomplete restore cannot resume")
-        dependencies = [
-            s
-            for s in ("postgres", "storage", "qdrant", "boundary")
-            if s in self.configuration["services"]
-        ]
+            # PostgreSQL dump restore does not repair SpiceDB transaction snapshots.
+            raise ValueError(
+                "restored authorization requires verified datastore repair before resuming writers"
+            )
+        self.stop_writers()
         self.command(
             "up",
             "--detach",
@@ -439,8 +494,36 @@ class Recovery:
             "--wait",
             "--wait-timeout",
             "90",
-            *dependencies,
+            "postgres",
         )
+        if "spicedb" in self.configuration["services"]:
+            self.command("up", "--detach", "--wait", "--wait-timeout", "90", "spicedb")
+            self.command("run", "--rm", "--no-deps", "authz-schema", "--check")
+            for owner in ("account", "workspace"):
+                if owner in self.configuration["services"]:
+                    self.command(
+                        "run",
+                        "--rm",
+                        "--no-deps",
+                        "--build",
+                        owner,
+                        "--rebuild-authorization",
+                    )
+        dependencies = [
+            s
+            for s in ("storage", "qdrant", "boundary")
+            if s in self.configuration["services"]
+        ]
+        if dependencies:
+            self.command(
+                "up",
+                "--detach",
+                "--no-deps",
+                "--wait",
+                "--wait-timeout",
+                "90",
+                *dependencies,
+            )
         self.command("up", "--detach", "--no-deps", "temporal")
         self.command(
             "run",
@@ -458,8 +541,8 @@ class Recovery:
                 "account",
                 "workspace",
                 "letfs",
-                "processor-cpu",
-                "processor-io",
+                "ingest-cpu",
+                "ingest-io",
                 "envoy",
             )
             if s in self.configuration["services"]
@@ -480,7 +563,9 @@ class Recovery:
 def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("backup", "restore", "resume"))
+    parser.add_argument(
+        "action", choices=("backup", "restore", "resume", "rebuild-authorization")
+    )
     parser.add_argument("--compose", type=Path, required=True)
     parser.add_argument("--project", required=True)
     parser.add_argument("--state", type=Path, required=True)
@@ -502,7 +587,7 @@ def main():
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             operation = Recovery(args)
-            getattr(operation, args.action)()
+            getattr(operation, args.action.replace("-", "_"))()
         except (
             OSError,
             ValueError,

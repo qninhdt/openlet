@@ -27,7 +27,9 @@ func TestOnboardUserWaitsForChildAndPersistsWorkspaceBeforePublishing(t *testing
 	env.OnActivity(a.EnsureUser, mock.Anything, "subject").Return(admission, nil).Once()
 	env.OnWorkflow("CreateWorkspace", mock.Anything, InitialWorkspace{ActorID: admission.UserID, Key: admission.UserID, Name: "My workspace"}).Return(workspaceID, nil).Once()
 	env.OnActivity(a.SaveInitialWorkspace, mock.Anything, "subject", workspaceID).Return(nil).Once()
-	env.OnActivity(a.PublishClerkUserID, mock.Anything, "subject", admission.UserID).Return(nil).Once()
+	synced := false
+	env.OnActivity(a.SyncAccountRelationships, mock.Anything, admission.UserID).Run(func(mock.Arguments) { synced = true }).Return(nil).Once()
+	env.OnActivity(a.PublishClerkUserID, mock.Anything, "subject", admission.UserID).Run(func(mock.Arguments) { require.True(t, synced) }).Return(nil).Once()
 	env.OnActivity(a.CompleteOnboarding, mock.Anything, "subject").Return(nil).Once()
 	env.ExecuteWorkflow(OnboardUser, "subject")
 	require.NoError(t, env.GetWorkflowError())
@@ -41,6 +43,7 @@ func TestOnboardUserCompletedNeverRecreatesWorkspace(t *testing.T) {
 	env := suite.NewTestWorkflowEnvironment()
 	a := &Activities{}
 	admission := user.Onboarding{UserID: uuid.Must(uuid.NewV7()), Status: "active"}
+	env.OnActivity(a.SyncAccountRelationships, mock.Anything, admission.UserID).Return(nil).Once()
 	env.OnActivity(a.EnsureUser, mock.Anything, "subject").Return(admission, nil).Once()
 	env.ExecuteWorkflow(OnboardUser, "subject")
 	require.NoError(t, env.GetWorkflowError())
@@ -57,5 +60,21 @@ func TestOnboardingFailureRetainsUser(t *testing.T) {
 	env.OnActivity(a.FailOnboarding, mock.Anything, "subject").Return(nil).Once()
 	env.ExecuteWorkflow(OnboardUser, "subject")
 	require.Error(t, env.GetWorkflowError())
+	env.AssertExpectations(t)
+}
+
+func TestOnboardingRelationshipFailureCannotPublishCompletedIdentity(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	a := &Activities{}
+	workspaceID := uuid.New()
+	admission := user.Onboarding{UserID: uuid.New(), WorkspaceID: &workspaceID, Status: "provisioning"}
+	env.OnActivity(a.EnsureUser, mock.Anything, "subject").Return(admission, nil).Once()
+	env.OnActivity(a.SyncAccountRelationships, mock.Anything, admission.UserID).Return(temporal.NewNonRetryableApplicationError("rejected", "INVALID_RELATIONSHIP", nil)).Once()
+	env.OnActivity(a.FailOnboarding, mock.Anything, "subject").Return(nil).Once()
+	env.ExecuteWorkflow(OnboardUser, "subject")
+	require.Error(t, env.GetWorkflowError())
+	env.AssertNotCalled(t, "PublishClerkUserID", mock.Anything, mock.Anything, mock.Anything)
+	env.AssertNotCalled(t, "CompleteOnboarding", mock.Anything, mock.Anything)
 	env.AssertExpectations(t)
 }

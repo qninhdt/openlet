@@ -53,8 +53,8 @@ func TestGinAuthenticationAndRecovery(t *testing.T) {
 	request.Header.Add("Authorization", "Bearer "+secret)
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
-	if response.Code != 401 {
-		t.Fatalf("duplicate internal credentials admitted: %d", response.Code)
+	if response.Code != 404 {
+		t.Fatalf("removed internal API is exposed: %d", response.Code)
 	}
 }
 

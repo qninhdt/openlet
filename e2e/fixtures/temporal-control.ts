@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -61,6 +62,11 @@ export async function recordLifecycleHistories(subject: string, userId: string, 
     return maintenanceId;
   }).not.toBe('');
   await recordWorkflowHistory('StorageMaintenance', maintenanceId);
+  for (const [name, queue] of [['ReconcileAccounts', 'openlet-account'], ['ReconcileWorkspaces', 'openlet-workspace']]) {
+    const workflowId = `replay/${name}/${randomUUID()}`;
+    await temporal(['workflow', 'execute', '--workflow-id', workflowId, '--type', name, '--task-queue', queue, '--input', '{}']);
+    await recordWorkflowHistory(name, workflowId);
+  }
 }
 
 export async function setTemporalRunning(running: boolean) {
@@ -72,7 +78,8 @@ export async function temporalIsHealthy(): Promise<boolean> {
   catch { return false; }
 }
 export async function triggerWorkspaceReconciliation() {
-  await temporal(['schedule', 'trigger', '--schedule-id', 'workspace-reconciliation']);
+  // A running scan may already have passed the record changed by this test.
+  await temporal(['schedule', 'trigger', '--schedule-id', 'workspace-reconciliation', '--overlap-policy', 'BufferOne']);
 }
 
 export async function recordCopyHistory(name: 'CopyNode' | 'CopyNodeRecovery', filesystemId: string, copyId: string, continued = false) {

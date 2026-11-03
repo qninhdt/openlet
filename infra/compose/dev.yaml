@@ -13,6 +13,52 @@ x-telemetry-env: &telemetry-env
   OTEL_RESOURCE_ATTRIBUTES: ${OTEL_RESOURCE_ATTRIBUTES:-}
   OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-false}
 services:
+  spicedb-migrate:
+    image: &spicedb-image authzed/spicedb:v1.57.0@sha256:2e0cd20aa923ccfd96eb285756ec10a5d7bbe387e4b29c26bd6447435d2328de
+    working_dir: /config
+    command: [datastore, migrate, head, --skip-release-check]
+    volumes:
+    - ${OPENLET_STATE_DIR:-../../.local}/spicedb.env:/config/spicedb.env:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+    networks: [backend]
+  spicedb:
+    image: *spicedb-image
+    restart: unless-stopped
+    working_dir: /config
+    command:
+    - serve
+    - --skip-release-check
+    - --telemetry-endpoint=
+    - --http-enabled=false
+    - --datastore-disable-watch-support
+    - --datastore-conn-pool-read-min-open=1
+    - --datastore-conn-pool-read-max-open=8
+    - --datastore-conn-pool-write-min-open=1
+    - --datastore-conn-pool-write-max-open=8
+    volumes:
+    - ${OPENLET_STATE_DIR:-../../.local}/spicedb.env:/config/spicedb.env:ro
+    depends_on:
+      spicedb-migrate: {condition: service_completed_successfully}
+    healthcheck:
+      test: [CMD, /usr/local/bin/grpc_health_probe, -addr=localhost:50051, -rpc-timeout=2s]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+    networks: [backend]
+    stop_grace_period: 30s
+  authz-schema:
+    build: {context: ../.., dockerfile: infra/bootstrap/Dockerfile}
+    image: openlet-migrations:local
+    entrypoint: [/usr/local/bin/authz-schema]
+    environment:
+      SPICEDB_ADDRESS: spicedb:50051
+      SPICEDB_GRPC_PRESHARED_KEY_FILE: /run/secrets/spicedb_key
+      ALLOW_PLAINTEXT_RPC: 'true'
+    secrets: [spicedb_key]
+    depends_on:
+      spicedb: {condition: service_healthy}
+    networks: [backend]
   postgres:
     restart: unless-stopped
     command:
@@ -108,17 +154,22 @@ services:
       GATEWAY_TOKEN_FILE: /run/secrets/gateway_token
       WORKSPACE_SERVICE_TOKEN_FILE: /run/secrets/workspace_service_token
       DATABASE_URL_FILE: /run/secrets/workspace_database_url
-      ACCOUNT_URL: http://account:8080
-      LETFS_URL: http://letfs:8080
+      ACCOUNT_RPC_ADDRESS: account:9090
+      ALLOW_PLAINTEXT_RPC: 'true'
+      SPICEDB_ADDRESS: spicedb:50051
+      SPICEDB_GRPC_PRESHARED_KEY_FILE: /run/secrets/spicedb_key
       MAX_OWNED_WORKSPACES: ${MAX_OWNED_WORKSPACES:-100}
       MAX_MEMBERS: ${MAX_MEMBERS:-100}
       DEFAULT_QUOTA_BYTES: ${DEFAULT_QUOTA_BYTES:-10737418240}
       INVITE_TTL: ${INVITE_TTL:-168h}
     secrets:
+    - spicedb_key
     - workspace_database_url
     - gateway_token
     - workspace_service_token
     depends_on:
+      authz-schema:
+        condition: service_completed_successfully
       temporal-init:
         condition: service_completed_successfully
       workspace-migrate:
@@ -141,10 +192,14 @@ services:
       dockerfile: apps/letfs/Dockerfile
     environment:
       <<: *telemetry-env
+      ALLOW_PLAINTEXT_RPC: 'true'
+      SPICEDB_ADDRESS: spicedb:50051
+      SPICEDB_GRPC_PRESHARED_KEY_FILE: /run/secrets/spicedb_key
+      GATEWAY_TOKEN_FILE: /run/secrets/gateway_token
       DATABASE_URL_FILE: /run/secrets/letfs_database_url
       WORKSPACE_SERVICE_TOKEN_FILE: /run/secrets/workspace_service_token
-      TEMPORAL_ADDRESS: http://temporal:7233
-      PROCESSOR_SERVICE_TOKEN_FILE: /run/secrets/processor_service_token
+      TEMPORAL_ADDRESS: temporal:7233
+      INGEST_SERVICE_TOKEN_FILE: /run/secrets/ingest_service_token
       OPENROUTER_URL: ${OPENROUTER_URL:-https://openrouter.ai/api/v1}
       OPENROUTER_API_KEY_FILE: /run/secrets/openrouter_api_key
       OPENROUTER_EMBEDDING_MODEL: ${OPENROUTER_EMBEDDING_MODEL:-openai/text-embedding-3-small}
@@ -179,14 +234,18 @@ services:
       S3_ACCESS_KEY_ID_FILE: /run/secrets/s3_access_key_id
       S3_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_secret_access_key
     secrets:
+    - spicedb_key
+    - gateway_token
     - letfs_database_url
     - workspace_service_token
-    - processor_service_token
+    - ingest_service_token
     - openrouter_api_key
     - qdrant_api_key
     - s3_access_key_id
     - s3_secret_access_key
     depends_on:
+      authz-schema:
+        condition: service_completed_successfully
       temporal-init:
         condition: service_completed_successfully
       letfs-migrate:
@@ -198,7 +257,7 @@ services:
     healthcheck:
       test:
       - CMD
-      - letfs
+      - /server
       - --healthcheck
       interval: 5s
       timeout: 5s
@@ -219,19 +278,20 @@ services:
     networks:
     - backend
     stop_grace_period: 30s
-  processor-cpu: &processor
+  ingest-cpu: &ingest
     command: [cpu]
     restart: unless-stopped
-    image: ${PROCESSOR_IMAGE:-openlet-processor:local}
+    image: ${INGEST_IMAGE:-letfs-ingest:local}
     build:
       context: ../..
-      dockerfile: apps/letfs-processing/Dockerfile
+      dockerfile: apps/letfs-ingest/Dockerfile
     environment:
       <<: *telemetry-env
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_NAMESPACE: openlet
-      LETFS_URL: http://letfs:8080
-      PROCESSOR_SERVICE_TOKEN_FILE: /run/secrets/processor_service_token
+      LETFS_RPC_ADDRESS: letfs:9090
+      ALLOW_PLAINTEXT_RPC: 'true'
+      INGEST_SERVICE_TOKEN_FILE: /run/secrets/ingest_service_token
       OPENROUTER_URL: ${OPENROUTER_URL:-https://openrouter.ai/api/v1}
       OPENROUTER_API_KEY_FILE: /run/secrets/openrouter_api_key
       OPENROUTER_EMBEDDING_MODEL: ${OPENROUTER_EMBEDDING_MODEL:-openai/text-embedding-3-small}
@@ -250,7 +310,7 @@ services:
       MIN_LEAF_TOKENS: ${MIN_LEAF_TOKENS:-256}
       SPLIT_TOKENS: ${SPLIT_TOKENS:-4096}
     secrets:
-    - processor_service_token
+    - ingest_service_token
     - openrouter_api_key
     - qdrant_api_key
     depends_on:
@@ -270,8 +330,8 @@ services:
     tmpfs:
     - /tmp:rw,noexec,nosuid,size=1g,mode=1777
     stop_grace_period: 40s
-  processor-io:
-    <<: *processor
+  ingest-io:
+    <<: *ingest
     command: [io]
     cpus: 1
     mem_limit: 1g
@@ -306,14 +366,20 @@ services:
       GATEWAY_TOKEN_FILE: /run/secrets/gateway_token
       WORKSPACE_SERVICE_TOKEN_FILE: /run/secrets/workspace_service_token
       DATABASE_URL_FILE: /run/secrets/account_database_url
+      ALLOW_PLAINTEXT_RPC: 'true'
+      SPICEDB_ADDRESS: spicedb:50051
+      SPICEDB_GRPC_PRESHARED_KEY_FILE: /run/secrets/spicedb_key
       CLERK_SECRET_KEY_FILE: /run/secrets/clerk_secret_key
       CLERK_API_URL: ${CLERK_API_URL:-https://api.clerk.com/v1}
     secrets:
+    - spicedb_key
     - account_database_url
     - gateway_token
     - workspace_service_token
     - clerk_secret_key
     depends_on:
+      authz-schema:
+        condition: service_completed_successfully
       temporal-init:
         condition: service_completed_successfully
       account-migrate:
@@ -370,6 +436,7 @@ services:
     environment:
       GOOSE_DRIVER: postgres
       DATABASE_URL_FILE: /run/secrets/account_database_url
+      ALLOW_PLAINTEXT_RPC: 'true'
     secrets:
     - account_database_url
     volumes:
@@ -428,6 +495,8 @@ volumes:
   postgres-data: {}
   qdrant-data: {}
 secrets:
+  spicedb_key:
+    file: ${OPENLET_STATE_DIR:-../../.local}/secrets/spicedb_key
   openrouter_api_key:
     file: ${OPENLET_STATE_DIR:-../../.local}/secrets/openrouter_api_key
   qdrant_api_key:
@@ -460,5 +529,5 @@ secrets:
     file: ${OPENLET_STATE_DIR:-../../.local}/secrets/gateway_token
   workspace_service_token:
     file: ${OPENLET_STATE_DIR:-../../.local}/secrets/workspace_service_token
-  processor_service_token:
-    file: ${OPENLET_STATE_DIR:-../../.local}/secrets/processor_service_token
+  ingest_service_token:
+    file: ${OPENLET_STATE_DIR:-../../.local}/secrets/ingest_service_token

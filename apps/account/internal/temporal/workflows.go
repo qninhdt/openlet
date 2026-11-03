@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/google/uuid"
 	"go.temporal.io/api/enums/v1"
 	"go.temporal.io/api/serviceerror"
@@ -21,6 +22,7 @@ type Activities struct {
 	Store    *user.Store
 	Clerk    clerk.Client
 	Temporal client.Client
+	Graph    v1.PermissionsServiceClient
 }
 
 func businessError(err error) error {
@@ -43,6 +45,9 @@ func (a *Activities) PublishClerkUserID(ctx context.Context, subject string, id 
 func (a *Activities) CompleteOnboarding(ctx context.Context, subject string) error {
 	return businessError(a.Store.Complete(ctx, subject))
 }
+func (a *Activities) SyncAccountRelationships(ctx context.Context, id uuid.UUID) error {
+	return businessError(a.Store.SyncRelationships(ctx, a.Graph, id))
+}
 func (a *Activities) FailOnboarding(ctx context.Context, subject string) error {
 	return a.Store.Fail(ctx, subject)
 }
@@ -62,7 +67,7 @@ func OnboardUser(ctx workflow.Context, subject string) (result uuid.UUID, err er
 		return uuid.Nil, err
 	}
 	if admission.Status == "active" {
-		return admission.UserID, nil
+		return admission.UserID, workflow.ExecuteActivity(ctx, a.SyncAccountRelationships, admission.UserID).Get(ctx, nil)
 	}
 	if admission.Status != "provisioning" {
 		return uuid.Nil, temporal.NewNonRetryableApplicationError("onboarding failed", "ONBOARDING_FAILED", nil)
@@ -83,6 +88,9 @@ func OnboardUser(ctx workflow.Context, subject string) (result uuid.UUID, err er
 		if err = workflow.ExecuteActivity(ctx, a.SaveInitialWorkspace, subject, workspaceID).Get(ctx, nil); err != nil {
 			return uuid.Nil, err
 		}
+	}
+	if err = workflow.ExecuteActivity(ctx, a.SyncAccountRelationships, admission.UserID).Get(ctx, nil); err != nil {
+		return uuid.Nil, err
 	}
 	if err = workflow.ExecuteActivity(ctx, a.PublishClerkUserID, subject, admission.UserID).Get(ctx, nil); err != nil {
 		return uuid.Nil, err
@@ -129,16 +137,66 @@ func (a *Activities) ReconcileOnboarding(ctx context.Context) error {
 	return nil
 }
 
-func ReconcileAccounts(ctx workflow.Context) error {
+type ReconcileInput struct {
+	After  uuid.UUID
+	Failed bool
+}
+
+func (a *Activities) AccountRelationshipIDs(ctx context.Context, after uuid.UUID) ([]uuid.UUID, error) {
+	return a.Store.RelationshipIDs(ctx, after)
+}
+
+func (a *Activities) SyncAccountRelationshipBatch(ctx context.Context, ids []uuid.UUID) error {
+	return businessError(a.Store.SyncRelationships(ctx, a.Graph, ids...))
+}
+
+func ReconcileAccounts(ctx workflow.Context, in ReconcileInput) error {
 	ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{StartToCloseTimeout: 2 * time.Minute, RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 3}})
 	var a *Activities
-	return workflow.ExecuteActivity(ctx, a.ReconcileOnboarding).Get(ctx, nil)
+	if in.After == uuid.Nil {
+		if err := workflow.ExecuteActivity(ctx, a.ReconcileOnboarding).Get(ctx, nil); err != nil {
+			if temporal.IsCanceledError(err) {
+				return err
+			}
+			in.Failed = true
+			workflow.GetLogger(ctx).Error("onboarding reconciliation failed", "error", err)
+		}
+	}
+	var ids []uuid.UUID
+	if err := workflow.ExecuteActivity(ctx, a.AccountRelationshipIDs, in.After).Get(ctx, &ids); err != nil {
+		return err
+	}
+	if len(ids) > 0 {
+		if err := workflow.ExecuteActivity(ctx, a.SyncAccountRelationshipBatch, ids).Get(ctx, nil); err != nil {
+			if temporal.IsCanceledError(err) {
+				return err
+			}
+			in.Failed = true
+			workflow.GetLogger(ctx).Error("account relationship reconciliation failed", "after", in.After.String(), "error", err)
+		}
+		in.After = ids[len(ids)-1]
+	}
+	if len(ids) == 100 {
+		return workflow.NewContinueAsNewError(ctx, ReconcileAccounts, in)
+	}
+	if in.Failed {
+		return temporal.NewApplicationError("account relationships could not all be synchronized", "RELATIONSHIP_SYNC_FAILED")
+	}
+	return nil
 }
 
 func EnsureReconciliation(ctx context.Context, tc client.Client) error {
-	_, err := tc.ScheduleClient().Create(ctx, client.ScheduleOptions{ID: "account-reconciliation", Spec: client.ScheduleSpec{Intervals: []client.ScheduleIntervalSpec{{Every: 5 * time.Minute}}}, Action: &client.ScheduleWorkflowAction{ID: "reconcile-accounts", Workflow: ReconcileAccounts, TaskQueue: Queue, WorkflowExecutionTimeout: 4 * time.Minute}, Overlap: enums.SCHEDULE_OVERLAP_POLICY_SKIP, TriggerImmediately: true})
+	_, err := tc.ScheduleClient().Create(ctx, client.ScheduleOptions{ID: "account-reconciliation", Spec: client.ScheduleSpec{Intervals: []client.ScheduleIntervalSpec{{Every: 5 * time.Minute}}}, Action: &client.ScheduleWorkflowAction{ID: "reconcile-accounts", Workflow: ReconcileAccounts, TaskQueue: Queue, Args: []interface{}{ReconcileInput{}}}, Overlap: enums.SCHEDULE_OVERLAP_POLICY_SKIP, TriggerImmediately: true})
 	if errors.Is(err, temporal.ErrScheduleAlreadyRunning) {
-		return tc.ScheduleClient().GetHandle(ctx, "account-reconciliation").Trigger(ctx, client.ScheduleTriggerOptions{Overlap: enums.SCHEDULE_OVERLAP_POLICY_SKIP})
+		handle := tc.ScheduleClient().GetHandle(ctx, "account-reconciliation")
+		if err := handle.Update(ctx, client.ScheduleUpdateOptions{DoUpdate: func(in client.ScheduleUpdateInput) (*client.ScheduleUpdate, error) {
+			schedule := in.Description.Schedule
+			schedule.Action = &client.ScheduleWorkflowAction{ID: "reconcile-accounts", Workflow: ReconcileAccounts, TaskQueue: Queue, Args: []interface{}{ReconcileInput{}}}
+			return &client.ScheduleUpdate{Schedule: &schedule}, nil
+		}}); err != nil {
+			return err
+		}
+		return handle.Trigger(ctx, client.ScheduleTriggerOptions{Overlap: enums.SCHEDULE_OVERLAP_POLICY_SKIP})
 	}
 	return err
 }

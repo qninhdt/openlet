@@ -33,16 +33,27 @@ test('operations restore real database state and S3 bytes into an isolated fence
     send.child.stdin?.end(`user = "${credentials}"\n`);
     await send;
     const id = randomUUID();
-    await execute('docker', ['compose', '--file', compose, '--project-name', project, 'exec', '-T', 'postgres', 'psql', '-X', '--set', 'ON_ERROR_STOP=1', '-U', 'openlet_admin', '-d', 'openlet_letfs', '-c', `INSERT INTO quota_buckets(id,provision_key,limit_bytes) VALUES('${id}','${id}',12345)`], { env });
+    await execute('docker', ['compose', '--file', compose, '--project-name', project, 'exec', '-T', 'postgres', 'psql', '-X', '--set', 'ON_ERROR_STOP=1', '-U', 'openlet_admin', '-d', 'openlet_letfs', '-c', `INSERT INTO quota_buckets(id,creator_service,create_fingerprint,limit_bytes) VALUES('${id}','recovery-test',repeat('0',64),12345)`], { env });
     for (const app of ['account', 'workspace', 'letfs']) {
       await execute('docker', ['compose', '--file', compose, '--project-name', project, 'run', '--rm', `${app}-migrate`], { env });
     }
     await execute('python3', [command, 'backup', '--compose', compose, '--project', project, '--state', state, '--output', snapshot], { env, timeout: 240_000 });
+    const manifest = JSON.parse(await readFile(join(snapshot, 'manifest.json'), 'utf8'));
+    assert.equal(manifest.version, 3);
+    assert.deepEqual(manifest.databases, ['account', 'workspace', 'letfs', 'temporal', 'temporal_visibility', 'spicedb']);
     await execute('python3', [command, 'restore', '--compose', compose, '--project', recoveredProject, '--state', restored, '--snapshot', snapshot], { env, timeout: 120_000 });
     const running = await execute('docker', ['compose', '--file', compose, '--project-name', recoveredProject, 'ps', '--status', 'running', '--services'], { env: restoredEnv });
     assert.deepEqual(running.stdout.trim().split('\n'), ['postgres']);
     const query = await execute('docker', ['compose', '--file', compose, '--project-name', recoveredProject, 'exec', '-T', 'postgres', 'psql', '-XAt', '-U', 'openlet_letfs', '-d', 'openlet_letfs', '-c', `SELECT limit_bytes FROM quota_buckets WHERE id='${id}'`], { env: restoredEnv });
     assert.equal(query.stdout.trim(), '12345');
+    const restoreMarker = join(restored, 'restore.json');
+    const repaired = await readFile(restoreMarker, 'utf8');
+    assert.equal(JSON.parse(repaired).authorization, 'transaction-ids-repaired');
+    await writeFile(restoreMarker, JSON.stringify({ ...JSON.parse(repaired), authorization: undefined }));
+    await assert.rejects(execute('python3', [command, 'resume', '--compose', compose, '--project', recoveredProject, '--state', restored], { env: restoredEnv, timeout: 150_000 }), /verified datastore repair/);
+    const fenced = await execute('docker', ['compose', '--file', compose, '--project-name', recoveredProject, 'ps', '--status', 'running', '--services'], { env: restoredEnv });
+    assert.deepEqual(fenced.stdout.trim().split('\n'), ['postgres']);
+    await writeFile(restoreMarker, repaired);
     await execute('python3', [command, 'resume', '--compose', compose, '--project', recoveredProject, '--state', restored], { env: restoredEnv, timeout: 150_000 });
     const receive = execute('curl', ['--config', '-', '--silent', '--show-error', '--fail', '--aws-sigv4', 'aws:amz:us-east-1:s3', url], { encoding: 'buffer', timeout: 15_000 });
     receive.child.stdin?.end(`user = "${credentials}"\n`);

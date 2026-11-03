@@ -1,0 +1,28 @@
+syntax = "proto3";
+package openlet_api.account.v1;
+
+option go_package = "openlet/packages/go/gen/openlet_api/account/v1;accountv1";
+
+service AccountService {
+  rpc GetUserSummaries(GetUserSummariesRequest) returns (GetUserSummariesResponse);
+  rpc GetVerifiedEmails(GetVerifiedEmailsRequest) returns (GetVerifiedEmailsResponse);
+}
+message UserSummary {
+  string id = 1;
+  string display_name = 2;
+  string avatar_url = 3;
+}
+
+// At most 100 IDs. A caller must verify the exact set of returned IDs.
+message GetUserSummariesRequest {
+  repeated string ids = 1;
+}
+message GetUserSummariesResponse {
+  repeated UserSummary users = 1;
+}
+message GetVerifiedEmailsRequest {
+  string user_id = 1;
+}
+message GetVerifiedEmailsResponse {
+  repeated string emails = 1;
+}

@@ -2,8 +2,10 @@ package http
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"net/http/httptest"
 	"openlet/apps/account/internal/config"
+	"openlet/packages/go/identity"
 	"strings"
 	"testing"
 )
@@ -13,8 +15,18 @@ func TestTrustedIdentityBoundary(t *testing.T) {
 	s := Server{Config: config.Config{GatewayToken: secret}}
 	h := gin.New()
 	h.Use(s.Gateway)
-	h.GET("/v1/me", func(c *gin.Context) { c.Status(204) })
-	h.GET("/v1/me/onboarding", func(c *gin.Context) { c.Status(204) })
+	verified := func(c *gin.Context) {
+		principal, ok := identity.FromContext(c.Request.Context())
+		if !ok || !principal.Gateway || principal.Subject != "user_test" {
+			t.Fatal("handler did not receive verified gateway identity")
+		}
+		if c.Request.URL.Path == "/v1/me/onboarding" && principal.ActorID != uuid.Nil {
+			t.Fatal("bootstrap gained user authority")
+		}
+		c.Status(204)
+	}
+	h.GET("/v1/me", verified)
+	h.GET("/v1/me/onboarding", verified)
 	for _, c := range []struct {
 		name, path, token, id, sub string
 		want                       int
@@ -48,6 +60,28 @@ func TestRouterUnknownPathsStillAuthenticate(t *testing.T) {
 		s.Router().ServeHTTP(w, r)
 		if w.Code != 401 {
 			t.Fatalf("%s bypassed authentication: %d", path, w.Code)
+		}
+	}
+}
+
+func TestSubjectOnlyBootstrapIsLimitedToOnboardingMethods(t *testing.T) {
+	secret := strings.Repeat("x", 43)
+	s := Server{Config: config.Config{GatewayToken: secret}}
+	h := gin.New()
+	h.Use(s.Gateway)
+	h.Any("/v1/me/onboarding", func(c *gin.Context) { c.Status(204) })
+	for _, method := range []string{"GET", "PUT", "POST", "PATCH", "DELETE"} {
+		request := httptest.NewRequest(method, "/v1/me/onboarding", nil)
+		request.Header.Set("X-Gateway-Token", secret)
+		request.Header.Set("X-Clerk-Sub", "user_test")
+		response := httptest.NewRecorder()
+		h.ServeHTTP(response, request)
+		want := 401
+		if method == "GET" || method == "PUT" {
+			want = 204
+		}
+		if response.Code != want {
+			t.Fatalf("%s subject-only status=%d want=%d", method, response.Code, want)
 		}
 	}
 }

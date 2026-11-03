@@ -35,6 +35,22 @@ def test_bootstrap_preserves_credentials_and_private_mount_permissions(tmp_path:
     )
     assert cluster["transport_socket"]["typed_config"]["sni"] == "identity.example.test"
     assert original["gateway_token"] in (state / "envoy.json").read_text()
+    assert len(original["spicedb_key"]) >= 32
+    assert (
+        "CREATE DATABASE openlet_spicedb OWNER openlet_spicedb"
+        in (state / "init.sql").read_text()
+    )
+    assert original["spicedb_db_password"] in original["spicedb_database_url"]
+
+
+def test_bootstrap_rejects_unsafe_native_graph_key_before_writing(tmp_path: Path):
+    state = tmp_path / "development"
+    configure(state, settings())
+    previous = (state / "init.sql").read_text()
+    (state / "secrets" / "spicedb_key").write_text("a" * 32 + "#unsafe")
+    with pytest.raises(ValueError, match="URL-safe"):
+        configure(state, settings())
+    assert (state / "init.sql").read_text() == previous
 
 
 @pytest.mark.parametrize(

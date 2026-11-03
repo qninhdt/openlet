@@ -12,7 +12,10 @@ import (
 func TestRecordedUserWorkflow(t *testing.T) {
 	replayer := worker.NewWorkflowReplayer()
 	replayer.RegisterWorkflow(OnboardUser)
-	if e := replayer.ReplayWorkflowHistoryFromJSONFile(nil, filepath.Join(os.Getenv("OPENLET_HISTORY_DIR"), "OnboardUser.json")); e != nil {
-		t.Fatal(e)
+	replayer.RegisterWorkflow(ReconcileAccounts)
+	for _, name := range []string{"OnboardUser", "ReconcileAccounts"} {
+		if e := replayer.ReplayWorkflowHistoryFromJSONFile(nil, filepath.Join(os.Getenv("OPENLET_HISTORY_DIR"), name+".json")); e != nil {
+			t.Fatal(e)
+		}
 	}
 }

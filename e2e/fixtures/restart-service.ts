@@ -6,7 +6,7 @@ import { ports, project, root, state } from '../setup/settings.ts';
 
 const execute = promisify(execFile);
 
-async function ownedService(service: 'letfs' | 'processor-cpu' | 'processor-io') {
+export async function ownedService(service: 'letfs' | 'ingest-cpu' | 'ingest-io') {
   const admission = JSON.parse(await readFile(join(state, 'environment.json'), 'utf8'));
   if (admission.project !== project || admission.root !== root || typeof admission.run !== 'string') throw new Error('E2E restart ownership mismatch');
   const { stdout } = await execute('docker', ['container', 'ls', '--all', '--quiet', '--filter', `label=com.docker.compose.project=${project}`, '--filter', `label=com.docker.compose.service=${service}`]);
@@ -18,7 +18,7 @@ async function ownedService(service: 'letfs' | 'processor-cpu' | 'processor-io')
   return { id, admission };
 }
 
-export async function restartService(service: 'letfs' | 'processor-cpu' | 'processor-io') {
+export async function restartService(service: 'letfs' | 'ingest-cpu' | 'ingest-io') {
   const { admission } = await ownedService(service);
   await execute('docker', ['compose', '--project-name', project, '--file', join(root, 'infra/compose/e2e.yaml'), 'restart', service], {
     cwd: root, timeout: 90_000, env: { ...process.env, OPENLET_E2E_ROOT: root, OPENLET_E2E_STATE: state, OPENLET_E2E_RUN: admission.run,

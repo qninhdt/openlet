@@ -2,8 +2,8 @@ package http
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -18,14 +18,16 @@ import (
 	"openlet/apps/workspace/internal/config"
 	"openlet/apps/workspace/internal/user"
 	"openlet/apps/workspace/internal/workspace"
+	"openlet/packages/go/identity"
 )
 
 type Server struct {
-	Config   config.Config
-	DB       *pgxpool.Pool
-	Temporal client.Client
-	Store    *workspace.Store
-	User     user.Client
+	GraphReady func(context.Context) error
+	Config     config.Config
+	DB         *pgxpool.Pool
+	Temporal   client.Client
+	Store      *workspace.Store
+	User       user.Client
 }
 
 func (s *Server) Router() *gin.Engine {
@@ -45,7 +47,7 @@ func (s *Server) Router() *gin.Engine {
 	r.GET("/ready", func(c *gin.Context) {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 		defer cancel()
-		if s.DB.Ping(ctx) != nil {
+		if s.GraphReady == nil || s.GraphReady(ctx) != nil || s.DB.Ping(ctx) != nil {
 			c.Status(http.StatusServiceUnavailable)
 			return
 		}
@@ -57,7 +59,6 @@ func (s *Server) Router() *gin.Engine {
 	})
 	public := r.Group("/v1")
 
-	registerFiles(public, s)
 	public.POST("/workspaces", s.createWorkspace)
 	public.GET("/workspaces", s.listWorkspaces)
 	public.GET("/workspaces/:ws", s.getWorkspace)
@@ -85,22 +86,17 @@ func Error(w http.ResponseWriter, r *http.Request, status int, code, message str
 
 func (s *Server) Gateway(c *gin.Context) {
 	r := c.Request
-	if len(r.Header.Values("X-Gateway-Token")) != 1 || subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Gateway-Token")), []byte(s.Config.GatewayToken)) != 1 {
-		Error(c.Writer, r, 401, "UNAUTHENTICATED", "gateway authentication required")
+	principal, err := identity.AuthenticateGateway(r.Header, s.Config.GatewayToken, false)
+	if err != nil {
+		code := "UNAUTHENTICATED"
+		if errors.Is(err, identity.ErrOnboardingRequired) {
+			code = "ONBOARDING_REQUIRED"
+		}
+		Error(c.Writer, r, http.StatusUnauthorized, code, err.Error())
 		c.Abort()
 		return
 	}
-	if len(r.Header.Values("X-Clerk-Sub")) != 1 || r.Header.Get("X-Clerk-Sub") == "" {
-		Error(c.Writer, r, 401, "UNAUTHENTICATED", "verified subject required")
-		c.Abort()
-		return
-	}
-	id, err := uuid.Parse(r.Header.Get("X-Openlet-User-ID"))
-	if len(r.Header.Values("X-Openlet-User-ID")) != 1 || err != nil || id == uuid.Nil {
-		Error(c.Writer, r, 401, "ONBOARDING_REQUIRED", "refresh an onboarded session")
-		c.Abort()
-	}
-
+	c.Request = r.WithContext(identity.WithPrincipal(r.Context(), principal))
 }
 
 func observe(c *gin.Context) {

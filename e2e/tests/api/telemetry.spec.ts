@@ -1,10 +1,10 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { test, expect } from '../../fixtures/api-test.ts';
 
-test('HTTP and Temporal preserve trace context through Go, Rust and Python without baggage', async ({ session, controls }) => {
+test('HTTP and Temporal preserve trace context through Go and Python without baggage', async ({ session, controls }) => {
   const traceId = randomBytes(16).toString('hex');
   const traceparent = `00-${traceId}-${randomBytes(8).toString('hex')}-01`;
-  const base = `/v1/workspaces/${session.workspaceId}`;
+  const base = `/v1/filesystems/${session.filesystemId}`;
   const response = await session.api.post(`${base}/nodes`, {
     headers: { traceparent, baggage: 'private=must-not-propagate', 'idempotency-key': randomUUID() },
     data: { kind: 'file', parent_id: session.rootId, name: 'trace-context.txt', media_type: 'text/plain',

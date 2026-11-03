@@ -5,8 +5,10 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
+	worker "openlet/apps/workspace/internal/temporal"
 	"openlet/apps/workspace/internal/user"
 	"openlet/apps/workspace/internal/workspace"
+	"openlet/packages/go/authz"
 )
 
 func (s *Server) members(c *gin.Context) {
@@ -16,7 +18,7 @@ func (s *Server) members(c *gin.Context) {
 		failure(w, r, e)
 		return
 	}
-	if _, e = s.Store.Authorize(r.Context(), ws, actorID(r), "viewer"); e != nil {
+	if _, e = s.Store.Authorize(r.Context(), ws, actorID(r), authz.MemberRead); e != nil {
 		failure(w, r, e)
 		return
 	}
@@ -86,6 +88,10 @@ func (s *Server) changeMember(c *gin.Context) {
 		failure(w, r, e)
 		return
 	}
+	if e = worker.SyncRelationships(r.Context(), s.Temporal, s.Store, ws); e != nil {
+		Error(w, r, 503, "DEPENDENCY_UNAVAILABLE", "membership change committed; authorization synchronization incomplete")
+		return
+	}
 	w.WriteHeader(204)
 }
 func (s *Server) invite(c *gin.Context) {
@@ -125,7 +131,7 @@ func (s *Server) invitations(c *gin.Context) {
 		failure(w, r, e)
 		return
 	}
-	if _, e = s.Store.Authorize(r.Context(), ws, actorID(r), "owner"); e != nil {
+	if _, e = s.Store.Authorize(r.Context(), ws, actorID(r), authz.InvitationRead); e != nil {
 		failure(w, r, e)
 		return
 	}
@@ -188,7 +194,11 @@ func (s *Server) acceptInvitation(c *gin.Context) {
 		failure(w, r, e)
 		return
 	}
-	resource, e := s.Store.Authorize(r.Context(), ws, actorID(r), "viewer")
+	if e = worker.SyncRelationships(r.Context(), s.Temporal, s.Store, ws); e != nil {
+		Error(w, r, 503, "DEPENDENCY_UNAVAILABLE", "membership accepted; authorization synchronization incomplete")
+		return
+	}
+	resource, e := s.Store.Authorize(r.Context(), ws, actorID(r), authz.MemberRead)
 	if e != nil {
 		failure(w, r, e)
 		return

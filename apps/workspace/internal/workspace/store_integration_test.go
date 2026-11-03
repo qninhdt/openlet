@@ -3,22 +3,40 @@
 package workspace
 
 import (
-	"context"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/wait"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"openlet/packages/go/authz"
+	"openlet/packages/go/testfixture"
+	"os"
 )
+
+func setupGraph(t *testing.T, store *Store) testcontainers.Container {
+	t.Helper()
+	graph, _, server := testfixture.SpiceDB(t, "../../../../packages/contracts/authz/schema.zed")
+	data, err := os.ReadFile("../../../../packages/contracts/authz/roles.json")
+	require.NoError(t, err)
+	policy, err := authz.ParseRolePolicy(data)
+	require.NoError(t, err)
+	require.NoError(t, authz.InitializeRolePolicy(t.Context(), graph, policy))
+	store.Graph = graph
+	return server
+}
+
+func syncGraph(t *testing.T, store *Store, id uuid.UUID) {
+	t.Helper()
+	require.NoError(t, store.SyncRelationships(t.Context(), store.Graph, id))
+}
 
 func TestIntegrationWorkspaceCollaboration(t *testing.T) {
 	db := postgres(t)
 	store := Store{DB: db, MaxWorkspaces: 10, MaxMembers: 10, QuotaLimit: 1024, InviteTTL: time.Hour}
+	setupGraph(t, &store)
 	ctx := t.Context()
 	owner, member := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	input := CreateInput{ActorID: owner, Key: uuid.Must(uuid.NewV7()), Name: "Team"}
@@ -33,7 +51,8 @@ func TestIntegrationWorkspaceCollaboration(t *testing.T) {
 	require.EqualError(t, err, "IDEMPOTENCY_CONFLICT")
 	require.NoError(t, store.Activate(ctx, mapping(created.Workspace.ID)))
 	ws := created.Workspace.ID
-	_, err = store.Authorize(ctx, ws, member, "viewer")
+	syncGraph(t, &store, ws)
+	_, err = store.Authorize(ctx, ws, member, authz.WorkspaceRead)
 	require.EqualError(t, err, "NOT_FOUND")
 	invitation, token, err := store.Invite(ctx, ws, owner, "member@example.com", "editor")
 	require.NoError(t, err)
@@ -44,19 +63,21 @@ func TestIntegrationWorkspaceCollaboration(t *testing.T) {
 	accepted, err := store.AcceptInvite(ctx, member, token, []string{"MEMBER@example.com"})
 	require.NoError(t, err)
 	require.Equal(t, ws, accepted)
+	syncGraph(t, &store, ws)
 	_, err = store.AcceptInvite(ctx, member, token, []string{"member@example.com"})
 	require.NoError(t, err)
-	_, err = store.Authorize(ctx, ws, member, "editor")
+	_, err = store.Authorize(ctx, ws, member, authz.MemberRead)
 	require.NoError(t, err)
-	current, err := store.Authorize(ctx, ws, owner, "owner")
+	current, err := store.Authorize(ctx, ws, owner, authz.WorkspaceTransfer)
 	require.NoError(t, err)
 	require.EqualError(t, store.ChangeMember(ctx, ws, owner, owner, "", true, current.Revision), "OWNER_TRANSFER_REQUIRED")
 	transferred, err := store.Update(ctx, ws, owner, current.Revision, UpdateInput{OwnerID: &member})
 	require.NoError(t, err)
 	require.NotEqual(t, current.Revision, transferred.Revision)
-	_, err = store.Authorize(ctx, ws, owner, "owner")
+	syncGraph(t, &store, ws)
+	_, err = store.Authorize(ctx, ws, owner, authz.WorkspaceTransfer)
 	require.EqualError(t, err, "FORBIDDEN")
-	current, err = store.Authorize(ctx, ws, member, "owner")
+	current, err = store.Authorize(ctx, ws, member, authz.WorkspaceTransfer)
 	require.NoError(t, err)
 	name := "Renamed"
 	renamed, err := store.Update(ctx, ws, member, current.Revision, UpdateInput{Name: &name})
@@ -78,7 +99,7 @@ func TestIntegrationWorkspaceCollaboration(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, pending, 1)
 	require.Equal(t, "deleting", pending[0].Status)
-	_, err = store.Authorize(ctx, ws, member, "owner")
+	_, err = store.Authorize(ctx, ws, member, authz.WorkspaceTransfer)
 	require.EqualError(t, err, "WORKSPACE_DELETING")
 	require.NoError(t, store.CompleteDeletion(ctx, ws))
 	require.NoError(t, store.CompleteDeletion(ctx, ws))
@@ -128,40 +149,85 @@ func TestIntegrationConcurrentWorkspaceLimit(t *testing.T) {
 
 func postgres(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
-	defer cancel()
-	baseline, err := filepath.Abs("../../migrations/0001_initial.sql")
+	return testfixture.Postgres(t, "../../migrations/0001_initial.sql")
+}
+
+func TestIntegrationStorageReservationSurvivesConcurrentRetryAndRejectsRebinding(t *testing.T) {
+	ctx := t.Context()
+	store := Store{DB: postgres(t), MaxWorkspaces: 10, MaxMembers: 10, QuotaLimit: 1024}
+	actor := uuid.New()
+	input := CreateInput{ActorID: actor, Key: uuid.New(), Name: "Stable storage"}
+	admission, err := store.EnsureWorkspace(ctx, input, "")
 	require.NoError(t, err)
-	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: testcontainers.ContainerRequest{
-			Image:        "postgres:18.6-trixie@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336",
-			Env:          map[string]string{"POSTGRES_USER": "owner", "POSTGRES_DB": "application", "POSTGRES_PASSWORD": "isolated-test-password"},
-			ExposedPorts: []string{"5432/tcp"},
-			Files:        []testcontainers.ContainerFile{{HostFilePath: baseline, ContainerFilePath: "/docker-entrypoint-initdb.d/10-baseline.sql", FileMode: 0o444}},
-			WaitingFor:   wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(time.Minute),
-		}, Started: true,
-	})
-	if container != nil {
-		testcontainers.CleanupContainer(t, container)
+	id := admission.Workspace.ID
+	type reservation struct {
+		storage Storage
+		err     error
 	}
+	results := make(chan reservation, 8)
+	var workers sync.WaitGroup
+	for range 8 {
+		workers.Go(func() {
+			storage, err := store.ReserveStorage(ctx, id)
+			results <- reservation{storage, err}
+		})
+	}
+	workers.Wait()
+	close(results)
+	var reserved Storage
+	for result := range results {
+		require.NoError(t, result.err)
+		if reserved.BucketID == uuid.Nil {
+			reserved = result.storage
+		}
+		require.Equal(t, reserved, result.storage)
+	}
+	require.Equal(t, uuid.Version(7), reserved.BucketID.Version())
+	require.Equal(t, uuid.Version(7), reserved.FilesystemID.Version())
+	require.NotEqual(t, reserved.BucketID, reserved.FilesystemID)
+	require.Equal(t, uuid.Nil, reserved.RootID, "root is returned by letfs after creation")
+	owner, err := store.EnsureWorkspace(ctx, input, "")
 	require.NoError(t, err)
-	host, err := container.Host(ctx)
+	require.Equal(t, reserved.BucketID, *owner.Workspace.BucketID)
+	require.Equal(t, reserved.FilesystemID, *owner.Workspace.FilesystemID)
+	foreign := reserved
+	foreign.RootID = uuid.New()
+	foreign.BucketID = uuid.New()
+	require.EqualError(t, store.Activate(ctx, foreign), "STATE_CONFLICT")
+	foreign = reserved
+	foreign.RootID = uuid.New()
+	foreign.FilesystemID = uuid.New()
+	require.EqualError(t, store.Activate(ctx, foreign), "STATE_CONFLICT")
+	reserved.RootID = uuid.New()
+	require.NoError(t, store.Activate(ctx, reserved))
+	require.NoError(t, store.Activate(ctx, reserved))
+	again, err := store.ReserveStorage(ctx, id)
 	require.NoError(t, err)
-	port, err := container.MappedPort(ctx, "5432/tcp")
+	require.Equal(t, reserved, again)
+	foreign = reserved
+	foreign.RootID = uuid.New()
+	require.EqualError(t, store.Activate(ctx, foreign), "STATE_CONFLICT")
+	_, err = store.DB.Exec(ctx, `UPDATE workspaces SET status='deleting' WHERE id=$1`, id)
 	require.NoError(t, err)
-	db, err := pgxpool.New(ctx, "postgres://owner:isolated-test-password@"+host+":"+port.Port()+"/application?sslmode=disable")
+	_, err = store.ReserveStorage(ctx, id)
+	require.EqualError(t, err, "STATE_CONFLICT")
+	require.EqualError(t, store.Activate(ctx, reserved), "STATE_CONFLICT")
+	require.NoError(t, store.CompleteDeletion(ctx, id))
+	_, err = store.ReserveStorage(ctx, id)
+	require.EqualError(t, err, "STATE_CONFLICT")
+	value, err := store.Get(ctx, id, actor)
 	require.NoError(t, err)
-	t.Cleanup(db.Close)
-	require.NoError(t, db.Ping(ctx))
-	return db
+	require.Equal(t, reserved.BucketID, *value.BucketID, "deletion retains the late-create fence identity")
 }
 
 func TestIntegrationConcurrentInvitationsReturnOneToken(t *testing.T) {
 	store := Store{DB: postgres(t), MaxWorkspaces: 10, MaxMembers: 10, QuotaLimit: 1024, InviteTTL: time.Hour}
+	setupGraph(t, &store)
 	owner := uuid.Must(uuid.NewV7())
 	provision, err := store.EnsureWorkspace(t.Context(), CreateInput{ActorID: owner, Key: uuid.Must(uuid.NewV7()), Name: "Team"}, "")
 	require.NoError(t, err)
 	require.NoError(t, store.Activate(t.Context(), mapping(provision.Workspace.ID)))
+	syncGraph(t, &store, provision.Workspace.ID)
 	type result struct {
 		invitation Invitation
 		token      string
@@ -284,11 +350,13 @@ func TestIntegrationWorkspaceReceiptAdmissionAndExpiry(t *testing.T) {
 
 func TestIntegrationFailedProvisioningCanBeDeleted(t *testing.T) {
 	store := Store{DB: postgres(t), MaxWorkspaces: 1, MaxMembers: 10, QuotaLimit: 1024}
+	setupGraph(t, &store)
 	ctx := t.Context()
 	actor := uuid.New()
 	admitted, err := store.EnsureWorkspace(ctx, CreateInput{ActorID: actor, Key: uuid.New(), Name: "Failed"}, "")
 	require.NoError(t, err)
 	require.NoError(t, store.Fail(ctx, admitted.Workspace.ID))
+	syncGraph(t, &store, admitted.Workspace.ID)
 	failed, err := store.Get(ctx, admitted.Workspace.ID, actor)
 	require.NoError(t, err)
 	require.Equal(t, "failed", failed.Status)

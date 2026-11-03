@@ -1,0 +1,13 @@
+{
+  "name": "@openlet/letfs-ingest",
+  "private": true,
+  "scripts": {
+    "build": "uv build --package letfs-ingest",
+    "check": "uv run --locked --package letfs-ingest ruff check . && uv run --locked --package letfs-ingest ruff format --check .",
+    "test": "uv run --locked --package letfs-ingest pytest tests -m 'not parser'",
+    "test:parser": "uv run --locked --package letfs-ingest pytest tests -m parser"
+  },
+  "devDependencies": {
+    "@openlet/python": "workspace:*"
+  }
+}

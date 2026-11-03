@@ -8,13 +8,21 @@ from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[2]
-DATABASES = ("account", "workspace", "letfs", "temporal", "temporal_visibility")
+DATABASES = (
+    "account",
+    "workspace",
+    "letfs",
+    "temporal",
+    "temporal_visibility",
+    "spicedb",
+)
 GENERATED = (
     "postgres_password",
     "gateway_token",
     "workspace_service_token",
-    "processor_service_token",
+    "ingest_service_token",
     "qdrant_api_key",
+    "spicedb_key",
 )
 PROVIDED = {
     "clerk_secret_key": "CLERK_SECRET_KEY",
@@ -101,6 +109,13 @@ def configure(state: Path, environment: dict[str, str]) -> None:
             raise ValueError(
                 f"existing {name} is invalid; explicit rotation is required"
             )
+        if name == "spicedb_key" and any(
+            c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
+            for c in value
+        ):
+            raise ValueError(
+                "existing spicedb_key must be URL-safe; explicit rotation is required"
+            )
         existing[name] = value
     state.mkdir(parents=True, exist_ok=True, mode=0o700)
     state.chmod(0o700)
@@ -108,7 +123,7 @@ def configure(state: Path, environment: dict[str, str]) -> None:
     (state / "secrets").chmod(0o700)
     for name, value in existing.items():
         private_write(state / "secrets" / name, value)
-    for app in DATABASES[:3]:
+    for app in ("account", "workspace", "letfs", "spicedb"):
         password = quote(existing[f"{app}_db_password"], safe="")
         private_write(
             state / "secrets" / f"{app}_database_url",
@@ -122,6 +137,12 @@ def configure(state: Path, environment: dict[str, str]) -> None:
         sql += f"ALTER ROLE {role} SET statement_timeout='15s';\nALTER ROLE {role} SET lock_timeout='5s';\n"
         sql += f"CREATE DATABASE {role} OWNER {role};\nREVOKE ALL ON DATABASE {role} FROM PUBLIC;\n"
     private_write(state / "init.sql", sql)
+    private_write(
+        state / "spicedb.env",
+        "SPICEDB_DATASTORE_ENGINE=postgres\n"
+        f"SPICEDB_DATASTORE_CONN_URI=postgres://openlet_spicedb:{quote(existing['spicedb_db_password'], safe='')}@postgres:5432/openlet_spicedb?sslmode=disable\n"
+        f"SPICEDB_GRPC_PRESHARED_KEY={existing['spicedb_key']}\n",
+    )
     temporal = json.loads((ROOT / "infra/config/temporal.template.json").read_text())
     for store, db in (("default", "temporal"), ("visibility", "temporal_visibility")):
         temporal["persistence"]["datastores"][store]["sql"]["password"] = existing[

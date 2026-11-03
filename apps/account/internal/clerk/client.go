@@ -31,6 +31,12 @@ func (c Client) request(ctx context.Context, method, path string, body any, out 
 	r.Header.Set("Content-Type", "application/json")
 	res, e := (&http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport), Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}).Do(r)
 	if e != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if errors.Is(e, context.DeadlineExceeded) {
+			return context.DeadlineExceeded
+		}
 		return errors.New("Clerk unavailable")
 	}
 	defer res.Body.Close()
@@ -40,7 +46,11 @@ func (c Client) request(ctx context.Context, method, path string, body any, out 
 	if out == nil {
 		return nil
 	}
-	return json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(out)
+	e = json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(out)
+	if e != nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return e
 }
 func (c Client) PublishUserID(ctx context.Context, subject, id string) error {
 	return c.request(ctx, http.MethodPatch, "/users/"+url.PathEscape(subject)+"/metadata", map[string]any{"public_metadata": map[string]string{"openlet_user_id": id}}, nil)

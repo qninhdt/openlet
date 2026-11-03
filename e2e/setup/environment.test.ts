@@ -30,7 +30,7 @@ test('occupied ports fail without changing project resources and release the OS 
   } finally { listener.close(); await once(listener, 'close'); }
 });
 
-test('SIGTERM during real container startup cleans owned resources', { timeout: 180_000 }, async () => {
+test('SIGTERM during real SpiceDB startup cleans owned resources', { timeout: 180_000 }, async () => {
   assert.deepEqual(await projectResources(), [], 'refusing to disturb another environment');
   const child = spawn(process.execPath, ['--input-type=module', '-e',
     "import setup from './e2e/setup/environment.ts'; const cleanup = await setup(); await cleanup();"],
@@ -43,12 +43,14 @@ test('SIGTERM during real container startup cleans owned resources', { timeout: 
     const until = Date.now() + 120_000;
     while (Date.now() < until) {
       if (child.exitCode !== null || child.signalCode !== null) throw new Error(`Setup exited before the injection point: ${diagnostic}`);
-      const found = await execute('docker', ['container', 'ls', '--all', '--quiet', '--filter', `label=com.docker.compose.project=${project}`]);
+      const found = await execute('docker', ['container', 'ls', '--quiet', '--filter', `label=com.docker.compose.project=${project}`,
+        '--filter', 'label=com.docker.compose.service=spicedb', '--filter', 'health=starting']);
       if (found.stdout.trim()) break;
       await new Promise(resolve => setTimeout(resolve, 250));
     }
-    const found = await execute('docker', ['container', 'ls', '--all', '--quiet', '--filter', `label=com.docker.compose.project=${project}`]);
-    assert.ok(found.stdout.trim(), 'startup never created a container');
+    const found = await execute('docker', ['container', 'ls', '--quiet', '--filter', `label=com.docker.compose.project=${project}`,
+      '--filter', 'label=com.docker.compose.service=spicedb', '--filter', 'health=starting']);
+    assert.ok(found.stdout.trim(), 'startup never reached SpiceDB readiness wait');
     child.kill('SIGTERM');
     const [code, signal] = await exit;
     assert.equal(signal, null, diagnostic);

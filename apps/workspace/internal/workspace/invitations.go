@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"openlet/packages/go/authz"
 )
 
 type Invitation struct {
@@ -40,12 +41,16 @@ func (s *Store) Invite(ctx context.Context, ws, actor uuid.UUID, email, role str
 	if e != nil {
 		return v, "", e
 	}
+	observed, e := s.Authorize(ctx, ws, actor, authz.InvitationCreate)
+	if e != nil {
+		return v, "", e
+	}
 	tx, e := s.DB.Begin(ctx)
 	if e != nil {
 		return v, "", e
 	}
 	defer tx.Rollback(ctx)
-	if _, e = authorize(ctx, tx, ws, actor, "owner"); e != nil {
+	if _, e = s.lockAdmission(ctx, tx, observed, actor); e != nil {
 		return v, "", e
 	}
 
@@ -95,12 +100,16 @@ func (s *Store) Invitations(ctx context.Context, ws, after uuid.UUID, limit int)
 	return out, rows.Err()
 }
 func (s *Store) RevokeInvite(ctx context.Context, ws, actor, id uuid.UUID) error {
+	observed, e := s.Authorize(ctx, ws, actor, authz.InvitationRevoke)
+	if e != nil {
+		return e
+	}
 	tx, e := s.DB.Begin(ctx)
 	if e != nil {
 		return e
 	}
 	defer tx.Rollback(ctx)
-	if _, e = authorize(ctx, tx, ws, actor, "owner"); e != nil {
+	if _, e = s.lockAdmission(ctx, tx, observed, actor); e != nil {
 		return e
 	}
 	result, e := tx.Exec(ctx, `UPDATE workspace_invitations SET status='revoked' WHERE id=$1 AND workspace_id=$2 AND status='pending'`, id, ws)
