@@ -199,7 +199,7 @@ func serve(ctx context.Context, cfg config.Config, contract *authz.Contract, lis
 	}
 	defer tc.Close()
 	jobs := &temporal.Jobs{Client: tc}
-	service := &filesystem.Service{Store: store, Processing: jobs, Copies: jobs, Deletions: jobs}
+	service := &filesystem.Service{Store: store, Processing: jobs, Deletions: jobs}
 	if backfill != nil {
 		result, err := (&temporal.Activities{Store: store, Jobs: jobs}).Backfill(ctx, *backfill)
 		if writeErr := json.NewEncoder(os.Stdout).Encode(result); writeErr != nil {

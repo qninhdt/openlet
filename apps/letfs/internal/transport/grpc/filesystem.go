@@ -123,29 +123,31 @@ func (s *Filesystem) ResolveNode(ctx context.Context, input *letfsv1.ResolveNode
 }
 
 func (s *Filesystem) BatchStat(ctx context.Context, input *letfsv1.BatchStatRequest) (*letfsv1.BatchStatResponse, error) {
-	fs, err := s.scopeInput(ctx, input.GetFilesystemId(), input.GetScopeId())
+	fs, err := parseID(input.GetFilesystemId())
 	if err != nil {
 		return nil, err
 	}
-	if len(input.GetLocators()) < 1 || len(input.GetLocators()) > 100 {
-		return nil, rpc.Fault(codes.InvalidArgument, "VALIDATION", "locator batch must contain 1..100 items")
-	}
-	locators := make([]filesystem.Locator, len(input.Locators))
-	for i, value := range input.Locators {
-		locators[i], err = locatorInput(value)
-		if err != nil {
-			return nil, err
+	locators := make([]filesystem.ScopedLocator, len(input.Locators))
+	for i, item := range input.Locators {
+		scope, e := parseID(item.GetScopeId())
+		if e != nil {
+			return nil, e
 		}
+		locator, e := locatorInput(item.GetLocator())
+		if e != nil {
+			return nil, e
+		}
+		locators[i] = filesystem.ScopedLocator{ScopeID: scope, Locator: locator}
 	}
 	values, err := s.Store.BatchStat(ctx, fs, locators)
 	if err != nil {
 		return nil, err
 	}
-	result := &letfsv1.BatchStatResponse{Items: make([]*letfsv1.Node, len(values))}
-	for i, value := range values {
-		result.Items[i] = nodeMessage(value)
+	out := &letfsv1.BatchStatResponse{}
+	for _, node := range values {
+		out.Items = append(out.Items, nodeMessage(node))
 	}
-	return result, nil
+	return out, nil
 }
 
 func (s *Filesystem) ListNodes(ctx context.Context, input *letfsv1.ListNodesRequest) (*letfsv1.ListNodesResponse, error) {
@@ -210,7 +212,11 @@ func (s *Filesystem) UpdateNode(ctx context.Context, input *letfsv1.UpdateNodeRe
 	if err != nil {
 		return nil, err
 	}
-	patch := filesystem.UpdateNode{Locator: locator, Revision: input.Revision, Name: input.Name}
+	destination, err := optionalID(input.DestinationScopeId)
+	if err != nil {
+		return nil, err
+	}
+	patch := filesystem.UpdateNode{Locator: locator, Revision: input.Revision, Name: input.Name, DestinationScopeID: destination}
 	if input.Parent != nil {
 		parent, err := locatorInput(input.Parent)
 		if err != nil {

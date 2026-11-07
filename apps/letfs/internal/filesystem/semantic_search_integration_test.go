@@ -134,12 +134,11 @@ func TestIntegrationSemanticSearchWithOpenRouterSDKAndCurrentFacts(t *testing.T)
 	defer provider.Close()
 	s.AI, err = search.NewAI(search.AIConfig{URL: provider.URL, Key: "isolated-key", RerankModel: "rerank-v1", AllowLocal: true})
 	require.NoError(t, err)
-	query := SearchInput{Query: "volcano"}
+	query := SemanticSearchInput{Query: "volcano"}
 	page, err := s.SemanticSearch(ctx, fs, query)
 	require.NoError(t, err)
 	require.Len(t, page.Items, 2)
 	require.False(t, page.Degraded)
-	require.Nil(t, page.NextCursor)
 	ids := []uuid.UUID{}
 	for _, item := range page.Items {
 		ids = append(ids, item.Node.ID)
@@ -157,22 +156,11 @@ func TestIntegrationSemanticSearchWithOpenRouterSDKAndCurrentFacts(t *testing.T)
 	first, err := s.SemanticSearch(ctx, fs, query)
 	require.NoError(t, err)
 	require.Len(t, first.Items, 1)
-	require.NotNil(t, first.NextCursor)
-	query.Cursor = first.NextCursor
-	second, err := s.SemanticSearch(ctx, fs, query)
-	require.NoError(t, err)
-	require.Len(t, second.Items, 1)
-	require.NotEqual(t, first.Items[0].Node.ID, second.Items[0].Node.ID)
-	changed := query
-	changed.Query = "different"
-	_, err = s.SemanticSearch(ctx, fs, changed)
-	require.Equal(t, apperr.Invalid, apperr.KindOf(err))
-	originalModel := s.AI.RerankModel
-	s.AI.RerankModel = "different-reranker"
-	_, err = s.SemanticSearch(ctx, fs, query)
-	require.Equal(t, apperr.Invalid, apperr.KindOf(err))
-	s.AI.RerankModel = originalModel
-	query.Cursor, query.Limit = nil, nil
+	mutationMu.Lock()
+	require.Len(t, rerankDocuments, 3, "output limit is applied after reranking all valid evidence")
+	require.Equal(t, rerankDocuments[len(rerankDocuments)-1], first.Items[0].Matched.Snippet)
+	mutationMu.Unlock()
+	query.Limit = nil
 	rerankFail.Store(true)
 	page, err = s.SemanticSearch(ctx, fs, query)
 	require.NoError(t, err)
@@ -190,7 +178,7 @@ func TestIntegrationSemanticSearchWithOpenRouterSDKAndCurrentFacts(t *testing.T)
 	_, err = s.SemanticSearch(ctx, fs, query)
 	require.Equal(t, apperr.Unavailable, apperr.KindOf(err))
 	s.Search = working
-	t.Run("bounded evidence and provider batches", func(t *testing.T) {
+	t.Run("bounded evidence and one provider request", func(t *testing.T) {
 		original := points
 		defer func() {
 			s.Search = working
@@ -204,6 +192,16 @@ func TestIntegrationSemanticSearchWithOpenRouterSDKAndCurrentFacts(t *testing.T)
 		proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if strings.HasSuffix(r.URL.Path, "/points/query") {
 				queries.Add(1)
+				payload, err := io.ReadAll(r.Body)
+				require.NoError(t, err)
+				r.Body = io.NopCloser(bytes.NewReader(payload))
+				var body map[string]any
+				require.NoError(t, json.Unmarshal(payload, &body))
+				require.NotContains(t, body, "offset")
+				require.EqualValues(t, 80, body["limit"])
+				for _, raw := range body["prefetch"].([]any) {
+					require.EqualValues(t, 80, raw.(map[string]any)["limit"])
+				}
 			}
 			forward.ServeHTTP(w, r)
 		}))
@@ -216,23 +214,14 @@ func TestIntegrationSemanticSearchWithOpenRouterSDKAndCurrentFacts(t *testing.T)
 			point(files[0].ID, files[0].ID, 1, "embedding-v1", fmt.Sprintf("volcano evidence %d", i), 2)
 		}
 		request("PUT", "/collections/files/points?wait=true", map[string]any{"points": points})
-		bounded := SearchInput{Query: "volcano", Limit: ptr(int32(50))}
+		bounded := SemanticSearchInput{Query: "volcano", Limit: ptr(int32(50))}
 		page, err := s.SemanticSearch(ctx, fs, bounded)
 		require.NoError(t, err)
-		require.EqualValues(t, 3, queries.Load(), "one request reads at most three actual Qdrant batches")
+		require.EqualValues(t, 1, queries.Load(), "one search performs one bounded Qdrant request")
 		require.Len(t, page.Items, 1)
-		require.NotNil(t, page.NextCursor)
 		mutationMu.Lock()
 		require.Len(t, rerankDocuments, 3, "one source contributes at most three evidence documents")
 		rerankDocuments = nil
-		mutationMu.Unlock()
-		bounded.Cursor = page.NextCursor
-		page, err = s.SemanticSearch(ctx, fs, bounded)
-		require.NoError(t, err)
-		require.Empty(t, page.Items, "a later page never repeats the original")
-		require.Nil(t, page.NextCursor)
-		mutationMu.Lock()
-		require.Empty(t, rerankDocuments, "exhausted duplicate evidence needs no rerank")
 		mutationMu.Unlock()
 		request("POST", "/collections/files/points/delete?wait=true", map[string]any{"filter": map[string]any{"must": []any{}}})
 		points = nil
@@ -248,7 +237,6 @@ func TestIntegrationSemanticSearchWithOpenRouterSDKAndCurrentFacts(t *testing.T)
 		}
 		request("PUT", "/collections/files/points?wait=true", map[string]any{"points": points})
 		queries.Store(0)
-		bounded.Cursor = nil
 		page, err = s.SemanticSearch(ctx, fs, bounded)
 		require.NoError(t, err)
 		require.EqualValues(t, 1, queries.Load(), "the evidence cap stops further provider batches")
@@ -256,7 +244,6 @@ func TestIntegrationSemanticSearchWithOpenRouterSDKAndCurrentFacts(t *testing.T)
 		require.Len(t, rerankDocuments, 64, "rerank input stays bounded across many originals")
 		mutationMu.Unlock()
 		require.LessOrEqual(t, len(page.Items), 30)
-		require.NotNil(t, page.NextCursor)
 	})
 	mutationMu.Lock()
 	mutation = func() {
@@ -279,6 +266,6 @@ func TestIntegrationSemanticSearchWithOpenRouterSDKAndCurrentFacts(t *testing.T)
 	mutationMu.Unlock()
 	_, err = s.SemanticSearch(ctx, fs, query)
 	require.Equal(t, apperr.Forbidden, apperr.KindOf(err), "revocation during rerank must be checked before returning text")
-	_, err = s.SemanticSearch(context.Background(), fs, SearchInput{Query: strings.Repeat("a", 2001)})
+	_, err = s.SemanticSearch(context.Background(), fs, SemanticSearchInput{Query: strings.Repeat("a", 2001)})
 	require.Equal(t, apperr.Unauthenticated, apperr.KindOf(err))
 }

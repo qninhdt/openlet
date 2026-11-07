@@ -34,10 +34,4 @@ func TestSearchBoundsAndCursorScope(t *testing.T) {
 	require.Error(t, err)
 	_, err = decodeSearchCursor(ptr(strings.Repeat("A", 17000)), "scope")
 	require.Error(t, err)
-	value.Seen = []uuid.UUID{uuid.New(), uuid.New()}
-	value.Seen[1] = value.Seen[0]
-	encoded, err = encodeSearchCursor(value)
-	require.NoError(t, err)
-	_, err = decodeSearchCursor(encoded, "scope")
-	require.Error(t, err)
 }

@@ -190,5 +190,12 @@ func TestIntegrationNodeWritesReceiptsQuotaAndTreeGuards(t *testing.T) {
 		require.NoError(t, err)
 		_, err = s.UpdateNode(ctx, fs, UpdateNode{Locator: Locator{NodeID: &branch.ID}, Revision: &branch.Revision, Parent: &Locator{NodeID: &parent}})
 		require.Equal(t, "RESOURCE_LIMIT", reason(err), "moving a subtree checks its complete height")
+		renamed, err := s.UpdateNode(ctx, fs, UpdateNode{Locator: Locator{NodeID: &branch.ID}, Revision: &branch.Revision, Parent: &Locator{NodeID: &root}, Name: ptr("renamed")})
+		require.NoError(t, err, "renaming under the same parent does not change tree depth")
+		require.Equal(t, root, *renamed.ParentID)
+		require.Equal(t, branch.Revision+1, renamed.Revision)
+		leaf, err := s.ResolveNode(ctx, fs, Locator{Path: ptr("/renamed/leaf")})
+		require.NoError(t, err)
+		require.Equal(t, branch.ID, *leaf.ParentID)
 	})
 }

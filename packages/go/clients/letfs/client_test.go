@@ -21,6 +21,7 @@ type fakeAdministration struct {
 }
 
 type fakeFilesystem struct {
+	semantic func(context.Context, *letfsv1.SemanticSearchRequest) (*letfsv1.SemanticSearchResponse, error)
 	letfsv1.FilesystemServiceClient
 	filesystem func(context.Context, *letfsv1.GetFilesystemRequest) (*letfsv1.GetFilesystemResponse, error)
 	node       func(context.Context, *letfsv1.GetNodeRequest) (*letfsv1.GetNodeResponse, error)
@@ -232,4 +233,27 @@ func TestCreateScopesRejectsMalformedAndForeignResults(t *testing.T) {
 			require.Error(t, err)
 		})
 	}
+}
+
+func (f fakeFilesystem) SemanticSearch(ctx context.Context, in *letfsv1.SemanticSearchRequest, _ ...grpc.CallOption) (*letfsv1.SemanticSearchResponse, error) {
+	return f.semantic(ctx, in)
+}
+
+func TestSemanticSearchBoundsOutputAndChecksReturnedScope(t *testing.T) {
+	fs, scope, file := uuid.New(), uuid.New(), uuid.New()
+	node := &letfsv1.Node{Id: file.String(), ScopeId: scope.String()}
+	client := FilesystemClient{API: fakeFilesystem{semantic: func(_ context.Context, in *letfsv1.SemanticSearchRequest) (*letfsv1.SemanticSearchResponse, error) {
+		require.Equal(t, fs.String(), in.FilesystemId)
+		require.Equal(t, scope.String(), in.ScopeId)
+		require.Equal(t, "report", in.Query)
+		require.EqualValues(t, 1, in.GetLimit())
+		require.Nil(t, in.ProtoReflect().Descriptor().Fields().ByName("cursor"))
+		return &letfsv1.SemanticSearchResponse{Items: []*letfsv1.SearchResult{{Node: node, Path: "/report"}}}, nil
+	}}}
+	result, err := client.SemanticSearch(t.Context(), fs, scope, "report", 1)
+	require.NoError(t, err)
+	require.Equal(t, file, result.Items[0].Node.ID)
+	node.ScopeId = uuid.NewString()
+	_, err = client.SemanticSearchWithOptions(t.Context(), fs, scope, SemanticSearchOptions{Query: "report", Limit: pointer(int32(1))})
+	require.Equal(t, apperr.Conflict, apperr.KindOf(err))
 }

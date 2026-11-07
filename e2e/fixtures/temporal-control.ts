@@ -87,10 +87,6 @@ export async function temporalIsHealthy(): Promise<boolean> {
   try { await temporal(['operator', 'cluster', 'health']); return true; }
   catch { return false; }
 }
-export async function recordCopyHistory(name: string, filesystemId: string, copyId: string, failed = false) {
-  return recordWorkflowHistory(name,`copy/${filesystemId}/${copyId}`,failed);
-}
-
 export async function triggerStorageMaintenance() {
   await temporal(['schedule', 'trigger', '--schedule-id', 'openlet-storage-maintenance']);
 }

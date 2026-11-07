@@ -64,10 +64,19 @@ func TestIntegrationLivePathsMetadataAndActionBoundaries(t *testing.T) {
 	}
 	_, err = s.GetNode(ctx, fsID, Locator{NodeID: &file, ExpectedNodeID: ptr(uuid.New())})
 	require.Equal(t, "TARGET_MISMATCH", reason(err))
-	nodes, err := s.BatchStat(ctx, fsID, []Locator{{NodeID: &file}, {NodeID: &artifact}, {NodeID: &file}})
+	nodes, err := s.BatchStat(ctx, bucketID, []ScopedLocator{{ScopeID: fsID, Locator: Locator{NodeID: &file}}, {ScopeID: fsID, Locator: Locator{NodeID: &artifact}}, {ScopeID: fsID, Locator: Locator{NodeID: &file}}})
 	require.NoError(t, err)
 	require.Equal(t, []uuid.UUID{file, artifact, file}, []uuid.UUID{nodes[0].ID, nodes[1].ID, nodes[2].ID})
-	nodes, err = s.BatchStat(ctx, fsID, []Locator{{NodeID: &file}, {NodeID: ptr(uuid.New())}})
+	nodes, err = s.BatchStat(ctx, bucketID, []ScopedLocator{
+		{ScopeID: fsID, Locator: Locator{Path: ptr("/Việt/../Việt/report.pdf")}},
+		{ScopeID: fsID, Locator: Locator{NodeID: &artifact}},
+		{ScopeID: fsID, Locator: Locator{Path: ptr("../Việt/report.pdf"), CwdID: &dir}},
+		{ScopeID: fsID, Locator: Locator{Path: ptr("/@" + file.String())}},
+	})
+	require.NoError(t, err)
+	require.Equal(t, []uuid.UUID{file, artifact, file, file}, []uuid.UUID{nodes[0].ID, nodes[1].ID, nodes[2].ID, nodes[3].ID})
+	require.Equal(t, "ARTIFACT_READ_ONLY", reason(nodes[1].writable()))
+	nodes, err = s.BatchStat(ctx, bucketID, []ScopedLocator{{ScopeID: fsID, Locator: Locator{NodeID: &file}}, {ScopeID: fsID, Locator: Locator{NodeID: ptr(uuid.New())}}})
 	require.Equal(t, apperr.Missing, apperr.KindOf(err))
 	require.Nil(t, nodes, "batch failure must not return partial metadata")
 	page, err := s.ListNodes(ctx, fsID, Locator{NodeID: &dir}, nil, nil)

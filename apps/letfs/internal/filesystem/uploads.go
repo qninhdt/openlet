@@ -190,8 +190,7 @@ func (s *session) uploadTarget(ctx context.Context, saved savedUpload) (*Node, u
 func (s *session) uploadCapacity(ctx context.Context, maxOutstanding, maxBacklog int64) error {
 	var outstanding, backlog int64
 	err := s.tx.QueryRow(ctx, `SELECT
- (SELECT count(*) FROM uploads u JOIN scopes sc ON sc.id=u.scope_id WHERE sc.filesystem_id=$1 AND u.processing_file_id IS NULL AND u.state IN ('open','completing'))+
- (SELECT count(*) FROM idempotency_keys r JOIN scopes f ON f.id=(r.result->>'scope_id')::uuid WHERE f.filesystem_id=$1 AND r.operation='copy-node' AND r.expires_at IS NULL),
+ (SELECT count(*) FROM uploads u JOIN scopes sc ON sc.id=u.scope_id WHERE sc.filesystem_id=$1 AND u.processing_file_id IS NULL AND u.state IN ('open','completing')),
  (SELECT count(*) FROM object_deletions WHERE filesystem_id=$1 AND (state!='deleted' OR ambiguous_write OR open_writes>0))`, s.filesystemID).Scan(&outstanding, &backlog)
 	if err != nil {
 		return databaseError(err)

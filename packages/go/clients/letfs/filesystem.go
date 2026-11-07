@@ -68,6 +68,16 @@ type SearchPage struct {
 	Degraded       bool
 	DegradedReason *string
 }
+type SemanticSearchResults struct {
+	Items          []SearchResult
+	Degraded       bool
+	DegradedReason *string
+}
+type SemanticSearchOptions struct {
+	Query   string
+	Filters SearchFilters
+	Limit   *int32
+}
 type SearchFilters struct {
 	Parent                                                   *Locator
 	SemanticType, MediaType                                  *string
@@ -221,25 +231,37 @@ func (c FilesystemClient) ResolveNode(ctx context.Context, filesystem, scope uui
 	return nativeNode(response.GetNode(), scope)
 }
 
-func (c FilesystemClient) BatchStat(ctx context.Context, filesystem, scope uuid.UUID, ids []uuid.UUID) ([]Node, error) {
-	locators := make([]*letfsv1.Locator, len(ids))
-	for i, id := range ids {
-		locators[i] = nodeLocator(id)
+type ScopedLocator struct {
+	ScopeID uuid.UUID
+	Locator Locator
+}
+
+func (c FilesystemClient) BatchStat(ctx context.Context, filesystem uuid.UUID, locators []ScopedLocator) ([]Node, error) {
+	request := &letfsv1.BatchStatRequest{FilesystemId: filesystem.String()}
+	for _, item := range locators {
+		locator, err := nativeLocator(item.Locator)
+		if err != nil {
+			return nil, err
+		}
+		request.Locators = append(request.Locators, &letfsv1.ScopedLocator{ScopeId: item.ScopeID.String(), Locator: locator})
 	}
 	ctx, cancel := bounded(ctx)
 	defer cancel()
-	response, err := c.API.BatchStat(ctx, &letfsv1.BatchStatRequest{FilesystemId: filesystem.String(), ScopeId: scope.String(), Locators: locators})
+	response, err := c.API.BatchStat(ctx, request)
 	if err != nil {
 		return nil, rpc.DecodeError(err)
 	}
-	items := make([]Node, len(response.GetItems()))
-	for i, item := range response.GetItems() {
-		items[i], err = nativeNode(item, scope)
+	if len(response.Items) != len(locators) {
+		return nil, scopeError()
+	}
+	nodes := make([]Node, len(locators))
+	for i, item := range response.Items {
+		nodes[i], err = nativeNode(item, locators[i].ScopeID)
 		if err != nil {
 			return nil, err
 		}
 	}
-	return items, nil
+	return nodes, nil
 }
 
 func (c FilesystemClient) CreateDirectory(ctx context.Context, filesystem, scope, key, parent uuid.UUID, name string) (Node, error) {
@@ -264,8 +286,8 @@ func (c FilesystemClient) CreateFile(ctx context.Context, filesystem, scope, key
 	return nativeNode(response.GetNode(), scope)
 }
 
-func (c FilesystemClient) UpdateNode(ctx context.Context, filesystem, scope, node uuid.UUID, revision *int64, name *string, parent *uuid.UUID) (Node, error) {
-	request := &letfsv1.UpdateNodeRequest{FilesystemId: filesystem.String(), ScopeId: scope.String(), Locator: nodeLocator(node), Revision: revision, Name: name}
+func (c FilesystemClient) UpdateNode(ctx context.Context, filesystem, scope, node uuid.UUID, revision *int64, name *string, parent *uuid.UUID, destinationScope *uuid.UUID) (Node, error) {
+	request := &letfsv1.UpdateNodeRequest{FilesystemId: filesystem.String(), ScopeId: scope.String(), Locator: nodeLocator(node), Revision: revision, Name: name, DestinationScopeId: uuidString(destinationScope)}
 	if parent != nil {
 		request.Parent = nodeLocator(*parent)
 	}
@@ -275,7 +297,11 @@ func (c FilesystemClient) UpdateNode(ctx context.Context, filesystem, scope, nod
 	if err != nil {
 		return Node{}, rpc.DecodeError(err)
 	}
-	value, err := nativeNode(response.GetNode(), scope)
+	expected := scope
+	if destinationScope != nil {
+		expected = *destinationScope
+	}
+	value, err := nativeNode(response.GetNode(), expected)
 	if err != nil || value.ID != node {
 		return Node{}, scopeError()
 	}
@@ -346,18 +372,18 @@ func (c FilesystemClient) Search(ctx context.Context, filesystem, scope uuid.UUI
 	return SearchPage{Items: items, NextCursor: response.NextCursor, Degraded: response.GetDegraded(), DegradedReason: response.DegradedReason}, nil
 }
 
-func (c FilesystemClient) SemanticSearch(ctx context.Context, filesystem, scope uuid.UUID, query string, limit int32, cursor *string) (SearchPage, error) {
+func (c FilesystemClient) SemanticSearch(ctx context.Context, filesystem, scope uuid.UUID, query string, limit int32) (SemanticSearchResults, error) {
 	ctx, cancel := bounded(ctx)
 	defer cancel()
-	response, err := c.API.SemanticSearch(ctx, &letfsv1.SemanticSearchRequest{FilesystemId: filesystem.String(), ScopeId: scope.String(), Query: query, Limit: &limit, Cursor: cursor})
+	response, err := c.API.SemanticSearch(ctx, &letfsv1.SemanticSearchRequest{FilesystemId: filesystem.String(), ScopeId: scope.String(), Query: query, Limit: &limit})
 	if err != nil {
-		return SearchPage{}, rpc.DecodeError(err)
+		return SemanticSearchResults{}, rpc.DecodeError(err)
 	}
 	items, err := nativeSearch(response.GetItems(), scope)
 	if err != nil {
-		return SearchPage{}, err
+		return SemanticSearchResults{}, err
 	}
-	return SearchPage{Items: items, NextCursor: response.NextCursor, Degraded: response.GetDegraded(), DegradedReason: response.DegradedReason}, nil
+	return SemanticSearchResults{Items: items, Degraded: response.GetDegraded(), DegradedReason: response.DegradedReason}, nil
 }
 
 func (c FilesystemClient) SearchWithOptions(ctx context.Context, filesystem, scope uuid.UUID, options SearchOptions) (SearchPage, error) {
@@ -377,20 +403,20 @@ func (c FilesystemClient) SearchWithOptions(ctx context.Context, filesystem, sco
 	}
 	return SearchPage{Items: items, NextCursor: response.NextCursor, Degraded: response.GetDegraded(), DegradedReason: response.DegradedReason}, nil
 }
-func (c FilesystemClient) SemanticSearchWithOptions(ctx context.Context, filesystem, scope uuid.UUID, options SearchOptions) (SearchPage, error) {
+func (c FilesystemClient) SemanticSearchWithOptions(ctx context.Context, filesystem, scope uuid.UUID, options SemanticSearchOptions) (SemanticSearchResults, error) {
 	filters, err := searchFilters(options.Filters)
 	if err != nil {
-		return SearchPage{}, err
+		return SemanticSearchResults{}, err
 	}
 	ctx, cancel := bounded(ctx)
 	defer cancel()
-	response, err := c.API.SemanticSearch(ctx, &letfsv1.SemanticSearchRequest{FilesystemId: filesystem.String(), ScopeId: scope.String(), Query: options.Query, Filters: filters, Limit: options.Limit, Cursor: options.Cursor})
+	response, err := c.API.SemanticSearch(ctx, &letfsv1.SemanticSearchRequest{FilesystemId: filesystem.String(), ScopeId: scope.String(), Query: options.Query, Filters: filters, Limit: options.Limit})
 	if err != nil {
-		return SearchPage{}, rpc.DecodeError(err)
+		return SemanticSearchResults{}, rpc.DecodeError(err)
 	}
 	items, err := nativeSearch(response.GetItems(), scope)
 	if err != nil {
-		return SearchPage{}, err
+		return SemanticSearchResults{}, err
 	}
-	return SearchPage{Items: items, NextCursor: response.NextCursor, Degraded: response.GetDegraded(), DegradedReason: response.DegradedReason}, nil
+	return SemanticSearchResults{Items: items, Degraded: response.GetDegraded(), DegradedReason: response.DegradedReason}, nil
 }

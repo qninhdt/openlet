@@ -34,11 +34,6 @@ func heartbeat(ctx context.Context) func() {
 	}()
 	return func() { cancel(); <-done }
 }
-func (a *Activities) CopyTreeData(ctx context.Context, in filesystem.CopyAdmission) error {
-	stop := heartbeat(ctx)
-	defer stop()
-	return sharedtemporal.Error(a.Store.CopyTreeData(ctx, in))
-}
 func (a *Activities) CreateFilesystem(ctx context.Context, in sharedtemporal.FilesystemCreation) error {
 	ctx = identity.WithPrincipal(ctx, identity.Principal{Service: "temporal"})
 	_, err := a.Store.CreateFilesystem(ctx, in.Key, filesystem.CreateFilesystem{ID: in.ID, LimitBytes: in.LimitBytes})
@@ -60,9 +55,4 @@ func (a *Activities) DeleteScopeData(ctx context.Context, in sharedtemporal.Scop
 	stop := heartbeat(ctx)
 	defer stop()
 	return sharedtemporal.Error(a.Store.DeleteScopeData(ctx, in.FilesystemID, in.ScopeID))
-}
-func (a *Activities) PurgeTrashData(ctx context.Context, in filesystem.DeletionInput) error {
-	stop := heartbeat(ctx)
-	defer stop()
-	return sharedtemporal.Error(a.Store.PurgeTrashData(ctx, in))
 }

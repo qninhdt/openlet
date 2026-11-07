@@ -2,10 +2,11 @@
 
 Backend for a cloud file application.
 
-Backend: Clerk onboarding, workspaces, ID/path file operations, exact inline bytes, direct S3 transfers, quota, trash/restore, Docling artifacts, semantic search and streamed ZIP downloads. Temporal handles durable partial copy/deletion, processing and maintenance. The plan records verification and external-provider limits.
+Backend: Clerk onboarding, workspaces, ID/path file operations, exact inline bytes, direct S3 transfers, quota, trash/restore, Docling artifacts, semantic search and streamed ZIP downloads. File copy/purge run in requests; Temporal handles filesystem/scope deletion, processing and maintenance. The plan records verification and external-provider limits.
 
 - [Backend documentation](docs/README.md)
 - [Setup and verification](docs/setup.md)
+- [Direct cross-scope file operations](plans/261107-1114-direct-cross-scope-file-operations/plan.md)
 - [Account/scope implementation plan](plans/261106-1517-account-scope-temporal-redesign/plan.md)
 - [Foundation validation history](plans/261102-1059-go-grpc-filesystem-authorization/plan.md)
 

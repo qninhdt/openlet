@@ -15,10 +15,6 @@ type ProcessingScheduler interface {
 	StartProcessing(context.Context, ProcessingDispatch) error
 }
 
-type CopyScheduler interface {
-	StartCopy(context.Context, CopyAdmission) error
-}
-
 type DeletionScheduler interface {
 	StartDeletion(context.Context, DeletionInput) error
 }
@@ -26,7 +22,6 @@ type DeletionScheduler interface {
 type Service struct {
 	Store      *Store
 	Processing ProcessingScheduler
-	Copies     CopyScheduler
 	Deletions  DeletionScheduler
 }
 
@@ -91,41 +86,24 @@ func (s *Service) Reprocess(ctx context.Context, scopeID uuid.UUID, file, key uu
 	return result, err
 }
 
-func (s *Service) CreateCopy(ctx context.Context, scopeID uuid.UUID, key uuid.UUID, input CreateCopy) (CopyResult, error) {
-	admission, err := s.Store.AdmitCopy(ctx, scopeID, key, input)
-	if err != nil {
-		return CopyResult{}, err
-	}
-	if s.Copies == nil {
-		return CopyResult{}, unavailable()
-	}
-	if err = s.Copies.StartCopy(ctx, admission); err != nil {
-		return CopyResult{}, err
-	}
-	result := CopyResult{ID: admission.ID, DestinationRootID: admission.Root.Destination}
-	return result, nil
+func (s *Service) CreateCopy(ctx context.Context, scopeID, key uuid.UUID, input CreateCopy) (Node, error) {
+	return s.Store.CopyNode(ctx, scopeID, key, input)
 }
 
 func (s *Service) TrashNode(ctx context.Context, scopeID uuid.UUID, locator Locator, revision *int64) (TrashEntry, error) {
 	return s.Store.TrashNode(ctx, scopeID, locator, revision)
 }
 
-func (s *Service) RestoreTrash(ctx context.Context, scopeID, id uuid.UUID) (Node, error) {
-	return s.Store.RestoreTrash(ctx, scopeID, id)
+func (s *Service) RestoreTrash(ctx context.Context, scopeID, id uuid.UUID, input RestoreTrash) (Node, error) {
+	return s.Store.RestoreTrash(ctx, scopeID, id, input)
 }
 
-func (s *Service) PurgeTrash(ctx context.Context, scopeID, id uuid.UUID) (*TrashEntry, error) {
+func (s *Service) PurgeTrash(ctx context.Context, scopeID, id uuid.UUID) error {
 	entry, err := s.Store.PrepareTrashPurge(ctx, scopeID, id)
 	if err != nil || entry == nil {
-		return entry, err
+		return err
 	}
-	if s.Deletions == nil {
-		return nil, unavailable()
-	}
-	if err = s.Deletions.StartDeletion(ctx, DeletionInput{ScopeID: scopeID, EntryID: &id}); err != nil {
-		slog.WarnContext(ctx, "trash purge dispatch deferred")
-	}
-	return entry, nil
+	return s.Store.PurgeTrashData(ctx, DeletionInput{ScopeID: scopeID, EntryID: &id})
 }
 
 func (s *Service) DeleteFilesystem(ctx context.Context, id uuid.UUID) (bool, error) {

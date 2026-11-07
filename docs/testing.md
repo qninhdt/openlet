@@ -39,6 +39,25 @@ Concurrency cases use barriers/controlled transactions rather than sleeps/random
 
 ## External integrations
 
+The SQL benchmark runs actual service query shapes against deterministic fixtures in an owned disposable PostgreSQL container (Docker required):
+
+```sh
+python scripts/performance/sql-benchmark.py /path/to/source /tmp/openlet-sql-results.json
+```
+
+Run it sequentially against before/after source trees, with no concurrent tests. It loads each tree's initial migrations, records one warm-up plus three measured executions, plans/buffers and insert costs. Results are SQL execution time, excluding HTTP, authorization RPC, providers and network; the fixture uses dispersed deterministic UUIDs rather than production UUIDv7 ordering. See the [measurement report](../plans/reports/performance-261107-1204-api-sql.md) for dataset, changes and limits.
+
+To measure each application SQL execution site, use the integration-fixture overlay:
+
+```sh
+python scripts/performance/sql-query-benchmark.py .local/sql-performance/per-query selfcheck
+python scripts/performance/sql-query-benchmark.py .local/sql-performance/per-query all
+python scripts/performance/sql-query-benchmark.py .local/sql-performance/per-query additional
+python scripts/performance/sql-query-benchmark.py .local/sql-performance/per-query summary --report plans/reports/per-query-sql.md
+```
+
+The overlay leaves application and fixture sources unchanged. Probes use the actual SQL/arguments and roll back each execution; savepoint control statements receive separate client timings. Supplemental cases run verbatim inventoried SQL on seeded datasets and must be updated when their source sites/contracts change. A reused output directory rejects a changed inventory; use a fresh directory for a new source revision. The report keeps missing sites and failed probes visible. Plans can contain synthetic fixture constants. Small integration fixtures establish individual query costs, not load performance; retain the larger workload benchmark above. See the [233-site measurement](../plans/reports/performance-261107-1342-per-query-sql.md).
+
 Clerk error handling uses controlled HTTP responses. A separate development-instance smoke verifies actual backend metadata and refreshed JWT. A test issuer is not evidence live Clerk passed. Never use production accounts/credentials/data.
 
 S3 tests use a dedicated compatible server and bucket. Before release verify the selected provider's actual put/copy/range/delete/version behavior, valid TLS, rejected anonymous reads and object-only credential permissions; local-emulator success is not universal compatibility. Real restart tests use PostgreSQL-backed Temporal.
@@ -47,7 +66,7 @@ Check public HTTP OpenAPI and generated protobuf contracts against handlers and 
 
 ## Workflow and system coverage
 
-SDK tests cover branches, retry classifications, timers and replay. Real Temporal tests cover worker/server restart, commit followed by response loss, bounded deletion continuation and retained partial-copy output without automatic retry. SDK activity mocks do not prove storage recovery. File bytes stay out of history. API journeys capture fresh `WorkspaceChanges` (running Update history) and `WorkspaceMaintenance` histories alongside onboarding and storage workflows for native replay.
+SDK tests cover branches, retry classifications, timers and replay. Real Temporal tests cover worker/server restart, commit followed by response loss and bounded scope/filesystem deletion. Direct-operation tests cover retained partial-copy output, caller-retried purge and copy/purge while Temporal is unavailable. SDK activity mocks do not prove storage recovery. File bytes stay out of history. API journeys capture fresh `WorkspaceChanges` (running Update history) and `WorkspaceMaintenance` histories alongside onboarding and storage workflows for native replay.
 
 The new Playwright API suite under `e2e/` was authored from scratch before
 business refactoring. It covers gateway boundaries and target onboarding,
@@ -143,12 +162,12 @@ OPENLET_HISTORY_DIR="$PWD/.local/go-histories" pnpm --filter @openlet/letfs test
 OPENLET_HISTORY_DIR="$PWD/.local/go-histories" pnpm --filter @openlet/letfs test:replay
 ```
 
-Replay requires the copy failure, purge, deletion, maintenance,
+Replay requires scope/filesystem deletion, maintenance,
 processing success/failure/retry/index-only and Python activity histories; missing
 coverage fails the command. CI runs native integration before replay; the [current implementation record](../plans/261106-1517-account-scope-temporal-redesign/plan.md) records whole-system acceptance.
 
 Workflow tests stay with their owning application. The new suite exports current
-lifecycle, copy, purge and processing histories; deleted E2E histories are not
+lifecycle and processing histories; deleted E2E histories are not
 substituted. Native parser tests and regression corpora remain app-owned.
 
 Native parser tests also generate an image-only PDF and require recovered OCR text.
@@ -172,10 +191,10 @@ PRs run unit tests, compilation, lint and relevant integration/workflow checks. 
 
 ## AI search verification
 
-`go -C apps/letfs test -race -tags integration ./internal/filesystem ./internal/transport/grpc` uses PostgreSQL and Qdrant v1.20.0 with controlled provider responses. It checks original-file grouping, current/readiness gating, foreign evidence rejection before rerank, filters/cursor binding, dependency failures, rerank degradation, trash/restore, replacement, rebuild cleanup/retry, purge and filesystem deletion. The new API suite must cover create/upload through the real Temporal/Python chain, filename search during failed/pending processing, current semantic results, and membership revocation before final acceptance. Paid model quality is evaluated separately with supplied credentials; test responses exercise API contracts and orchestration.
+`go -C apps/letfs test -race -tags integration ./internal/filesystem ./internal/transport/grpc` uses PostgreSQL and Qdrant v1.20.0 with controlled provider responses. It checks original-file grouping, current/readiness gating, foreign evidence rejection before rerank, filters and filename cursor binding, one semantic retrieval without continuation, rerank-before-limit and 80/64/3 candidate/evidence bounds, dependency failures, rerank degradation, trash/restore, replacement, rebuild cleanup/retry, purge and filesystem deletion. The new API suite must cover create/upload through the real Temporal/Python chain, filename search during failed/pending processing, current semantic results, and membership revocation before final acceptance. Paid model quality is evaluated separately with supplied credentials; test responses exercise API contracts and orchestration.
 
-The API journeys export fresh Account/Workspace lifecycle, Go filesystem/purge,
-copy success/partial failure and processing success/failure/restart histories
+The API journeys export fresh Account/Workspace lifecycle, Go filesystem/scope deletion,
+processing success/failure/restart histories
 to `.local/api-e2e/histories/`. Run the complete suite first. Each Go owner replays the fresh histories with its native SDK:
 
 ```sh

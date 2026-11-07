@@ -80,6 +80,8 @@ Table "letfs_idempotency_keys" {
   Indexes {
     (scope, operation, request_key) [pk]
     expires_at [name: 'letfs_receipt_expiry', note: 'Partial index predicate: expires_at IS NOT NULL']
+    (`result->>'file_id'`, `result->>'generation'`) [name: 'processing_receipts', note: "Partial: operation='process-file' AND expires_at IS NULL"]
+    (`result->>'id'`) [name: 'upload_receipts', note: "Partial: operation='create-upload' AND expires_at IS NULL"]
   }
 }
 
@@ -181,6 +183,7 @@ Table "nodes" {
   Indexes {
     (scope_id, id) [unique, name: "nodes_scope_id_id_key"]
     (scope_id, parent_id, name) [unique, name: "nodes_scope_id_parent_id_name_key"]
+    (scope_id, parent_id, id) [name: 'nodes_children_page']
     (scope_id, id) [type: btree, name: "nodes_detached_roots", note: 'Partial index predicate: (parent_id IS NULL)']
   }
 }
@@ -203,6 +206,7 @@ Table "object_deletions" {
   Indexes {
     (filesystem_id, eligible_at) [type: btree, name: "object_deletions_backlog", note: 'Partial index predicate: state <> \'deleted\'::text OR ambiguous_write OR open_writes > 0']
     (eligible_at, object_key) [type: btree, name: "object_deletions_due"]
+    filesystem_id [name: 'object_deletions_by_filesystem']
   }
 }
 
@@ -235,6 +239,7 @@ Table "trash_entries" {
 
   Indexes {
     (scope_id, id) [type: btree, name: "trash_page"]
+    (scope_id, original_parent_id) [name: 'trash_original_parent', note: 'Partial: original_parent_id IS NOT NULL']
   }
 }
 
@@ -277,6 +282,9 @@ Table "uploads" {
   Indexes {
     (updated_at, id) [type: btree, name: "uploads_multipart_cleanup", note: 'Partial index predicate: ((state = ANY (ARRAY[\'aborted\'::text])) AND (multipart_id IS NOT NULL))']
     (scope_id, state, expires_at) [type: btree, name: "uploads_outstanding", note: 'Partial index predicate: (state = ANY (ARRAY[\'open\'::text, \'completing\'::text]))']
+    (processing_file_id, processing_generation) [name: 'uploads_processing', note: 'Partial: processing_file_id IS NOT NULL']
+    scope_id [name: 'uploads_by_scope']
+    scope_id [name: 'uploads_user_outstanding', note: 'Partial: processing_file_id IS NULL AND state IN (open,completing)']
   }
 }
 

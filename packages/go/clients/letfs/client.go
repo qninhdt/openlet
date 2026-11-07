@@ -20,6 +20,14 @@ func scopeError() error {
 func bounded(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(ctx, 10*time.Second)
 }
+
+func uuidString(id *uuid.UUID) *string {
+	if id == nil {
+		return nil
+	}
+	value := id.String()
+	return &value
+}
 func (c Client) CreateFilesystem(ctx context.Context, id, key uuid.UUID, limit int64) (Filesystem, error) {
 	if id == uuid.Nil || key == uuid.Nil || limit < 0 {
 		return Filesystem{}, scopeError()

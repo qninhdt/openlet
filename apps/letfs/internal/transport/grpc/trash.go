@@ -74,7 +74,19 @@ func (s *Filesystem) RestoreTrash(ctx context.Context, input *letfsv1.RestoreTra
 	if err != nil {
 		return nil, err
 	}
-	node, err := s.Service.RestoreTrash(ctx, fs, id)
+	destination, err := optionalID(input.DestinationScopeId)
+	if err != nil {
+		return nil, err
+	}
+	restore := filesystem.RestoreTrash{DestinationScopeID: destination, Name: input.Name}
+	if input.Parent != nil {
+		parent, e := locatorInput(input.Parent)
+		if e != nil {
+			return nil, e
+		}
+		restore.Parent = &parent
+	}
+	node, err := s.Service.RestoreTrash(ctx, fs, id, restore)
 	if err != nil {
 		return nil, err
 	}
@@ -90,12 +102,8 @@ func (s *Filesystem) PurgeTrash(ctx context.Context, input *letfsv1.PurgeTrashRe
 	if err != nil {
 		return nil, err
 	}
-	entry, err := s.Service.PurgeTrash(ctx, fs, id)
-	if err != nil {
+	if err = s.Service.PurgeTrash(ctx, fs, id); err != nil {
 		return nil, err
 	}
-	if entry == nil {
-		return &letfsv1.PurgeTrashResponse{}, nil
-	}
-	return &letfsv1.PurgeTrashResponse{Entry: trashMessage(*entry)}, nil
+	return &letfsv1.PurgeTrashResponse{}, nil
 }

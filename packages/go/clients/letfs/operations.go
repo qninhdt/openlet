@@ -16,7 +16,6 @@ type Download struct {
 	InlineContent        []byte
 	SignedURL            string
 }
-type Copy struct{ ID, DestinationRootID uuid.UUID }
 type Processing struct {
 	FileID            uuid.UUID
 	DesiredGeneration int64
@@ -74,14 +73,6 @@ type PartReceipt struct {
 	ETag   string
 }
 
-func nativeCopy(value *letfsv1.Copy) (Copy, error) {
-	id, err := parseID(value.GetId())
-	if err != nil {
-		return Copy{}, err
-	}
-	root, err := parseID(value.GetDestinationRootId())
-	return Copy{ID: id, DestinationRootID: root}, err
-}
 func nativeTrash(value *letfsv1.TrashEntry, filesystem uuid.UUID) (TrashEntry, error) {
 	if value == nil {
 		return TrashEntry{}, scopeError()
@@ -177,14 +168,17 @@ func (c FilesystemClient) ReplaceContent(ctx context.Context, filesystem, scope,
 	}
 	return value, nil
 }
-func (c FilesystemClient) CreateCopy(ctx context.Context, filesystem, scope, destinationScope, source, parent, key uuid.UUID, name string, revision *int64) (Copy, error) {
-	ctx, cancel := bounded(ctx)
-	defer cancel()
-	response, err := c.API.CreateCopy(ctx, &letfsv1.CreateCopyRequest{DestinationScopeId: destinationScope.String(), FilesystemId: filesystem.String(), ScopeId: scope.String(), SourceId: source.String(), ParentId: parent.String(), Name: name, Revision: revision, IdempotencyKey: key.String()})
-	if err != nil {
-		return Copy{}, rpc.DecodeError(err)
+func (c FilesystemClient) CreateCopy(ctx context.Context, filesystem, scope, destinationScope, source, parent, key uuid.UUID, name string, revision *int64) (Node, error) {
+	if destinationScope == uuid.Nil {
+		destinationScope = scope
 	}
-	return nativeCopy(response.GetCopy())
+	ctx, cancel := context.WithTimeout(ctx, 120*time.Second)
+	defer cancel()
+	response, err := c.API.CreateCopy(ctx, &letfsv1.CreateCopyRequest{DestinationScopeId: uuidString(&destinationScope), FilesystemId: filesystem.String(), ScopeId: scope.String(), SourceId: source.String(), ParentId: parent.String(), Name: name, Revision: revision, IdempotencyKey: key.String()})
+	if err != nil {
+		return Node{}, rpc.DecodeError(err)
+	}
+	return nativeNode(response.GetNode(), destinationScope)
 }
 func (c FilesystemClient) GetProcessing(ctx context.Context, filesystem, scope, node uuid.UUID) (Processing, error) {
 	ctx, cancel := bounded(ctx)
@@ -251,30 +245,28 @@ func (c FilesystemClient) GetTrash(ctx context.Context, filesystem, scope, id uu
 	}
 	return value, nil
 }
-func (c FilesystemClient) RestoreTrash(ctx context.Context, filesystem, scope, id uuid.UUID) (Node, error) {
+func (c FilesystemClient) RestoreTrash(ctx context.Context, filesystem, scope, id uuid.UUID, destinationScope, parent *uuid.UUID, name *string) (Node, error) {
+	request := &letfsv1.RestoreTrashRequest{FilesystemId: filesystem.String(), ScopeId: scope.String(), EntryId: id.String(), DestinationScopeId: uuidString(destinationScope), Name: name}
+	if parent != nil {
+		request.Parent = nodeLocator(*parent)
+	}
 	ctx, cancel := bounded(ctx)
 	defer cancel()
-	response, err := c.API.RestoreTrash(ctx, &letfsv1.RestoreTrashRequest{FilesystemId: filesystem.String(), ScopeId: scope.String(), EntryId: id.String()})
+	response, err := c.API.RestoreTrash(ctx, request)
 	if err != nil {
 		return Node{}, rpc.DecodeError(err)
 	}
-	return nativeNode(response.GetNode(), scope)
+	expected := scope
+	if destinationScope != nil {
+		expected = *destinationScope
+	}
+	return nativeNode(response.GetNode(), expected)
 }
-func (c FilesystemClient) PurgeTrash(ctx context.Context, filesystem, scope, id uuid.UUID) (*TrashEntry, error) {
-	ctx, cancel := bounded(ctx)
+func (c FilesystemClient) PurgeTrash(ctx context.Context, filesystem, scope, id uuid.UUID) error {
+	ctx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
-	response, err := c.API.PurgeTrash(ctx, &letfsv1.PurgeTrashRequest{FilesystemId: filesystem.String(), ScopeId: scope.String(), EntryId: id.String()})
-	if err != nil {
-		return nil, rpc.DecodeError(err)
-	}
-	if response.GetEntry() == nil {
-		return nil, nil
-	}
-	value, err := nativeTrash(response.GetEntry(), scope)
-	if err != nil || value.ID != id {
-		return nil, scopeError()
-	}
-	return &value, nil
+	_, err := c.API.PurgeTrash(ctx, &letfsv1.PurgeTrashRequest{FilesystemId: filesystem.String(), ScopeId: scope.String(), EntryId: id.String()})
+	return rpc.DecodeError(err)
 }
 
 func (c FilesystemClient) CreateUpload(ctx context.Context, filesystem, scope, key, parent uuid.UUID, name, mediaType string, size *int64, md5 *string) (Upload, error) {

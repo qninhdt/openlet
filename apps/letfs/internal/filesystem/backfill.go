@@ -19,12 +19,12 @@ func (s *Store) BackfillCandidates(ctx context.Context, mode string, after uuid.
 		return nil, enrichmentValidation("invalid backfill mode or limit")
 	}
 	rows, err := s.DB.Query(ctx, `WITH RECURSIVE live AS (
- SELECT n.id,n.scope_id,n.kind,0 AS depth FROM nodes n JOIN scopes scopeID ON scopeID.root_id=n.id JOIN filesystems b ON b.id=scopeID.filesystem_id WHERE scopeID.state='active' AND b.state='active'
- UNION ALL SELECT n.id,n.scope_id,n.kind,l.depth+1 FROM nodes n JOIN live l ON n.parent_id=l.id AND n.scope_id=l.scope_id WHERE l.kind='directory' AND l.depth<128)
- SELECT n.scope_id,n.name,n.revision,f.node_id,f.desired_generation,f.publication_status,f.processing_updated_at,scopeID.allow_indexing
- FROM live l JOIN nodes n ON n.id=l.id JOIN files f ON f.node_id=n.id JOIN scopes scopeID ON scopeID.id=n.scope_id WHERE n.id>$1
+ SELECT n.id,n.scope_id,n.kind,n.name,n.revision,0 AS depth FROM nodes n JOIN scopes scopeID ON scopeID.root_id=n.id JOIN filesystems b ON b.id=scopeID.filesystem_id WHERE scopeID.state='active' AND b.state='active'
+ UNION ALL SELECT n.id,n.scope_id,n.kind,n.name,n.revision,l.depth+1 FROM nodes n JOIN live l ON n.parent_id=l.id AND n.scope_id=l.scope_id WHERE l.kind='directory' AND l.depth<128)
+ SELECT l.scope_id,l.name,l.revision,f.node_id,f.desired_generation,f.publication_status,f.processing_updated_at,scopeID.allow_indexing
+ FROM live l JOIN files f ON f.node_id=l.id JOIN scopes scopeID ON scopeID.id=l.scope_id WHERE l.id>$1
  AND (scopeID.allow_indexing OR f.publication_status NOT IN ('enriched','ready'))
- AND (($2='missing' AND f.publication_status!='ready') OR ($2='rebuild-index' AND f.publication_status='ready')) ORDER BY n.id LIMIT $3`, after, mode, limit+1)
+ AND (($2='missing' AND f.publication_status!='ready') OR ($2='rebuild-index' AND f.publication_status='ready')) ORDER BY l.id LIMIT $3`, after, mode, limit+1)
 	if err != nil {
 		return nil, databaseError(err)
 	}

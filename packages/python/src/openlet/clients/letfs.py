@@ -196,9 +196,9 @@ class Locator:
 
 
 @dataclass(frozen=True)
-class Copy:
-    id: str
-    destination_root_id: str
+class ScopedLocator:
+    scope_id: str
+    locator: Locator
 
 
 @dataclass(frozen=True)
@@ -295,6 +295,13 @@ class SearchResult:
 class SearchPage:
     items: tuple[SearchResult, ...]
     next_cursor: str | None
+    degraded: bool
+    degraded_reason: str | None
+
+
+@dataclass(frozen=True)
+class SemanticSearchResults:
+    items: tuple[SearchResult, ...]
     degraded: bool
     degraded_reason: str | None
 
@@ -415,10 +422,6 @@ def _node(value, scope_id: str | None = None):
         value.semantic_type if value.HasField("semantic_type") else None,
         value.context if value.HasField("context") else None,
     )
-
-
-def _copy(value):
-    return Copy(value.id, value.destination_root_id)
 
 
 def _trash(value):
@@ -796,12 +799,7 @@ class FilesystemClient:
         return _node(response.node, scope_id)
 
     async def batch_stat(
-        self,
-        filesystem_id: str,
-        scope_id: str,
-        locators: Sequence[Locator],
-        *,
-        actor_id=None,
+        self, filesystem_id: str, locators: Sequence[ScopedLocator], *, actor_id=None
     ) -> tuple[Node, ...]:
         if not locators or len(locators) > 100:
             raise ValueError("batch stat requires 1 to 100 locators")
@@ -809,12 +807,26 @@ class FilesystemClient:
             self._stub.BatchStat,
             pb.BatchStatRequest(
                 filesystem_id=filesystem_id,
-                scope_id=scope_id,
-                locators=[_locator(item) for item in locators],
+                locators=[
+                    pb.ScopedLocator(
+                        scope_id=item.scope_id, locator=_locator(item.locator)
+                    )
+                    for item in locators
+                ],
             ),
             actor_id=actor_id,
         )
-        return tuple(_node(item, scope_id) for item in response.items)
+        if len(response.items) != len(locators):
+            raise AppError(
+                "invalid filesystem result",
+                reason="FILESYSTEM_SCOPE_CONFLICT",
+                kind="conflict",
+                retryable=False,
+            )
+        return tuple(
+            _node(item, locator.scope_id)
+            for item, locator in zip(response.items, locators, strict=True)
+        )
 
     async def create_directory(
         self,
@@ -903,12 +915,15 @@ class FilesystemClient:
         revision: int | None = None,
         name: str | None = None,
         parent: Locator | None = None,
+        destination_scope_id: str | None = None,
     ) -> Node:
         request = pb.UpdateNodeRequest(
             filesystem_id=filesystem_id,
             scope_id=scope_id,
             locator=_locator(locator),
         )
+        if destination_scope_id is not None:
+            request.destination_scope_id = destination_scope_id
         if revision is not None:
             request.revision = revision
         if name is not None:
@@ -918,7 +933,7 @@ class FilesystemClient:
         response = await self._rpc.invoke(
             self._stub.UpdateNode, request, actor_id=actor_id
         )
-        return _node(response.node, scope_id)
+        return _node(response.node, destination_scope_id or scope_id)
 
     async def replace_content(
         self,
@@ -950,19 +965,19 @@ class FilesystemClient:
         filesystem_id: str,
         scope_id: str,
         source_id: str,
-        destination_scope_id: str,
         parent_id: str,
-        name: str,
         idempotency_key: str,
         *,
+        destination_scope_id: str | None = None,
+        name: str = "",
         actor_id=None,
         revision: int | None = None,
-    ) -> Copy:
+    ) -> Node:
         request = pb.CreateCopyRequest(
             filesystem_id=filesystem_id,
             scope_id=scope_id,
             source_id=source_id,
-            destination_scope_id=destination_scope_id,
+            destination_scope_id=destination_scope_id or scope_id,
             parent_id=parent_id,
             name=name,
             idempotency_key=idempotency_key,
@@ -970,9 +985,9 @@ class FilesystemClient:
         if revision is not None:
             request.revision = revision
         response = await self._rpc.invoke(
-            self._stub.CreateCopy, request, actor_id=actor_id
+            self._stub.CreateCopy, request, actor_id=actor_id, timeout=120
         )
-        return _copy(response.copy)
+        return _node(response.node, destination_scope_id or scope_id)
 
     async def get_processing(
         self,
@@ -1083,28 +1098,41 @@ class FilesystemClient:
         return result
 
     async def restore_trash(
-        self, filesystem_id: str, scope_id: str, entry_id: str, *, actor_id=None
+        self,
+        filesystem_id: str,
+        scope_id: str,
+        entry_id: str,
+        *,
+        actor_id=None,
+        destination_scope_id: str | None = None,
+        parent: Locator | None = None,
+        name: str | None = None,
     ) -> Node:
-        response = await self._rpc.invoke(
-            self._stub.RestoreTrash,
-            pb.RestoreTrashRequest(
-                filesystem_id=filesystem_id, scope_id=scope_id, entry_id=entry_id
-            ),
-            actor_id=actor_id,
+        request = pb.RestoreTrashRequest(
+            filesystem_id=filesystem_id, scope_id=scope_id, entry_id=entry_id
         )
-        return _node(response.node, scope_id)
+        if destination_scope_id is not None:
+            request.destination_scope_id = destination_scope_id
+        if parent is not None:
+            request.parent.CopyFrom(_locator(parent))
+        if name is not None:
+            request.name = name
+        response = await self._rpc.invoke(
+            self._stub.RestoreTrash, request, actor_id=actor_id
+        )
+        return _node(response.node, destination_scope_id or scope_id)
 
     async def purge_trash(
         self, filesystem_id: str, scope_id: str, entry_id: str, *, actor_id=None
-    ) -> TrashEntry | None:
-        response = await self._rpc.invoke(
+    ) -> None:
+        await self._rpc.invoke(
             self._stub.PurgeTrash,
             pb.PurgeTrashRequest(
                 filesystem_id=filesystem_id, scope_id=scope_id, entry_id=entry_id
             ),
             actor_id=actor_id,
+            timeout=120,
         )
-        return _trash(response.entry) if response.HasField("entry") else None
 
     async def create_upload(
         self,
@@ -1225,39 +1253,6 @@ class FilesystemClient:
             actor_id=actor_id,
         )
 
-    async def _search(
-        self,
-        method,
-        request_type,
-        filesystem_id: str,
-        scope_id: str,
-        query: str,
-        *,
-        actor_id=None,
-        filters: SearchFilters | None = None,
-        limit: int | None = None,
-        cursor: str | None = None,
-        sort: str | None = None,
-        direction: str | None = None,
-    ) -> SearchPage:
-        request = request_type(
-            filesystem_id=filesystem_id,
-            scope_id=scope_id,
-            query=query,
-            filters=_search_filters(filters),
-        )
-        for name, value in (
-            ("limit", limit),
-            ("cursor", cursor),
-            ("sort", sort),
-            ("direction", direction),
-        ):
-            if value is not None and hasattr(request, name):
-                setattr(request, name, value)
-        return _search_page(
-            await self._rpc.invoke(method, request, actor_id=actor_id), filesystem_id
-        )
-
     async def search_files(
         self,
         filesystem_id: str,
@@ -1271,17 +1266,23 @@ class FilesystemClient:
         sort: str | None = None,
         direction: str | None = None,
     ) -> SearchPage:
-        return await self._search(
-            self._stub.SearchFiles,
-            pb.SearchFilesRequest,
-            filesystem_id,
-            query,
-            actor_id=actor_id,
-            filters=filters,
-            limit=limit,
-            cursor=cursor,
-            sort=sort,
-            direction=direction,
+        request = pb.SearchFilesRequest(
+            filesystem_id=filesystem_id,
+            scope_id=scope_id,
+            query=query,
+            filters=_search_filters(filters),
+        )
+        for name, value in (
+            ("limit", limit),
+            ("cursor", cursor),
+            ("sort", sort),
+            ("direction", direction),
+        ):
+            if value is not None:
+                setattr(request, name, value)
+        return _search_page(
+            await self._rpc.invoke(self._stub.SearchFiles, request, actor_id=actor_id),
+            scope_id,
         )
 
     async def semantic_search(
@@ -1293,17 +1294,22 @@ class FilesystemClient:
         actor_id=None,
         filters: SearchFilters | None = None,
         limit: int | None = None,
-        cursor: str | None = None,
-    ) -> SearchPage:
-        return await self._search(
-            self._stub.SemanticSearch,
-            pb.SemanticSearchRequest,
-            filesystem_id,
-            query,
-            actor_id=actor_id,
-            filters=filters,
-            limit=limit,
-            cursor=cursor,
+    ) -> SemanticSearchResults:
+        request = pb.SemanticSearchRequest(
+            filesystem_id=filesystem_id,
+            scope_id=scope_id,
+            query=query,
+            filters=_search_filters(filters),
+        )
+        if limit is not None:
+            request.limit = limit
+        value = await self._rpc.invoke(
+            self._stub.SemanticSearch, request, actor_id=actor_id
+        )
+        return SemanticSearchResults(
+            tuple(_search_result(item, scope_id) for item in value.items),
+            value.degraded,
+            value.degraded_reason if value.HasField("degraded_reason") else None,
         )
 
     async def get_download(

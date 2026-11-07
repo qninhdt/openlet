@@ -37,6 +37,7 @@ func (s *Server) Handler() http.Handler {
 	route("POST /v1/filesystems/{filesystem}/scopes/{scope}/nodes", s.createNode)
 	route("GET /v1/filesystems/{filesystem}/scopes/{scope}/nodes", s.listNodes)
 	route("GET /v1/filesystems/{filesystem}/scopes/{scope}/nodes:resolve", s.resolveNode)
+	route("POST /v1/filesystems/{filesystem}/scopes/{scope}/nodes/{node}", s.copyNode)
 	route("GET /v1/filesystems/{filesystem}/scopes/{scope}/nodes/{node}", s.getNode)
 	route("PATCH /v1/filesystems/{filesystem}/scopes/{scope}/nodes/{node}", s.updateNode)
 	route("PUT /v1/filesystems/{filesystem}/scopes/{scope}/nodes/{node}/content", s.replaceContent)
@@ -44,7 +45,7 @@ func (s *Server) Handler() http.Handler {
 	route("GET /v1/filesystems/{filesystem}/scopes/{scope}/nodes/{node}/archive", s.getArchive)
 	route("GET /v1/filesystems/{filesystem}/scopes/{scope}/nodes/{node}/processing", s.getProcessing)
 	route("POST /v1/filesystems/{filesystem}/scopes/{scope}/nodes/{node}/processing-runs", s.reprocess)
-	route("POST /v1/filesystems/{filesystem}/scopes/{scope}/files/batch-stat", s.batchStat)
+	route("POST /v1/filesystems/{filesystem}/files/batch-stat", s.batchStat)
 	route("DELETE /v1/filesystems/{filesystem}/scopes/{scope}/nodes/{node}", s.trashNode)
 	route("GET /v1/filesystems/{filesystem}/scopes/{scope}/trash-entries", s.listTrash)
 	route("GET /v1/filesystems/{filesystem}/scopes/{scope}/trash-entries/{entry}", s.getTrash)
@@ -175,14 +176,14 @@ func respond(w http.ResponseWriter, r *http.Request, code int, value any) {
 	case nodeResponse:
 		etag = `"` + strconv.FormatInt(item.Revision, 10) + `"`
 		if code == http.StatusCreated {
-			location = "/v1/filesystems/" + fsID(r) + "/scopes/" + r.PathValue("scope") + "/nodes/" + item.ID
+			location = "/v1/filesystems/" + fsID(r) + "/scopes/" + item.ScopeID + "/nodes/" + item.ID
 		}
 	case uploadResponse:
 		if code == http.StatusCreated {
 			location = "/v1/filesystems/" + fsID(r) + "/scopes/" + r.PathValue("scope") + "/uploads/" + item.ID
 		}
 	case trashResponse:
-		if code == http.StatusCreated || code == http.StatusAccepted {
+		if code == http.StatusCreated {
 			location = "/v1/filesystems/" + fsID(r) + "/scopes/" + r.PathValue("scope") + "/trash-entries/" + item.ID
 		}
 	case publicationResponse:

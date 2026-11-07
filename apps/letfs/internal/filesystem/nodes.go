@@ -189,20 +189,52 @@ func (s *Store) readNode(ctx context.Context, scopeID uuid.UUID, locator Locator
 	return node, err
 }
 
-func (s *Store) BatchStat(ctx context.Context, scopeID uuid.UUID, locators []Locator) ([]Node, error) {
-	if _, err := s.authorize(ctx, scopeID, "scope", authz.ScopeReadMetadata); err != nil {
-		return nil, err
+type ScopedLocator struct {
+	ScopeID uuid.UUID `json:"scope_id"`
+	Locator
+}
+
+func (s *Store) BatchStat(ctx context.Context, filesystemID uuid.UUID, locators []ScopedLocator) ([]Node, error) {
+	if len(locators) == 0 || len(locators) > 100 {
+		return nil, apperr.New(apperr.Invalid, "VALIDATION", "locator batch must contain 1..100 items")
 	}
-	session, err := s.openSession(ctx, scopeID, false)
+	groups := map[uuid.UUID][]int{}
+	for i, locator := range locators {
+		groups[locator.ScopeID] = append(groups[locator.ScopeID], i)
+	}
+	for scopeID := range groups {
+		if err := s.ValidateScope(ctx, filesystemID, scopeID); err != nil {
+			return nil, err
+		}
+		if _, err := s.authorize(ctx, scopeID, "scope", authz.ScopeReadMetadata); err != nil {
+			return nil, err
+		}
+	}
+	session, err := s.openSession(ctx, locators[0].ScopeID, false)
 	if err != nil {
 		return nil, err
 	}
 	defer session.tx.Rollback(ctx)
-	nodes, err := session.resolve(ctx, locators)
-	for i := range nodes {
-		nodes[i].Context = nil
+	nodes := make([]Node, len(locators))
+	for scopeID, indices := range groups {
+		selected, err := session.inScope(ctx, scopeID)
+		if err != nil {
+			return nil, err
+		}
+		batch := make([]Locator, len(indices))
+		for i, index := range indices {
+			batch[i] = locators[index].Locator
+		}
+		values, err := selected.resolve(ctx, batch)
+		if err != nil {
+			return nil, err
+		}
+		for i, index := range indices {
+			values[i].Context = nil
+			nodes[index] = values[i]
+		}
 	}
-	return nodes, err
+	return nodes, nil
 }
 
 type NodePage struct {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -12,6 +11,18 @@ import (
 	"github.com/qninhdt/openlet/apps/letfs/internal/clients/search"
 	"github.com/qninhdt/openlet/packages/go/authz"
 )
+
+type SemanticSearchInput struct {
+	Query   string        `json:"query"`
+	Filters SearchFilters `json:"filters"`
+	Limit   *int32        `json:"limit,omitempty"`
+}
+
+type SemanticSearchResults struct {
+	Items          []SearchResult
+	Degraded       bool
+	DegradedReason *string
+}
 
 func excerpt(text, query string, limit int) string {
 	lower, position := strings.ToLower(text), 0
@@ -27,7 +38,7 @@ func excerpt(text, query string, limit int) string {
 	return string(runes[start:min(start+limit, len(runes))])
 }
 
-func (s *Store) hydrateSearch(ctx context.Context, scopeID uuid.UUID, input SearchInput, points []search.Point) (map[int]SearchResult, error) {
+func (s *Store) hydrateSearch(ctx context.Context, scopeID uuid.UUID, input SemanticSearchInput, points []search.Point) (map[int]SearchResult, error) {
 	session, err := s.openSession(ctx, scopeID, false)
 	if err != nil {
 		return nil, err
@@ -54,14 +65,19 @@ func (s *Store) hydrateSearch(ctx context.Context, scopeID uuid.UUID, input Sear
 	if err != nil {
 		return nil, err
 	}
-	query := fmt.Sprintf(`%s,req AS (SELECT * FROM jsonb_to_recordset($10) AS p(idx int,source_id uuid,file_id uuid,generation bigint)),
+	// Validate only provider candidates against current ancestry, rather than walking the whole scope.
+	query := fmt.Sprintf(`WITH RECURSIVE req AS (SELECT * FROM jsonb_to_recordset($10) AS p(idx int,source_id uuid,file_id uuid,generation bigint)),
+ live AS (
+ SELECT DISTINCT n.id AS source_id,n.id,n.parent_id,n.name::text COLLATE "C" AS path,0 AS depth FROM req p JOIN nodes n ON n.id=p.source_id AND n.scope_id=$1
+ UNION ALL SELECT l.source_id,n.id,n.parent_id,CASE WHEN n.id=$2 THEN rtrim($3,'/')||'/'||l.path ELSE n.name||'/'||l.path END,l.depth+1
+ FROM live l JOIN nodes n ON n.id=l.parent_id AND n.scope_id=$1 WHERE l.id<>$2 AND n.kind='directory' AND l.depth<128),
  ancestors AS (SELECT p.idx,p.source_id,p.generation,n.id,n.parent_id,0 AS depth,jsonb_build_array(jsonb_build_object('node_id',n.id,'filename',n.name)) AS breadcrumb FROM req p JOIN nodes n ON n.id=p.file_id AND n.scope_id=$1
  UNION ALL SELECT a.idx,a.source_id,a.generation,n.id,n.parent_id,a.depth+1,jsonb_build_array(jsonb_build_object('node_id',n.id,'filename',n.name))||a.breadcrumb
  FROM ancestors a JOIN nodes n ON n.id=a.parent_id WHERE n.scope_id=$1 AND a.id!=a.source_id AND a.depth<128)
- SELECT a.idx,%s,false,l.path,a.breadcrumb FROM ancestors a JOIN live l ON l.id=a.source_id JOIN nodes n ON n.id=l.id JOIN files f ON f.node_id=n.id
+ SELECT a.idx,%s,false,l.path,a.breadcrumb FROM ancestors a JOIN live l ON l.source_id=a.source_id AND l.id=$2 JOIN nodes n ON n.id=l.source_id JOIN files f ON f.node_id=n.id
  WHERE a.id=a.source_id AND n.kind='file' AND f.desired_generation=a.generation
  AND f.publication_status='ready' %s`,
-		searchLive, strings.Replace(nodeColumns, "f.context", "NULL::text", 1), searchFiltersSQL)
+		strings.Replace(nodeColumns, "f.context", "NULL::text", 1), searchFiltersSQL)
 	f := input.Filters
 	rows, err := session.tx.Query(ctx, query, scopeID, root, path, f.SemanticType, f.MediaType, f.CreatedAfter, f.CreatedBefore, f.UpdatedAfter, f.UpdatedBefore, data)
 	if err != nil {
@@ -87,101 +103,55 @@ func (s *Store) hydrateSearch(ctx context.Context, scopeID uuid.UUID, input Sear
 	return result, databaseError(rows.Err())
 }
 
-func (s *Store) SemanticSearch(ctx context.Context, scopeID uuid.UUID, input SearchInput) (SearchPage, error) {
-	actor, err := s.authorize(ctx, scopeID, "scope", authz.ScopeReadContent)
+func (s *Store) SemanticSearch(ctx context.Context, scopeID uuid.UUID, input SemanticSearchInput) (SemanticSearchResults, error) {
+	_, err := s.authorize(ctx, scopeID, "scope", authz.ScopeReadContent)
 	if err != nil {
-		return SearchPage{}, err
+		return SemanticSearchResults{}, err
 	}
-	limit, err := input.validate(true)
+	limit, err := (SearchInput{Query: input.Query, Filters: input.Filters, Limit: input.Limit}).validate(true)
 	if err != nil {
-		return SearchPage{}, err
-	}
-	binding, err := s.searchBinding(scopeID, actor, input, true)
-	if err != nil {
-		return SearchPage{}, err
-	}
-	cursor, err := decodeSearchCursor(input.Cursor, binding)
-	if err != nil {
-		return SearchPage{}, err
+		return SemanticSearchResults{}, err
 	}
 	var filesystemID uuid.UUID
 	var allowIndexing bool
 	if err = s.DB.QueryRow(ctx, `SELECT filesystem_id,allow_indexing FROM scopes WHERE id=$1`, scopeID).Scan(&filesystemID, &allowIndexing); err != nil {
-		return SearchPage{}, databaseError(err)
+		return SemanticSearchResults{}, databaseError(err)
 	}
 	// Validate scope before sending caller text to providers.
 	if _, err = s.hydrateSearch(ctx, scopeID, input, nil); err != nil {
-		return SearchPage{}, err
+		return SemanticSearchResults{}, err
 	}
 	if !allowIndexing {
-		return SearchPage{Items: []SearchResult{}}, nil
+		return SemanticSearchResults{Items: []SearchResult{}}, nil
 	}
 	if s.AI == nil || s.Search == nil || s.IndexSpace.Validate() != nil {
-		return SearchPage{}, search.Dependency()
+		return SemanticSearchResults{}, search.Dependency()
 	}
 	vector, err := s.AI.Embed(ctx, input.Query, s.IndexSpace.Model, s.IndexSpace.Dimension)
 	if err != nil {
-		return SearchPage{}, err
+		return SemanticSearchResults{}, err
 	}
-	seen, previous := make(map[uuid.UUID]bool), make(map[uuid.UUID]bool)
-	for _, id := range cursor.Seen {
-		seen[id], previous[id] = true, true
+	points, err := s.Search.Query(ctx, s.IndexSpace.Collection, filesystemID, scopeID, strings.TrimSpace(input.Query), vector)
+	if err != nil {
+		return SemanticSearchResults{}, err
+	}
+	valid, err := s.hydrateSearch(ctx, scopeID, input, points)
+	if err != nil {
+		return SemanticSearchResults{}, err
 	}
 	perSource := make(map[uuid.UUID]int)
 	selected := make([]search.Point, 0, 64)
-	exhausted := false
-	for range 3 {
-		if cursor.Offset >= 10000 || len(seen) >= 256 {
-			exhausted = true
+	for i, point := range points {
+		if len(selected) == 64 {
 			break
 		}
-		points, err := s.Search.Query(ctx, s.IndexSpace.Collection, filesystemID, scopeID, strings.TrimSpace(input.Query), vector, cursor.Offset)
-		if err != nil {
-			return SearchPage{}, err
+		if _, ok := valid[i]; !ok || perSource[point.Payload.SourceID] == 3 {
+			continue
 		}
-		if len(points) == 0 {
-			exhausted = true
-			break
-		}
-		valid, err := s.hydrateSearch(ctx, scopeID, input, points)
-		if err != nil {
-			return SearchPage{}, err
-		}
-		consumed := 0
-		for i, point := range points {
-			if len(selected) >= 64 || cursor.Offset >= 10000 {
-				break
-			}
-			consumed++
-			cursor.Offset++
-			if _, ok := valid[i]; !ok {
-				continue
-			}
-			id := point.Payload.SourceID
-			if previous[id] || perSource[id] >= 3 {
-				continue
-			}
-			if !seen[id] && len(seen)-len(previous) >= int(limit) {
-				consumed--
-				cursor.Offset--
-				break
-			}
-			seen[id] = true
-			perSource[id]++
-			selected = append(selected, point)
-		}
-		if consumed < len(points) {
-			break
-		}
-		if len(points) < 80 {
-			exhausted = true
-			break
-		}
-		if len(seen)-len(previous) >= int(limit) {
-			break
-		}
+		perSource[point.Payload.SourceID]++
+		selected = append(selected, point)
 	}
-	result := SearchPage{Items: []SearchResult{}}
+	result := SemanticSearchResults{Items: []SearchResult{}}
 	order := make([]int, len(selected))
 	for i := range order {
 		order[i] = i
@@ -202,11 +172,11 @@ func (s *Store) SemanticSearch(ctx context.Context, scopeID uuid.UUID, input Sea
 	}
 	// Provider latency may overlap trash, replacement or revocation; return current facts only.
 	if _, err = s.authorize(ctx, scopeID, "scope", authz.ScopeReadContent); err != nil {
-		return SearchPage{}, err
+		return SemanticSearchResults{}, err
 	}
 	current, err := s.hydrateSearch(ctx, scopeID, input, selected)
 	if err != nil {
-		return SearchPage{}, err
+		return SemanticSearchResults{}, err
 	}
 	emitted := make(map[uuid.UUID]bool)
 	for _, i := range order {
@@ -214,17 +184,9 @@ func (s *Store) SemanticSearch(ctx context.Context, scopeID uuid.UUID, input Sea
 		if item, ok := current[i]; ok && !emitted[point.Payload.SourceID] {
 			emitted[point.Payload.SourceID] = true
 			result.Items = append(result.Items, item)
-		}
-	}
-	cursor.Seen = make([]uuid.UUID, 0, len(seen))
-	for id := range seen {
-		cursor.Seen = append(cursor.Seen, id)
-	}
-	slices.SortFunc(cursor.Seen, func(a, b uuid.UUID) int { return strings.Compare(a.String(), b.String()) })
-	if !exhausted && len(cursor.Seen) < 256 && cursor.Offset < 10000 {
-		result.NextCursor, err = encodeSearchCursor(cursor)
-		if err != nil {
-			return SearchPage{}, err
+			if len(result.Items) == int(limit) {
+				break
+			}
 		}
 	}
 	return result, nil

@@ -144,9 +144,27 @@ func (s *Store) TrashNode(ctx context.Context, scopeID uuid.UUID, locator Locato
 	return entry, databaseError(session.tx.Commit(ctx))
 }
 
-func (s *Store) RestoreTrash(ctx context.Context, scopeID, id uuid.UUID) (Node, error) {
+type RestoreTrash struct {
+	DestinationScopeID *uuid.UUID
+	Parent             *Locator
+	Name               *string
+}
+
+func (s *Store) RestoreTrash(ctx context.Context, scopeID, id uuid.UUID, input RestoreTrash) (Node, error) {
 	if _, err := s.authorize(ctx, scopeID, "scope", authz.ScopeRestore); err != nil {
 		return Node{}, err
+	}
+	destinationID := scopeID
+	if input.DestinationScopeID != nil {
+		destinationID = *input.DestinationScopeID
+	}
+	if destinationID != scopeID && input.Parent == nil {
+		return Node{}, apperr.New(apperr.Invalid, "VALIDATION", "cross-scope restore requires a parent")
+	}
+	if input.Parent != nil || destinationID != scopeID {
+		if _, err := s.authorize(ctx, destinationID, "scope", authz.ScopeWrite); err != nil {
+			return Node{}, err
+		}
 	}
 	session, err := s.openSession(ctx, scopeID, true)
 	if err != nil {
@@ -160,37 +178,66 @@ func (s *Store) RestoreTrash(ctx context.Context, scopeID, id uuid.UUID) (Node, 
 	if entry.Status != "trashed" {
 		return Node{}, apperr.New(apperr.Conflict, "TRASH_PURGING", "trash entry is being purged")
 	}
-	if entry.ParentID == nil {
+	parentLocator := Locator{NodeID: entry.ParentID}
+	if input.Parent != nil {
+		parentLocator = *input.Parent
+	}
+	if parentLocator.NodeID == nil && parentLocator.Path == nil {
 		return Node{}, apperr.New(apperr.Missing, "NOT_FOUND", "original parent not found")
 	}
-	parent, err := session.resolveOne(ctx, Locator{NodeID: entry.ParentID})
+	destination, err := session.inScope(ctx, destinationID)
+	if err != nil {
+		return Node{}, err
+	}
+	parent, err := destination.resolveOne(ctx, parentLocator)
 	if err != nil {
 		return Node{}, err
 	}
 	if err = parent.writable(); err != nil {
 		return Node{}, err
 	}
+	if input.Parent != nil {
+		if err = guard(parentLocator, parent.ID, true); err != nil {
+			return Node{}, err
+		}
+	}
 	if err = parent.directory(); err != nil {
 		return Node{}, err
 	}
-	if err = session.name(parent.ID, entry.Name); err != nil {
-		return Node{}, err
+	name := entry.Name
+	if input.Name != nil {
+		name = *input.Name
 	}
-	if err = session.validateMove(ctx, entry.NodeID, parent.ID); err != nil {
+	if err = destination.name(parent.ID, name); err != nil {
 		return Node{}, err
-	}
-	_, err = session.tx.Exec(ctx, `UPDATE nodes SET parent_id=$2,name=$3 WHERE id=$1`, entry.NodeID, parent.ID, entry.Name)
-	if err != nil {
-		return Node{}, databaseError(err)
 	}
 	_, err = session.tx.Exec(ctx, `DELETE FROM trash_entries WHERE id=$1`, id)
 	if err != nil {
 		return Node{}, databaseError(err)
 	}
-	if err = session.bump(ctx, entry.NodeID, parent.ID); err != nil {
+	if destinationID == scopeID {
+		if err = session.validateMove(ctx, entry.NodeID, parent.ID); err != nil {
+			return Node{}, err
+		}
+		_, err = session.tx.Exec(ctx, `UPDATE nodes SET parent_id=$2,name=$3 WHERE id=$1`, entry.NodeID, parent.ID, name)
+		if err != nil {
+			return Node{}, databaseError(err)
+		}
+		err = session.bump(ctx, entry.NodeID)
+	} else {
+		node, e := session.fetch(ctx, entry.NodeID)
+		if e != nil {
+			return Node{}, e
+		}
+		err = session.transferTree(ctx, node, destination, parent, name)
+	}
+	if err != nil {
 		return Node{}, err
 	}
-	node, err := session.fetch(ctx, entry.NodeID)
+	if err = session.bump(ctx, parent.ID); err != nil {
+		return Node{}, err
+	}
+	node, err := destination.fetch(ctx, entry.NodeID)
 	if err != nil {
 		return Node{}, err
 	}

@@ -118,13 +118,9 @@
           "locators": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/openlet_api.letfs.v1.Locator"
+              "$ref": "#/components/schemas/openlet_api.letfs.v1.ScopedLocator"
             },
             "title": "locators"
-          },
-          "scope_id": {
-            "type": "string",
-            "title": "scope_id"
           }
         },
         "title": "BatchStatRequest",
@@ -197,26 +193,14 @@
         "title": "CompleteUploadResponse",
         "additionalProperties": false
       },
-      "openlet_api.letfs.v1.Copy": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string",
-            "title": "id"
-          },
-          "destination_root_id": {
-            "type": "string",
-            "title": "destination_root_id"
-          }
-        },
-        "title": "Copy",
-        "additionalProperties": false
-      },
       "openlet_api.letfs.v1.CreateCopyRequest": {
         "type": "object",
         "properties": {
           "destination_scope_id": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "title": "destination_scope_id"
           },
           "filesystem_id": {
@@ -259,9 +243,9 @@
       "openlet_api.letfs.v1.CreateCopyResponse": {
         "type": "object",
         "properties": {
-          "copy": {
-            "title": "copy",
-            "$ref": "#/components/schemas/openlet_api.letfs.v1.Copy"
+          "node": {
+            "title": "node",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.Node"
           }
         },
         "title": "CreateCopyResponse",
@@ -1106,13 +1090,6 @@
       },
       "openlet_api.letfs.v1.PurgeTrashResponse": {
         "type": "object",
-        "properties": {
-          "entry": {
-            "title": "entry",
-            "description": "Absent after removal (HTTP 204); otherwise the durable purge admission (HTTP 202).",
-            "$ref": "#/components/schemas/openlet_api.letfs.v1.TrashEntry"
-          }
-        },
         "title": "PurgeTrashResponse",
         "additionalProperties": false
       },
@@ -1254,6 +1231,24 @@
           "scope_id": {
             "type": "string",
             "title": "scope_id"
+          },
+          "destination_scope_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "destination_scope_id"
+          },
+          "parent": {
+            "title": "parent",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.Locator"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "name"
           }
         },
         "title": "RestoreTrashRequest",
@@ -1268,6 +1263,21 @@
           }
         },
         "title": "RestoreTrashResponse",
+        "additionalProperties": false
+      },
+      "openlet_api.letfs.v1.ScopedLocator": {
+        "type": "object",
+        "properties": {
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
+          },
+          "locator": {
+            "title": "locator",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.Locator"
+          }
+        },
+        "title": "ScopedLocator",
         "additionalProperties": false
       },
       "openlet_api.letfs.v1.SearchFilesRequest": {
@@ -1459,13 +1469,6 @@
             "title": "limit",
             "format": "int32"
           },
-          "cursor": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "title": "cursor"
-          },
           "scope_id": {
             "type": "string",
             "title": "scope_id"
@@ -1483,13 +1486,6 @@
               "$ref": "#/components/schemas/openlet_api.letfs.v1.SearchResult"
             },
             "title": "items"
-          },
-          "next_cursor": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "title": "next_cursor"
           },
           "degraded": {
             "type": "boolean",
@@ -1684,6 +1680,13 @@
       "openlet_api.letfs.v1.UpdateNodeRequest": {
         "type": "object",
         "properties": {
+          "destination_scope_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "destination_scope_id"
+          },
           "filesystem_id": {
             "type": "string",
             "title": "filesystem_id"

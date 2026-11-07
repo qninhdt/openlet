@@ -5,23 +5,16 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/qninhdt/openlet/packages/go/apperr"
 )
 
-func copyDeadline(admission CopyAdmission) error {
-	if !time.Now().Before(admission.Deadline) {
-		return apperr.New(apperr.Conflict, "RESOURCE_LIMIT", "copy deadline exceeded")
-	}
-	return nil
-}
 func (s *session) copyNode(ctx context.Context, id uuid.UUID) (Node, error) {
 	return s.resolveOne(ctx, Locator{NodeID: &id})
 }
-func (s *session) copySource(ctx context.Context, item CopyItem, exact bool) (Node, error) {
+func (s *session) copySource(ctx context.Context, item copyItem, exact bool) (Node, error) {
 	node, err := s.copyNode(ctx, item.Source)
 	if errorReason(err) == "NOT_FOUND" {
 		return Node{}, apperr.New(apperr.Conflict, "SOURCE_REPLACED", "copy source changed")
@@ -52,19 +45,7 @@ func (s *session) copySource(ctx context.Context, item CopyItem, exact bool) (No
 	}
 	return node, nil
 }
-func (s *session) copyActive(ctx context.Context, admission CopyAdmission) error {
-	var active bool
-	err := s.tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM idempotency_keys WHERE operation='copy-node'
- AND scope=$1 AND result->>'id'=$2 AND expires_at IS NULL)`, "scope/"+admission.ScopeID.String()+"/actor/"+admission.ActorID.String(), admission.ID.String()).Scan(&active)
-	if err != nil {
-		return databaseError(err)
-	}
-	if !active {
-		return apperr.New(apperr.Conflict, "COPY_CLOSED", "copy admission is closed")
-	}
-	return nil
-}
-func (s *session) copyCommitted(ctx context.Context, admission CopyAdmission, item CopyItem) (bool, error) {
+func (s *session) copyCommitted(ctx context.Context, admission copyPlan, item copyItem) (bool, error) {
 	parent, err := s.copyNode(ctx, item.Parent)
 	if err != nil {
 		return false, err
@@ -117,13 +98,11 @@ func (s *session) releaseCopyCandidate(ctx context.Context, key string) error {
 	return databaseError(err)
 }
 
-func (s *session) validateCopyCandidate(ctx context.Context, admission CopyAdmission, item CopyItem, key string) (bool, error) {
-	if err := copyDeadline(admission); err != nil {
+func (s *session) validateCopyCandidate(ctx context.Context, admission copyPlan, item copyItem, key string) (bool, error) {
+	if err := ctx.Err(); err != nil {
 		return false, err
 	}
-	if err := s.copyActive(ctx, admission); err != nil {
-		return false, err
-	}
+
 	var active, attempted bool
 	if err := s.tx.QueryRow(ctx, `SELECT f.state='active' AND b.state='active' FROM scopes f JOIN filesystems b ON b.id=f.filesystem_id WHERE f.id=$1`, s.scopeID).Scan(&active); err != nil {
 		return false, databaseError(err)
@@ -149,9 +128,9 @@ func (s *session) validateCopyCandidate(ctx context.Context, admission CopyAdmis
 	return false, err
 }
 
-// commitCopyItem consumes trusted workflow selections, not caller-supplied objects.
-func (s *Store) commitCopyItem(ctx context.Context, admission CopyAdmission, item CopyItem) error {
-	if err := copyDeadline(admission); err != nil {
+// commitCopyItem consumes locally selected nodes, not caller-supplied objects.
+func (s *Store) commitCopyItem(ctx context.Context, admission copyPlan, item copyItem) error {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	session, err := s.openSession(ctx, admission.DestinationScopeID, true)
@@ -163,9 +142,7 @@ func (s *Store) commitCopyItem(ctx context.Context, admission CopyAdmission, ite
 	if err != nil || done {
 		return err
 	}
-	if err = session.copyActive(ctx, admission); err != nil {
-		return err
-	}
+
 	sourceSession, err := session.inScope(ctx, admission.ScopeID)
 	if err != nil {
 		return err
@@ -266,14 +243,14 @@ func (s *Store) commitCopyItem(ctx context.Context, admission CopyAdmission, ite
 	return published
 }
 
-type CopyFrame struct {
+type copyFrame struct {
 	SourceScopeID uuid.UUID
-	Item          CopyItem  `json:"item"`
-	After         uuid.UUID `json:"after"`
-	Revision      int64     `json:"revision,string"`
+	Item          copyItem
+	After         uuid.UUID
+	Revision      int64
 }
 
-func (s *session) copyFrame(ctx context.Context, frame CopyFrame) (Node, error) {
+func (s *session) copyFrame(ctx context.Context, frame copyFrame) (Node, error) {
 	sourceSession, err := s.inScope(ctx, frame.SourceScopeID)
 	if err != nil {
 		return Node{}, err
@@ -290,8 +267,8 @@ func (s *session) copyFrame(ctx context.Context, frame CopyFrame) (Node, error) 
 	}
 	return node, nil
 }
-func (s *Store) nextCopyItem(ctx context.Context, admission CopyAdmission, frame CopyFrame) (*CopyItem, error) {
-	if err := copyDeadline(admission); err != nil {
+func (s *Store) nextCopyItem(ctx context.Context, admission copyPlan, frame copyFrame) (*copyItem, error) {
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	session, err := s.openSession(ctx, admission.DestinationScopeID, false)
@@ -325,22 +302,9 @@ func (s *Store) nextCopyItem(ctx context.Context, admission CopyAdmission, frame
 	item, err := sourceSession.selectCopy(ctx, admission.ID, node, parent, node.Name, frame.Item.Derived || frame.Item.Kind == "file", frame.Item.Depth+1)
 	return &item, err
 }
-func (s *Store) CloseCopyAdmission(ctx context.Context, admission CopyAdmission) error {
-	session, err := s.lifecycleSession(ctx, admission.DestinationScopeID)
-	if err != nil {
-		return err
-	}
-	defer session.tx.Rollback(ctx)
-	_, err = session.tx.Exec(ctx, `UPDATE idempotency_keys SET expires_at=now()+interval '24 hours'
- WHERE operation='copy-node' AND result->>'id'=$1 AND expires_at IS NULL`, admission.ID.String())
-	if err != nil {
-		return databaseError(err)
-	}
-	return databaseError(session.tx.Commit(ctx))
-}
 
 // finishCopyFile records processing intent after the copied file subtree completes.
-func (s *Store) finishCopyFile(ctx context.Context, admission CopyAdmission, frame CopyFrame) error {
+func (s *Store) finishCopyFile(ctx context.Context, admission copyPlan, frame copyFrame) error {
 	if frame.Item.Kind != "file" || frame.Item.Derived {
 		return nil
 	}
@@ -380,19 +344,11 @@ func (s *session) inScope(ctx context.Context, id uuid.UUID) (*session, error) {
 	return &other, nil
 }
 
-// CopyTreeData uses only local traversal state; partial writes are retained on error.
-func (s *Store) CopyTreeData(ctx context.Context, in CopyAdmission) (err error) {
-	defer func() {
-		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		defer cancel()
-		closeErr := s.CloseCopyAdmission(cleanup, in)
-		if err == nil {
-			err = closeErr
-		}
-	}()
+// copyTreeData uses only local traversal state; partial writes are retained on error.
+func (s *Store) copyTreeData(ctx context.Context, in copyPlan) error {
 	var nodes, bytes int64
-	var visit func(CopyItem) error
-	visit = func(item CopyItem) error {
+	var visit func(copyItem) error
+	visit = func(item copyItem) error {
 		nodes++
 		bytes += item.Size
 		if nodes > in.MaxNodes || bytes > in.MaxBytes {
@@ -401,7 +357,7 @@ func (s *Store) CopyTreeData(ctx context.Context, in CopyAdmission) (err error) 
 		if err := s.commitCopyItem(ctx, in, item); err != nil {
 			return err
 		}
-		frame := CopyFrame{SourceScopeID: in.ScopeID, Item: item, Revision: 1}
+		frame := copyFrame{SourceScopeID: in.ScopeID, Item: item, Revision: 1}
 		for {
 			child, err := s.nextCopyItem(ctx, in, frame)
 			if err != nil {

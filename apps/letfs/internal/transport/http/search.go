@@ -77,12 +77,9 @@ func (s *Server) searchFiles(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Server) semanticSearch(w http.ResponseWriter, r *http.Request) error {
-	var input filesystem.SearchInput
+	var input filesystem.SemanticSearchInput
 	if err := decodeJSON(w, r, &input); err != nil {
 		return err
-	}
-	if input.Sort != nil || input.Direction != nil {
-		return invalid()
 	}
 	fs, err := s.requestContext(r)
 	if err != nil {
@@ -92,7 +89,7 @@ func (s *Server) semanticSearch(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	return writeSearch(w, r, page)
+	return writeSearchJSON(w, searchResponse{Items: searchRows(page.Items), Degraded: page.Degraded, DegradedReason: page.DegradedReason})
 }
 
 type searchBreadcrumb struct {
@@ -123,9 +120,9 @@ type searchResult struct {
 	Matched      *searchMatch `json:"matched,omitempty"`
 }
 
-func writeSearch(w http.ResponseWriter, r *http.Request, page filesystem.SearchPage) error {
-	rows := make([]searchResult, 0, len(page.Items))
-	for _, item := range page.Items {
+func searchRows(items []filesystem.SearchResult) []searchResult {
+	rows := make([]searchResult, 0, len(items))
+	for _, item := range items {
 		node := item.Node
 		var parent *string
 		if node.ParentID != nil {
@@ -150,12 +147,23 @@ func writeSearch(w http.ResponseWriter, r *http.Request, page filesystem.SearchP
 		}
 		rows = append(rows, row)
 	}
-	result := struct {
-		Items          []searchResult `json:"items"`
-		NextCursor     *string        `json:"next_cursor"`
-		Degraded       bool           `json:"degraded"`
-		DegradedReason *string        `json:"degraded_reason,omitempty"`
-	}{rows, page.NextCursor, page.Degraded, page.DegradedReason}
+	return rows
+}
+
+type searchResponse struct {
+	Items          []searchResult `json:"items"`
+	Degraded       bool           `json:"degraded"`
+	DegradedReason *string        `json:"degraded_reason,omitempty"`
+}
+
+func writeSearch(w http.ResponseWriter, r *http.Request, page filesystem.SearchPage) error {
+	return writeSearchJSON(w, struct {
+		searchResponse
+		NextCursor *string `json:"next_cursor"`
+	}{searchResponse{searchRows(page.Items), page.Degraded, page.DegradedReason}, page.NextCursor})
+}
+
+func writeSearchJSON(w http.ResponseWriter, result any) error {
 	data, err := json.Marshal(result)
 	if err != nil {
 		return err

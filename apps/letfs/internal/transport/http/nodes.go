@@ -12,13 +12,11 @@ import (
 
 func (s *Server) createNode(w http.ResponseWriter, r *http.Request) error {
 	var input struct {
-		Kind               string  `json:"kind"`
-		ParentID           string  `json:"parent_id"`
-		Name               string  `json:"name"`
-		Content            *[]byte `json:"content_base64,omitempty"`
-		MediaType          *string `json:"media_type,omitempty"`
-		DestinationScopeID *string `json:"destination_scope_id,omitempty"`
-		SourceID           *string `json:"source_id,omitempty"`
+		Kind      string  `json:"kind"`
+		ParentID  string  `json:"parent_id"`
+		Name      string  `json:"name"`
+		Content   *[]byte `json:"content_base64,omitempty"`
+		MediaType *string `json:"media_type,omitempty"`
 	}
 	if err := decodeJSON(w, r, &input); err != nil {
 		return err
@@ -34,39 +32,6 @@ func (s *Server) createNode(w http.ResponseWriter, r *http.Request) error {
 	parent, err := parseID(input.ParentID)
 	if err != nil {
 		return err
-	}
-	if input.SourceID != nil {
-		if input.Kind != "" || input.Content != nil || input.MediaType != nil {
-			return invalid()
-		}
-		source, err := parseID(*input.SourceID)
-		if err != nil {
-			return err
-		}
-		rev, err := revision(r)
-		if err != nil {
-			return err
-		}
-		destination := fs
-		if input.DestinationScopeID != nil {
-			destination, err = parseID(*input.DestinationScopeID)
-			if err != nil {
-				return err
-			}
-			filesystemID, err := parseID(fsID(r))
-			if err != nil {
-				return err
-			}
-			if err = s.Store.ValidateScope(r.Context(), filesystemID, destination); err != nil {
-				return err
-			}
-		}
-		result, err := s.Service.CreateCopy(r.Context(), fs, key, filesystem.CreateCopy{DestinationScopeID: destination, SourceID: source, ParentID: parent, Name: input.Name, Revision: rev})
-		if err != nil {
-			return err
-		}
-		respond(w, r, http.StatusAccepted, copyResponseFrom(result))
-		return nil
 	}
 	creation := filesystem.CreateNode{Parent: filesystem.Locator{NodeID: &parent}, Name: input.Name}
 	switch input.Kind {
@@ -166,7 +131,7 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) error {
 
 func (s *Server) batchStat(w http.ResponseWriter, r *http.Request) error {
 	var input struct {
-		Locators []filesystem.Locator `json:"locators"`
+		Locators []filesystem.ScopedLocator `json:"locators"`
 	}
 	if err := decodeJSON(w, r, &input); err != nil {
 		return err
@@ -174,7 +139,7 @@ func (s *Server) batchStat(w http.ResponseWriter, r *http.Request) error {
 	if len(input.Locators) < 1 || len(input.Locators) > 100 {
 		return apperr.New(apperr.Invalid, "VALIDATION", "locator batch must contain 1..100 items")
 	}
-	fs, err := s.requestContext(r)
+	fs, err := parseID(fsID(r))
 	if err != nil {
 		return err
 	}
@@ -198,8 +163,9 @@ func (s *Server) updateNode(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	var input struct {
-		Name     *string `json:"name,omitempty"`
-		ParentID *string `json:"parent_id,omitempty"`
+		DestinationScopeID *string `json:"destination_scope_id,omitempty"`
+		Name               *string `json:"name,omitempty"`
+		ParentID           *string `json:"parent_id,omitempty"`
 	}
 	if err = decodeJSON(w, r, &input); err != nil {
 		return err
@@ -212,7 +178,11 @@ func (s *Server) updateNode(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	patch := filesystem.UpdateNode{Locator: locator, Revision: rev, Name: input.Name}
+	destination, err := optionalUUID(input.DestinationScopeID)
+	if err != nil {
+		return err
+	}
+	patch := filesystem.UpdateNode{Locator: locator, Revision: rev, Name: input.Name, DestinationScopeID: destination}
 	if input.ParentID != nil {
 		parent, err := nodeLocator(*input.ParentID)
 		if err != nil {

@@ -82,3 +82,13 @@ func TestSearchPreservesFullMetadataJSON(t *testing.T) {
 	require.Error(t, err)
 	require.Empty(t, response.Body.String())
 }
+
+func TestSemanticSearchRejectsPaginationAndOmitsContinuation(t *testing.T) {
+	for _, field := range []string{`"cursor":"next"`, `"cursor":null`, `"sort":"name"`} {
+		request := httptest.NewRequest("POST", "/", strings.NewReader(`{"query":"report",`+field+`}`))
+		require.Error(t, (&Server{}).semanticSearch(httptest.NewRecorder(), request))
+	}
+	response := httptest.NewRecorder()
+	require.NoError(t, writeSearchJSON(response, searchResponse{Items: searchRows(nil)}))
+	require.JSONEq(t, `{"items":[],"degraded":false}`, response.Body.String())
+}

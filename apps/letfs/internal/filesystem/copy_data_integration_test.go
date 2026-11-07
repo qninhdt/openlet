@@ -79,9 +79,9 @@ func TestIntegrationCopyPublicationReconcilesRetriesAndRetainsPartialEffects(t *
 		require.NoError(t, err)
 		return node
 	}
-	admit := func(source Node, name string) CopyAdmission {
+	admit := func(source Node, name string) copyPlan {
 		t.Helper()
-		admission, err := s.AdmitCopy(ctx, fs, uuid.New(), CreateCopy{DestinationScopeID: fs, SourceID: source.ID, ParentID: root, Name: name, Revision: &source.Revision})
+		admission, err := s.prepareCopy(ctx, fs, uuid.New(), CreateCopy{DestinationScopeID: fs, SourceID: source.ID, ParentID: root, Name: name, Revision: &source.Revision})
 		require.NoError(t, err)
 		return admission
 	}
@@ -98,7 +98,7 @@ func TestIntegrationCopyPublicationReconcilesRetriesAndRetainsPartialEffects(t *
 	require.NoError(t, err)
 	tree := admit(dir, "tree-copy")
 	require.NoError(t, s.commitCopyItem(ctx, tree, tree.Root))
-	frame := CopyFrame{SourceScopeID: fs, Item: tree.Root, Revision: 1}
+	frame := copyFrame{SourceScopeID: fs, Item: tree.Root, Revision: 1}
 	late := create(dir.ID, "late.txt", []byte("late"))
 	copied := 0
 	for {
@@ -110,15 +110,13 @@ func TestIntegrationCopyPublicationReconcilesRetriesAndRetainsPartialEffects(t *
 		require.NotEqual(t, late.ID, item.Source, "captured upper bound excludes later children")
 		require.NoError(t, s.commitCopyItem(ctx, tree, *item))
 		require.NoError(t, s.commitCopyItem(ctx, tree, *item), "lost commit acknowledgment must not recharge")
-		require.NoError(t, s.finishCopyFile(ctx, tree, CopyFrame{SourceScopeID: fs, Item: *item, Revision: 1}))
-		require.NoError(t, s.finishCopyFile(ctx, tree, CopyFrame{SourceScopeID: fs, Item: *item, Revision: 1}))
+		require.NoError(t, s.finishCopyFile(ctx, tree, copyFrame{SourceScopeID: fs, Item: *item, Revision: 1}))
+		require.NoError(t, s.finishCopyFile(ctx, tree, copyFrame{SourceScopeID: fs, Item: *item, Revision: 1}))
 		frame.After = item.Source
 		frame.Revision++
 		copied++
 	}
 	require.Equal(t, 2, copied)
-	require.NoError(t, s.CloseCopyAdmission(ctx, tree))
-	require.NoError(t, s.CloseCopyAdmission(ctx, tree))
 	require.EqualValues(t, 14, usage(), "two originals, late child and one exact copy")
 	var generation int64
 	require.NoError(t, db.QueryRow(ctx, `SELECT desired_generation FROM files WHERE node_id=$1`, copyDestination(tree.ID, first.ID)).Scan(&generation))
@@ -133,7 +131,6 @@ func TestIntegrationCopyPublicationReconcilesRetriesAndRetainsPartialEffects(t *
 	require.NoError(t, err)
 	require.NoError(t, s.commitCopyItem(ctx, replay, replay.Root))
 	require.Equal(t, before+3, usage())
-	require.NoError(t, s.CloseCopyAdmission(ctx, replay))
 	destination, err := s.GetNode(ctx, fs, Locator{NodeID: &replay.Root.Destination})
 	require.NoError(t, err)
 	entry, err := s.TrashNode(ctx, fs, Locator{NodeID: &destination.ID}, &destination.Revision)
@@ -143,7 +140,6 @@ func TestIntegrationCopyPublicationReconcilesRetriesAndRetainsPartialEffects(t *
 	done, err := s.DeletionBatch(ctx, fs, &entry.ID)
 	require.NoError(t, err)
 	require.True(t, done)
-	require.Error(t, s.commitCopyItem(ctx, replay, replay.Root), "closed admission cannot recreate a purged result")
 
 	// Derived forests preserve provenance and initialize one logical processing generation.
 	document := create(root, "source.pdf", []byte("document"))
@@ -156,11 +152,11 @@ func TestIntegrationCopyPublicationReconcilesRetriesAndRetainsPartialEffects(t *
 	document, err = s.GetNode(ctx, fs, Locator{NodeID: &document.ID})
 	require.NoError(t, err)
 	derived := admit(document, "copied.pdf")
-	var walk func(CopyItem)
-	walk = func(item CopyItem) {
+	var walk func(copyItem)
+	walk = func(item copyItem) {
 		t.Helper()
 		require.NoError(t, s.commitCopyItem(ctx, derived, item))
-		frame := CopyFrame{SourceScopeID: fs, Item: item, Revision: 1}
+		frame := copyFrame{SourceScopeID: fs, Item: item, Revision: 1}
 		for {
 			child, err := s.nextCopyItem(ctx, derived, frame)
 			require.NoError(t, err)
@@ -181,7 +177,6 @@ func TestIntegrationCopyPublicationReconcilesRetriesAndRetainsPartialEffects(t *
 	require.NoError(t, db.QueryRow(ctx, `SELECT publication_status,desired_generation FROM files WHERE node_id=$1`, derived.Root.Destination).Scan(&publication, &generation))
 	require.Equal(t, "parsed", publication)
 	require.EqualValues(t, 1, generation)
-	require.NoError(t, s.CloseCopyAdmission(ctx, derived))
 
 	// Ambiguous object writes stay counted through a successful retry.
 	payload := []byte{0, 255, 1, 2}

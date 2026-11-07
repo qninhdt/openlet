@@ -2,7 +2,6 @@ package temporal
 
 import (
 	"github.com/google/uuid"
-	"github.com/qninhdt/openlet/apps/letfs/internal/filesystem"
 	shared "github.com/qninhdt/openlet/packages/go/temporal"
 	enums "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/workflow"
@@ -10,7 +9,6 @@ import (
 )
 
 const (
-	PurgeTrashName       = "PurgeTrash"
 	DeleteFilesystemName = shared.DeleteFilesystemWorkflow
 	DeleteScopeName      = shared.DeleteScopeWorkflow
 )
@@ -23,12 +21,6 @@ func DeleteScope(ctx workflow.Context, in shared.ScopeDeletion) error {
 	defer cancel()
 	ctx = bulkContext(ctx)
 	return workflow.ExecuteActivity(ctx, "DeleteScopeData", in).Get(ctx, nil)
-}
-func PurgeTrash(ctx workflow.Context, in filesystem.DeletionInput) error {
-	ctx, cancel := workflow.NewDisconnectedContext(ctx)
-	defer cancel()
-	ctx = bulkContext(ctx)
-	return workflow.ExecuteActivity(ctx, "PurgeTrashData", in).Get(ctx, nil)
 }
 func DeleteFilesystem(ctx workflow.Context, in shared.FilesystemDeletion) error {
 	ctx, cancel := workflow.NewDisconnectedContext(ctx)

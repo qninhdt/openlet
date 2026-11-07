@@ -1,6 +1,6 @@
 # Setup and verification
 
-The backend services implement onboarding, collaboration, generic file operations, S3 uploads, durable copy/deletion and finite maintenance. [Operations](operations.md) records shutdown, backup/restore and release checks; the plan retains verification state.
+The backend services implement onboarding, collaboration, generic file operations, S3 uploads, direct copy/purge, durable filesystem/scope deletion and finite maintenance. [Operations](operations.md) records shutdown, backup/restore and release checks; the plan retains verification state.
 
 ## Requirements
 

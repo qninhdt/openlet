@@ -10,7 +10,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/qninhdt/openlet/apps/letfs/internal/filesystem"
-	temporal "github.com/qninhdt/openlet/apps/letfs/internal/temporal"
 	"github.com/qninhdt/openlet/apps/letfs/internal/testfixture"
 	"github.com/qninhdt/openlet/packages/go/authz"
 	letfsv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/letfs/v1"
@@ -18,7 +17,6 @@ import (
 	"github.com/qninhdt/openlet/packages/go/rpc"
 	sharedfixture "github.com/qninhdt/openlet/packages/go/testfixture"
 	"github.com/stretchr/testify/require"
-	"go.temporal.io/sdk/worker"
 	grpcgo "google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -26,10 +24,9 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-func TestIntegrationCopyAndPurgeJobsOverAuthenticatedRPC(t *testing.T) {
+func TestIntegrationDirectCopyAndPurgeOverAuthenticatedRPC(t *testing.T) {
 	db := testfixture.Postgres(t, "../../../migrations/0001_initial.sql")
 	graph, _, _ := sharedfixture.SpiceDB(t, "../../../../../packages/contracts/authz/schema.zed")
-	tc, _ := sharedfixture.Temporal(t)
 	store := &filesystem.Store{DB: db, Graph: graph, MaxNodes: 100, MaxCopyNodes: 100, InlineLimit: 64, MaxFileBytes: 64,
 		MaxOutstanding: 100, MaxCleanupBacklog: 100}
 	owner := identity.WithPrincipal(t.Context(), identity.Principal{Service: "resource-owner"})
@@ -53,8 +50,7 @@ func TestIntegrationCopyAndPurgeJobsOverAuthenticatedRPC(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	server := grpcgo.NewServer(grpcgo.UnaryInterceptor(authentication.Unary()))
-	jobs := &temporal.Jobs{Client: tc}
-	letfsv1.RegisterFilesystemServiceServer(server, &Filesystem{Store: store, Service: &filesystem.Service{Store: store, Processing: jobs, Copies: jobs, Deletions: jobs}})
+	letfsv1.RegisterFilesystemServiceServer(server, &Filesystem{Store: store, Service: &filesystem.Service{Store: store}})
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(listener) }()
 	t.Cleanup(func() { server.Stop(); require.NoError(t, <-done) })
@@ -67,22 +63,17 @@ func TestIntegrationCopyAndPurgeJobsOverAuthenticatedRPC(t *testing.T) {
 	public := metadata.NewOutgoingContext(deadline, metadata.Pairs("authorization", "Bearer "+gatewayToken, "x-openlet-account-id", actor.String()))
 
 	input := &letfsv1.CreateCopyRequest{FilesystemId: filesystemID.String(), ScopeId: fs.String(), SourceId: source.ID.String(), ParentId: created.RootID.String(),
-		DestinationScopeId: fs.String(), Name: "copy.bin", Revision: &source.Revision, IdempotencyKey: uuid.NewString()}
+		DestinationScopeId: func() *string { v := fs.String(); return &v }(), Name: "copy.bin", Revision: &source.Revision, IdempotencyKey: uuid.NewString()}
 	_, err = api.CreateCopy(deadline, input)
 	require.Equal(t, codes.Unauthenticated, status.Code(err))
 	admitted, err := api.CreateCopy(public, input)
 	require.NoError(t, err)
 	replayed, err := api.CreateCopy(public, input)
 	require.NoError(t, err)
-	require.Equal(t, admitted.Copy.Id, replayed.Copy.Id)
-	w := worker.New(tc, temporal.Queue, worker.Options{WorkerStopTimeout: time.Second})
-	temporal.Register(w, &temporal.Activities{Store: store})
-	require.NoError(t, w.Start())
-	t.Cleanup(w.Stop)
-	require.NoError(t, tc.GetWorkflow(deadline, "copy/"+filesystemID.String()+"/"+admitted.Copy.Id, "").Get(deadline, nil))
+	require.Equal(t, admitted.Node.Id, replayed.Node.Id)
 	other := uuid.New()
 	foreign := metadata.NewOutgoingContext(deadline, metadata.Pairs("authorization", "Bearer "+gatewayToken, "x-openlet-account-id", other.String()))
-	copiedID := uuid.MustParse(admitted.Copy.DestinationRootId)
+	copiedID := uuid.MustParse(admitted.Node.Id)
 	copied, err := store.GetNode(actorContext, fs, filesystem.Locator{NodeID: &copiedID})
 	require.NoError(t, err)
 	entry, err := store.TrashNode(actorContext, fs, filesystem.Locator{NodeID: &copied.ID}, &copied.Revision)
@@ -90,17 +81,13 @@ func TestIntegrationCopyAndPurgeJobsOverAuthenticatedRPC(t *testing.T) {
 	purge := &letfsv1.PurgeTrashRequest{FilesystemId: filesystemID.String(), ScopeId: fs.String(), EntryId: entry.ID.String()}
 	_, err = api.PurgeTrash(foreign, purge)
 	require.Equal(t, codes.PermissionDenied, status.Code(err))
-	purging, err := api.PurgeTrash(public, purge)
+	_, err = api.PurgeTrash(public, purge)
 	require.NoError(t, err)
-	require.Equal(t, "purging", purging.Entry.Status)
-	require.Eventually(t, func() bool {
-		var exists bool
-		err := db.QueryRow(deadline, "SELECT EXISTS(SELECT 1 FROM trash_entries WHERE id=$1)", entry.ID).Scan(&exists)
-		return err == nil && !exists
-	}, 30*time.Second, 100*time.Millisecond)
-	absent, err := api.PurgeTrash(public, purge)
+	var exists bool
+	require.NoError(t, db.QueryRow(deadline, "SELECT EXISTS(SELECT 1 FROM trash_entries WHERE id=$1)", entry.ID).Scan(&exists))
+	require.False(t, exists)
+	_, err = api.PurgeTrash(public, purge)
 	require.NoError(t, err)
-	require.Nil(t, absent.Entry)
 	var used int64
 	require.NoError(t, db.QueryRow(deadline, `SELECT used_bytes FROM filesystems WHERE id=$1`, filesystemID).Scan(&used))
 	require.EqualValues(t, 3, used)

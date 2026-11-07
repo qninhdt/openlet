@@ -27,15 +27,12 @@ type Point struct {
 	Payload Payload `json:"payload"`
 }
 
-func (c *Client) Query(ctx context.Context, collection string, fs, scope uuid.UUID, query string, vector []float64, offset int) ([]Point, error) {
-	if offset < 0 || offset >= 10000 {
-		return nil, Dependency()
-	}
+func (c *Client) Query(ctx context.Context, collection string, fs, scope uuid.UUID, query string, vector []float64) ([]Point, error) {
 	filter := map[string]any{"must": []any{map[string]any{"key": "filesystem_id", "match": map[string]any{"value": fs.String()}}, map[string]any{"key": "scope_id", "match": map[string]any{"value": scope.String()}}}}
 	body := map[string]any{"prefetch": []any{
-		map[string]any{"query": vector, "using": "dense", "filter": filter, "limit": offset + 80},
-		map[string]any{"query": map[string]any{"text": query}, "using": "text", "filter": filter, "limit": offset + 80},
-	}, "query": map[string]any{"fusion": "rrf"}, "offset": offset, "limit": 80, "with_payload": true}
+		map[string]any{"query": vector, "using": "dense", "filter": filter, "limit": 80},
+		map[string]any{"query": map[string]any{"text": query}, "using": "text", "filter": filter, "limit": 80},
+	}, "query": map[string]any{"fusion": "rrf"}, "limit": 80, "with_payload": true}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	// Query allows the reference 15-second provider budget; deletion remains capped at five seconds.

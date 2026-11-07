@@ -262,10 +262,11 @@ func (s *Store) CreateNode(ctx context.Context, scopeID uuid.UUID, key uuid.UUID
 }
 
 type UpdateNode struct {
-	Locator  Locator
-	Revision *int64
-	Name     *string
-	Parent   *Locator
+	DestinationScopeID *uuid.UUID
+	Locator            Locator
+	Revision           *int64
+	Name               *string
+	Parent             *Locator
 }
 
 func (s *Store) UpdateNode(ctx context.Context, scopeID uuid.UUID, input UpdateNode) (Node, error) {
@@ -275,11 +276,30 @@ func (s *Store) UpdateNode(ctx context.Context, scopeID uuid.UUID, input UpdateN
 	if input.Name == nil && input.Parent == nil {
 		return Node{}, apperr.New(apperr.Invalid, "VALIDATION", "node patch is empty")
 	}
+	destinationID := scopeID
+	if input.DestinationScopeID != nil {
+		destinationID = *input.DestinationScopeID
+	}
+	if destinationID != scopeID {
+		if input.Parent == nil {
+			return Node{}, apperr.New(apperr.Invalid, "VALIDATION", "cross-scope move requires a parent")
+		}
+		if _, err := s.authorize(ctx, scopeID, "scope", authz.ScopeTrash); err != nil {
+			return Node{}, err
+		}
+		if _, err := s.authorize(ctx, destinationID, "scope", authz.ScopeWrite); err != nil {
+			return Node{}, err
+		}
+	}
 	session, err := s.openSession(ctx, scopeID, true)
 	if err != nil {
 		return Node{}, err
 	}
 	defer session.tx.Rollback(ctx)
+	destinationSession, err := session.inScope(ctx, destinationID)
+	if err != nil {
+		return Node{}, err
+	}
 	node, err := session.resolveOne(ctx, input.Locator)
 	if err != nil {
 		return Node{}, err
@@ -302,7 +322,7 @@ func (s *Store) UpdateNode(ctx context.Context, scopeID uuid.UUID, input UpdateN
 	}
 	parent := *node.ParentID
 	if input.Parent != nil {
-		destination, err := session.resolveOne(ctx, *input.Parent)
+		destination, err := destinationSession.resolveOne(ctx, *input.Parent)
 		if err != nil {
 			return Node{}, err
 		}
@@ -317,23 +337,36 @@ func (s *Store) UpdateNode(ctx context.Context, scopeID uuid.UUID, input UpdateN
 		}
 		parent = destination.ID
 	}
-	if err = session.name(parent, name); err != nil {
+	if err = destinationSession.name(parent, name); err != nil {
 		return Node{}, err
 	}
-	if err = session.validateMove(ctx, node.ID, parent); err != nil {
-		return Node{}, err
+	if destinationID == scopeID {
+		if parent != *node.ParentID {
+			if err = session.validateMove(ctx, node.ID, parent); err != nil {
+				return Node{}, err
+			}
+		}
+		_, err = session.tx.Exec(ctx, `UPDATE nodes SET name=$2,parent_id=$3 WHERE id=$1`, node.ID, name, parent)
+	} else {
+		parentNode, e := destinationSession.fetch(ctx, parent)
+		if e != nil {
+			return Node{}, e
+		}
+		err = session.transferTree(ctx, node, destinationSession, parentNode, name)
 	}
-	_, err = session.tx.Exec(ctx, `UPDATE nodes SET name=$2,parent_id=$3 WHERE id=$1`, node.ID, name, parent)
 	if err != nil {
 		return Node{}, databaseError(err)
 	}
 	if err = session.bump(ctx, parent, *node.ParentID); err != nil {
 		return Node{}, err
 	}
-	if err = session.bump(ctx, node.ID); err != nil {
+	if destinationID == scopeID {
+		err = session.bump(ctx, node.ID)
+	}
+	if err != nil {
 		return Node{}, err
 	}
-	out, err := session.fetch(ctx, node.ID)
+	out, err := destinationSession.fetch(ctx, node.ID)
 	if err != nil {
 		return Node{}, err
 	}

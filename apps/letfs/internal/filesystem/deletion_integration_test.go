@@ -52,7 +52,7 @@ func TestIntegrationDeletionBatchesRetainEvidenceAndDebitOnce(t *testing.T) {
 	admitted, err := s.PrepareTrashPurge(ctx, fs, entry.ID)
 	require.NoError(t, err)
 	require.Equal(t, "purging", admitted.Status)
-	_, err = s.RestoreTrash(ctx, fs, entry.ID)
+	_, err = s.RestoreTrash(ctx, fs, entry.ID, RestoreTrash{})
 	require.Equal(t, "TRASH_PURGING", reason(err))
 	done, err := s.DeletionBatch(ctx, fs, &entry.ID)
 	require.NoError(t, err)

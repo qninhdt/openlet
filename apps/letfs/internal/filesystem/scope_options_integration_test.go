@@ -53,12 +53,12 @@ func TestIntegrationScopeBlobRestrictions(t *testing.T) {
 	testfixture.Grant(t, graph, "scope", unrestricted.ID, actor, authz.ScopeWrite)
 	binary, err := s.CreateNode(ctx, unrestricted.ID, uuid.New(), CreateNode{Parent: Locator{NodeID: unrestricted.RootID}, Name: "bytes.bin", File: &InlineFile{Content: []byte{0, 255}, MediaType: "application/octet-stream"}})
 	require.NoError(t, err)
-	copyInput, err := s.AdmitCopy(ctx, unrestricted.ID, uuid.New(), CreateCopy{DestinationScopeID: fs, SourceID: binary.ID, ParentID: *created.RootID, Name: "binary-copy-checked", Revision: &binary.Revision})
+	copyInput, err := s.prepareCopy(ctx, unrestricted.ID, uuid.New(), CreateCopy{DestinationScopeID: fs, SourceID: binary.ID, ParentID: *created.RootID, Name: "binary-copy-checked", Revision: &binary.Revision})
 	require.NoError(t, err)
-	require.Equal(t, "BLOB_FILES_DISABLED", reason(s.CopyTreeData(ctx, copyInput)))
+	require.Equal(t, "BLOB_FILES_DISABLED", reason(s.copyTreeData(ctx, copyInput)))
 	_, err = db.Exec(ctx, `UPDATE files SET storage_kind='object',inline_bytes=NULL,object_key='objects/source' WHERE node_id=$1`, binary.ID)
 	require.NoError(t, err)
-	_, err = s.AdmitCopy(ctx, unrestricted.ID, uuid.New(), CreateCopy{DestinationScopeID: fs, SourceID: binary.ID, ParentID: *created.RootID, Name: "blob-copy", Revision: &binary.Revision})
+	_, err = s.prepareCopy(ctx, unrestricted.ID, uuid.New(), CreateCopy{DestinationScopeID: fs, SourceID: binary.ID, ParentID: *created.RootID, Name: "blob-copy", Revision: &binary.Revision})
 	require.Equal(t, "BLOB_FILES_DISABLED", reason(err), "reject before touching object storage")
 	root := Locator{NodeID: created.RootID}
 	create := func(name string, content []byte) (Node, error) {
@@ -112,9 +112,9 @@ func TestIntegrationScopeBlobRestrictions(t *testing.T) {
 	}
 	file, err = s.ReplaceContent(ctx, fs, Locator{NodeID: &file.ID}, &file.Revision, []byte("updated\n"), "text/plain")
 	require.NoError(t, err)
-	admission, err := s.AdmitCopy(ctx, fs, uuid.New(), CreateCopy{DestinationScopeID: fs, SourceID: file.ID, ParentID: *created.RootID, Name: "copy", Revision: &file.Revision})
+	admission, err := s.prepareCopy(ctx, fs, uuid.New(), CreateCopy{DestinationScopeID: fs, SourceID: file.ID, ParentID: *created.RootID, Name: "copy", Revision: &file.Revision})
 	require.NoError(t, err)
-	require.NoError(t, s.CopyTreeData(ctx, admission))
+	require.NoError(t, s.copyTreeData(ctx, admission))
 	require.NoError(t, db.QueryRow(ctx, `SELECT inline_bytes,storage_kind FROM files WHERE node_id=$1`, admission.Root.Destination).Scan(&saved, &kind))
 	require.Equal(t, []byte("updated\n"), saved)
 	require.Equal(t, "inline", kind)
@@ -197,7 +197,7 @@ func TestIntegrationScopeIndexingDisabledPreservesEnrichment(t *testing.T) {
 			var completed bool
 			require.NoError(t, db.QueryRow(ctx, `SELECT expires_at IS NOT NULL FROM idempotency_keys WHERE operation='process-file' AND result->>'file_id'=$1`, file.ID.String()).Scan(&completed))
 			require.True(t, completed)
-			page, err := s.SemanticSearch(ctx, scope.ID, SearchInput{Query: "notes"})
+			page, err := s.SemanticSearch(ctx, scope.ID, SemanticSearchInput{Query: "notes"})
 			require.NoError(t, err, "disabled indexing requires no search or embedding provider")
 			require.Empty(t, page.Items)
 		}

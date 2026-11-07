@@ -66,15 +66,6 @@ func nodeResponseFrom(value filesystem.Node) nodeResponse {
 	}
 }
 
-type copyResponse struct {
-	ID                string `json:"id"`
-	DestinationRootID string `json:"destination_root_id"`
-}
-
-func copyResponseFrom(value filesystem.CopyResult) copyResponse {
-	return copyResponse{value.ID.String(), value.DestinationRootID.String()}
-}
-
 type trashResponse struct {
 	ID        string    `json:"id"`
 	NodeID    string    `json:"node_id"`

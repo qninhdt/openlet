@@ -29,13 +29,13 @@ One workspace has one filesystem, one shared scope and one personal scope per me
 
 ## Storage and execution
 
-Every node request names filesystem and scope. `/` means that scope's root; IDs, relative paths, cwd and aliases must reach its live root. Move stays in scope; copy may cross scopes in one filesystem with source content-read and destination write. No virtual root or path adapter is needed.
+Every node request names filesystem and scope. `/` means that scope's root; IDs, relative paths, cwd and aliases must reach its live root. Copy/move/restore may cross scopes in one filesystem with separate source/destination actions. File operations run directly in requests; processing remains an independent pipeline. No virtual root or path adapter is needed.
 
 Files hold bounded inline bytes or an independent immutable object. Direct signed transfers avoid proxying object bodies. Generated children below a source file remain read-only; source generation and lifecycle fence late publication. Scope-owned `allow_blob_files` and `allow_indexing` options independently control object-backed files and search indexing; both default true. See [data invariants](data-model.md).
 
 Short filesystem-row locks serialize accounting and lifecycle. Publication updates bytes/node count atomically with actual rows. Trash stays charged; actual deletion debits once. Network calls occur outside SQL transactions. Remaining rows and durable cleanup facts support repeat-safe deletion. Physical cleanup may follow logical completion.
 
-Input/permission admission runs before starting workflows. Activities enforce transactional integrity and admitted-command identity. SQL followed by graph failure cannot report success; retries reconcile committed writes using existing receipts. Scope grants stay in SpiceDB. Copy uses one activity with no automatic retry; partial committed output remains visible on failure.
+Input/permission admission runs before starting workflows. Activities enforce transactional integrity and admitted-command identity. SQL followed by graph failure cannot report success; retries reconcile committed writes using existing receipts. Scope grants stay in SpiceDB. Copy runs synchronously with no automatic retry; partial committed output remains visible on failure.
 
 The [workflow catalogue](workflows.md) specifies owner queues, child workflows and retry behavior. Shared `packages/go/temporal` contains cross-service names/DTOs and transport helpers, with no domain implementation. Workspace calls Account gRPC for bounded summaries/verified email. Account starts a Workspace child; Workspace schedules LetFS activities and deletion children directly. Workspace has no gRPC server.
 

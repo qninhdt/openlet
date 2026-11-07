@@ -3,6 +3,8 @@ package httpapi
 import (
 	"net/http"
 	"strings"
+
+	"github.com/qninhdt/openlet/apps/letfs/internal/filesystem"
 )
 
 func (s *Server) trashNode(w http.ResponseWriter, r *http.Request) error {
@@ -80,7 +82,29 @@ func (s *Server) restoreTrash(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	node, err := s.Service.RestoreTrash(r.Context(), fs, id)
+	var input struct {
+		DestinationScopeID *string `json:"destination_scope_id,omitempty"`
+		ParentID           *string `json:"parent_id,omitempty"`
+		Name               *string `json:"name,omitempty"`
+	}
+	if r.ContentLength != 0 {
+		if err = decodeJSON(w, r, &input); err != nil {
+			return err
+		}
+	}
+	destination, err := optionalUUID(input.DestinationScopeID)
+	if err != nil {
+		return err
+	}
+	restore := filesystem.RestoreTrash{DestinationScopeID: destination, Name: input.Name}
+	if input.ParentID != nil {
+		parent, err := nodeLocator(*input.ParentID)
+		if err != nil {
+			return err
+		}
+		restore.Parent = &parent
+	}
+	node, err := s.Service.RestoreTrash(r.Context(), fs, id, restore)
 	if err != nil {
 		return err
 	}
@@ -97,15 +121,10 @@ func (s *Server) purgeTrash(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	entry, err := s.Service.PurgeTrash(r.Context(), fs, id)
-	if err != nil {
+	if err = s.Service.PurgeTrash(r.Context(), fs, id); err != nil {
 		return err
 	}
-	if entry == nil {
-		w.Header().Set("Cache-Control", "no-store")
-		w.WriteHeader(http.StatusNoContent)
-		return nil
-	}
-	respond(w, r, http.StatusAccepted, trashResponseFrom(*entry))
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNoContent)
 	return nil
 }

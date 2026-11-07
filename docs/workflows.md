@@ -37,12 +37,6 @@ W DeleteFilesystem [letfs]
 W DeleteScope [letfs]
 └── A DeleteScopeData [letfs]
 
-W PurgeTrash [letfs]
-└── A PurgeTrashData [letfs]
-
-W CopyTree [letfs]
-└── A CopyTreeData [letfs]
-
 W ProcessFile [letfs]
 ├── A process_file [letfs-ingest / CPU]  (if required)
 ├── A enrich_file [letfs-ingest / IO]    (if required)
@@ -71,15 +65,19 @@ WorkspaceChanges serializes commands per workspace with a native workflow mutex 
 
 DeleteWorkspace marks deleting, waits for its one DeleteFilesystem child, then removes Workspace relationships and records deletion. Accepted deletion survives caller disconnect; ABANDON children continue when a parent closes. A terminated parent can be explicitly retried without assuming its child stopped.
 
-DeleteFilesystem fences writes and keyset-pages scopes. It starts at most four DeleteScope children concurrently, waits for them, then removes the filesystem. After 100 pages it continues with its cursor. DeleteScopeData and PurgeTrashData loop bounded SQL batches internally. Each batch records cleanup, removes actual rows and debits only those rows atomically. Duplicate requests use independent generated child IDs and natural idempotence. Missing/deleted resources are successful cleanup retries. No per-node activities exist.
+DeleteFilesystem fences writes and keyset-pages scopes. It starts at most four DeleteScope children concurrently, waits for them, then removes the filesystem. After 100 pages it continues with its cursor. DeleteScopeData loops bounded SQL batches internally. Request-owned trash purge uses the same local batch deletion logic. Each batch records cleanup, removes actual rows and debits only those rows atomically. Duplicate requests use independent generated child IDs and natural idempotence. Missing/deleted resources are successful cleanup retries. No per-node activities exist.
 
 Deletion blocks uploads/copy/processing publication. Logical completion can precede S3 cleanup. Deleted identity remains only while transfers or cleanup need attribution. Graph removal errors remain retryable. Ambiguous/open-write evidence is retained for late writes, including after NotFound.
 
-StorageMaintenance runs every five minutes with overlap SKIP. Its three activities expire uploads, reconcile durable intents and delete objects; later phases still run if an earlier one fails, and errors are returned together. Reconciliation handles lost purge/deletion/processing dispatch and a copy admission that never started. It never restarts a started or terminal failed copy. Unknown Temporal status is not proof of abandonment. WorkspaceMaintenance prunes existing receipts only.
+StorageMaintenance runs every five minutes with overlap SKIP. Its three activities expire uploads, reconcile durable intents and delete objects; later phases still run if an earlier one fails, and errors are returned together. Reconciliation handles filesystem/scope deletion and processing dispatch. It does not start or resume request-owned copy/purge operations. Unknown Temporal status is not proof of abandonment. WorkspaceMaintenance prunes existing receipts only.
 
-## Copy
+## Direct file operations
 
-CopyTree runs one CopyTreeData activity with `MaximumAttempts: 1`. Traversal is local and bounded by captured node/byte/depth/runtime limits. Each ordinary node is visible and charged on commit. Source/destination identity, revisions, lifecycle and cleanup evidence are revalidated around S3 I/O. Failure keeps committed output and returns an error; there is no automatic rollback or resume guarantee. Admission returns stable copy/destination identities, with no monitor or progress surface. Test harness history export is solely verification tooling.
+Copy and trash purge run synchronously in the API request, without Temporal activities, child workflows or replacement background tasks. Copy traverses locally within existing node/byte/depth limits, commits individual nodes and charges quota on each commit. Inline bytes copy in PostgreSQL; blobs use S3 CopyObject with cleanup evidence recorded before external writes. Source/destination identities, revisions, scope options and lifecycle are revalidated around I/O. Failure returns through the request and retains committed output. Only a completed copy saves a 24-hour receipt containing its resulting Node. No progress, resume or automatic redispatch exists.
+
+Purge marks its existing trash entry purging, then removes bounded SQL batches in the request. A failed/interrupted purge retains its state and remaining nodes; retrying DELETE finishes it naturally. S3/index garbage collection remains separate from logical deletion.
+
+Cross-scope move/restore keep IDs, payloads and filesystem accounting. The filesystem lock and one transaction cover whole-tree policy validation, scope/parent changes, revisions, old-generation/index cleanup and new processing intent. Processing continues independently through the existing pipeline.
 
 ## Processing
 

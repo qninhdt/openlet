@@ -6,7 +6,9 @@ import pytest
 from openlet.clients.letfs import (
     ArchiveFrame,
     FilesystemClient,
+    Locator,
     ProcessingClient,
+    ScopedLocator,
     StorageAdministrationClient,
 )
 from openlet.errors import AppError
@@ -18,6 +20,42 @@ TOKEN = "isolated-filesystem-service-credential-123"
 
 
 class Filesystem(letfs_rpc.FilesystemServiceServicer):
+    async def CreateCopy(self, request, context):
+        assert request.scope_id == "shared"
+        assert request.destination_scope_id == (
+            "shared" if request.idempotency_key == "same-scope" else "personal"
+        )
+        return pb.CreateCopyResponse(
+            node=pb.Node(id="copy", scope_id=request.destination_scope_id)
+        )
+
+    async def UpdateNode(self, request, context):
+        assert request.scope_id == "shared"
+        assert request.destination_scope_id == "personal"
+        assert request.parent.node_id == "root-personal"
+        return pb.UpdateNodeResponse(
+            node=pb.Node(id=request.locator.node_id, scope_id="personal")
+        )
+
+    async def RestoreTrash(self, request, context):
+        assert request.scope_id == "shared"
+        assert request.destination_scope_id == "personal"
+        assert request.parent.node_id == "root-personal"
+        assert request.name == "restored"
+        return pb.RestoreTrashResponse(node=pb.Node(id="restored", scope_id="personal"))
+
+    async def BatchStat(self, request, context):
+        assert [item.scope_id for item in request.locators] == ["shared", "personal"]
+        return pb.BatchStatResponse(
+            items=[
+                pb.Node(id=item.locator.node_id, scope_id=item.scope_id)
+                for item in request.locators
+            ]
+        )
+
+    async def PurgeTrash(self, request, context):
+        return pb.PurgeTrashResponse()
+
     async def GetFilesystem(self, request, context):
         return pb.GetFilesystemResponse(
             filesystem=pb.Filesystem(
@@ -42,6 +80,35 @@ class Filesystem(letfs_rpc.FilesystemServiceServicer):
                 size_bytes=42,
                 media_type="application/pdf",
             )
+        )
+
+    async def SearchFiles(self, request, context):
+        assert request.scope_id == "shared"
+        assert request.query == "report"
+        assert request.cursor == "next"
+        return pb.SearchFilesResponse(
+            items=[
+                pb.SearchResult(
+                    node=pb.Node(id="file", scope_id="shared"), path="/report.txt"
+                )
+            ],
+            next_cursor="later",
+        )
+
+    async def SemanticSearch(self, request, context):
+        assert request.filesystem_id == "filesystem"
+        assert request.scope_id == "shared"
+        assert request.query == "report"
+        assert request.limit == 1
+        assert "cursor" not in request.DESCRIPTOR.fields_by_name
+        return pb.SemanticSearchResponse(
+            items=[
+                pb.SearchResult(
+                    node=pb.Node(id="file", scope_id="shared"), path="/report.txt"
+                )
+            ],
+            degraded=True,
+            degraded_reason="RERANK_UNAVAILABLE",
         )
 
     async def StreamArchive(self, request, context):
@@ -164,6 +231,58 @@ async def test_filesystem_client_reads_metadata(letfs_server):
         assert (await FilesystemClient(rpc).get_filesystem("notes")).limit_bytes == 1024
 
 
+async def test_direct_operations_and_scoped_batch_use_destination_identity(
+    letfs_server,
+):
+    async with RpcClient(letfs_server, TOKEN, allow_plaintext=True) as rpc:
+        client = FilesystemClient(rpc)
+        copied = await client.create_copy(
+            "drive",
+            "shared",
+            "source",
+            "root-personal",
+            "key",
+            destination_scope_id="personal",
+            name="copied",
+            revision=1,
+        )
+        assert (copied.id, copied.scope_id) == ("copy", "personal")
+        same_scope = await client.create_copy(
+            "drive", "shared", "source", "root-shared", "same-scope"
+        )
+        assert same_scope.scope_id == "shared"
+        moved = await client.update_node(
+            "drive",
+            "shared",
+            Locator(node_id="source"),
+            destination_scope_id="personal",
+            parent=Locator(node_id="root-personal"),
+            revision=1,
+        )
+        assert (moved.id, moved.scope_id) == ("source", "personal")
+        restored = await client.restore_trash(
+            "drive",
+            "shared",
+            "entry",
+            destination_scope_id="personal",
+            parent=Locator(node_id="root-personal"),
+            name="restored",
+        )
+        assert restored.scope_id == "personal"
+        nodes = await client.batch_stat(
+            "drive",
+            [
+                ScopedLocator("shared", Locator(node_id="a")),
+                ScopedLocator("personal", Locator(node_id="b")),
+            ],
+        )
+        assert [(node.id, node.scope_id) for node in nodes] == [
+            ("a", "shared"),
+            ("b", "personal"),
+        ]
+        assert await client.purge_trash("drive", "personal", "entry") is None
+
+
 async def test_closing_archive_cancels_rpc_before_channel_closes():
     stopped = asyncio.Event()
 
@@ -266,3 +385,21 @@ async def test_scope_creation_rejects_malformed_response(letfs_server, filesyste
             await StorageAdministrationClient(rpc).create_scopes(
                 filesystem, ["a", "b"], "key"
             )
+
+
+@pytest.mark.asyncio
+async def test_search_clients_preserve_scope_and_distinct_contracts(letfs_server):
+    async with RpcClient(letfs_server, TOKEN, allow_plaintext=True) as rpc:
+        client = FilesystemClient(rpc)
+        results = await client.semantic_search(
+            "filesystem", "shared", "report", limit=1
+        )
+        assert results.items[0].node.scope_id == "shared"
+        assert results.items[0].path == "/report.txt"
+        assert results.degraded_reason == "RERANK_UNAVAILABLE"
+        assert not hasattr(results, "next_cursor")
+        page = await client.search_files(
+            "filesystem", "shared", "report", cursor="next"
+        )
+        assert page.items[0].node.scope_id == "shared"
+        assert page.next_cursor == "later"

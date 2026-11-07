@@ -10,6 +10,8 @@ CREATE TABLE public.idempotency_keys (
     PRIMARY KEY (scope,operation,request_key)
 );
 CREATE INDEX letfs_receipt_expiry ON public.idempotency_keys(expires_at) WHERE expires_at IS NOT NULL;
+CREATE INDEX processing_receipts ON public.idempotency_keys((result->>'file_id'),(result->>'generation')) WHERE operation='process-file' AND expires_at IS NULL;
+CREATE INDEX upload_receipts ON public.idempotency_keys((result->>'id')) WHERE operation='create-upload' AND expires_at IS NULL;
 
 CREATE TABLE public.files (
     node_id uuid NOT NULL,
@@ -165,22 +167,28 @@ ALTER TABLE ONLY public.uploads
     ADD CONSTRAINT uploads_pkey PRIMARY KEY (id);
 
 CREATE INDEX nodes_detached_roots ON public.nodes USING btree (scope_id, id) WHERE parent_id IS NULL;
+CREATE INDEX nodes_children_page ON public.nodes(scope_id,parent_id,id);
 
 
 
 CREATE INDEX object_deletions_backlog ON public.object_deletions USING btree (filesystem_id, eligible_at) WHERE (state <> 'deleted'::text OR ambiguous_write OR open_writes>0);
 
 CREATE INDEX object_deletions_due ON public.object_deletions USING btree (eligible_at, object_key);
+CREATE INDEX object_deletions_by_filesystem ON public.object_deletions(filesystem_id);
 
 
 CREATE INDEX processing_dispatch ON public.files (processing_updated_at,node_id) WHERE publication_status IN ('pending','parsed','enriched');
 
 
 CREATE INDEX trash_page ON public.trash_entries USING btree (scope_id, id);
+CREATE INDEX trash_original_parent ON public.trash_entries(scope_id,original_parent_id) WHERE original_parent_id IS NOT NULL;
 
 CREATE INDEX uploads_multipart_cleanup ON public.uploads USING btree (updated_at, id) WHERE ((state = ANY (ARRAY['aborted'::text])) AND (multipart_id IS NOT NULL));
 
 CREATE INDEX uploads_outstanding ON public.uploads USING btree (scope_id, state, expires_at) WHERE (state = ANY (ARRAY['open'::text, 'completing'::text]));
+CREATE INDEX uploads_processing ON public.uploads(processing_file_id,processing_generation) WHERE processing_file_id IS NOT NULL;
+CREATE INDEX uploads_by_scope ON public.uploads(scope_id);
+CREATE INDEX uploads_user_outstanding ON public.uploads(scope_id) WHERE processing_file_id IS NULL AND state IN ('open','completing');
 
 
 ALTER TABLE ONLY public.files

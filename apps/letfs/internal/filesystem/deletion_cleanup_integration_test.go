@@ -69,3 +69,39 @@ func TestIntegrationDeletionRetriesGraphAndPrunesOnlyUnreferencedStorage(t *test
 	require.NoError(t, s.DeleteScopeData(ctx, fs, scope))
 	require.NoError(t, s.RemoveFilesystem(ctx, fs))
 }
+
+func TestIntegrationScopeDeletionCompletesOnlyAbortedUploadReceipts(t *testing.T) {
+	db := testfixture.Postgres(t, "../../migrations/0001_initial.sql")
+	s := Store{DB: db, MaxNodes: 100}
+	ctx := identity.WithPrincipal(t.Context(), identity.Principal{Service: "resource-owner"})
+	fs := uuid.Must(uuid.NewV7())
+	_, err := s.CreateFilesystem(ctx, uuid.New(), CreateFilesystem{ID: fs, LimitBytes: 1000})
+	require.NoError(t, err)
+	scopes, err := s.CreateScopes(ctx, uuid.New(), fs, []uuid.UUID{uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())}, true, true)
+	require.NoError(t, err)
+	tests := []struct {
+		name, state, operation string
+		scope                  uuid.UUID
+		wantExpired            bool
+	}{
+		{"open", "open", "create-upload", scopes[0].ID, true},
+		{"aborted", "aborted", "create-upload", scopes[0].ID, true},
+		{"finalized", "finalized", "create-upload", scopes[0].ID, false},
+		{"foreign", "aborted", "create-upload", scopes[1].ID, false},
+		{"other-operation", "aborted", "process-file", scopes[0].ID, false},
+	}
+	for _, test := range tests {
+		id := uuid.New()
+		_, err = db.Exec(ctx, `INSERT INTO uploads(id,scope_id,actor_id,input,transport,expected_size,state,result) VALUES($1,$2,$3,'{}','inline',0,$4,'{}')`, id, test.scope, uuid.New(), test.state)
+		require.NoError(t, err)
+		_, err = db.Exec(ctx, `INSERT INTO idempotency_keys(scope,operation,request_key,request_hash,result) VALUES('test',$1,$2,'hash',jsonb_build_object('id',$3::text))`, test.operation, test.name, id.String())
+		require.NoError(t, err)
+	}
+	require.NoError(t, s.fenceScopeDeletion(ctx, scopes[0].ID))
+	for _, test := range tests {
+		var expired bool
+		require.NoError(t, db.QueryRow(ctx, `SELECT expires_at IS NOT NULL FROM idempotency_keys WHERE scope='test' AND request_key=$1`, test.name).Scan(&expired))
+		require.Equal(t, test.wantExpired, expired, test.name)
+	}
+	require.NoError(t, s.fenceScopeDeletion(ctx, scopes[0].ID), "repeat deletion remains a no-op")
+}

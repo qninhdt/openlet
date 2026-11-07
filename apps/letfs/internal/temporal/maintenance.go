@@ -2,7 +2,6 @@ package temporal
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"time"
@@ -66,26 +65,7 @@ func (a *Activities) reconcileResources(ctx context.Context) (int, error) {
 	if err != nil {
 		return count, err
 	}
-	rows, err := a.Store.DB.Query(ctx, `SELECT scope_id,id FROM trash_entries WHERE state='purging' ORDER BY created_at,id LIMIT 64`)
-	if err != nil {
-		return count, err
-	}
-	purges, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (filesystem.DeletionInput, error) {
-		var input filesystem.DeletionInput
-		var id uuid.UUID
-		err := row.Scan(&input.ScopeID, &id)
-		input.EntryID = &id
-		return input, err
-	})
-	if err != nil {
-		return count, err
-	}
-	for _, purge := range purges {
-		if err = a.Jobs.StartDeletion(ctx, purge); err != nil {
-			return count, err
-		}
-	}
-	rows, err = a.Store.DB.Query(ctx, `SELECT id FROM filesystems WHERE state='deleting' ORDER BY id LIMIT 64`)
+	rows, err := a.Store.DB.Query(ctx, `SELECT id FROM filesystems WHERE state='deleting' ORDER BY id LIMIT 64`)
 	if err != nil {
 		return count, err
 	}
@@ -142,39 +122,6 @@ func (a *Activities) reconcileResources(ctx context.Context) (int, error) {
 		slog.WarnContext(ctx, "search index cleanup deferred")
 	} else {
 		count += cleaned
-	}
-	rows, err = a.Store.DB.Query(ctx, `SELECT result FROM idempotency_keys WHERE operation='copy-node' AND expires_at IS NULL ORDER BY result->>'id' LIMIT 64`)
-	if err != nil {
-		return count, err
-	}
-	admissions, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (filesystem.CopyAdmission, error) {
-		var admission filesystem.CopyAdmission
-		var data []byte
-		if err := row.Scan(&data); err != nil {
-			return admission, err
-		}
-		err := json.Unmarshal(data, &admission)
-		return admission, err
-	})
-	if err != nil {
-		return count, err
-	}
-	for _, admission := range admissions {
-		running, err := a.Jobs.WorkflowStatus(ctx, copyWorkflowID(admission.FilesystemID, admission.ID), nil)
-		if err != nil {
-			return count, err
-		}
-		if running == nil {
-			err = a.Jobs.StartCopy(ctx, admission)
-		} else if !*running {
-			err = a.Store.CloseCopyAdmission(ctx, admission)
-		}
-		if err != nil {
-			return count, err
-		}
-		if running == nil || !*running {
-			count++
-		}
 	}
 	return count, nil
 }

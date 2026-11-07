@@ -17,7 +17,7 @@ type DeletionInput struct {
 	EntryID      *uuid.UUID `json:"entry_id"`
 }
 
-// PrepareTrashPurge persists admission; the workflow dispatcher owns scheduling.
+// PrepareTrashPurge fences restore before request-owned batched removal.
 func (s *Store) PrepareTrashPurge(ctx context.Context, scopeID, id uuid.UUID) (*TrashEntry, error) {
 	if _, err := s.authorize(ctx, scopeID, "scope", authz.ScopePurge); err != nil {
 		return nil, err
@@ -76,10 +76,6 @@ func (s *Store) fenceScopeDeletion(ctx context.Context, scopeID uuid.UUID) error
  SELECT f.node_id,f.desired_generation FROM files f JOIN nodes n ON n.id=f.node_id WHERE n.scope_id=$1 AND f.desired_generation>0 ON CONFLICT DO NOTHING`, scopeID); err != nil {
 		return databaseError(err)
 	}
-	if _, err = session.tx.Exec(ctx, `UPDATE idempotency_keys SET expires_at=now()+interval '24 hours'
- WHERE operation='copy-node' AND result->>'scope_id'=$1 AND expires_at IS NULL`, scopeID.String()); err != nil {
-		return databaseError(err)
-	}
 	if _, err = session.tx.Exec(ctx, `INSERT INTO object_deletions(object_key,filesystem_id,ambiguous_write,eligible_at)
  SELECT candidate_key,$2,true,greatest(now()+interval '15 minutes',transfer_deadline) FROM uploads
  WHERE scope_id=$1 AND result_node_id IS NULL AND candidate_key IS NOT NULL ON CONFLICT(object_key) DO UPDATE
@@ -90,8 +86,9 @@ func (s *Store) fenceScopeDeletion(ctx context.Context, scopeID uuid.UUID) error
  inline_bytes=NULL,updated_at=now() WHERE scope_id=$1 AND result_node_id IS NULL`, scopeID); err != nil {
 		return databaseError(err)
 	}
-	if _, err = session.tx.Exec(ctx, `UPDATE idempotency_keys r SET expires_at=now()+interval '24 hours' FROM uploads u
- WHERE u.scope_id=$1 AND u.state='aborted' AND r.operation='create-upload' AND r.result->>'id'=u.id::text AND r.expires_at IS NULL`, scopeID); err != nil {
+	if _, err = session.tx.Exec(ctx, `UPDATE idempotency_keys r SET expires_at=now()+interval '24 hours'
+ WHERE r.operation='create-upload' AND r.expires_at IS NULL
+ AND r.result->>'id'=ANY(ARRAY(SELECT id::text FROM uploads WHERE scope_id=$1 AND state='aborted'))`, scopeID); err != nil {
 		return databaseError(err)
 	}
 	return databaseError(session.tx.Commit(ctx))

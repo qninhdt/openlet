@@ -238,13 +238,17 @@ message ResolveNodeResponse {
 // At most 100 locators; failure is atomic rather than returning foreign/missing metadata.
 message BatchStatRequest {
   string filesystem_id = 1;
-  repeated Locator locators = 2;
-  string scope_id = 3;
+  repeated ScopedLocator locators = 2;
+}
+message ScopedLocator {
+  string scope_id = 1;
+  Locator locator = 2;
 }
 message BatchStatResponse {
   repeated Node items = 1;
 }
 message UpdateNodeRequest {
+  optional string destination_scope_id = 8;
   string filesystem_id = 1;
   Locator locator = 2;
   optional int64 revision = 4;
@@ -266,12 +270,8 @@ message ReplaceContentRequest {
 message ReplaceContentResponse {
   Node node = 1;
 }
-message Copy {
-  string id = 1;
-  string destination_root_id = 2;
-}
 message CreateCopyRequest {
-  string destination_scope_id = 8;
+  optional string destination_scope_id = 8;
   string filesystem_id = 1;
   string source_id = 2;
   string parent_id = 3;
@@ -281,7 +281,7 @@ message CreateCopyRequest {
   string scope_id = 7;
 }
 message CreateCopyResponse {
-  Copy copy = 1;
+  Node node = 1;
 }
 message Processing {
   int64 desired_generation = 1;
@@ -350,6 +350,9 @@ message RestoreTrashRequest {
   string filesystem_id = 1;
   string entry_id = 2;
   string scope_id = 3;
+  optional string destination_scope_id = 4;
+  Locator parent = 5;
+  optional string name = 6;
 }
 message RestoreTrashResponse {
   Node node = 1;
@@ -359,10 +362,7 @@ message PurgeTrashRequest {
   string entry_id = 2;
   string scope_id = 3;
 }
-message PurgeTrashResponse {
-  // Absent after removal (HTTP 204); otherwise the durable purge admission (HTTP 202).
-  TrashEntry entry = 1;
-}
+message PurgeTrashResponse {}
 
 message UploadDestination {
   Locator parent = 1;
@@ -505,12 +505,10 @@ message SemanticSearchRequest {
   string query = 2;
   SearchFilters filters = 3;
   optional int32 limit = 4;
-  optional string cursor = 5;
   string scope_id = 6;
 }
 message SemanticSearchResponse {
   repeated SearchResult items = 1;
-  optional string next_cursor = 2;
   bool degraded = 3;
   optional string degraded_reason = 4;
 }

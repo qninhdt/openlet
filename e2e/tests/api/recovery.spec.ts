@@ -3,29 +3,31 @@ import { test, expect, directory, objectFile, inline } from '../../fixtures/api-
 import { lockFilesystemRoot } from '../../fixtures/filesystem-lock.ts';
 import { recoveryGuide } from '../../fixtures/documents.ts';
 import { restartService } from '../../fixtures/restart-service.ts';
-import { setTemporalRunning, temporalIsHealthy, triggerStorageMaintenance, recordCopyHistory, recordLifecycleHistories, recordWorkflowHistory, filesystemDeletionIsRunning, terminateWorkspaceDeletion } from '../../fixtures/temporal-control.ts';
+import { setTemporalRunning, temporalIsHealthy, triggerStorageMaintenance, recordLifecycleHistories, recordWorkflowHistory, filesystemDeletionIsRunning, terminateWorkspaceDeletion } from '../../fixtures/temporal-control.ts';
 
-test('copy admission survives a Temporal outage and maintenance starts the committed receipt', async ({ session }) => {
+test('copy and purge complete while Temporal is unavailable', async ({ session }) => {
   const base = `/v1/filesystems/${session.filesystemId}/scopes/${session.scopeId}`;
-  const source = await inline(session, 'deferred-source.bin', Buffer.from('copy'));
-  const options = { headers: { 'idempotency-key': randomUUID(), 'if-match': '"1"' }, data: { source_id: source.id, parent_id: session.rootId, name: 'deferred-copy.bin' } };
+  const source = await inline(session, 'source.bin', Buffer.from('copy'));
+  const options = { headers: { 'idempotency-key': randomUUID(), 'if-match': '"1"' }, data: { parent_id: session.rootId, name: 'copied.bin' } };
   await setTemporalRunning(false);
   try {
-    const admitted = await session.api.post(`${base}/nodes`, options);
-    expect(admitted.status()).toBe(503);
+    const response = await session.api.post(`${base}/nodes/${source.id}:copy`, options);
+    expect(response.status()).toBe(201);
+    const copied = await response.json();
+    expect(await (await session.api.get(`${base}/nodes/${copied.id}/content`)).body()).toEqual(Buffer.from('copy'));
+    const repeated = await session.api.post(`${base}/nodes/${source.id}:copy`, options);
+    expect(repeated.status()).toBe(201);
+    expect((await repeated.json()).id).toBe(copied.id);
+    const trashed = await session.api.delete(`${base}/nodes/${copied.id}`, { headers: { 'if-match': response.headers().etag } });
+    expect(trashed.status()).toBe(201);
+    const entry = await trashed.json();
+    expect((await session.api.delete(`${base}/trash-entries/${entry.id}`)).status()).toBe(204);
+    expect((await (await session.api.get(`/v1/filesystems/${session.filesystemId}`)).json()).used_bytes).toBe('4');
   } finally { await setTemporalRunning(true); }
   await expect.poll(temporalIsHealthy).toBe(true);
-  await triggerStorageMaintenance();
-  await expect.poll(async () => (await session.api.get(`${base}/nodes:resolve`, { params: { path: '/deferred-copy.bin' } })).status()).toBe(200);
-  const repeated = await session.api.post(`${base}/nodes`, options);
-  expect(repeated.status()).toBe(202);
-  const copy = await repeated.json();
-  await recordCopyHistory('CopyTreeDeferred', session.filesystemId, copy.id);
-  expect(await (await session.api.get(`${base}/nodes/${copy.destination_root_id}/content`)).body()).toEqual(Buffer.from('copy'));
-  expect((await (await session.api.get(`/v1/filesystems/${session.filesystemId}`)).json()).used_bytes).toBe('8');
 });
 
-test('source changes and a real worker restart leave committed partial copy visible', async ({ session, controls, playwright }) => {
+test('source changes during direct copy return an error and retain committed output', async ({ session, controls, playwright }) => {
   const base = `/v1/filesystems/${session.filesystemId}/scopes/${session.scopeId}`;
   const folder = await directory(session, 'changing-source');
   const storage = await playwright.request.newContext();
@@ -33,21 +35,21 @@ test('source changes and a real worker restart leave committed partial copy visi
     const file = await objectFile(session, storage, 'source.bin', Buffer.alloc(300_000, 0x72), folder.id);
     const selected = await session.api.get(`${base}/nodes/${folder.id}`);
     expect((await controls.put('/control/storage', { data: { method: 'PUT', contains: '/objects/', mode: 'pause' } })).status()).toBe(200);
-    const admitted = await session.api.post(`${base}/nodes`, { headers: { 'idempotency-key': randomUUID(), 'if-match': selected.headers().etag },
-      data: { source_id: folder.id, parent_id: session.rootId, name: 'partial-result' } });
-    expect(admitted.status()).toBe(202);
-    const copy = await admitted.json();
+    const pending = session.api.post(`${base}/nodes/${folder.id}:copy`, { headers: { 'idempotency-key': randomUUID(), 'if-match': selected.headers().etag },
+      data: { parent_id: session.rootId, name: 'partial-result' } });
     await expect.poll(async () => (await (await controls.get('/control/storage')).json()).hits).toBe(1);
-    const partial = await session.api.get(`${base}/nodes/${copy.destination_root_id}`);
+    const partial = await session.api.get(`${base}/nodes:resolve`, { params: { path: "/partial-result" } });
     expect(partial.status()).toBe(200);
-    expect((await partial.json()).name).toBe('partial-result');
+    const copied = await partial.json();
+    expect(copied.name).toBe('partial-result');
     const current = await session.api.get(`${base}/nodes/${file.node_id}`);
     expect((await session.api.put(`${base}/nodes/${file.node_id}/content`, { headers: { 'if-match': current.headers().etag, 'content-type': 'application/octet-stream' }, data: Buffer.from('changed') })).status()).toBe(200);
-    await restartService('letfs');
     await controls.delete('/control/storage');
-    await recordCopyHistory('CopyTreeRecovery', session.filesystemId, copy.id, true);
-    expect((await session.api.get(`${base}/nodes/${copy.destination_root_id}`)).status()).toBe(200);
-    expect((await (await session.api.get(`${base}/nodes`, { params: { parent_id: copy.destination_root_id } })).json()).items).toEqual([]);
+    const failed = await pending;
+    expect(failed.status()).toBe(409);
+    await triggerStorageMaintenance();
+    expect((await session.api.get(`${base}/nodes/${copied.id}`)).status()).toBe(200);
+    expect((await (await session.api.get(`${base}/nodes`, { params: { parent_id: copied.id } })).json()).items).toEqual([]);
     expect((await (await session.api.get(`/v1/filesystems/${session.filesystemId}`)).json()).used_bytes).toBe('7');
   } finally { await controls.delete('/control/storage'); await storage.dispose(); }
 });

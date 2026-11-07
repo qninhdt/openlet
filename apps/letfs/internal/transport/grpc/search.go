@@ -79,9 +79,9 @@ func (s *Filesystem) SemanticSearch(ctx context.Context, input *letfsv1.Semantic
 	if err != nil {
 		return nil, err
 	}
-	page, err := s.Store.SemanticSearch(ctx, fs, filesystem.SearchInput{Query: input.GetQuery(), Filters: filters, Limit: input.Limit, Cursor: input.Cursor})
+	page, err := s.Store.SemanticSearch(ctx, fs, filesystem.SemanticSearchInput{Query: input.GetQuery(), Filters: filters, Limit: input.Limit})
 	if err != nil {
 		return nil, err
 	}
-	return &letfsv1.SemanticSearchResponse{Items: searchResultMessages(page.Items), NextCursor: page.NextCursor, Degraded: page.Degraded, DegradedReason: page.DegradedReason}, nil
+	return &letfsv1.SemanticSearchResponse{Items: searchResultMessages(page.Items), Degraded: page.Degraded, DegradedReason: page.DegradedReason}, nil
 }

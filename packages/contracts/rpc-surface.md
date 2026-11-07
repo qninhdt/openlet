@@ -13,15 +13,16 @@ Workspace has no RPC server. Account starts a Workspace Temporal child. Workspac
 
 ## Filesystem operations
 
-Filesystem metadata uses filesystem identity/action. Every tree operation carries filesystem and scope. Both source and destination scopes of copy must belong to the same filesystem and pass their own actions. Locators support live ID/path/cwd/expected identity without virtual path descriptors.
+Filesystem metadata uses filesystem identity/action. Every tree operation carries filesystem and scope; BatchStat carries a scope on each locator. Both source and destination scopes of copy/move/restore must belong to the same filesystem and pass their own actions. Locators support live ID/path/cwd/expected identity without virtual path descriptors.
 
 | Operations | Contract |
 |---|---|
 | GetFilesystem | Filesystem metadata and accounting; independent of content rights |
 | CreateNode, ListNodes, GetNode, ResolveNode, BatchStat | Typed bytes/metadata, bounded pages, scoped cursors and live ancestry |
-| UpdateNode, ReplaceContent | Identity/revision, same-scope move, cycle/depth/artifact/quota guards |
+| UpdateNode, ReplaceContent | Identity/revision, cross-scope move, cycle/depth/artifact/quota guards |
 | GetDownload, StreamArchive | Content-read; inline or signed object descriptor; bounded ZIP stream invalidated by terminal error |
-| CreateCopy | Source content-read/destination write; stable copy/destination identity; no monitor or progress RPC |
+| CreateCopy | Source content-read/destination write; synchronous completed Node response; no job, monitor or progress RPC |
+| SearchFiles, SemanticSearch | Filename keyset pages; semantic top-K with no cursor, one retrieval and bounded reranking |
 | GetProcessing, ReprocessNode | Metadata status / write action; generation intent and request identity |
 | CreateUpload, GetUpload, AbortUpload | Write plus initiating actor/session authority; immutable completed result |
 | GetUploadParts, CompleteUpload | Bounded native parts, opaque ETags, verified size/checksum and saved publication preconditions |

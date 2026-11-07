@@ -59,11 +59,9 @@ type SearchPage struct {
 }
 
 type searchCursor struct {
-	Binding string      `json:"binding"`
-	Value   string      `json:"value"`
-	ID      *uuid.UUID  `json:"id"`
-	Offset  int         `json:"offset"`
-	Seen    []uuid.UUID `json:"seen"`
+	Binding string     `json:"binding"`
+	Value   string     `json:"value"`
+	ID      *uuid.UUID `json:"id"`
 }
 
 func (input SearchInput) validate(semantic bool) (int32, error) {
@@ -97,25 +95,13 @@ func (input SearchInput) validate(semantic bool) (int32, error) {
 	return limit, nil
 }
 
-func (s *Store) searchBinding(scopeID, actor uuid.UUID, input SearchInput, semantic bool) (string, error) {
+func (s *Store) searchBinding(scopeID, actor uuid.UUID, input SearchInput) (string, error) {
 	input.Cursor, input.Query = nil, strings.TrimSpace(input.Query)
-	var space *VectorSpace
-	reranker := ""
-	if semantic {
-		space = &s.IndexSpace
-		if s.AI != nil {
-			reranker = s.AI.RerankModel
-		}
-	}
 	return fingerprint(struct {
-		Filesystem uuid.UUID `json:"filesystem"`
-		Actor      uuid.UUID `json:"actor"`
-
-		Input    SearchInput  `json:"input"`
-		Semantic bool         `json:"semantic"`
-		Space    *VectorSpace `json:"vector_space"`
-		Reranker string       `json:"reranker"`
-	}{scopeID, actor, input, semantic, space, reranker})
+		Scope uuid.UUID   `json:"scope"`
+		Actor uuid.UUID   `json:"actor"`
+		Input SearchInput `json:"input"`
+	}{scopeID, actor, input})
 }
 
 func decodeSearchCursor(raw *string, binding string) (searchCursor, error) {
@@ -133,15 +119,8 @@ func decodeSearchCursor(raw *string, binding string) (searchCursor, error) {
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&result) != nil || decoder.Decode(new(any)) != io.EOF || result.Binding != binding || result.Offset < 0 || result.Offset > 10000 || len(result.Seen) > 256 || len(result.Value) > 300 {
+	if decoder.Decode(&result) != nil || decoder.Decode(new(any)) != io.EOF || result.Binding != binding || len(result.Value) > 300 {
 		return result, invalid
-	}
-	seen := make(map[uuid.UUID]bool, len(result.Seen))
-	for _, id := range result.Seen {
-		if seen[id] {
-			return result, invalid
-		}
-		seen[id] = true
 	}
 	return result, nil
 }
@@ -157,8 +136,8 @@ func encodeSearchCursor(value searchCursor) (*string, error) {
 
 // Stop traversal at original files so generated descendants cannot become search roots.
 const searchLive = `WITH RECURSIVE live AS (
- SELECT n.id,n.kind,$3::text COLLATE "C" AS path,0 AS depth FROM nodes n WHERE n.id=$2 AND n.scope_id=$1
- UNION ALL SELECT n.id,n.kind,rtrim(l.path,'/')||'/'||n.name,l.depth+1 FROM nodes n JOIN live l ON n.parent_id=l.id WHERE n.scope_id=$1 AND l.kind='directory' AND l.depth<128) `
+ SELECT n.*,$3::text COLLATE "C" AS path,0 AS depth FROM nodes n WHERE n.id=$2 AND n.scope_id=$1
+ UNION ALL SELECT n.*,rtrim(l.path,'/')||'/'||n.name,l.depth+1 FROM nodes n JOIN live l ON n.parent_id=l.id WHERE n.scope_id=$1 AND l.kind='directory' AND l.depth<128) `
 
 const searchFiltersSQL = ` AND ($4::text IS NULL OR f.semantic_type=$4) AND ($5::text IS NULL OR f.media_type=$5)
  AND ($6::timestamptz IS NULL OR n.created_at>=$6) AND ($7::timestamptz IS NULL OR n.created_at<=$7)
@@ -199,7 +178,7 @@ func (s *Store) SearchFiles(ctx context.Context, scopeID uuid.UUID, input Search
 	if err != nil {
 		return SearchPage{}, err
 	}
-	binding, err := s.searchBinding(scopeID, actor, input, false)
+	binding, err := s.searchBinding(scopeID, actor, input)
 	if err != nil {
 		return SearchPage{}, err
 	}
@@ -225,7 +204,7 @@ func (s *Store) SearchFiles(ctx context.Context, scopeID uuid.UUID, input Search
 		op, direction = "<", "DESC"
 	}
 	// Only validated fixed sort/direction choices enter SQL; all caller values remain parameters.
-	query := fmt.Sprintf(`%s SELECT %s,false,l.path,%s AS sort_value FROM live l JOIN nodes n ON n.id=l.id JOIN files f ON f.node_id=n.id
+	query := fmt.Sprintf(`%s SELECT %s,false,n.path,%s AS sort_value FROM live n JOIN files f ON f.node_id=n.id
  WHERE n.kind='file' %s AND (strpos(lower(n.name),lower($10))>0 OR strpos(lower(coalesce(f.title,'')),lower($10))>0)
  AND ($11::uuid IS NULL OR (%s,n.id)%s($12::text,$11::uuid)) ORDER BY %s %s,n.id %s LIMIT $13`,
 		searchLive, strings.Replace(nodeColumns, "f.context", "NULL::text", 1), value, searchFiltersSQL, value, op, value, direction, direction)

@@ -33,13 +33,13 @@ Account owns type/owner; profile management provides no resource inheritance. Cr
 
 GET `/filesystems/{filesystem}` requires `filesystem:read` and returns lifecycle and quota/counters. Scope creation returns its immutable blob/indexing options through private storage administration. Filesystem rights confer no scope content access.
 
-All suffixes below are under `/filesystems/{filesystem}/scopes/{scope}`. LetFS knows actor/resource/action only. Locators select ID or path/cwd within the selected live root. Move stays in scope; copy may select destination_scope_id in the same filesystem.
+All suffixes below are under `/filesystems/{filesystem}/scopes/{scope}`. LetFS knows actor/resource/action only. Locators select ID or path/cwd within the selected live root. Copy, move and restore accept an optional `destination_scope_id` in the same filesystem; otherwise they use the current scope. A cross-scope move/restore requires an explicit destination parent.
 
 | Suffix | Action / behavior |
 |---|---|
-| GET `/nodes`, `/nodes:resolve`, `/nodes/{node}`, POST `/files/batch-stat` | read_metadata; bounded live metadata/identity resolution |
+| GET `/nodes`, `/nodes:resolve`, `/nodes/{node}` | read_metadata; bounded live metadata/identity resolution |
 | POST `/nodes`, PATCH `/nodes/{node}`, PUT `/nodes/{node}/content` | write; ordinary create/edit/move with identity/revision guards |
-| POST `/nodes` with source_id | Source read_content + destination write, source If-Match; 202 `{id,destination_root_id}` without monitor Location |
+| POST `/nodes/{node}:copy` | Source read_content + destination write, source If-Match and Idempotency-Key; synchronous 201 Node with destination Location |
 | GET `/nodes/{node}/content`, `/nodes/{node}/archive` | read_content; exact bytes/direct signed GET or request-owned ZIP |
 | GET `/nodes/{node}/processing` | read_metadata; status only |
 | POST `/nodes/{node}/processing-runs` | write; ordinary reprocessing admission |
@@ -47,10 +47,12 @@ All suffixes below are under `/filesystems/{filesystem}/scopes/{scope}`. LetFS k
 | POST `/uploads`, GET/DELETE `/uploads/{upload}`, GET parts, PUT completion | write plus initiating actor/session constraints |
 | DELETE `/nodes/{node}` | trash; 201 detached trash entry |
 | GET `/trash-entries[/{entry}]` | read_metadata |
-| POST `/trash-entries/{entry}:restore` | restore; current entry identity |
-| DELETE `/trash-entries/{entry}` | purge; 202 while admitted, 204 missing |
+| POST `/trash-entries/{entry}:restore` | source restore; explicit destination requires write; optional destination_scope_id, parent_id and name; 200 Node |
+| DELETE `/trash-entries/{entry}` | purge; synchronous batched removal; 204 when complete or missing |
 
-Copy uses one activity with no automatic retry. Partial committed nodes remain readable and charged after failure. Same-key admission returns its stable identities; no progress endpoint or exact resume guarantee exists.
+Copy/purge use no workflow. Copy returns its completed Node; failure retains committed output and returns the request error. A completed same-key retry returns the saved Node without copying again; no job/progress response or automatic resume exists. `POST /nodes` only creates files/directories and rejects the old source_id copy shape. Move uses PATCH with optional destination_scope_id, parent_id and name; cross-scope move requires source write/trash and destination write, preserves all IDs/S3 keys and has no quota delta. Restore accepts an optional body with the same destination fields; an empty body restores the original location/name. Name collisions reject rather than overwrite.
+
+`POST /filesystems/{filesystem}/files/batch-stat` accepts 1–100 `locators`, each with `scope_id` and the ordinary node_id or path/cwd locator fields. It checks every scope, preserves input order/duplicates, and returns no partial metadata on failure. The former scope-level batch-stat route is removed.
 
 `allow_blob_files` and `allow_indexing` are immutable scope creation options, both defaulting true. Omitted gRPC creation options use those defaults; options apply to each scope in that creation batch. With `allow_blob_files=false`, a scope accepts UTF-8 inline text with tab/CR/LF, refuses object uploads and object-backed copies (including processor output), and routes restricted sources to text processing regardless of extension. Invalid restricted payloads return BLOB_FILES_DISABLED. `allow_indexing=false` preserves parsing/enrichment but skips embedding/index publication; completed files remain enriched, semantic search returns no results, and filename search remains available. Direct indexing calls return INDEXING_DISABLED. Existing byte limits apply; creation option mismatch returns SCOPE_CONFLICT.
 
@@ -66,7 +68,7 @@ Ingest uploads use the same `open`, `completing`, `finalized`, `aborted` transfe
 
 `GET /search?q=...` finds live original filenames/titles directly in PostgreSQL. Optional parent uses `node_id` or `path`/`cwd_id`; filters use `type`, `media_type`, and created/updated after/before timestamps. Sort is `name|created_at|updated_at`, direction `asc|desc`, limit 1–100. Keyset cursors bind the filesystem, actor/scope, query, filters and sort.
 
-`POST /search` accepts `{query,filters,limit,cursor}` with limit 1–50. Dense and native BM25 prefetch fuse with RRF; DB live/current/ready checks and filters precede bounded reranking. A result is one original file with current metadata and `matched:{file_id,breadcrumb,snippet}`. Both searches return `{items,next_cursor,degraded}`. Reranker failure returns hybrid order with `degraded=true` and `degraded_reason=RERANK_UNAVAILABLE`; embedding or Qdrant failure returns 503 `DEPENDENCY_UNAVAILABLE`. Semantic cursors carry bounded offsets/seen source IDs, bind query/filter/vector-space context, and may drift as ranking changes. Work is bounded to three candidate pages per request, 10,000 candidate positions and 256 unique sources per cursor chain. Clients should follow `next_cursor` even when filtering produces an empty page.
+`POST /search` accepts `{query,filters,limit}` with default limit 20 and range 1–50. It returns `{items,degraded}` with no cursor or continuation. One Qdrant request retrieves at most 80 candidates from dense/native BM25 prefetch fused with RRF. DB live/current/ready checks and filters precede reranking of at most 64 evidence documents, with at most three per original. Results group evidence into original files and apply the output limit after reranking. Each result has current metadata and `matched:{file_id,breadcrumb,snippet}`. Filtering, duplicate evidence or concurrent changes can produce fewer results than the limit. Reranker failure returns hybrid order with `degraded=true` and `degraded_reason=RERANK_UNAVAILABLE`; embedding or Qdrant failure returns 503 `DEPENDENCY_UNAVAILABLE`. Filename search retains `{items,next_cursor,degraded}` keyset pages.
 
 Client flows: show filename plus AI title/subtitle when available; track publication and index readiness; keep filename search usable while AI work is pending; open the matched breadcrumb from a semantic card; show a rerank degradation banner; offer manual reprocessing after a reported failure. Lists omit embedding context and file bodies. README may be rendered as an overview through the ordinary content route. Artifact/chunk evidence is grouped into its original file card. Trash, replacement and authorization changes remove stale results through current DB validation.
 
@@ -76,7 +78,7 @@ limits), `DOCUMENT_INVALID` (invalid input or rejected conversion) and
 class, cause class and peak resident memory when available; dependency stderr and
 document contents are not copied into those diagnostics.
 
-Copy validates selected revisions and commits each destination item independently, not source-tree snapshot semantics; see [data model](data-model.md). Reject cross-filesystem copy/move even in one workspace. An exposed filesystem ID is metadata, not authorization to select arbitrary scope.
+Copy validates selected revisions and commits each destination item independently, without source-tree snapshot semantics; see [data model](data-model.md). Reject cross-filesystem copy/move even in one workspace. An exposed filesystem ID is metadata, not authorization to select arbitrary scope.
 
 ## Private communication
 
@@ -108,4 +110,4 @@ Responses use `application/zip`, safe attachment disposition and `no-store`. The
 
 ### Trash resources
 
-DELETE nodes/{node} requires `scope:trash` and If-Match, detaches the subtree and returns 201 with its trash-entry Location. GET trash-entries and GET trash-entries/{entry} require `scope:read_metadata`. Entries expose id, node_id, nullable original parent_id, name, actor_id, status and created_at; the parent may already have been purged. POST trash-entries/{entry}:restore requires `scope:restore` and the current entry identity, restores the original live parent/name and rejects name conflicts or purging entries. DELETE trash-entries/{entry} requires `scope:purge`, commits purging before dispatch, and returns 202 plus Location or 204 after removal. No request key or deletion monitor table is required.
+DELETE nodes/{node} requires `scope:trash` and If-Match, detaches the subtree and returns 201 with its trash-entry Location. GET trash-entries and GET trash-entries/{entry} require `scope:read_metadata`. Entries expose id, node_id, nullable original parent_id, name, actor_id, status and created_at; the parent may already have been purged. POST trash-entries/{entry}:restore requires source `scope:restore`; selecting a destination additionally requires its `scope:write`. It defaults to the original live parent/name and rejects name conflicts or purging entries. DELETE trash-entries/{entry} requires `scope:purge`, fences restore and removes the tree in request-owned batches, returning 204 after removal. Interrupted purge is completed by retrying DELETE. No request key or deletion monitor table is required.

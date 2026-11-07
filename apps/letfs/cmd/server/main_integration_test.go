@@ -27,7 +27,7 @@ import (
 func TestIntegrationCompositionChecksPolicyServesRealRPCAndDrains(t *testing.T) {
 	db := testfixture.Postgres(t, "../../migrations/0001_initial.sql")
 	graph, address, graphServer := sharedfixture.SpiceDB(t, "../../../../packages/contracts/authz/schema.zed")
-	tc, temporalAddress := sharedfixture.Temporal(t)
+	_, temporalAddress := sharedfixture.Temporal(t)
 	contract, err := authz.LoadContract("../../../../packages/contracts/authz/schema.zed")
 	require.NoError(t, err)
 	input := map[string]string{
@@ -114,11 +114,10 @@ func TestIntegrationCompositionChecksPolicyServesRealRPCAndDrains(t *testing.T) 
 			Name: "source.bin", Content: []byte{0, 255, 1}, MediaType: "application/octet-stream"}}})
 	require.NoError(t, err)
 	copy, err := files.CreateCopy(caller, &letfsv1.CreateCopyRequest{FilesystemId: fsID, SourceId: source.Node.Id, ParentId: rootID,
-		DestinationScopeId: scopeID, Name: "copy.bin", Revision: &source.Node.Revision, IdempotencyKey: uuid.NewString(), ScopeId: scopeID})
+		DestinationScopeId: &scopeID, Name: "copy.bin", Revision: &source.Node.Revision, IdempotencyKey: uuid.NewString(), ScopeId: scopeID})
 	require.NoError(t, err)
-	job, stopJob := context.WithTimeout(t.Context(), 10*time.Second)
-	defer stopJob()
-	require.NoError(t, tc.GetWorkflow(job, "copy/"+fsID+"/"+copy.Copy.Id, "").Get(job, nil))
+	require.Equal(t, scopeID, copy.Node.ScopeId)
+	require.Equal(t, "copy.bin", copy.Node.Name)
 	require.NoError(t, graphServer.Stop(t.Context(), nil))
 	state, err := health.Check(t.Context(), &healthv1.HealthCheckRequest{})
 	require.NoError(t, err)

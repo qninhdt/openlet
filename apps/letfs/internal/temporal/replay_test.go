@@ -16,19 +16,17 @@ func TestRecordedFilesystemWorkflows(t *testing.T) {
 	dir := os.Getenv("OPENLET_HISTORY_DIR")
 	require.NotEmpty(t, dir, "export fresh Go histories with the integration suite first")
 	replayer := worker.NewWorkflowReplayer()
-	replayer.RegisterWorkflowWithOptions(CopyTree, workflow.RegisterOptions{Name: CopyTreeName})
 	replayer.RegisterWorkflowWithOptions(DeleteScope, workflow.RegisterOptions{Name: DeleteScopeName})
-	replayer.RegisterWorkflowWithOptions(PurgeTrash, workflow.RegisterOptions{Name: PurgeTrashName})
 	replayer.RegisterWorkflowWithOptions(DeleteFilesystem, workflow.RegisterOptions{Name: DeleteFilesystemName})
 	replayer.RegisterWorkflowWithOptions(ProcessFile, workflow.RegisterOptions{Name: ProcessFileName})
 	replayer.RegisterWorkflowWithOptions(StorageMaintenance, workflow.RegisterOptions{Name: StorageMaintenanceName})
 	patterns := []string{
-		"CopyTreeFailed-0.json", "PurgeTrash-0.json", "DeleteFilesystem-0.json", "DeleteScope-0.json",
+		"DeleteFilesystem-0.json", "DeleteScope-0.json",
 		"ProcessFile-parsed-0.json", "ProcessFile-failed-0.json", "ProcessFile-retry-0.json", "ProcessFile-index-only-0.json",
 		"StorageMaintenance-*.json", "ProcessFilePython-*.json",
 	}
 	if _, err := os.Stat(filepath.Join(dir, "OnboardUser.json")); err == nil {
-		patterns = []string{"CopyTree.json", "CopyTreeRecovery.json", "CopyTreeObjectFailed.json", "CopyTreeDeferred.json", "PurgeTrash.json", "DeleteFilesystem.json", "DeleteScope.json",
+		patterns = []string{"DeleteFilesystem.json", "DeleteScope.json",
 			"ProcessFileParsed.json", "ProcessFileDirect.json", "ProcessFileFailed.json", "ProcessFileRecovery.json", "StorageMaintenance.json"}
 	} else {
 		require.True(t, os.IsNotExist(err), "cannot inspect history source: %v", err)

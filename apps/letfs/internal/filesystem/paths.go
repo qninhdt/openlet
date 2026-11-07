@@ -122,7 +122,8 @@ func (s *session) resolve(ctx context.Context, locators []Locator) ([]Node, erro
 ), live AS (SELECT DISTINCT idx FROM ancestors WHERE id=$2), walk(idx,pos,id,parent_id,kind) AS (
  SELECT r.idx,0,n.id,n.parent_id,n.kind FROM req r JOIN live l USING(idx) JOIN nodes n ON n.id=r.start_id AND n.scope_id=$1
  UNION ALL SELECT w.idx,w.pos+1,n.id,n.parent_id,n.kind FROM walk w JOIN req r USING(idx)
- JOIN nodes n ON n.scope_id=$1 AND CASE WHEN r.parts[w.pos+1]='..' THEN n.id=w.parent_id AND w.id<>$2 ELSE n.parent_id=w.id AND n.name=r.parts[w.pos+1] END
+ JOIN nodes n ON n.scope_id=$1 AND ((r.parts[w.pos+1]='..' AND n.id=w.parent_id AND w.id<>$2)
+ OR (r.parts[w.pos+1]<>'..' AND n.parent_id=w.id AND n.name=r.parts[w.pos+1]))
  WHERE w.pos<cardinality(r.parts)
 ), resolved AS (
  SELECT r.idx,n.* FROM walk w JOIN req r USING(idx) JOIN nodes n ON n.id=w.id AND n.scope_id=$1 WHERE w.pos=cardinality(r.parts)

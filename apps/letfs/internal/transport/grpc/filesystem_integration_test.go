@@ -116,7 +116,7 @@ func TestIntegrationFilesystemOperationsOverAuthenticatedRPC(t *testing.T) {
 	resolved, err := client.ResolveNode(ctx, &letfsv1.ResolveNodeRequest{FilesystemId: bucketID.String(), ScopeId: fsID.String(), Locator: locator})
 	require.NoError(t, err)
 	require.Equal(t, node.Node.Id, resolved.Node.Id)
-	batch, err := client.BatchStat(ctx, &letfsv1.BatchStatRequest{FilesystemId: bucketID.String(), ScopeId: fsID.String(), Locators: []*letfsv1.Locator{locator, locator}})
+	batch, err := client.BatchStat(ctx, &letfsv1.BatchStatRequest{FilesystemId: bucketID.String(), Locators: []*letfsv1.ScopedLocator{{ScopeId: fsID.String(), Locator: locator}, {ScopeId: fsID.String(), Locator: locator}}})
 	require.NoError(t, err)
 	require.Len(t, batch.Items, 2)
 	listed, err := client.ListNodes(ctx, &letfsv1.ListNodesRequest{FilesystemId: bucketID.String(), ScopeId: fsID.String(), Parent: &letfsv1.Locator{Target: &letfsv1.Locator_NodeId{NodeId: fs.RootID.String()}}})

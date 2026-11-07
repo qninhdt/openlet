@@ -30,9 +30,7 @@ import (
 func replayRuns(t *testing.T, tc client.Client, id, runID, name string) int {
 	t.Helper()
 	replayer := worker.NewWorkflowReplayer()
-	replayer.RegisterWorkflowWithOptions(CopyTree, workflow.RegisterOptions{Name: CopyTreeName})
 	replayer.RegisterWorkflowWithOptions(DeleteScope, workflow.RegisterOptions{Name: DeleteScopeName})
-	replayer.RegisterWorkflowWithOptions(PurgeTrash, workflow.RegisterOptions{Name: PurgeTrashName})
 	replayer.RegisterWorkflowWithOptions(DeleteFilesystem, workflow.RegisterOptions{Name: DeleteFilesystemName})
 	replayer.RegisterWorkflowWithOptions(ProcessFile, workflow.RegisterOptions{Name: ProcessFileName})
 	replayer.RegisterWorkflowWithOptions(StorageMaintenance, workflow.RegisterOptions{Name: StorageMaintenanceName})
@@ -64,7 +62,7 @@ func replayRuns(t *testing.T, tc client.Client, id, runID, name string) int {
 	return runs
 }
 
-func TestIntegrationCopyFailureAndDeletionWorkerRestart(t *testing.T) {
+func TestIntegrationFilesystemDeletionWorkerRestart(t *testing.T) {
 	tc, _ := sharedfixture.Temporal(t)
 	db := testfixture.Postgres(t, "../../migrations/0001_initial.sql")
 	graph, _, _ := sharedfixture.SpiceDB(t, "../../../../packages/contracts/authz/schema.zed")
@@ -87,8 +85,6 @@ func TestIntegrationCopyFailureAndDeletionWorkerRestart(t *testing.T) {
 	}
 	source, err = store.GetNode(ctx, scope, filesystem.Locator{NodeID: &source.ID})
 	require.NoError(t, err)
-	admission, err := store.AdmitCopy(ctx, scope, uuid.New(), filesystem.CreateCopy{DestinationScopeID: scope, SourceID: source.ID, ParentID: *created.RootID, Name: "copy", Revision: &source.Revision})
-	require.NoError(t, err)
 	activities := &Activities{Store: store}
 	first := worker.New(tc, Queue, worker.Options{WorkerStopTimeout: time.Second})
 	Register(first, activities)
@@ -99,22 +95,7 @@ func TestIntegrationCopyFailureAndDeletionWorkerRestart(t *testing.T) {
 			first.Stop()
 		}
 	})
-	copyRun, err := tc.ExecuteWorkflow(ctx, client.StartWorkflowOptions{TaskQueue: Queue}, CopyTreeName, admission)
-	require.NoError(t, err)
-	require.Error(t, copyRun.Get(ctx, nil), "quota failure retains earlier copy writes")
 	var used, nodes int64
-	require.NoError(t, db.QueryRow(ctx, "SELECT used_bytes,node_count FROM filesystems WHERE id=$1", fs).Scan(&used, &nodes))
-	require.EqualValues(t, 3, used)
-	require.EqualValues(t, 6, nodes, "root + source tree + partial destination tree")
-	require.Equal(t, 1, replayRuns(t, tc, copyRun.GetID(), copyRun.GetRunID(), "CopyTreeFailed"))
-	entry, err := store.TrashNode(ctx, scope, filesystem.Locator{NodeID: &admission.Root.Destination}, func() *int64 { v := int64(2); return &v }())
-	require.NoError(t, err)
-	_, err = store.PrepareTrashPurge(ctx, scope, entry.ID)
-	require.NoError(t, err)
-	purge, err := tc.ExecuteWorkflow(ctx, client.StartWorkflowOptions{TaskQueue: Queue}, PurgeTrashName, filesystem.DeletionInput{ScopeID: scope, EntryID: &entry.ID})
-	require.NoError(t, err)
-	require.NoError(t, purge.Get(ctx, nil))
-	require.Equal(t, 1, replayRuns(t, tc, purge.GetID(), purge.GetRunID(), "PurgeTrash"))
 	_, err = db.Exec(ctx, "UPDATE filesystems SET limit_bytes=1000 WHERE id=$1", fs)
 	require.NoError(t, err)
 	for i := range 70 {
