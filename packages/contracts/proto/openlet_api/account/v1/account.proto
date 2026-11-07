@@ -4,24 +4,24 @@ package openlet_api.account.v1;
 option go_package = "github.com/qninhdt/openlet/packages/go/gen/openlet_api/account/v1;accountv1";
 
 service AccountService {
-  rpc GetUserSummaries(GetUserSummariesRequest) returns (GetUserSummariesResponse);
+  rpc GetAccountSummaries(GetAccountSummariesRequest) returns (GetAccountSummariesResponse);
   rpc GetVerifiedEmails(GetVerifiedEmailsRequest) returns (GetVerifiedEmailsResponse);
 }
-message UserSummary {
+message AccountSummary {
   string id = 1;
   string display_name = 2;
   string avatar_url = 3;
 }
 
 // At most 100 IDs. A caller must verify the exact set of returned IDs.
-message GetUserSummariesRequest {
+message GetAccountSummariesRequest {
   repeated string ids = 1;
 }
-message GetUserSummariesResponse {
-  repeated UserSummary users = 1;
+message GetAccountSummariesResponse {
+  repeated AccountSummary accounts = 1;
 }
 message GetVerifiedEmailsRequest {
-  string user_id = 1;
+  string account_id = 1;
 }
 message GetVerifiedEmailsResponse {
   repeated string emails = 1;

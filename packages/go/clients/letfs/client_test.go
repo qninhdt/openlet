@@ -15,17 +15,14 @@ import (
 
 type fakeAdministration struct {
 	letfsv1.StorageAdministrationServiceClient
-	create   func(context.Context, *letfsv1.CreateStorageRequest) (*letfsv1.CreateStorageResponse, error)
-	freeze   func(context.Context, *letfsv1.FreezeBucketRequest) (*letfsv1.FreezeBucketResponse, error)
-	list     func(context.Context, *letfsv1.ListBucketFilesystemsRequest) (*letfsv1.ListBucketFilesystemsResponse, error)
-	delete   func(context.Context, *letfsv1.DeleteFilesystemRequest) (*letfsv1.DeleteFilesystemResponse, error)
-	complete func(context.Context, *letfsv1.CompleteBucketDeletionRequest) (*letfsv1.CompleteBucketDeletionResponse, error)
+	createFilesystem func(context.Context, *letfsv1.CreateFilesystemRequest) (*letfsv1.CreateFilesystemResponse, error)
+	createScopes     func(context.Context, *letfsv1.CreateScopesRequest) (*letfsv1.CreateScopesResponse, error)
+	delete           func(context.Context, *letfsv1.DeleteFilesystemRequest) (*letfsv1.DeleteFilesystemResponse, error)
 }
 
 type fakeFilesystem struct {
 	letfsv1.FilesystemServiceClient
 	filesystem func(context.Context, *letfsv1.GetFilesystemRequest) (*letfsv1.GetFilesystemResponse, error)
-	usage      func(context.Context, *letfsv1.GetBucketUsageRequest) (*letfsv1.GetBucketUsageResponse, error)
 	node       func(context.Context, *letfsv1.GetNodeRequest) (*letfsv1.GetNodeResponse, error)
 	list       func(context.Context, *letfsv1.ListNodesRequest) (*letfsv1.ListNodesResponse, error)
 	upload     func(context.Context, *letfsv1.CreateUploadRequest) (*letfsv1.CreateUploadResponse, error)
@@ -35,9 +32,6 @@ type fakeFilesystem struct {
 
 func (f fakeFilesystem) GetFilesystem(ctx context.Context, in *letfsv1.GetFilesystemRequest, _ ...grpc.CallOption) (*letfsv1.GetFilesystemResponse, error) {
 	return f.filesystem(ctx, in)
-}
-func (f fakeFilesystem) GetBucketUsage(ctx context.Context, in *letfsv1.GetBucketUsageRequest, _ ...grpc.CallOption) (*letfsv1.GetBucketUsageResponse, error) {
-	return f.usage(ctx, in)
 }
 func (f fakeFilesystem) GetNode(ctx context.Context, in *letfsv1.GetNodeRequest, _ ...grpc.CallOption) (*letfsv1.GetNodeResponse, error) {
 	return f.node(ctx, in)
@@ -62,104 +56,63 @@ type fakeArchive struct {
 
 func (f fakeArchive) Recv() (*letfsv1.StreamArchiveResponse, error) { return f.recv() }
 
-func (f fakeAdministration) CreateStorage(ctx context.Context, request *letfsv1.CreateStorageRequest, _ ...grpc.CallOption) (*letfsv1.CreateStorageResponse, error) {
-	return f.create(ctx, request)
-}
-func (f fakeAdministration) FreezeBucket(ctx context.Context, request *letfsv1.FreezeBucketRequest, _ ...grpc.CallOption) (*letfsv1.FreezeBucketResponse, error) {
-	return f.freeze(ctx, request)
-}
-func (f fakeAdministration) ListBucketFilesystems(ctx context.Context, request *letfsv1.ListBucketFilesystemsRequest, _ ...grpc.CallOption) (*letfsv1.ListBucketFilesystemsResponse, error) {
-	return f.list(ctx, request)
+func (f fakeAdministration) CreateFilesystem(ctx context.Context, request *letfsv1.CreateFilesystemRequest, _ ...grpc.CallOption) (*letfsv1.CreateFilesystemResponse, error) {
+	return f.createFilesystem(ctx, request)
 }
 func (f fakeAdministration) DeleteFilesystem(ctx context.Context, request *letfsv1.DeleteFilesystemRequest, _ ...grpc.CallOption) (*letfsv1.DeleteFilesystemResponse, error) {
 	return f.delete(ctx, request)
 }
-func (f fakeAdministration) CompleteBucketDeletion(ctx context.Context, request *letfsv1.CompleteBucketDeletionRequest, _ ...grpc.CallOption) (*letfsv1.CompleteBucketDeletionResponse, error) {
-	return f.complete(ctx, request)
-}
 
-func TestCreateStorageConvertsNativeContractAndValidatesScope(t *testing.T) {
-	bucket, filesystem, root := uuid.New(), uuid.New(), uuid.New()
-	input := Storage{LimitBytes: 1024, BucketID: bucket, FilesystemID: filesystem}
-	client := Client{API: fakeAdministration{create: func(_ context.Context, request *letfsv1.CreateStorageRequest) (*letfsv1.CreateStorageResponse, error) {
-		require.Equal(t, bucket.String(), request.GetBucket().GetIdempotencyKey())
-		require.Equal(t, int64(1024), request.GetBucket().GetLimitBytes())
-		require.Equal(t, filesystem.String(), request.GetFilesystem().GetIdempotencyKey())
-		require.Equal(t, "drive", request.GetFilesystem().GetRootName())
-		return &letfsv1.CreateStorageResponse{
-			Bucket:     &letfsv1.Bucket{Id: bucket.String(), LimitBytes: 1024, State: "active"},
-			Filesystem: &letfsv1.Filesystem{Id: filesystem.String(), BucketId: bucket.String(), RootId: root.String(), State: "active"},
-		}, nil
+func TestCreateFilesystemValidatesIdentityAndQuota(t *testing.T) {
+	id, key := uuid.New(), uuid.New()
+	value := &letfsv1.Filesystem{Id: id.String(), LimitBytes: 1024, State: "active"}
+	c := Client{API: fakeAdministration{createFilesystem: func(_ context.Context, in *letfsv1.CreateFilesystemRequest) (*letfsv1.CreateFilesystemResponse, error) {
+		require.Equal(t, key.String(), in.IdempotencyKey)
+		require.EqualValues(t, 1024, in.LimitBytes)
+		return &letfsv1.CreateFilesystemResponse{Filesystem: value}, nil
 	}}}
-	result, err := client.CreateStorage(t.Context(), input)
+	got, err := c.CreateFilesystem(t.Context(), id, key, 1024)
 	require.NoError(t, err)
-	require.Equal(t, root, result.RootID)
-
-	client.API = fakeAdministration{create: func(context.Context, *letfsv1.CreateStorageRequest) (*letfsv1.CreateStorageResponse, error) {
-		return &letfsv1.CreateStorageResponse{Bucket: &letfsv1.Bucket{Id: uuid.NewString(), LimitBytes: 1024, State: "active"}, Filesystem: &letfsv1.Filesystem{Id: filesystem.String(), BucketId: bucket.String(), RootId: root.String(), State: "active"}}, nil
-	}}
-	_, err = client.CreateStorage(t.Context(), input)
+	require.Equal(t, id, got.ID)
+	value.LimitBytes++
+	_, err = c.CreateFilesystem(t.Context(), id, key, 1024)
 	require.Equal(t, apperr.Conflict, apperr.KindOf(err))
 }
-
-func TestDeletionOperationsValidateOwnerResultsAndProgress(t *testing.T) {
-	bucket, first, second := uuid.New(), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
-	if first.String() > second.String() {
-		first, second = second, first
-	}
-	client := Client{API: fakeAdministration{
-		freeze: func(context.Context, *letfsv1.FreezeBucketRequest) (*letfsv1.FreezeBucketResponse, error) {
-			return &letfsv1.FreezeBucketResponse{Bucket: &letfsv1.Bucket{Id: bucket.String(), State: "frozen"}}, nil
-		},
-		list: func(_ context.Context, request *letfsv1.ListBucketFilesystemsRequest) (*letfsv1.ListBucketFilesystemsResponse, error) {
-			require.Equal(t, bucket.String(), request.GetBucketId())
-			return &letfsv1.ListBucketFilesystemsResponse{FilesystemIds: []string{first.String(), second.String()}}, nil
-		},
-		delete: func(context.Context, *letfsv1.DeleteFilesystemRequest) (*letfsv1.DeleteFilesystemResponse, error) {
-			return &letfsv1.DeleteFilesystemResponse{Completed: false}, nil
-		},
-		complete: func(context.Context, *letfsv1.CompleteBucketDeletionRequest) (*letfsv1.CompleteBucketDeletionResponse, error) {
-			return &letfsv1.CompleteBucketDeletionResponse{Bucket: &letfsv1.Bucket{Id: bucket.String(), State: "deleted"}}, nil
-		},
-	}}
-	require.NoError(t, client.FreezeBucket(t.Context(), bucket))
-	ids, err := client.ListFilesystems(t.Context(), bucket, uuid.Nil)
-	require.NoError(t, err)
-	require.Equal(t, []uuid.UUID{first, second}, ids)
-	completed, err := client.DeleteFilesystem(t.Context(), first)
-	require.NoError(t, err)
-	require.False(t, completed)
-	require.NoError(t, client.CompleteBucket(t.Context(), bucket))
-}
-
-func TestListFilesystemsRejectsUnorderedOrOversizedPages(t *testing.T) {
-	bucket, id := uuid.New(), uuid.New()
-	for _, values := range [][]string{{id.String(), id.String()}, make([]string, 101)} {
-		client := Client{API: fakeAdministration{list: func(context.Context, *letfsv1.ListBucketFilesystemsRequest) (*letfsv1.ListBucketFilesystemsResponse, error) {
-			return &letfsv1.ListBucketFilesystemsResponse{FilesystemIds: values}, nil
-		}}}
-		_, err := client.ListFilesystems(t.Context(), bucket, uuid.Nil)
-		require.Equal(t, apperr.Conflict, apperr.KindOf(err))
+func TestCreateScopesValidatesOptions(t *testing.T) {
+	fs, id, key := uuid.New(), uuid.New(), uuid.New()
+	for _, blob := range []bool{false, true} {
+		for _, index := range []bool{false, true} {
+			value := &letfsv1.Scope{Id: id.String(), FilesystemId: fs.String(), RootId: uuid.NewString(), State: "active", AllowBlobFiles: blob, AllowIndexing: index}
+			c := Client{API: fakeAdministration{createScopes: func(_ context.Context, in *letfsv1.CreateScopesRequest) (*letfsv1.CreateScopesResponse, error) {
+				require.NotNil(t, in.AllowBlobFiles)
+				require.NotNil(t, in.AllowIndexing)
+				require.Equal(t, blob, in.GetAllowBlobFiles())
+				require.Equal(t, index, in.GetAllowIndexing())
+				return &letfsv1.CreateScopesResponse{Scopes: []*letfsv1.Scope{value}}, nil
+			}}}
+			got, err := c.CreateScopes(t.Context(), fs, key, []uuid.UUID{id}, blob, index)
+			require.NoError(t, err)
+			require.Equal(t, blob, got[0].AllowBlobFiles)
+			require.Equal(t, index, got[0].AllowIndexing)
+			value.AllowIndexing = !index
+			_, err = c.CreateScopes(t.Context(), fs, key, []uuid.UUID{id}, blob, index)
+			require.Equal(t, apperr.Conflict, apperr.KindOf(err))
+		}
 	}
 }
 
 func TestFilesystemReadsConvertAndValidateScope(t *testing.T) {
-	filesystem, bucket, root, node, parent := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
-	paths := PathContext{Mounts: []Mount{{Path: "/", FilesystemID: filesystem}}}
+	filesystem, scope, node, parent := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	now := time.Now().UTC().Truncate(time.Second)
-	native := &letfsv1.Node{Id: node.String(), FilesystemId: filesystem.String(), ParentId: pointer(parent.String()), Name: "report.pdf", Kind: "file", Revision: 3, SizeBytes: 42, CreatedAt: timestamppb.New(now), UpdatedAt: timestamppb.New(now)}
+	native := &letfsv1.Node{Id: node.String(), ScopeId: scope.String(), ParentId: pointer(parent.String()), Name: "report.pdf", Kind: "file", Revision: 3, SizeBytes: 42, CreatedAt: timestamppb.New(now), UpdatedAt: timestamppb.New(now)}
 	api := fakeFilesystem{
 		filesystem: func(_ context.Context, in *letfsv1.GetFilesystemRequest) (*letfsv1.GetFilesystemResponse, error) {
 			require.Equal(t, filesystem.String(), in.GetFilesystemId())
-			return &letfsv1.GetFilesystemResponse{Filesystem: &letfsv1.Filesystem{Id: filesystem.String(), BucketId: bucket.String(), RootId: root.String(), State: "active"}}, nil
-		},
-		usage: func(_ context.Context, in *letfsv1.GetBucketUsageRequest) (*letfsv1.GetBucketUsageResponse, error) {
-			require.Equal(t, bucket.String(), in.GetBucketId())
-			return &letfsv1.GetBucketUsageResponse{Bucket: &letfsv1.Bucket{Id: bucket.String(), LimitBytes: 100, UsedBytes: 42, State: "active"}, UploadLimits: &letfsv1.UploadLimits{InlineLimitBytes: 10, MaxFileBytes: 90}}, nil
+			return &letfsv1.GetFilesystemResponse{Filesystem: &letfsv1.Filesystem{Id: filesystem.String(), LimitBytes: 100, UsedBytes: 42, State: "active"}}, nil
 		},
 		node: func(_ context.Context, in *letfsv1.GetNodeRequest) (*letfsv1.GetNodeResponse, error) {
 			require.Equal(t, node.String(), in.GetNodeId())
-			require.Equal(t, filesystem.String(), in.GetPathContext().GetMounts()[0].GetFilesystemId())
+			require.Equal(t, filesystem.String(), in.GetFilesystemId())
 			return &letfsv1.GetNodeResponse{Node: native}, nil
 		},
 		list: func(_ context.Context, in *letfsv1.ListNodesRequest) (*letfsv1.ListNodesResponse, error) {
@@ -170,37 +123,33 @@ func TestFilesystemReadsConvertAndValidateScope(t *testing.T) {
 	client := FilesystemClient{API: api}
 	fs, err := client.GetFilesystem(t.Context(), filesystem)
 	require.NoError(t, err)
-	require.Equal(t, root, fs.RootID)
-	usage, err := client.GetBucketUsage(t.Context(), bucket)
-	require.NoError(t, err)
-	require.Equal(t, int64(42), usage.UsedBytes)
-	item, err := client.GetNode(t.Context(), filesystem, node, paths)
+	require.EqualValues(t, 42, fs.UsedBytes)
+	item, err := client.GetNode(t.Context(), filesystem, scope, node)
 	require.NoError(t, err)
 	require.Equal(t, &parent, item.ParentID)
 	require.Equal(t, now, item.CreatedAt)
-	page, err := client.ListNodes(t.Context(), filesystem, parent, paths, 20, nil)
+	page, err := client.ListNodes(t.Context(), filesystem, scope, parent, 20, nil)
 	require.NoError(t, err)
 	require.Len(t, page.Items, 1)
 	require.Equal(t, "next", *page.NextCursor)
 }
 
 func TestFilesystemReadsRejectForeignObjects(t *testing.T) {
-	filesystem, node := uuid.New(), uuid.New()
+	filesystem, scope, node := uuid.New(), uuid.New(), uuid.New()
 	client := FilesystemClient{API: fakeFilesystem{node: func(context.Context, *letfsv1.GetNodeRequest) (*letfsv1.GetNodeResponse, error) {
-		return &letfsv1.GetNodeResponse{Node: &letfsv1.Node{Id: node.String(), FilesystemId: uuid.NewString()}}, nil
+		return &letfsv1.GetNodeResponse{Node: &letfsv1.Node{Id: node.String(), ScopeId: uuid.NewString()}}, nil
 	}}}
-	_, err := client.GetNode(t.Context(), filesystem, node, PathContext{Mounts: []Mount{{Path: "/", FilesystemID: filesystem}}})
+	_, err := client.GetNode(t.Context(), filesystem, scope, node)
 	require.Equal(t, apperr.Conflict, apperr.KindOf(err))
 }
 
 func pointer[T any](value T) *T { return &value }
 
-func TestMutationRequestsCarryPathContextAndNativeTargets(t *testing.T) {
-	filesystem, parent, node, key, entry := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
-	paths := PathContext{Mounts: []Mount{{Path: "/", FilesystemID: filesystem}}}
+func TestMutationRequestsCarryScopeAndNativeTargets(t *testing.T) {
+	filesystem, scope, parent, node, key, entry := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	api := fakeFilesystem{
 		upload: func(_ context.Context, in *letfsv1.CreateUploadRequest) (*letfsv1.CreateUploadResponse, error) {
-			require.Equal(t, filesystem.String(), in.GetPathContext().GetMounts()[0].GetFilesystemId())
+			require.Equal(t, filesystem.String(), in.GetFilesystemId())
 			require.Equal(t, parent.String(), in.GetDestination().GetParent().GetNodeId())
 			return &letfsv1.CreateUploadResponse{Upload: &letfsv1.Upload{Id: key.String(), Status: "pending", Transport: "object"}}, nil
 		},
@@ -210,17 +159,16 @@ func TestMutationRequestsCarryPathContextAndNativeTargets(t *testing.T) {
 		},
 	}
 	client := FilesystemClient{API: api}
-	upload, err := client.CreateUpload(t.Context(), filesystem, key, parent, paths, "x", "text/plain", nil, nil)
+	upload, err := client.CreateUpload(t.Context(), filesystem, scope, key, parent, "x", "text/plain", nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, key, upload.ID)
-	trashed, err := client.Trash(t.Context(), filesystem, node, paths, nil)
+	trashed, err := client.Trash(t.Context(), filesystem, scope, node, nil)
 	require.NoError(t, err)
 	require.Equal(t, entry, trashed.ID)
 }
 
 func TestArchiveStreamConvertsFramesAndErrors(t *testing.T) {
-	filesystem, node := uuid.New(), uuid.New()
-	paths := PathContext{Mounts: []Mount{{Path: "/", FilesystemID: filesystem}}}
+	filesystem, scope, node := uuid.New(), uuid.New(), uuid.New()
 	calls := 0
 	stream := fakeArchive{recv: func() (*letfsv1.StreamArchiveResponse, error) {
 		calls++
@@ -236,7 +184,7 @@ func TestArchiveStreamConvertsFramesAndErrors(t *testing.T) {
 		require.Equal(t, node.String(), in.GetNodeId())
 		return stream, nil
 	}}}
-	archive, err := client.StreamArchive(t.Context(), filesystem, node, paths)
+	archive, err := client.StreamArchive(t.Context(), filesystem, scope, node)
 	require.NoError(t, err)
 	metadata, err := archive.Recv()
 	require.NoError(t, err)
@@ -258,4 +206,30 @@ func TestArchiveCloseCancelsEarlyReader(t *testing.T) {
 		t.Fatal("archive close did not cancel stream")
 	}
 	stream.Close()
+}
+
+func (f fakeAdministration) CreateScopes(ctx context.Context, in *letfsv1.CreateScopesRequest, _ ...grpc.CallOption) (*letfsv1.CreateScopesResponse, error) {
+	return f.createScopes(ctx, in)
+}
+func TestCreateScopesRejectsMalformedAndForeignResults(t *testing.T) {
+	fs, key, a, b, root := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	valid := func(id uuid.UUID) *letfsv1.Scope {
+		return &letfsv1.Scope{Id: id.String(), FilesystemId: fs.String(), RootId: root.String(), State: "active", AllowBlobFiles: true, AllowIndexing: true}
+	}
+	for name, scopes := range map[string][]*letfsv1.Scope{
+		"missing": {valid(a)}, "duplicate": {valid(a), valid(a)}, "foreign": {valid(a), valid(uuid.New())},
+		"foreign filesystem": {valid(a), {Id: b.String(), FilesystemId: uuid.NewString(), RootId: root.String(), State: "active", AllowBlobFiles: true, AllowIndexing: true}},
+		"invalid root":       {valid(a), {Id: b.String(), FilesystemId: fs.String(), RootId: "invalid", State: "active"}},
+		"nil":                {valid(a), nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := Client{API: fakeAdministration{createScopes: func(_ context.Context, in *letfsv1.CreateScopesRequest) (*letfsv1.CreateScopesResponse, error) {
+				require.Equal(t, fs.String(), in.FilesystemId)
+				require.Equal(t, key.String(), in.IdempotencyKey)
+				return &letfsv1.CreateScopesResponse{Scopes: scopes}, nil
+			}}}
+			_, err := c.CreateScopes(t.Context(), fs, key, []uuid.UUID{a, b}, true, true)
+			require.Error(t, err)
+		})
+	}
 }

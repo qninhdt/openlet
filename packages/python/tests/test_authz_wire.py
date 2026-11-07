@@ -31,8 +31,8 @@ async def test_official_authzed_client_plaintext_boundary_is_bounded_and_owned()
         assert await check(
             api,
             "019a3b66-0000-7000-8000-000000000001",
-            "node_read",
-            Resource("filesystem", "drive"),
+            "read_metadata",
+            Resource("scope", "drive"),
         )
     finally:
         await api.close()

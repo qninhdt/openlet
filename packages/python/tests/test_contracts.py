@@ -22,4 +22,4 @@ def test_client_and_server_interfaces_are_packaged():
         assert getattr(module, service + "Stub")
         assert getattr(module, service + "Servicer")
         assert callable(getattr(module, "add_" + service + "Servicer_to_server"))
-    assert account_pb2.GetUserSummariesRequest(ids=["user"]).ids == ["user"]
+    assert account_pb2.GetAccountSummariesRequest(ids=["user"]).ids == ["user"]

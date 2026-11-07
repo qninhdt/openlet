@@ -12,11 +12,6 @@ import (
 
 const maxDepth = 128
 
-type Mount struct {
-	Path         string    `json:"path"`
-	FilesystemID uuid.UUID `json:"filesystem_id"`
-}
-
 type Locator struct {
 	NodeID           *uuid.UUID `json:"node_id,omitempty"`
 	Path             *string    `json:"path,omitempty"`
@@ -33,29 +28,8 @@ func nodeAlias(name string) (uuid.UUID, bool) {
 	return id, err == nil && strings.EqualFold(id.String(), name[1:])
 }
 
-func pathParts(fs uuid.UUID, mounts []Mount, locator Locator) ([]string, error) {
-	invalid := func() error { return apperr.New(apperr.Invalid, "VALIDATION", "invalid locator or mount") }
-	if len(mounts) == 0 || len(mounts) > 32 {
-		return nil, invalid()
-	}
-	found := false
-	seen := make(map[string]bool, len(mounts))
-	for _, mount := range mounts {
-		if mount.FilesystemID == uuid.Nil || !utf8.ValidString(mount.Path) || len(mount.Path) > 4096 || !strings.HasPrefix(mount.Path, "/") ||
-			(mount.Path != "/" && strings.HasSuffix(mount.Path, "/")) || strings.ContainsRune(mount.Path, '\x00') || seen[mount.Path] {
-			return nil, invalid()
-		}
-		for _, part := range strings.Split(mount.Path, "/") {
-			if part == "." || part == ".." || len(part) > 255 {
-				return nil, invalid()
-			}
-		}
-		seen[mount.Path] = true
-		found = found || mount.FilesystemID == fs
-	}
-	if !found {
-		return nil, apperr.New(apperr.Missing, "NOT_FOUND", "resource not found")
-	}
+func pathParts(locator Locator) ([]string, error) {
+	invalid := func() error { return apperr.New(apperr.Invalid, "VALIDATION", "invalid locator") }
 	for _, id := range []*uuid.UUID{locator.NodeID, locator.CwdID, locator.ExpectedNodeID, locator.ExpectedParentID} {
 		if id != nil && *id == uuid.Nil {
 			return nil, invalid()
@@ -75,21 +49,7 @@ func pathParts(fs uuid.UUID, mounts []Mount, locator Locator) ([]string, error) 
 		if locator.CwdID != nil {
 			return nil, invalid()
 		}
-		selected := -1
-		for i, mount := range mounts {
-			if path == mount.Path || strings.HasPrefix(path, mount.Path+"/") || mount.Path == "/" {
-				if selected < 0 || len(mount.Path) > len(mounts[selected].Path) {
-					selected = i
-				}
-			}
-		}
-		if selected < 0 {
-			return nil, apperr.New(apperr.Missing, "NOT_FOUND", "resource not found")
-		}
-		if mounts[selected].FilesystemID != fs {
-			return nil, apperr.New(apperr.Conflict, "CROSS_FILESYSTEM_UNSUPPORTED", "cross-filesystem operation unsupported")
-		}
-		path = path[len(mounts[selected].Path):]
+
 	}
 	parts := []string{}
 	for _, part := range strings.Split(path, "/") {
@@ -121,7 +81,7 @@ func guard(locator Locator, id uuid.UUID, parent bool) error {
 	return nil
 }
 
-func (s *session) resolve(ctx context.Context, mounts []Mount, locators []Locator) ([]Node, error) {
+func (s *session) resolve(ctx context.Context, locators []Locator) ([]Node, error) {
 	if len(locators) == 0 || len(locators) > 100 {
 		return nil, apperr.New(apperr.Invalid, "VALIDATION", "locator batch must contain 1..100 items")
 	}
@@ -132,7 +92,7 @@ func (s *session) resolve(ctx context.Context, mounts []Mount, locators []Locato
 	}
 	requests := make([]request, len(locators))
 	for i, locator := range locators {
-		parts, err := pathParts(s.fs, mounts, locator)
+		parts, err := pathParts(locator)
 		if err != nil {
 			return nil, err
 		}
@@ -157,23 +117,23 @@ func (s *session) resolve(ctx context.Context, mounts []Mount, locators []Locato
 	rows, err := s.tx.Query(ctx, `WITH RECURSIVE req AS (
  SELECT * FROM jsonb_to_recordset($3) AS x(idx int,start_id uuid,parts text[])
 ), ancestors(idx,id,parent_id,depth) AS (
- SELECT r.idx,n.id,n.parent_id,0 FROM req r JOIN nodes n ON n.id=r.start_id AND n.filesystem_id=$1
- UNION ALL SELECT a.idx,n.id,n.parent_id,a.depth+1 FROM ancestors a JOIN nodes n ON n.id=a.parent_id AND n.filesystem_id=$1 WHERE a.id<>$2 AND a.depth<128
+ SELECT r.idx,n.id,n.parent_id,0 FROM req r JOIN nodes n ON n.id=r.start_id AND n.scope_id=$1
+ UNION ALL SELECT a.idx,n.id,n.parent_id,a.depth+1 FROM ancestors a JOIN nodes n ON n.id=a.parent_id AND n.scope_id=$1 WHERE a.id<>$2 AND a.depth<128
 ), live AS (SELECT DISTINCT idx FROM ancestors WHERE id=$2), walk(idx,pos,id,parent_id,kind) AS (
- SELECT r.idx,0,n.id,n.parent_id,n.kind FROM req r JOIN live l USING(idx) JOIN nodes n ON n.id=r.start_id AND n.filesystem_id=$1
+ SELECT r.idx,0,n.id,n.parent_id,n.kind FROM req r JOIN live l USING(idx) JOIN nodes n ON n.id=r.start_id AND n.scope_id=$1
  UNION ALL SELECT w.idx,w.pos+1,n.id,n.parent_id,n.kind FROM walk w JOIN req r USING(idx)
- JOIN nodes n ON n.filesystem_id=$1 AND CASE WHEN r.parts[w.pos+1]='..' THEN n.id=w.parent_id AND w.id<>$2 ELSE n.parent_id=w.id AND n.name=r.parts[w.pos+1] END
+ JOIN nodes n ON n.scope_id=$1 AND CASE WHEN r.parts[w.pos+1]='..' THEN n.id=w.parent_id AND w.id<>$2 ELSE n.parent_id=w.id AND n.name=r.parts[w.pos+1] END
  WHERE w.pos<cardinality(r.parts)
 ), resolved AS (
- SELECT r.idx,n.* FROM walk w JOIN req r USING(idx) JOIN nodes n ON n.id=w.id AND n.filesystem_id=$1 WHERE w.pos=cardinality(r.parts)
+ SELECT r.idx,n.* FROM walk w JOIN req r USING(idx) JOIN nodes n ON n.id=w.id AND n.scope_id=$1 WHERE w.pos=cardinality(r.parts)
 ), provenance(idx,id,parent_id,kind,depth) AS (
  SELECT idx,id,parent_id,kind,0 FROM resolved
  UNION ALL SELECT a.idx,n.id,n.parent_id,n.kind,a.depth+1 FROM provenance a
- JOIN nodes n ON n.id=a.parent_id AND n.filesystem_id=$1 WHERE a.id<>$2 AND a.depth<128
+ JOIN nodes n ON n.id=a.parent_id AND n.scope_id=$1 WHERE a.id<>$2 AND a.depth<128
 )
 SELECT n.idx,`+nodeColumns+`,p.artifact_readonly FROM resolved n JOIN (
  SELECT idx,bool_or(depth>0 AND kind='file') AS artifact_readonly FROM provenance GROUP BY idx
-) p USING(idx) LEFT JOIN files f ON f.node_id=n.id ORDER BY n.idx`, s.fs, s.root, encoded)
+) p USING(idx) LEFT JOIN files f ON f.node_id=n.id ORDER BY n.idx`, s.scopeID, s.root, encoded)
 	if err != nil {
 		return nil, databaseError(err)
 	}
@@ -199,8 +159,8 @@ SELECT n.idx,`+nodeColumns+`,p.artifact_readonly FROM resolved n JOIN (
 	return result, nil
 }
 
-func (s *session) resolveOne(ctx context.Context, mounts []Mount, locator Locator) (Node, error) {
-	nodes, err := s.resolve(ctx, mounts, []Locator{locator})
+func (s *session) resolveOne(ctx context.Context, locator Locator) (Node, error) {
+	nodes, err := s.resolve(ctx, []Locator{locator})
 	if err != nil {
 		return Node{}, err
 	}

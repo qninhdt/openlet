@@ -6,7 +6,7 @@
     "description": "Generated from public HTTP annotations. Native gRPC and byte-stream adapters have separate contracts."
   },
   "paths": {
-    "/v1/filesystems/{filesystem_id}/nodes/{node_id}": {
+    "/v1/filesystems/{filesystem_id}/scopes/{scope_id}/nodes/{node_id}": {
       "get": {
         "tags": [
           "openlet_api.letfs.v1.FilesystemService"
@@ -24,28 +24,21 @@
             }
           },
           {
+            "name": "scope_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "scope_id"
+            }
+          },
+          {
             "name": "node_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string",
               "title": "node_id"
-            }
-          },
-          {
-            "name": "path_context.mounts.path",
-            "in": "query",
-            "schema": {
-              "type": "string",
-              "title": "path"
-            }
-          },
-          {
-            "name": "path_context.mounts.filesystem_id",
-            "in": "query",
-            "schema": {
-              "type": "string",
-              "title": "filesystem_id"
             }
           }
         ],
@@ -86,6 +79,10 @@
           "upload_id": {
             "type": "string",
             "title": "upload_id"
+          },
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
           }
         },
         "title": "AbortUploadRequest",
@@ -125,9 +122,9 @@
             },
             "title": "locators"
           },
-          "path_context": {
-            "title": "path_context",
-            "$ref": "#/components/schemas/openlet_api.letfs.v1.PathContext"
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
           }
         },
         "title": "BatchStatRequest",
@@ -163,37 +160,6 @@
         "title": "Breadcrumb",
         "additionalProperties": false
       },
-      "openlet_api.letfs.v1.Bucket": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string",
-            "title": "id"
-          },
-          "limit_bytes": {
-            "type": [
-              "integer",
-              "string"
-            ],
-            "title": "limit_bytes",
-            "format": "int64"
-          },
-          "used_bytes": {
-            "type": [
-              "integer",
-              "string"
-            ],
-            "title": "used_bytes",
-            "format": "int64"
-          },
-          "state": {
-            "type": "string",
-            "title": "state"
-          }
-        },
-        "title": "Bucket",
-        "additionalProperties": false
-      },
       "openlet_api.letfs.v1.CompleteUploadRequest": {
         "type": "object",
         "properties": {
@@ -211,6 +177,10 @@
               "$ref": "#/components/schemas/openlet_api.letfs.v1.PartReceipt"
             },
             "title": "parts"
+          },
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
           }
         },
         "title": "CompleteUploadRequest",
@@ -237,33 +207,6 @@
           "destination_root_id": {
             "type": "string",
             "title": "destination_root_id"
-          },
-          "status": {
-            "type": "string",
-            "title": "status"
-          },
-          "committed_nodes": {
-            "type": [
-              "integer",
-              "string"
-            ],
-            "title": "committed_nodes",
-            "format": "int64"
-          },
-          "committed_bytes": {
-            "type": [
-              "integer",
-              "string"
-            ],
-            "title": "committed_bytes",
-            "format": "int64"
-          },
-          "error_code": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "title": "error_code"
           }
         },
         "title": "Copy",
@@ -272,6 +215,10 @@
       "openlet_api.letfs.v1.CreateCopyRequest": {
         "type": "object",
         "properties": {
+          "destination_scope_id": {
+            "type": "string",
+            "title": "destination_scope_id"
+          },
           "filesystem_id": {
             "type": "string",
             "title": "filesystem_id"
@@ -301,9 +248,9 @@
             "type": "string",
             "title": "idempotency_key"
           },
-          "path_context": {
-            "title": "path_context",
-            "$ref": "#/components/schemas/openlet_api.letfs.v1.PathContext"
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
           }
         },
         "title": "CreateCopyRequest",
@@ -333,9 +280,9 @@
                 "type": "string",
                 "title": "idempotency_key"
               },
-              "path_context": {
-                "title": "path_context",
-                "$ref": "#/components/schemas/openlet_api.letfs.v1.PathContext"
+              "scope_id": {
+                "type": "string",
+                "title": "scope_id"
               }
             }
           },
@@ -395,10 +342,6 @@
                 "type": "string",
                 "title": "idempotency_key"
               },
-              "path_context": {
-                "title": "path_context",
-                "$ref": "#/components/schemas/openlet_api.letfs.v1.PathContext"
-              },
               "size_bytes": {
                 "type": [
                   "integer",
@@ -418,6 +361,10 @@
                   "null"
                 ],
                 "title": "content_md5"
+              },
+              "scope_id": {
+                "type": "string",
+                "title": "scope_id"
               }
             }
           },
@@ -546,13 +493,29 @@
             "type": "string",
             "title": "id"
           },
-          "bucket_id": {
-            "type": "string",
-            "title": "bucket_id"
+          "limit_bytes": {
+            "type": [
+              "integer",
+              "string"
+            ],
+            "title": "limit_bytes",
+            "format": "int64"
           },
-          "root_id": {
-            "type": "string",
-            "title": "root_id"
+          "used_bytes": {
+            "type": [
+              "integer",
+              "string"
+            ],
+            "title": "used_bytes",
+            "format": "int64"
+          },
+          "node_count": {
+            "type": [
+              "integer",
+              "string"
+            ],
+            "title": "node_count",
+            "format": "int64"
           },
           "state": {
             "type": "string",
@@ -560,58 +523,6 @@
           }
         },
         "title": "Filesystem",
-        "additionalProperties": false
-      },
-      "openlet_api.letfs.v1.GetBucketUsageRequest": {
-        "type": "object",
-        "properties": {
-          "bucket_id": {
-            "type": "string",
-            "title": "bucket_id"
-          }
-        },
-        "title": "GetBucketUsageRequest",
-        "additionalProperties": false
-      },
-      "openlet_api.letfs.v1.GetBucketUsageResponse": {
-        "type": "object",
-        "properties": {
-          "bucket": {
-            "title": "bucket",
-            "$ref": "#/components/schemas/openlet_api.letfs.v1.Bucket"
-          },
-          "upload_limits": {
-            "title": "upload_limits",
-            "$ref": "#/components/schemas/openlet_api.letfs.v1.UploadLimits"
-          }
-        },
-        "title": "GetBucketUsageResponse",
-        "additionalProperties": false
-      },
-      "openlet_api.letfs.v1.GetCopyRequest": {
-        "type": "object",
-        "properties": {
-          "filesystem_id": {
-            "type": "string",
-            "title": "filesystem_id"
-          },
-          "copy_id": {
-            "type": "string",
-            "title": "copy_id"
-          }
-        },
-        "title": "GetCopyRequest",
-        "additionalProperties": false
-      },
-      "openlet_api.letfs.v1.GetCopyResponse": {
-        "type": "object",
-        "properties": {
-          "copy": {
-            "title": "copy",
-            "$ref": "#/components/schemas/openlet_api.letfs.v1.Copy"
-          }
-        },
-        "title": "GetCopyResponse",
         "additionalProperties": false
       },
       "openlet_api.letfs.v1.GetDownloadRequest": {
@@ -634,9 +545,9 @@
             "title": "revision",
             "format": "int64"
           },
-          "path_context": {
-            "title": "path_context",
-            "$ref": "#/components/schemas/openlet_api.letfs.v1.PathContext"
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
           }
         },
         "title": "GetDownloadRequest",
@@ -686,9 +597,9 @@
             "type": "string",
             "title": "node_id"
           },
-          "path_context": {
-            "title": "path_context",
-            "$ref": "#/components/schemas/openlet_api.letfs.v1.PathContext"
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
           }
         },
         "title": "GetNodeRequest",
@@ -716,9 +627,9 @@
             "type": "string",
             "title": "node_id"
           },
-          "path_context": {
-            "title": "path_context",
-            "$ref": "#/components/schemas/openlet_api.letfs.v1.PathContext"
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
           }
         },
         "title": "GetProcessingRequest",
@@ -745,6 +656,10 @@
           "entry_id": {
             "type": "string",
             "title": "entry_id"
+          },
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
           }
         },
         "title": "GetTrashRequest",
@@ -779,6 +694,10 @@
               "format": "int32"
             },
             "title": "numbers"
+          },
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
           }
         },
         "title": "GetUploadPartsRequest",
@@ -809,6 +728,10 @@
           "upload_id": {
             "type": "string",
             "title": "upload_id"
+          },
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
           }
         },
         "title": "GetUploadRequest",
@@ -860,10 +783,6 @@
             "title": "parent",
             "$ref": "#/components/schemas/openlet_api.letfs.v1.Locator"
           },
-          "path_context": {
-            "title": "path_context",
-            "$ref": "#/components/schemas/openlet_api.letfs.v1.PathContext"
-          },
           "limit": {
             "type": [
               "integer",
@@ -878,6 +797,10 @@
               "null"
             ],
             "title": "cursor"
+          },
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
           }
         },
         "title": "ListNodesRequest",
@@ -925,6 +848,10 @@
               "null"
             ],
             "title": "cursor"
+          },
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
           }
         },
         "title": "ListTrashRequest",
@@ -1004,32 +931,12 @@
         "title": "Locator",
         "additionalProperties": false
       },
-      "openlet_api.letfs.v1.Mount": {
-        "type": "object",
-        "properties": {
-          "path": {
-            "type": "string",
-            "title": "path"
-          },
-          "filesystem_id": {
-            "type": "string",
-            "title": "filesystem_id"
-          }
-        },
-        "title": "Mount",
-        "additionalProperties": false,
-        "description": "A mount is path context for the requested filesystem, never an authorization grant."
-      },
       "openlet_api.letfs.v1.Node": {
         "type": "object",
         "properties": {
           "id": {
             "type": "string",
             "title": "id"
-          },
-          "filesystem_id": {
-            "type": "string",
-            "title": "filesystem_id"
           },
           "parent_id": {
             "type": [
@@ -1105,6 +1012,10 @@
             ],
             "title": "context",
             "description": "Omitted from list/search metadata; only explicitly requested detail can include context."
+          },
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
           }
         },
         "title": "Node",
@@ -1124,20 +1035,6 @@
           }
         },
         "title": "PartReceipt",
-        "additionalProperties": false
-      },
-      "openlet_api.letfs.v1.PathContext": {
-        "type": "object",
-        "properties": {
-          "mounts": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/openlet_api.letfs.v1.Mount"
-            },
-            "title": "mounts"
-          }
-        },
-        "title": "PathContext",
         "additionalProperties": false
       },
       "openlet_api.letfs.v1.PathLocator": {
@@ -1198,6 +1095,10 @@
           "entry_id": {
             "type": "string",
             "title": "entry_id"
+          },
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
           }
         },
         "title": "PurgeTrashRequest",
@@ -1226,10 +1127,6 @@
             "title": "locator",
             "$ref": "#/components/schemas/openlet_api.letfs.v1.Locator"
           },
-          "path_context": {
-            "title": "path_context",
-            "$ref": "#/components/schemas/openlet_api.letfs.v1.PathContext"
-          },
           "revision": {
             "type": [
               "integer",
@@ -1247,6 +1144,10 @@
           "media_type": {
             "type": "string",
             "title": "media_type"
+          },
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
           }
         },
         "title": "ReplaceContentRequest",
@@ -1278,9 +1179,9 @@
             "type": "string",
             "title": "idempotency_key"
           },
-          "path_context": {
-            "title": "path_context",
-            "$ref": "#/components/schemas/openlet_api.letfs.v1.PathContext"
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
           }
         },
         "title": "ReprocessNodeRequest",
@@ -1320,9 +1221,9 @@
             "title": "locator",
             "$ref": "#/components/schemas/openlet_api.letfs.v1.Locator"
           },
-          "path_context": {
-            "title": "path_context",
-            "$ref": "#/components/schemas/openlet_api.letfs.v1.PathContext"
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
           }
         },
         "title": "ResolveNodeRequest",
@@ -1349,6 +1250,10 @@
           "entry_id": {
             "type": "string",
             "title": "entry_id"
+          },
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
           }
         },
         "title": "RestoreTrashRequest",
@@ -1409,9 +1314,9 @@
             ],
             "title": "direction"
           },
-          "path_context": {
-            "title": "path_context",
-            "$ref": "#/components/schemas/openlet_api.letfs.v1.PathContext"
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
           }
         },
         "title": "SearchFilesRequest",
@@ -1561,9 +1466,9 @@
             ],
             "title": "cursor"
           },
-          "path_context": {
-            "title": "path_context",
-            "$ref": "#/components/schemas/openlet_api.letfs.v1.PathContext"
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
           }
         },
         "title": "SemanticSearchRequest",
@@ -1658,9 +1563,9 @@
             "type": "string",
             "title": "node_id"
           },
-          "path_context": {
-            "title": "path_context",
-            "$ref": "#/components/schemas/openlet_api.letfs.v1.PathContext"
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
           }
         },
         "title": "StreamArchiveRequest",
@@ -1748,10 +1653,6 @@
             "title": "locator",
             "$ref": "#/components/schemas/openlet_api.letfs.v1.Locator"
           },
-          "path_context": {
-            "title": "path_context",
-            "$ref": "#/components/schemas/openlet_api.letfs.v1.PathContext"
-          },
           "revision": {
             "type": [
               "integer",
@@ -1760,6 +1661,10 @@
             ],
             "title": "revision",
             "format": "int64"
+          },
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
           }
         },
         "title": "TrashNodeRequest",
@@ -1787,10 +1692,6 @@
             "title": "locator",
             "$ref": "#/components/schemas/openlet_api.letfs.v1.Locator"
           },
-          "path_context": {
-            "title": "path_context",
-            "$ref": "#/components/schemas/openlet_api.letfs.v1.PathContext"
-          },
           "revision": {
             "type": [
               "integer",
@@ -1810,6 +1711,10 @@
           "parent": {
             "title": "parent",
             "$ref": "#/components/schemas/openlet_api.letfs.v1.Locator"
+          },
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
           }
         },
         "title": "UpdateNodeRequest",
@@ -1924,45 +1829,6 @@
           }
         },
         "title": "UploadDestination",
-        "additionalProperties": false
-      },
-      "openlet_api.letfs.v1.UploadLimits": {
-        "type": "object",
-        "properties": {
-          "inline_limit_bytes": {
-            "type": [
-              "integer",
-              "string"
-            ],
-            "title": "inline_limit_bytes",
-            "format": "int64"
-          },
-          "max_file_bytes": {
-            "type": [
-              "integer",
-              "string"
-            ],
-            "title": "max_file_bytes",
-            "format": "int64"
-          },
-          "multipart_threshold_bytes": {
-            "type": [
-              "integer",
-              "string"
-            ],
-            "title": "multipart_threshold_bytes",
-            "format": "int64"
-          },
-          "multipart_part_bytes": {
-            "type": [
-              "integer",
-              "string"
-            ],
-            "title": "multipart_part_bytes",
-            "format": "int64"
-          }
-        },
-        "title": "UploadLimits",
         "additionalProperties": false
       },
       "openlet_api.letfs.v1.UploadPart": {

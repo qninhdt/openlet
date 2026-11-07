@@ -25,3 +25,14 @@ func TestMediaTypeAndProcessingFormats(t *testing.T) {
 		require.Equal(t, test.parse, parse, test.name)
 	}
 }
+
+func TestInlineTextPolicy(t *testing.T) {
+	restricted := session{allowBlobFiles: false}
+	for _, content := range [][]byte{nil, {}, []byte("Xin chào 🌏\r\n\t"), []byte("{\"value\":1}"), []byte("# Markdown\n"), []byte("package main\n")} {
+		require.NoError(t, restricted.validateInlineText(content))
+	}
+	for _, content := range [][]byte{{0xff}, {0}, {1}, {127}, []byte("hello\x00world"), []byte("\u0085")} {
+		require.Equal(t, "BLOB_FILES_DISABLED", reason(restricted.validateInlineText(content)))
+		require.NoError(t, (&session{allowBlobFiles: true}).validateInlineText(content), "unrestricted scopes retain exact arbitrary bytes")
+	}
+}

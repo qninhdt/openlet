@@ -229,14 +229,12 @@ services:
       spicedb: {condition: service_healthy}
     build: {context: ../.., dockerfile: apps/account/Dockerfile}
     environment:
-      ACCOUNT_SERVICE_TOKEN_FILE: /run/secrets/account_service_token
-      WORKSPACE_RPC_ADDRESS: workspace:9090
       <<: [*telemetry-env, *go-environment]
       DATABASE_URL_FILE: /run/secrets/account_database_url
       CLERK_API_URL: http://boundary:8080/v1
       CLERK_SECRET_KEY_FILE: /run/secrets/clerk_secret_key
       ALLOW_TEST_HTTP: 'true'
-    secrets: [account_service_token, account_database_url, gateway_token, workspace_service_token, clerk_secret_key, spicedb_key]
+    secrets: [account_database_url, gateway_token, workspace_service_token, clerk_secret_key, spicedb_key]
     healthcheck: &go-health
       test: [CMD, /server, --healthcheck]
       interval: 2s
@@ -251,13 +249,11 @@ services:
       spicedb: {condition: service_healthy}
     build: {context: ../.., dockerfile: apps/workspace/Dockerfile}
     environment:
-      ACCOUNT_SERVICE_TOKEN_FILE: /run/secrets/account_service_token
       <<: [*telemetry-env, *go-environment]
       DATABASE_URL_FILE: /run/secrets/workspace_database_url
       ACCOUNT_RPC_ADDRESS: account:9090
-      LETFS_RPC_ADDRESS: letfs:9090
       DEFAULT_QUOTA_BYTES: '20971520'
-    secrets: [account_service_token, workspace_database_url, gateway_token, workspace_service_token, spicedb_key]
+    secrets: [workspace_database_url, gateway_token, workspace_service_token, spicedb_key]
     healthcheck: *go-health
     stop_grace_period: 40s
     labels: *labels
@@ -345,7 +341,6 @@ secrets:
   letfs_database_url: {file: '${OPENLET_E2E_STATE}/secrets/letfs_database_url'}
   gateway_token: {file: '${OPENLET_E2E_STATE}/secrets/gateway_token'}
   workspace_service_token: {file: '${OPENLET_E2E_STATE}/secrets/workspace_service_token'}
-  account_service_token: {file: '${OPENLET_E2E_STATE}/secrets/account_service_token'}
   ingest_service_token: {file: '${OPENLET_E2E_STATE}/secrets/ingest_service_token'}
   clerk_secret_key: {file: '${OPENLET_E2E_STATE}/secrets/clerk_secret_key'}
   fixture_control_token: {file: '${OPENLET_E2E_STATE}/secrets/fixture_control_token'}

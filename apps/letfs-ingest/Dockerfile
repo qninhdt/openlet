@@ -10,7 +10,7 @@ RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked --no-dev --packag
 FROM dependencies AS models
 COPY apps/letfs-ingest/src/letfs_ingest/__init__.py ./apps/letfs-ingest/src/letfs_ingest/
 COPY apps/letfs-ingest/src/letfs_ingest/parser/__init__.py apps/letfs-ingest/src/letfs_ingest/parser/models.py apps/letfs-ingest/src/letfs_ingest/parser/prefetch_models.py ./apps/letfs-ingest/src/letfs_ingest/parser/
-RUN --mount=type=cache,target=/root/.cache/huggingface PYTHONPATH=/app/apps/letfs-ingest/src .venv/bin/python -m letfs_ingest.parser.prefetch_models /models
+RUN --mount=type=cache,target=/root/.cache/huggingface HF_HUB_DISABLE_XET=1 PYTHONPATH=/app/apps/letfs-ingest/src .venv/bin/python -m letfs_ingest.parser.prefetch_models /models
 
 FROM dependencies AS package
 COPY apps/letfs-ingest/src/ ./apps/letfs-ingest/src/

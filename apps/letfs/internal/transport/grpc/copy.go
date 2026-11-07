@@ -6,13 +6,12 @@ import (
 	letfsv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/letfs/v1"
 )
 
-func copyMessage(state filesystem.CopyState) *letfsv1.Copy {
-	return &letfsv1.Copy{Id: state.Admission.ID.String(), DestinationRootId: state.Admission.Root.Destination.String(),
-		Status: state.Status, CommittedNodes: state.CommittedNodes, CommittedBytes: state.CommittedBytes, ErrorCode: state.ErrorCode}
+func copyMessage(value filesystem.CopyResult) *letfsv1.Copy {
+	return &letfsv1.Copy{Id: value.ID.String(), DestinationRootId: value.DestinationRootID.String()}
 }
 
 func (s *Filesystem) CreateCopy(ctx context.Context, input *letfsv1.CreateCopyRequest) (*letfsv1.CreateCopyResponse, error) {
-	fs, err := parseID(input.GetFilesystemId())
+	fs, err := s.scopeInput(ctx, input.GetFilesystemId(), input.GetScopeId())
 	if err != nil {
 		return nil, err
 	}
@@ -28,30 +27,14 @@ func (s *Filesystem) CreateCopy(ctx context.Context, input *letfsv1.CreateCopyRe
 	if err != nil {
 		return nil, err
 	}
-	mounts, err := pathInput(input.GetPathContext())
+	destination, err := s.scopeInput(ctx, input.GetFilesystemId(), input.GetDestinationScopeId())
 	if err != nil {
 		return nil, err
 	}
-	state, err := s.Service.CreateCopy(ctx, fs, mounts, key, filesystem.CreateCopy{SourceID: source, ParentID: parent, Name: input.GetName(), Revision: input.Revision})
+	state, err := s.Service.CreateCopy(ctx, fs, key, filesystem.CreateCopy{DestinationScopeID: destination, SourceID: source, ParentID: parent, Name: input.GetName(), Revision: input.Revision})
 	if err != nil {
 		return nil, err
 	}
 	result := copyMessage(state)
 	return &letfsv1.CreateCopyResponse{Copy: result}, nil
-}
-
-func (s *Filesystem) GetCopy(ctx context.Context, input *letfsv1.GetCopyRequest) (*letfsv1.GetCopyResponse, error) {
-	fs, err := parseID(input.GetFilesystemId())
-	if err != nil {
-		return nil, err
-	}
-	id, err := parseID(input.GetCopyId())
-	if err != nil {
-		return nil, err
-	}
-	state, err := s.Service.GetCopy(ctx, fs, id)
-	if err != nil {
-		return nil, err
-	}
-	return &letfsv1.GetCopyResponse{Copy: copyMessage(state)}, nil
 }

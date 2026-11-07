@@ -5,8 +5,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/qninhdt/openlet/packages/go/authz"
-
 	"github.com/stretchr/testify/require"
 )
 
@@ -15,12 +13,10 @@ func TestRejectsInvalidConfigurationBeforeConnecting(t *testing.T) {
 	require.NoError(t, os.WriteFile(schema, []byte("definition user {}"), 0600))
 	t.Setenv("ALLOW_PLAINTEXT_RPC_FILE", "")
 	t.Setenv("ALLOW_PLAINTEXT_RPC", "invalid")
-	require.EqualError(t, run(t.Context(), schema, "../../../contracts/authz/roles.json", false), "ALLOW_PLAINTEXT_RPC must be true or false")
+	require.EqualError(t, run(t.Context(), schema, false), "ALLOW_PLAINTEXT_RPC must be true or false")
 	t.Setenv("ALLOW_PLAINTEXT_RPC", "false")
-	require.EqualError(t, run(t.Context(), schema+".missing", "../../../contracts/authz/roles.json", false), "expected authorization schema file is unavailable")
-	require.EqualError(t, run(t.Context(), schema, schema+".missing", false), "expected authorization role policy file is unavailable")
-	require.ErrorIs(t, run(t.Context(), schema, schema, false), authz.ErrInvalidPolicy)
+	require.EqualError(t, run(t.Context(), schema+".missing", false), "expected authorization schema file is unavailable")
 	t.Setenv("SPICEDB_ADDRESS_FILE", "")
 	t.Setenv("SPICEDB_ADDRESS", "invalid")
-	require.EqualError(t, run(t.Context(), schema, "../../../contracts/authz/roles.json", false), "authorization transport configuration rejected")
+	require.EqualError(t, run(t.Context(), schema, false), "authorization transport configuration rejected")
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -59,6 +60,21 @@ func (s *Store) inlineSize(content []byte) error {
 	return nil
 }
 
+func (s *session) validateInlineText(content []byte) error {
+	if s.allowBlobFiles {
+		return nil
+	}
+	if !utf8.Valid(content) {
+		return apperr.New(apperr.Invalid, "BLOB_FILES_DISABLED", "scope requires UTF-8 text")
+	}
+	for _, char := range string(content) {
+		if unicode.IsControl(char) && char != '\t' && char != '\n' && char != '\r' {
+			return apperr.New(apperr.Invalid, "BLOB_FILES_DISABLED", "text cannot contain control characters other than tab and line endings")
+		}
+	}
+	return nil
+}
+
 func (s *session) name(parent uuid.UUID, name string) error {
 	if err := ValidateName(name); err != nil {
 		return err
@@ -70,9 +86,9 @@ func (s *session) name(parent uuid.UUID, name string) error {
 }
 
 func (s *session) usage(ctx context.Context, delta int64) error {
-	changed, err := s.tx.Exec(ctx, `UPDATE quota_buckets SET used_bytes=used_bytes+$2
+	changed, err := s.tx.Exec(ctx, `UPDATE filesystems SET used_bytes=used_bytes+$2
  WHERE id=$1 AND used_bytes+$2>=0 AND ($2<=0 OR used_bytes<=limit_bytes-$2)
- AND (state='active' OR ($2<=0 AND state='frozen'))`, s.bucket, delta)
+ AND (state='active' OR ($2<=0 AND state IN ('deleting','deleted')))`, s.filesystemID, delta)
 	if err != nil {
 		return databaseError(err)
 	}
@@ -84,7 +100,7 @@ func (s *session) usage(ctx context.Context, delta int64) error {
 
 func (s *session) addNodes(ctx context.Context, count int64) error {
 	changed, err := s.tx.Exec(ctx, `UPDATE filesystems SET node_count=node_count+$2
- WHERE id=$1 AND node_count+$2 >= CASE WHEN state='deleting' THEN 0 ELSE 1 END AND ($2<=0 OR node_count+$2<=$3)`, s.fs, count, s.maxNodes)
+ WHERE id=$1 AND node_count+$2>=0 AND ($2<=0 OR node_count+$2<=$3)`, s.filesystemID, count, s.maxNodes)
 	if err != nil {
 		return databaseError(err)
 	}
@@ -101,20 +117,20 @@ func (s *session) bump(ctx context.Context, ids ...uuid.UUID) error {
 
 func (s *session) fetch(ctx context.Context, id uuid.UUID) (Node, error) {
 	var node Node
-	err := s.tx.QueryRow(ctx, `SELECT `+nodeColumns+`,false FROM nodes n LEFT JOIN files f ON f.node_id=n.id WHERE n.filesystem_id=$1 AND n.id=$2`, s.fs, id).Scan(node.fields()...)
+	err := s.tx.QueryRow(ctx, `SELECT `+nodeColumns+`,false FROM nodes n LEFT JOIN files f ON f.node_id=n.id WHERE n.scope_id=$1 AND n.id=$2`, s.scopeID, id).Scan(node.fields()...)
 	return node, databaseError(err)
 }
 
 func (s *session) depth(ctx context.Context, id uuid.UUID) (int64, error) {
 	var depth int64
-	err := s.tx.QueryRow(ctx, `WITH RECURSIVE a AS (SELECT id,parent_id,0 AS depth FROM nodes WHERE id=$1 AND filesystem_id=$2
- UNION ALL SELECT n.id,n.parent_id,a.depth+1 FROM a JOIN nodes n ON n.id=a.parent_id AND n.filesystem_id=$2 WHERE a.depth<128)
- SELECT max(depth)::bigint FROM a`, id, s.fs).Scan(&depth)
+	err := s.tx.QueryRow(ctx, `WITH RECURSIVE a AS (SELECT id,parent_id,0 AS depth FROM nodes WHERE id=$1 AND scope_id=$2
+ UNION ALL SELECT n.id,n.parent_id,a.depth+1 FROM a JOIN nodes n ON n.id=a.parent_id AND n.scope_id=$2 WHERE a.depth<128)
+ SELECT max(depth)::bigint FROM a`, id, s.scopeID).Scan(&depth)
 	return depth, databaseError(err)
 }
 
-func (s *Store) CreateNode(ctx context.Context, fs uuid.UUID, mounts []Mount, key uuid.UUID, input CreateNode) (Node, error) {
-	actor, err := s.authorize(ctx, fs, "filesystem", authz.NodeCreate)
+func (s *Store) CreateNode(ctx context.Context, scopeID uuid.UUID, key uuid.UUID, input CreateNode) (Node, error) {
+	actor, err := s.authorize(ctx, scopeID, "scope", authz.ScopeWrite)
 	if err != nil {
 		return Node{}, err
 	}
@@ -124,7 +140,7 @@ func (s *Store) CreateNode(ctx context.Context, fs uuid.UUID, mounts []Mount, ke
 	if err = ValidateName(input.Name); err != nil {
 		return Node{}, err
 	}
-	if _, err = pathParts(fs, mounts, input.Parent); err != nil {
+	if _, err = pathParts(input.Parent); err != nil {
 		return Node{}, err
 	}
 	if input.File != nil {
@@ -144,12 +160,17 @@ func (s *Store) CreateNode(ctx context.Context, fs uuid.UUID, mounts []Mount, ke
 	if err != nil {
 		return Node{}, err
 	}
-	session, err := s.openSession(ctx, fs, true)
+	session, err := s.openSession(ctx, scopeID, true)
 	if err != nil {
 		return Node{}, err
 	}
 	defer session.tx.Rollback(ctx)
-	scope := "filesystem/" + fs.String() + "/actor/" + actor.String()
+	if input.File != nil {
+		if err = session.validateInlineText(input.File.Content); err != nil {
+			return Node{}, err
+		}
+	}
+	scope := "scope/" + scopeID.String() + "/actor/" + actor.String()
 	var savedHash string
 	var saved []byte
 	err = session.tx.QueryRow(ctx, `SELECT request_hash,result FROM idempotency_keys
@@ -167,7 +188,7 @@ func (s *Store) CreateNode(ctx context.Context, fs uuid.UUID, mounts []Mount, ke
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return Node{}, databaseError(err)
 	}
-	parent, err := session.resolveOne(ctx, mounts, input.Parent)
+	parent, err := session.resolveOne(ctx, input.Parent)
 	if err != nil {
 		return Node{}, err
 	}
@@ -202,7 +223,7 @@ func (s *Store) CreateNode(ctx context.Context, fs uuid.UUID, mounts []Mount, ke
 		return Node{}, err
 	}
 	id := uuid.Must(uuid.NewV7())
-	_, err = session.tx.Exec(ctx, `INSERT INTO nodes(id,filesystem_id,parent_id,name,kind,size_bytes) VALUES($1,$2,$3,$4,$5,$6)`, id, fs, parent.ID, input.Name, kind, len(content))
+	_, err = session.tx.Exec(ctx, `INSERT INTO nodes(id,scope_id,parent_id,name,kind,size_bytes) VALUES($1,$2,$3,$4,$5,$6)`, id, scopeID, parent.ID, input.Name, kind, len(content))
 	if err != nil {
 		return Node{}, databaseError(err)
 	}
@@ -247,19 +268,19 @@ type UpdateNode struct {
 	Parent   *Locator
 }
 
-func (s *Store) UpdateNode(ctx context.Context, fs uuid.UUID, mounts []Mount, input UpdateNode) (Node, error) {
-	if _, err := s.authorize(ctx, fs, "filesystem", authz.NodeUpdate); err != nil {
+func (s *Store) UpdateNode(ctx context.Context, scopeID uuid.UUID, input UpdateNode) (Node, error) {
+	if _, err := s.authorize(ctx, scopeID, "scope", authz.ScopeWrite); err != nil {
 		return Node{}, err
 	}
 	if input.Name == nil && input.Parent == nil {
 		return Node{}, apperr.New(apperr.Invalid, "VALIDATION", "node patch is empty")
 	}
-	session, err := s.openSession(ctx, fs, true)
+	session, err := s.openSession(ctx, scopeID, true)
 	if err != nil {
 		return Node{}, err
 	}
 	defer session.tx.Rollback(ctx)
-	node, err := session.resolveOne(ctx, mounts, input.Locator)
+	node, err := session.resolveOne(ctx, input.Locator)
 	if err != nil {
 		return Node{}, err
 	}
@@ -281,7 +302,7 @@ func (s *Store) UpdateNode(ctx context.Context, fs uuid.UUID, mounts []Mount, in
 	}
 	parent := *node.ParentID
 	if input.Parent != nil {
-		destination, err := session.resolveOne(ctx, mounts, *input.Parent)
+		destination, err := session.resolveOne(ctx, *input.Parent)
 		if err != nil {
 			return Node{}, err
 		}
@@ -322,9 +343,9 @@ func (s *Store) UpdateNode(ctx context.Context, fs uuid.UUID, mounts []Mount, in
 func (s *session) cycle(ctx context.Context, id, parent uuid.UUID) error {
 	var err error
 	var cycle bool
-	err = s.tx.QueryRow(ctx, `WITH RECURSIVE a AS (SELECT id,parent_id,0 AS depth FROM nodes WHERE id=$1 AND filesystem_id=$2
- UNION ALL SELECT n.id,n.parent_id,a.depth+1 FROM a JOIN nodes n ON n.id=a.parent_id AND n.filesystem_id=$2 WHERE a.depth<128)
- SELECT EXISTS(SELECT 1 FROM a WHERE id=$3)`, parent, s.fs, id).Scan(&cycle)
+	err = s.tx.QueryRow(ctx, `WITH RECURSIVE a AS (SELECT id,parent_id,0 AS depth FROM nodes WHERE id=$1 AND scope_id=$2
+ UNION ALL SELECT n.id,n.parent_id,a.depth+1 FROM a JOIN nodes n ON n.id=a.parent_id AND n.scope_id=$2 WHERE a.depth<128)
+ SELECT EXISTS(SELECT 1 FROM a WHERE id=$3)`, parent, s.scopeID, id).Scan(&cycle)
 	if err != nil {
 		return databaseError(err)
 	}
@@ -344,9 +365,9 @@ func (s *session) validateMove(ctx context.Context, id, parent uuid.UUID) error 
 		return err
 	}
 	var height int64
-	err = s.tx.QueryRow(ctx, `WITH RECURSIVE a AS (SELECT id,0 AS depth FROM nodes WHERE id=$1 AND filesystem_id=$2
- UNION ALL SELECT n.id,a.depth+1 FROM a JOIN nodes n ON n.parent_id=a.id AND n.filesystem_id=$2 WHERE a.depth<128)
- SELECT max(depth)::bigint FROM a`, id, s.fs).Scan(&height)
+	err = s.tx.QueryRow(ctx, `WITH RECURSIVE a AS (SELECT id,0 AS depth FROM nodes WHERE id=$1 AND scope_id=$2
+ UNION ALL SELECT n.id,a.depth+1 FROM a JOIN nodes n ON n.parent_id=a.id AND n.scope_id=$2 WHERE a.depth<128)
+ SELECT max(depth)::bigint FROM a`, id, s.scopeID).Scan(&height)
 	if err != nil {
 		return databaseError(err)
 	}
@@ -356,20 +377,23 @@ func (s *session) validateMove(ctx context.Context, id, parent uuid.UUID) error 
 	return nil
 }
 
-func (s *Store) ReplaceContent(ctx context.Context, fs uuid.UUID, mounts []Mount, locator Locator, revision *int64, content []byte, mime string) (Node, error) {
-	_, err := s.authorize(ctx, fs, "filesystem", authz.ContentWrite)
+func (s *Store) ReplaceContent(ctx context.Context, scopeID uuid.UUID, locator Locator, revision *int64, content []byte, mime string) (Node, error) {
+	_, err := s.authorize(ctx, scopeID, "scope", authz.ScopeWrite)
 	if err != nil {
 		return Node{}, err
 	}
 	if err = s.inlineSize(content); err != nil {
 		return Node{}, err
 	}
-	session, err := s.openSession(ctx, fs, true)
+	session, err := s.openSession(ctx, scopeID, true)
 	if err != nil {
 		return Node{}, err
 	}
 	defer session.tx.Rollback(ctx)
-	node, err := session.resolveOne(ctx, mounts, locator)
+	if err = session.validateInlineText(content); err != nil {
+		return Node{}, err
+	}
+	node, err := session.resolveOne(ctx, locator)
 	if err != nil {
 		return Node{}, err
 	}

@@ -1,81 +1,87 @@
 # Durable execution
 
-Service-owned workflows use pinned Go/Python SDKs. File parsing, semantic enrichment and search indexing run as three whole-source Python activities scheduled by letfs. The [service refactor decision](../plans/261103-1348-service-refactor/tmp-refactor-decision.md) records the current boundaries and acceptance criteria.
+Workflows run in the existing private per-environment namespace. Account uses `openlet-account`, Workspace `openlet-workspace`, LetFS `openlet-letfs`; ingest activities use `openlet-letfs-cpu` and `openlet-letfs-io`. Each activity registers only on its executing owner's worker. Cross-service names/DTOs live in `packages/go/temporal`; domain code remains service-local.
 
-## Ownership and communication
+## Workflow trees
 
-| Owner | Workflow/activity code | Application core |
-|---|---|---|
-| Account | `apps/account/internal/temporal/` | `internal/user/` |
-| Workspace | `apps/workspace/internal/temporal/` | `internal/workspace/` |
-| letfs | `apps/letfs/internal/temporal/` | `internal/filesystem/`, `internal/clients/storage/` |
+```text
+W OnboardUser [account]
+├── A EnsureAccount [account]
+├── child W CreateWorkspace [ws]
+└── A PublishAccountIdentity [account]
 
-Official Go SDK workers run inside the corresponding service. One private namespace per environment, explicit owner queues. Workflow code is deterministic and performs I/O only through activities. HTTP and gRPC adapters reuse feature services. Activities invoke the same business steps. Shared Temporal helpers own trace/error conversion; they contain no workflows or business retry policy. No file bytes, credentials or growing traversal arrays in history.
+W AccountChanges [account]
+└── A ApplyAccountChange [account]
 
-Account and Workspace submit commands with Temporal Update-With-Start before writing business rows. The admission Update waits for the first Activity result; losing the HTTP connection does not cancel accepted work. Temporal unavailability before acceptance returns 503 without a business mutation. Account executes a local Activity calling Workspace gRPC and polls durable initial-workspace admission. Workspace executes its own storage Activities through the shared letfs gRPC client. There are no Account/Workspace graph-scan or dispatch-reconciliation schedules. Workspace retains only a receipt-expiry schedule. letfs retains recovery for SQL intents committed by direct filesystem APIs.
+W CreateWorkspace [ws]
+├── A CreateFilesystem [letfs]
+├── A CreateScopes [letfs]
+└── A SaveWorkspace [ws]
 
-## Catalogue
+W WorkspaceChanges [ws, serialized per workspace]
+├── Add/join: A CreateScopes [letfs] → A AddMember [ws]
+├── Role/remove: A UpdateMembership [ws]
+├── Scope grant: A UpdateScopeAccess [ws]
+└── Delete: child W DeleteWorkspace [ws]
 
-| Workflow | Owner | Durable work |
-|---|---|---|
-| `OnboardUser` | Account | Internal identity, initial workspace/storage, Clerk claim |
-| `CreateWorkspace` | Workspace | Workspace/Owner, storage provisioning, activation |
-| `DeleteWorkspace` | Workspace | Deny access, freeze bucket, remove every filesystem, finalize tombstone |
-| `WorkspacePermissions` | Workspace | Serialize member/owner/join/delete commands and their targeted graph writes per workspace |
-| `WorkspaceMaintenance` | Workspace | Expire completed idempotency receipts |
-| `CopyNode` | letfs | Bounded traversal and per-item visible commits with partial results |
-| `PurgeTrash` | letfs | Direct leaf batches for either node kind |
-| `DeleteFilesystem` | letfs | Remove live/trash/artifact/upload state |
-| `StorageMaintenance` | letfs | Expire uploads, recover admissions, drain detached forests and reclaim objects |
-| `ProcessFile` | letfs | `process_file` on `openlet-letfs-cpu`, then `enrich_file -> index_file` on `openlet-letfs-io` |
+W DeleteWorkspace [ws]
+├── A MarkWorkspaceDeleting [ws]
+├── child W DeleteFilesystem [letfs]
+└── A RemoveWorkspace [ws]
 
-Workspace authorization commands execute as Updates to `workspace-permissions/<workspace-id>`. A native workflow mutex covers validation, SQL mutation and graph publication, including Activity retries. `PrepareMutation` is a Local Activity with a five-second attempt timeout; `ApplyMutation` remains a regular Activity. Scheduling that regular Activity persists the prepared result before its SQL changes, so worker recovery preserves the original owner and receipt hash. After 100 completed Updates, Continue-As-New waits for all handlers to finish. The existing `idempotency_keys` table records each mutation in its SQL transaction; retries after a lost commit acknowledgement skip SQL and finish the graph write. An ownership transfer changes both users in one atomic SpiceDB request. Name-only updates and invitations that do not change membership remain direct.
+W DeleteFilesystem [letfs]
+├── A ListScopesForDeletion [letfs]  (write fence + keyset page)
+├── child W DeleteScope [letfs] × scopes, bounded concurrency
+└── A RemoveFilesystem [letfs]
 
-Direct operations: auth, profile and invitation mutations, path/stat/list, mkdir, rename/move, inline text edits, upload transfer/finalize, trash/restore. Physical object cleanup follows logical deletion asynchronously.
+W DeleteScope [letfs]
+└── A DeleteScopeData [letfs]
 
-## Activity sequences
+W PurgeTrash [letfs]
+└── A PurgeTrashData [letfs]
 
-### OnboardUser
+W CopyTree [letfs]
+└── A CopyTreeData [letfs]
 
-`OnboardUser` executes `EnsureUser` (unique Clerk subject plus self relationship), then its local `EnsureInitialWorkspace` Activity calls Workspace's authenticated gRPC admission. The workflow polls the same stable request until Workspace reports active, then executes `PublishClerkUserID` and `CompleteOnboarding`. The final Activity saves the initial workspace ID and activates the user together. Completed onboarding never recreates a later-deleted initial workspace. After 100 pending polls, Continue-As-New starts a fresh history and preserves the same request identity. Account does not reference Workspace workflow names, queues or Activity implementations.
+W ProcessFile [letfs]
+├── A process_file [letfs-ingest / CPU]  (if required)
+├── A enrich_file [letfs-ingest / IO]    (if required)
+└── A index_file [letfs-ingest / IO]  (if scope allows indexing)
 
-### CreateWorkspace
+W StorageMaintenance [letfs, scheduled]
+├── A ExpireUploads [letfs]
+├── A ReconcileResources [letfs]
+└── A DeleteObjects [letfs]
 
-`PrepareWorkspace` checks limits, commits Workspace/Owner and the existing receipt, reserves stable bucket/filesystem IDs, and grants owner status access. The Workspace-local `CreateStorage` Activity calls letfs administration gRPC, which invokes naturally idempotent bucket/filesystem operations. `CompleteWorkspace` publishes storage inheritance while SQL still blocks membership/deletion, then saves the root and activates, releases letfs provisioning receipts through gRPC, and starts the 24-hour receipt TTL for ordinary creation. Initial-workspace receipts do not expire, so delayed Account recovery cannot create a second initial workspace. An already-active retry skips activation graph writes so it cannot re-enable a later deletion. There are no letfs business mappings or provision keys. Handled permanent failures mark provisioning failed; partial storage remains deletable by its owner.
+W WorkspaceMaintenance [ws, scheduled]
+└── A PruneReceipts [ws]
+```
 
-The workflow ID is `create-workspace/<actor>/<request-key>`. Concurrent admissions validate the same input in the Update handler. Existing receipts replay the same Workspace; changed input conflicts. Closed IDs allow a new execution so receipt expiry can release a key without depending on Temporal history retention. SQL uniqueness and the pinned receipt protect unfinished work. Initial creation reserves `actor_id == request_key`; public creation rejects that reserved key.
+## Admission and publication
 
-### DeleteWorkspace
+HTTP/gRPC admission validates input and permission before starting work; there are no permission/quota-check activities. Mutation transactions still enforce lifecycle, revision, member cap and hard filesystem accounting. Onboarding carries its trusted verified account into the initial Workspace child. Workspace allocates opaque filesystem/scope IDs once; LetFS never knows shared/personal purpose.
 
-A serialized `WorkspacePermissions` Update executes `PrepareWorkspaceDeletion`: authorize the action, recheck lifecycle/revision under lock, commit deleting, then disable inherited storage access. Only then does it start the `DeleteWorkspace` child with ABANDON parent-close policy and return 202. Repeated DELETE uses the running child; a closed failed/terminated child can be restarted explicitly with the same resource identity.
+CreateWorkspace performs generic storage creation followed by SaveWorkspace, which persists the mapping/member and publishes graph relationships. AddMember similarly commits actual membership and acknowledges its graph publication. Existing receipts reconcile lost SQL/graph acknowledgments; a committed or pre-existing resource must never be compensated. Permanent uncommitted admission failure cleans only storage created for that command through the existing deletion child. Transient failures retry.
 
-`DeleteWorkspace` freezes the bucket, enumerates filesystems with a bounded keyset cursor, polls authenticated `DeleteFilesystem` gRPC admissions until letfs-owned cleanup completes, completes the bucket, then executes `CompleteWorkspaceDeletion`. This final Activity commits the tombstone/removes nonowner memberships and deletes their graph tuples, retaining owner status access. After 100 pending polls or completed filesystem steps, Continue-As-New carries the last completed cursor and resumes unfinished deletion; cancellation uses a disconnected scope. A recovery run reuses stable filesystem deletion identity and skips already-deleted filesystems.
+AccountChanges handles managed-account creation and graph publication; ordinary profile edits remain direct. OnboardUser ends with Clerk identity publication. Verified completion prevents recreation after workspace deletion or Temporal history expiry; Account stores no initial-workspace foreign key.
 
-Temporal execution failures, timeouts and operator termination remain visible in Temporal history. Handled provisioning failures also update SQL lifecycle. Termination cannot execute failure handlers: inspect the execution and perform explicit deletion retry or operator recovery. No periodic reconciliation silently restarts terminal workflows.
+WorkspaceChanges serializes commands per workspace with a native workflow mutex and Update-With-Start. After 100 completed Updates, Continue-As-New waits for handlers. Membership/access/delete responses wait for their required effects, including graph acknowledgement. Workspace rename and invitation management stay direct.
 
-### CopyNode
+## Deletion and maintenance
 
-HTTP commits a scoped copy receipt and immutable admission before dispatch. `CopyItem` publishes one ordinary node after verified storage copy and atomic quota checks; deterministic destination IDs and captured parent/source revisions protect response-loss retries. `NextCopyItem` reads bounded high-water children; `FinishCopyFile` admits processing once after an ordinary file subtree completes. Directories and derived files skip this Activity. Artifact descendants stay read-only and do not receive independent processing intents.
+DeleteWorkspace marks deleting, waits for its one DeleteFilesystem child, then removes Workspace relationships and records deletion. Accepted deletion survives caller disconnect; ABANDON children continue when a parent closes. A terminated parent can be explicitly retried without assuming its child stopped.
 
-The workflow carries at most 128 frames, one selected item and cumulative counts across Continue-As-New every 100 steps. Node/byte/depth ceilings and a one-hour deadline bound work. A failure returns an explicit partial result and preserves committed nodes; no staging, rollback or item table exists. `CompleteCopy` starts the receipt's 24-hour TTL. The scoped monitor reads Temporal admission/progress, checks current `copy_read` permission and requires the initiating actor or `copy_inspect_any` action. Missing retained history returns 410.
+DeleteFilesystem fences writes and keyset-pages scopes. It starts at most four DeleteScope children concurrently, waits for them, then removes the filesystem. After 100 pages it continues with its cursor. DeleteScopeData and PurgeTrashData loop bounded SQL batches internally. Each batch records cleanup, removes actual rows and debits only those rows atomically. Duplicate requests use independent generated child IDs and natural idempotence. Missing/deleted resources are successful cleanup retries. No per-node activities exist.
 
-### PurgeTrash
+Deletion blocks uploads/copy/processing publication. Logical completion can precede S3 cleanup. Deleted identity remains only while transfers or cleanup need attribution. Graph removal errors remain retryable. Ambiguous/open-write evidence is retained for late writes, including after NotFound.
 
-`BeginPurge` claims the trash entry, excluding restore. `DeleteNodesBatch` follows one bounded branch and removes at most 64 leaf siblings, with quota debit and object-deletion intent in the same transaction. Remaining nodes preserve progress after response loss; no deletion item or execution-state table is used. The trash entry disappears when its root is removed. Every purge uses this workflow. A purging entry fences restore and is sufficient for maintenance to recover a lost dispatch.
+StorageMaintenance runs every five minutes with overlap SKIP. Its three activities expire uploads, reconcile durable intents and delete objects; later phases still run if an earlier one fails, and errors are returned together. Reconciliation handles lost purge/deletion/processing dispatch and a copy admission that never started. It never restarts a started or terminal failed copy. Unknown Temporal status is not proof of abandonment. WorkspaceMaintenance prunes existing receipts only.
 
-### DeleteFilesystem
+## Copy
 
-The owner admission disables access, aborts unattached open transfers and preserves immutable-key cleanup evidence under the filesystem lock. The deletion workflow starts directly with `DeleteNodesBatch`, whose store validation rejects invalid identities and lifecycle states. Shared `DeleteNodesBatch` queries at most 64 leaves across all roots, including trash and detached artifacts. Each batch removes metadata, debits actual usage and records cleanup atomically; the last batch retains a deleted filesystem tombstone with no nodes or charged bytes. Continue-As-New carries only immutable filesystem/entry identity after 200 batches. Lifecycle guards reject late copy/upload/publication attempts; no SQL traversal snapshot is required.
+CopyTree runs one CopyTreeData activity with `MaximumAttempts: 1`. Traversal is local and bounded by captured node/byte/depth/runtime limits. Each ordinary node is visible and charged on commit. Source/destination identity, revisions, lifecycle and cleanup evidence are revalidated around S3 I/O. Failure keeps committed output and returns an error; there is no automatic rollback or resume guarantee. Admission returns stable copy/destination identities, with no monitor or progress surface. Test harness history export is solely verification tooling.
 
-### StorageMaintenance
-
-A finite five-minute Schedule with overlap SKIP runs bounded `ExpireUploadsBatch`, `ReconcileResourcesBatch` and `DeleteObjectsBatch`. Each phase runs even if an earlier phase fails; the workflow reports all errors together. Resource recovery drains detached artifact forests, recovers purging entries and incomplete copy admissions, and reconciles processing/index cleanup. A closed copy completes its receipt without deleting partial output. Unknown/unavailable history never proves abandonment. Copy writers register candidate evidence before I/O; unresolved write counts survive worker death. Cleanup rejects referenced keys, and an attempted deletion permanently fences that copy candidate from later publication/reuse. Unresolved late writes retain compact daily cleanup tombstones.
-
-Inspect S3 per-key errors and retry. Physical GC never debits logical usage again. Keep bucket attribution while cleanup exists. No automatic age-based trash purge or counter repair.
-
-Processing reconciliation runs within existing bounded maintenance work. It starts committed intents missing a workflow, reconciles closed workflows, and cleans unpublished output sessions. Unknown Temporal status never authorizes failing an active job.
-
-### ProcessFile
+## Processing
 
 Eligible source publication commits a monotonic desired generation on `files`. PDF/DOCX/PPTX/XLSX parse first; direct text/CSV/image sources skip parsing. Dispatch starts `process-file/<file-id>/<generation>` with `{source:{file_id,generation},parse_required,enrichment_required}`. Bounded maintenance recovers a lost start and records explicit failure after a closed workflow; unknown Temporal state never authorizes failure. Manual reprocessing commits its caller-scoped receipt and generation before dispatch.
 
@@ -87,12 +93,7 @@ Indexing uses full text for overlapping chunks, independently of the enrichment 
 
 The Python application has two explicit process roles: `python -m letfs_ingest.worker cpu` registers parsing only and checks offline models/OCR; `python -m letfs_ingest.worker io` registers enrichment/indexing only and does not require parser preflight. Both roles propagate Temporal/gRPC/provider-HTTP trace context and shut down in a bounded time.
 
-## Admission, retry and change safety
 
-Account/Workspace commands must be durably accepted by Temporal before SQL business mutations. Letfs copy/upload admission commits scoped receipts before dispatch; processing starts from a file intent committed with source publication. Plain stable workflow identity plus DB uniqueness/results survives duplicate starts/history expiry. No HMAC or generic idempotency framework. Trusted private backend access is mandatory; queues do not authenticate callers. Workspace admits an authorized scoped request; letfs processes it without evaluating workspace roles.
+## Verification
 
-Bound each activity attempt and external call. Retry infrastructure errors with SDK backoff; quota/name/revision/source conflicts are non-retryable for that attempt. Generation, stage and resource lifecycle guards protect repeated effects. Temporal is at-least-once execution, not exactly-once effects. Never hold DB locks during network I/O.
-
-Starts use stable identities and operation-specific duplicate policies. Workspace creation keys become reusable after receipt expiry; deletion retries explicitly resume closed cleanup. Copy receipts replay the original handle, and upload finalize returns its saved result. Trash uses the original node revision; restore/purge use current entry identity/state without response receipts.
-
-Copy checkpoints and counters live in bounded workflow history; deletion uses remaining nodes as its durable checkpoint. Operator termination retains committed business state. Keep representative fresh histories and replay tests for current workflow definitions; no production compatibility/version scaffolding is required. Verify commit acknowledgment loss, bounded history continuation and actual worker/server restart against real domain operations.
+Workflow tests check activity order, queue ownership, retry policies and child behavior. Real PostgreSQL/SpiceDB/Temporal tests cover publication failures, duplicate cleanup and restart accounting. Replay uses freshly exported histories; no production compatibility histories are required. See [testing](testing.md).

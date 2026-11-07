@@ -14,7 +14,7 @@ import (
 func TestProvisioningRequiresServiceBeforeStorage(t *testing.T) {
 	s := &Store{}
 	for _, ctx := range []context.Context{t.Context(), identity.WithPrincipal(t.Context(), identity.Principal{Service: "gateway", Gateway: true})} {
-		_, err := s.CreateBucket(ctx, uuid.New(), CreateBucket{ID: uuid.Must(uuid.NewV7()), LimitBytes: 100})
+		_, err := s.CreateFilesystem(ctx, uuid.New(), CreateFilesystem{ID: uuid.Must(uuid.NewV7()), LimitBytes: 100})
 		require.Equal(t, apperr.Forbidden, apperr.KindOf(err))
 	}
 }
@@ -29,4 +29,14 @@ func TestStableStorageIdentityAndExactNames(t *testing.T) {
 	for _, name := range []string{"a\\b", "Việt Nam", strings.Repeat("x", 255)} {
 		require.NoError(t, ValidateName(name))
 	}
+}
+
+func TestFilesystemFingerprintIncludesQuota(t *testing.T) {
+	input := CreateFilesystem{ID: uuid.Must(uuid.NewV7()), LimitBytes: 100}
+	first, err := fingerprint(input)
+	require.NoError(t, err)
+	input.LimitBytes = 101
+	second, err := fingerprint(input)
+	require.NoError(t, err)
+	require.NotEqual(t, first, second)
 }

@@ -13,6 +13,7 @@ import (
 )
 
 type Payload struct {
+	ScopeID         uuid.UUID `json:"scope_id"`
 	FilesystemID    uuid.UUID `json:"filesystem_id"`
 	SourceID        uuid.UUID `json:"source_id"`
 	FileID          uuid.UUID `json:"file_id"`
@@ -26,11 +27,11 @@ type Point struct {
 	Payload Payload `json:"payload"`
 }
 
-func (c *Client) Query(ctx context.Context, collection string, fs uuid.UUID, query string, vector []float64, offset int) ([]Point, error) {
+func (c *Client) Query(ctx context.Context, collection string, fs, scope uuid.UUID, query string, vector []float64, offset int) ([]Point, error) {
 	if offset < 0 || offset >= 10000 {
 		return nil, Dependency()
 	}
-	filter := map[string]any{"must": []any{map[string]any{"key": "filesystem_id", "match": map[string]any{"value": fs.String()}}}}
+	filter := map[string]any{"must": []any{map[string]any{"key": "filesystem_id", "match": map[string]any{"value": fs.String()}}, map[string]any{"key": "scope_id", "match": map[string]any{"value": scope.String()}}}}
 	body := map[string]any{"prefetch": []any{
 		map[string]any{"query": vector, "using": "dense", "filter": filter, "limit": offset + 80},
 		map[string]any{"query": map[string]any{"text": query}, "using": "text", "filter": filter, "limit": offset + 80},
@@ -51,7 +52,7 @@ func (c *Client) Query(ctx context.Context, collection string, fs uuid.UUID, que
 	}
 	for _, point := range *response.Result.Points {
 		p := point.Payload
-		if p.FilesystemID == uuid.Nil || p.SourceID == uuid.Nil || p.FileID == uuid.Nil || p.Generation <= 0 || p.EmbeddingModel == "" || p.VectorDimension <= 0 {
+		if p.FilesystemID == uuid.Nil || p.ScopeID == uuid.Nil || p.SourceID == uuid.Nil || p.FileID == uuid.Nil || p.Generation <= 0 || p.EmbeddingModel == "" || p.VectorDimension <= 0 {
 			return nil, Dependency()
 		}
 	}

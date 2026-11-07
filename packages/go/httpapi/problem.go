@@ -49,8 +49,6 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 		status = 428
 	case "REVISION_MISMATCH", "TARGET_MISMATCH":
 		status = 412
-	case "COPY_EXPIRED":
-		status = 410
 	case "REQUEST_LIMIT":
 		status = 413
 	case "INVALID_RANGE":

@@ -35,6 +35,7 @@ func (g Generation) validate() error {
 
 type IndexPreparation struct {
 	FilesystemID uuid.UUID
+	ScopeID      uuid.UUID
 	Source       Generation
 	Nodes        []ProcessingNode
 	VectorSpace  VectorSpace
@@ -45,14 +46,17 @@ func (s *Store) PrepareIndex(ctx context.Context, source Generation) (IndexPrepa
 	if err := source.validate(); err != nil {
 		return IndexPreparation{}, err
 	}
-	if s.IndexSpace.Validate() != nil {
-		return IndexPreparation{}, apperr.New(apperr.Unavailable, "DEPENDENCY_UNAVAILABLE", "vector space configuration unavailable")
-	}
 	session, err := s.processingSession(ctx, source, false)
 	if err != nil {
 		return IndexPreparation{}, err
 	}
 	defer session.tx.Rollback(ctx)
+	if !session.allowIndexing {
+		return IndexPreparation{}, apperr.New(apperr.Precondition, "INDEXING_DISABLED", "scope does not allow indexing")
+	}
+	if s.IndexSpace.Validate() != nil {
+		return IndexPreparation{}, apperr.New(apperr.Unavailable, "DEPENDENCY_UNAVAILABLE", "vector space configuration unavailable")
+	}
 	p, err := session.enrichmentState(ctx, source)
 	if err != nil {
 		return IndexPreparation{}, err
@@ -60,7 +64,7 @@ func (s *Store) PrepareIndex(ctx context.Context, source Generation) (IndexPrepa
 	if p.publication != "enriched" && p.publication != "ready" && p.publication != "index_failed" {
 		return IndexPreparation{}, uploadState("PUBLICATION_NOT_COMPLETE")
 	}
-	result := IndexPreparation{FilesystemID: session.fs, Source: source, VectorSpace: s.IndexSpace}
+	result := IndexPreparation{FilesystemID: session.filesystemID, ScopeID: session.scopeID, Source: source, VectorSpace: s.IndexSpace}
 	if p.publication == "ready" {
 		result.Complete = true
 		return result, nil
@@ -89,6 +93,9 @@ func (s *Store) CompleteIndex(ctx context.Context, source Generation) error {
 		return err
 	}
 	defer session.tx.Rollback(ctx)
+	if !session.allowIndexing {
+		return apperr.New(apperr.Precondition, "INDEXING_DISABLED", "scope does not allow indexing")
+	}
 	p, err := session.enrichmentState(ctx, source)
 	if err != nil {
 		return err
@@ -120,6 +127,9 @@ func (s *Store) FailIndex(ctx context.Context, source Generation, code string) e
 		return err
 	}
 	defer session.tx.Rollback(ctx)
+	if !session.allowIndexing {
+		return apperr.New(apperr.Precondition, "INDEXING_DISABLED", "scope does not allow indexing")
+	}
 	if _, err = session.enrichmentState(ctx, source); err != nil {
 		return err
 	}

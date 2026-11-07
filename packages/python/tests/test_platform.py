@@ -20,7 +20,7 @@ from openlet.rpc import Authenticator, Credential
 from openlet.temporal import application_error
 
 ACTOR = "019a3b66-0000-7000-8000-000000000001"
-METHOD = "/openlet_api.account.v1.AccountService/GetUserSummaries"
+METHOD = "/openlet_api.account.v1.AccountService/GetAccountSummaries"
 TOKEN = "isolated-owner-service-credential-12345"
 
 
@@ -29,7 +29,7 @@ def test_gateway_identity_and_rpc_delegation_are_separate_trust_boundaries():
         {
             "X-Gateway-Token": TOKEN,
             "X-Clerk-Sub": "subject",
-            "X-Openlet-User-ID": ACTOR,
+            "X-Openlet-Account-ID": ACTOR,
         },
         TOKEN,
     )
@@ -41,7 +41,7 @@ def test_gateway_identity_and_rpc_delegation_are_separate_trust_boundaries():
         [Credential("workspace", TOKEN, frozenset({METHOD}), delegate_actor=True)]
     )
     delegated, failure = service.authenticate(
-        (("authorization", f"Bearer {TOKEN}"), ("x-openlet-user-id", ACTOR)),
+        (("authorization", f"Bearer {TOKEN}"), ("x-openlet-account-id", ACTOR)),
         METHOD,
     )
     assert failure is None
@@ -49,7 +49,7 @@ def test_gateway_identity_and_rpc_delegation_are_separate_trust_boundaries():
     _, failure = Authenticator(
         [Credential("workspace", TOKEN, frozenset({METHOD}))]
     ).authenticate(
-        (("authorization", f"Bearer {TOKEN}"), ("x-openlet-user-id", ACTOR)),
+        (("authorization", f"Bearer {TOKEN}"), ("x-openlet-account-id", ACTOR)),
         METHOD,
     )
     assert failure is not None
@@ -117,19 +117,19 @@ async def test_authz_uses_generated_action_resource_contract():
         async def CheckPermission(self, request, **options):
             assert options["timeout"] == 2
             assert request.consistency.fully_consistent
-            assert request.resource.object_type == "filesystem"
-            assert request.permission == "node_read"
+            assert request.resource.object_type == "scope"
+            assert request.permission == "read_metadata"
             return CheckPermissionResponse(
                 permissionship=CheckPermissionResponse.PERMISSIONSHIP_HAS_PERMISSION
             )
 
-    assert await check(API(), ACTOR, "node_read", Resource("filesystem", "drive"))
+    assert await check(API(), ACTOR, "read_metadata", Resource("scope", "drive"))
     with pytest.raises(ValueError, match="invalid authorization check"):
-        await check(API(), ACTOR, "node_read", Resource("workspace", "drive"))
+        await check(API(), ACTOR, "read_metadata", Resource("workspace", "drive"))
 
 
 async def test_bulk_authz_preserves_order_and_rejects_mismatched_responses():
-    resources = [Resource("filesystem", "one"), Resource("filesystem", "two")]
+    resources = [Resource("scope", "one"), Resource("scope", "two")]
 
     class API:
         async def CheckBulkPermissions(self, request, **options):
@@ -156,7 +156,7 @@ async def test_bulk_authz_preserves_order_and_rejects_mismatched_responses():
                 ]
             )
 
-    assert await bulk_check(API(), ACTOR, "node_read", resources) == (True, False)
+    assert await bulk_check(API(), ACTOR, "read_metadata", resources) == (True, False)
 
     class Mismatch:
         async def CheckBulkPermissions(self, request, **options):
@@ -169,11 +169,11 @@ async def test_bulk_authz_preserves_order_and_rejects_mismatched_responses():
             return CheckBulkPermissionsResponse(pairs=[pair, pair])
 
     with pytest.raises(ValueError, match="does not match"):
-        await bulk_check(Mismatch(), ACTOR, "node_read", resources)
+        await bulk_check(Mismatch(), ACTOR, "read_metadata", resources)
 
 
 async def test_bulk_authz_item_failure_is_dependency_failure():
-    resources = [Resource("filesystem", "one")]
+    resources = [Resource("scope", "one")]
 
     class API:
         async def CheckBulkPermissions(self, request, **options):
@@ -187,7 +187,7 @@ async def test_bulk_authz_item_failure_is_dependency_failure():
             )
 
     with pytest.raises(AppError) as captured:
-        await bulk_check(API(), ACTOR, "node_read", resources)
+        await bulk_check(API(), ACTOR, "read_metadata", resources)
     assert captured.value.reason == "DEPENDENCY_UNAVAILABLE"
     assert "private" not in str(captured.value)
 
@@ -198,7 +198,7 @@ async def test_authz_does_not_translate_caller_cancellation():
             raise asyncio.CancelledError
 
     with pytest.raises(asyncio.CancelledError):
-        await check(API(), ACTOR, "node_read", Resource("filesystem", "drive"))
+        await check(API(), ACTOR, "read_metadata", Resource("scope", "drive"))
 
 
 def test_vector_space_rejects_invalid_remote_index_configuration():

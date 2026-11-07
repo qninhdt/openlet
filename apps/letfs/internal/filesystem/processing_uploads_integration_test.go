@@ -27,20 +27,20 @@ func TestIntegrationParseObjectOutputsUseInternalEndpointAndFenceLateCompletion(
 	s := Store{DB: db, Storage: objects, MaxNodes: 100, InlineLimit: 64, MaxFileBytes: 20 * 1024 * 1024,
 		ProcessingMaxOutputs: 10, ProcessingMaxOutputBytes: 20 * 1024 * 1024, MultipartThreshold: 5 * 1024 * 1024, MultipartPartBytes: 5 * 1024 * 1024, UploadLifetime: time.Minute, UploadTransferGrace: time.Hour}
 	owner := identity.WithPrincipal(t.Context(), identity.Principal{Service: "resource-owner"})
-	bucket, fs, file := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
-	_, err = s.CreateBucket(owner, uuid.New(), CreateBucket{ID: bucket, LimitBytes: 20 * 1024 * 1024})
+	filesystemID, fs, file := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	_, err = s.CreateFilesystem(owner, uuid.New(), CreateFilesystem{ID: filesystemID, LimitBytes: 20 * 1024 * 1024})
 	require.NoError(t, err)
-	created, err := s.CreateFilesystem(owner, uuid.New(), CreateFilesystem{ID: fs, BucketID: bucket, RootName: "root"})
+	created, err := createTestScope(owner, &s, uuid.New(), filesystemID, fs)
 	require.NoError(t, err)
 	// Seed only the canonical original; all output operations exercise the real pipeline store.
-	_, err = db.Exec(t.Context(), `INSERT INTO nodes(id,filesystem_id,parent_id,name,kind,size_bytes) VALUES($1,$2,$3,'report.pdf','file',1)`, file, fs, created.RootID)
+	_, err = db.Exec(t.Context(), `INSERT INTO nodes(id,scope_id,parent_id,name,kind,size_bytes) VALUES($1,$2,$3,'report.pdf','file',1)`, file, fs, created.RootID)
 	require.NoError(t, err)
 	_, err = db.Exec(t.Context(), `INSERT INTO files(node_id,storage_kind,inline_bytes,desired_generation,processing_format,publication_status)
  VALUES($1,'inline','x',1,'pdf','pending')`, file)
 	require.NoError(t, err)
 	_, err = db.Exec(t.Context(), `UPDATE filesystems SET node_count=2 WHERE id=$1`, fs)
 	require.NoError(t, err)
-	_, err = db.Exec(t.Context(), `UPDATE quota_buckets SET used_bytes=1 WHERE id=$1`, bucket)
+	_, err = db.Exec(t.Context(), `UPDATE filesystems SET used_bytes=1 WHERE id=$1`, filesystemID)
 	require.NoError(t, err)
 	a := Generation{FileID: file, Generation: 1}
 	_, err = s.PrepareParse(t.Context(), a)

@@ -161,6 +161,7 @@ class Processor:
                 Qdrant(client),
                 space,
                 prepared.filesystem_id,
+                prepared.scope_id,
                 prepared.source_id,
                 prepared.generation,
                 batch_size=settings.batch_size,

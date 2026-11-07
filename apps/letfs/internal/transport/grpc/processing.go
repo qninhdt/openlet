@@ -6,7 +6,7 @@ import (
 )
 
 func (s *Filesystem) GetProcessing(ctx context.Context, input *letfsv1.GetProcessingRequest) (*letfsv1.GetProcessingResponse, error) {
-	fs, err := parseID(input.GetFilesystemId())
+	fs, err := s.scopeInput(ctx, input.GetFilesystemId(), input.GetScopeId())
 	if err != nil {
 		return nil, err
 	}
@@ -14,11 +14,7 @@ func (s *Filesystem) GetProcessing(ctx context.Context, input *letfsv1.GetProces
 	if err != nil {
 		return nil, err
 	}
-	mounts, err := pathInput(input.GetPathContext())
-	if err != nil {
-		return nil, err
-	}
-	value, err := s.Store.GetProcessing(ctx, fs, mounts, id)
+	value, err := s.Store.GetProcessing(ctx, fs, id)
 	if err != nil {
 		return nil, err
 	}
@@ -27,7 +23,7 @@ func (s *Filesystem) GetProcessing(ctx context.Context, input *letfsv1.GetProces
 }
 
 func (s *Filesystem) ReprocessNode(ctx context.Context, input *letfsv1.ReprocessNodeRequest) (*letfsv1.ReprocessNodeResponse, error) {
-	fs, err := parseID(input.GetFilesystemId())
+	fs, err := s.scopeInput(ctx, input.GetFilesystemId(), input.GetScopeId())
 	if err != nil {
 		return nil, err
 	}
@@ -39,11 +35,7 @@ func (s *Filesystem) ReprocessNode(ctx context.Context, input *letfsv1.Reprocess
 	if err != nil {
 		return nil, err
 	}
-	mounts, err := pathInput(input.GetPathContext())
-	if err != nil {
-		return nil, err
-	}
-	value, err := s.Service.Reprocess(ctx, fs, mounts, id, key)
+	value, err := s.Service.Reprocess(ctx, fs, id, key)
 	if err != nil {
 		return nil, err
 	}

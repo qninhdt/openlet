@@ -15,6 +15,5 @@ COPY --from=build /go/bin/goose /usr/local/bin/goose
 COPY --from=build /authz-schema /usr/local/bin/authz-schema
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY packages/contracts/authz/schema.zed /contracts/schema.zed
-COPY packages/contracts/authz/roles.json /contracts/roles.json
 USER 65532:65532
 ENTRYPOINT ["goose"]

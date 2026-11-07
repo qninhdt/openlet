@@ -17,18 +17,17 @@ test('internal gRPC authenticates service and actor, isolates public ingress and
   const serviceToken = (await readFile(join(state, 'secrets/gateway_token'), 'utf8')).trim();
   const check = async (token: string, actorId: string, allowed: boolean) => {
     const command = execute('docker', ['exec', '-i', id, '/app/.venv/bin/python', '-c', script], { timeout: 45_000 });
-    command.child.stdin!.end(JSON.stringify({ token, service_token: serviceToken, actor_id: actorId, allowed, filesystem_id: session.filesystemId, node_id: session.rootId, foreign_user_id: guest.userId }));
+    command.child.stdin!.end(JSON.stringify({ token, service_token: serviceToken, actor_id: actorId, allowed, filesystem_id: session.filesystemId, scope_id: session.scopeId, node_id: session.rootId, foreign_account_id: guest.accountId }));
     expect((await command).stdout).toContain('isolation passed');
   };
   try {
-    await check(await mint(controls, identity), session.userId, true);
+    await check(await mint(controls, identity), session.accountId, true);
     const base = `/v1/workspaces/${session.workspaceId}`;
-    const invite = await (await session.api.post(`${base}/invitations`, { data: { email: otherIdentity.email, role: 'viewer' } })).json();
+    const invite = await (await session.api.post(`${base}/invitations`, { data: { email: otherIdentity.email, role: 'member' } })).json();
     expect((await guest.api.post('/v1/memberships', { data: { token: invite.token } })).status()).toBe(201);
     const token = await mint(controls, otherIdentity);
-    await check(token, guest.userId, true);
-    const current = await session.api.get(base);
-    expect((await session.api.delete(`${base}/members/${guest.userId}`, { headers: { 'if-match': current.headers().etag } })).status()).toBe(204);
-    await check(token, guest.userId, false);
+    await check(token, guest.accountId, true);
+    expect((await session.api.delete(`${base}/members/${guest.accountId}`)).status()).toBe(204);
+    await check(token, guest.accountId, false);
   } finally { await guest.api.dispose(); }
 });

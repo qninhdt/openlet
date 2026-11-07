@@ -20,7 +20,6 @@ GENERATED = (
     "postgres_password",
     "gateway_token",
     "workspace_service_token",
-    "account_service_token",
     "ingest_service_token",
     "qdrant_api_key",
     "spicedb_key",

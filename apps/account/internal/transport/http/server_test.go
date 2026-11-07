@@ -41,7 +41,7 @@ func TestTrustedIdentityBoundary(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			r := httptest.NewRequest("GET", c.path, nil)
 			r.Header.Set("X-Gateway-Token", c.token)
-			r.Header.Set("X-Openlet-User-ID", c.id)
+			r.Header.Set("X-Openlet-Account-ID", c.id)
 			r.Header.Set("X-Clerk-Sub", c.sub)
 			w := httptest.NewRecorder()
 			h.ServeHTTP(w, r)

@@ -71,18 +71,18 @@ def action_bindings() -> dict[Path, str]:
         )
     # Permission declarations are the authority for both handwritten runtimes.
     schema = (CONTRACTS / "authz/schema.zed").read_text()
-    resources = {}
-    for name, body in re.findall(r"definition (\w+) \{([^}]+)\}", schema):
-        if name in {"account", "workspace", "filesystem", "quota_bucket"}:
-            resources[name] = re.findall(r"permission (\w+) =", body)
-    # Workspace exposes inherited storage permissions too; checks use the owning resource.
-    storage = set(resources["filesystem"] + resources["quota_bucket"])
-    resources["workspace"] = [
-        name for name in resources["workspace"] if name not in storage
-    ]
-    actions = {
-        action: resource for resource, names in resources.items() for action in names
+    resources = {
+        name: re.findall(r"permission (\w+) =", body)
+        for name, body in re.findall(r"definition (\w+) \{([^}]+)\}", schema)
+        if name in {"account", "workspace", "filesystem", "scope"}
     }
+    actions = [
+        (resource, action) for resource, names in resources.items() for action in names
+    ]
+
+    def constant(resource: str, action: str) -> str:
+        return "".join(word.title() for word in (resource + "_" + action).split("_"))
+
     go = [
         "// Code generated from contracts/authz/schema.zed; DO NOT EDIT.",
         "package authz",
@@ -91,8 +91,8 @@ def action_bindings() -> dict[Path, str]:
         "",
         "const (",
     ]
-    for action in actions:
-        name = "".join(word.title() for word in action.split("_"))
+    for resource, action in actions:
+        name = constant(resource, action)
         go.append(f'    {name} Action = "{action}"')
     go.extend(
         [
@@ -107,9 +107,7 @@ def action_bindings() -> dict[Path, str]:
             [
                 f'    case "{resource}":',
                 "        switch a {",
-                "        case "
-                + ", ".join("".join(w.title() for w in n.split("_")) for n in names)
-                + ":",
+                "        case " + ", ".join(constant(resource, n) for n in names) + ":",
                 "            return true",
                 "        }",
             ]
@@ -118,15 +116,22 @@ def action_bindings() -> dict[Path, str]:
     go_source = subprocess.run(
         [formatter], input="\n".join(go), text=True, capture_output=True, check=True
     ).stdout
-    python = "# Generated from contracts/authz/schema.zed; DO NOT EDIT.\nACTION_RESOURCES = {\n"
-    python += (
-        "".join(
-            f'    "{action}": "{resource}",\n' for action, resource in actions.items()
+    python = "# Generated from contracts/authz/schema.zed; DO NOT EDIT.\nRESOURCE_ACTIONS = {\n"
+    for resource, names in resources.items():
+        python += f'    "{resource}": frozenset(\n        [\n'
+        python += "".join(f'            "{name}",\n' for name in names)
+        python += "        ]\n    ),\n"
+    python += "}\n"
+    matrix = "# Actions and resource ownership\n\nGenerated from `schema.zed`. Roles are fixed resource relations; no global role policy.\n\n| Resource | Actions |\n|---|---|\n"
+    for resource, names in resources.items():
+        matrix += (
+            f"| {resource} | "
+            + ", ".join(f"`{resource}:{name}`" for name in names)
+            + " |\n"
         )
-        + "}\n"
-    )
     return {
         ROOT / "packages/go/authz/actions.go": go_source,
+        CONTRACTS / "authz/action-resource-matrix.md": matrix,
         ROOT / "packages/python/src/openlet/_authz_actions.py": python,
     }
 

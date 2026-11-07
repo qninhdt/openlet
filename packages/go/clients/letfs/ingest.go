@@ -59,11 +59,11 @@ type VectorSpace struct {
 	Dimension         int32
 }
 type IndexInput struct {
-	FilesystemID, SourceID uuid.UUID
-	Generation             int64
-	Nodes                  []InventoryNode
-	VectorSpace            VectorSpace
-	MaxOutputBytes         int64
+	FilesystemID, ScopeID, SourceID uuid.UUID
+	Generation                      int64
+	Nodes                           []InventoryNode
+	VectorSpace                     VectorSpace
+	MaxOutputBytes                  int64
 }
 type IndexAdmission struct {
 	Input     *IndexInput
@@ -267,6 +267,10 @@ func (c IngestClient) PrepareIndex(ctx context.Context, value Generation) (Index
 	if err != nil {
 		return IndexAdmission{}, err
 	}
+	scope, err := parseID(input.GetScopeId())
+	if err != nil {
+		return IndexAdmission{}, err
+	}
 	nodes, err := nativeInventory(input.GetNodes())
 	if err != nil {
 		return IndexAdmission{}, err
@@ -275,7 +279,7 @@ func (c IngestClient) PrepareIndex(ctx context.Context, value Generation) (Index
 	if space == nil {
 		return IndexAdmission{}, scopeError()
 	}
-	return IndexAdmission{Input: &IndexInput{FilesystemID: filesystem, SourceID: source, Generation: input.GetGeneration(), Nodes: nodes, VectorSpace: VectorSpace{Model: space.GetModel(), Collection: space.GetCollection(), Dimension: space.GetDimension()}, MaxOutputBytes: input.GetMaxOutputBytes()}}, nil
+	return IndexAdmission{Input: &IndexInput{FilesystemID: filesystem, ScopeID: scope, SourceID: source, Generation: input.GetGeneration(), Nodes: nodes, VectorSpace: VectorSpace{Model: space.GetModel(), Collection: space.GetCollection(), Dimension: space.GetDimension()}, MaxOutputBytes: input.GetMaxOutputBytes()}}, nil
 }
 
 func (c IngestClient) CompleteIndex(ctx context.Context, value Generation) error {

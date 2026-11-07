@@ -35,15 +35,11 @@ func uploadMessage(value filesystem.Upload) *letfsv1.Upload {
 }
 
 func (s *Filesystem) CreateUpload(ctx context.Context, input *letfsv1.CreateUploadRequest) (*letfsv1.CreateUploadResponse, error) {
-	fs, err := parseID(input.GetFilesystemId())
+	fs, err := s.scopeInput(ctx, input.GetFilesystemId(), input.GetScopeId())
 	if err != nil {
 		return nil, err
 	}
 	key, err := parseID(input.GetIdempotencyKey())
-	if err != nil {
-		return nil, err
-	}
-	mounts, err := pathInput(input.GetPathContext())
 	if err != nil {
 		return nil, err
 	}
@@ -70,7 +66,7 @@ func (s *Filesystem) CreateUpload(ctx context.Context, input *letfsv1.CreateUplo
 	default:
 		return nil, rpc.Fault(codes.InvalidArgument, "VALIDATION", "upload target required")
 	}
-	value, err := s.Service.CreateUpload(ctx, fs, mounts, key, creation)
+	value, err := s.Service.CreateUpload(ctx, fs, key, creation)
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +74,7 @@ func (s *Filesystem) CreateUpload(ctx context.Context, input *letfsv1.CreateUplo
 }
 
 func (s *Filesystem) GetUpload(ctx context.Context, input *letfsv1.GetUploadRequest) (*letfsv1.GetUploadResponse, error) {
-	fs, err := parseID(input.GetFilesystemId())
+	fs, err := s.scopeInput(ctx, input.GetFilesystemId(), input.GetScopeId())
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +90,7 @@ func (s *Filesystem) GetUpload(ctx context.Context, input *letfsv1.GetUploadRequ
 }
 
 func (s *Filesystem) GetUploadParts(ctx context.Context, input *letfsv1.GetUploadPartsRequest) (*letfsv1.GetUploadPartsResponse, error) {
-	fs, err := parseID(input.GetFilesystemId())
+	fs, err := s.scopeInput(ctx, input.GetFilesystemId(), input.GetScopeId())
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +114,7 @@ func uploadPartsMessage(values []filesystem.UploadPart) []*letfsv1.UploadPart {
 }
 
 func (s *Filesystem) CompleteUpload(ctx context.Context, input *letfsv1.CompleteUploadRequest) (*letfsv1.CompleteUploadResponse, error) {
-	fs, err := parseID(input.GetFilesystemId())
+	fs, err := s.scopeInput(ctx, input.GetFilesystemId(), input.GetScopeId())
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +134,7 @@ func (s *Filesystem) CompleteUpload(ctx context.Context, input *letfsv1.Complete
 }
 
 func (s *Filesystem) AbortUpload(ctx context.Context, input *letfsv1.AbortUploadRequest) (*letfsv1.AbortUploadResponse, error) {
-	fs, err := parseID(input.GetFilesystemId())
+	fs, err := s.scopeInput(ctx, input.GetFilesystemId(), input.GetScopeId())
 	if err != nil {
 		return nil, err
 	}

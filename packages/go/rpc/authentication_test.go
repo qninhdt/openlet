@@ -27,11 +27,11 @@ func TestCallerAuthenticationAndMethodScope(t *testing.T) {
 		{"missing", letfsv1.FilesystemService_GetNode_FullMethodName, nil, codes.Unauthenticated},
 		{"bad token", letfsv1.FilesystemService_GetNode_FullMethodName, metadata.Pairs("authorization", "Bearer other"), codes.Unauthenticated},
 		{"missing actor", letfsv1.FilesystemService_GetNode_FullMethodName, metadata.Pairs("authorization", "Bearer "+token), codes.Unauthenticated},
-		{"duplicate actor", letfsv1.FilesystemService_GetNode_FullMethodName, metadata.Pairs("authorization", "Bearer "+token, "x-openlet-user-id", actor, "x-openlet-user-id", actor), codes.Unauthenticated},
-		{"duplicate credential", letfsv1.FilesystemService_GetNode_FullMethodName, metadata.Pairs("authorization", "Bearer "+token, "authorization", "Bearer "+token, "x-openlet-user-id", actor), codes.Unauthenticated},
-		{"spoofed service", letfsv1.FilesystemService_GetNode_FullMethodName, metadata.Pairs("authorization", "Bearer "+token, "x-openlet-user-id", actor, "x-openlet-service", "workspace"), codes.Unauthenticated},
-		{"private method", letfsv1.StorageAdministrationService_CreateBucket_FullMethodName, metadata.Pairs("authorization", "Bearer "+token, "x-openlet-user-id", actor), codes.PermissionDenied},
-		{"valid", letfsv1.FilesystemService_GetNode_FullMethodName, metadata.Pairs("authorization", "Bearer "+token, "x-openlet-user-id", actor), codes.OK},
+		{"duplicate actor", letfsv1.FilesystemService_GetNode_FullMethodName, metadata.Pairs("authorization", "Bearer "+token, "x-openlet-account-id", actor, "x-openlet-account-id", actor), codes.Unauthenticated},
+		{"duplicate credential", letfsv1.FilesystemService_GetNode_FullMethodName, metadata.Pairs("authorization", "Bearer "+token, "authorization", "Bearer "+token, "x-openlet-account-id", actor), codes.Unauthenticated},
+		{"spoofed service", letfsv1.FilesystemService_GetNode_FullMethodName, metadata.Pairs("authorization", "Bearer "+token, "x-openlet-account-id", actor, "x-openlet-service", "workspace"), codes.Unauthenticated},
+		{"private method", letfsv1.StorageAdministrationService_CreateFilesystem_FullMethodName, metadata.Pairs("authorization", "Bearer "+token, "x-openlet-account-id", actor), codes.PermissionDenied},
+		{"valid", letfsv1.FilesystemService_GetNode_FullMethodName, metadata.Pairs("authorization", "Bearer "+token, "x-openlet-account-id", actor), codes.OK},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx, err := authentication.Authenticate(metadata.NewIncomingContext(context.Background(), test.md), test.method)
@@ -64,7 +64,7 @@ func TestServiceCredentialsCannotImpersonateUsers(t *testing.T) {
 	const actor = "019a3b66-0000-7000-8000-000000000001"
 	authentication, err := NewAuthenticator([]Credential{
 		{Service: "ingest", Token: ingest, Methods: []string{letfsv1.IngestService_PrepareParse_FullMethodName}},
-		{Service: "workspace", Token: workspace, Methods: []string{letfsv1.StorageAdministrationService_CreateBucket_FullMethodName}},
+		{Service: "workspace", Token: workspace, Methods: []string{letfsv1.StorageAdministrationService_CreateFilesystem_FullMethodName}},
 	})
 	require.NoError(t, err)
 	for _, test := range []struct {
@@ -74,15 +74,15 @@ func TestServiceCredentialsCannotImpersonateUsers(t *testing.T) {
 		{"scoped ingest", ingest, letfsv1.IngestService_PrepareParse_FullMethodName, "", "ingest", codes.OK},
 		{"ingest cannot impersonate", ingest, letfsv1.IngestService_PrepareParse_FullMethodName, actor, "", codes.PermissionDenied},
 		{"ingest cannot use public methods", ingest, letfsv1.FilesystemService_GetNode_FullMethodName, "", "", codes.PermissionDenied},
-		{"scoped administration", workspace, letfsv1.StorageAdministrationService_CreateBucket_FullMethodName, "", "workspace", codes.OK},
-		{"workspace cannot impersonate", workspace, letfsv1.StorageAdministrationService_CreateBucket_FullMethodName, actor, "", codes.PermissionDenied},
+		{"scoped administration", workspace, letfsv1.StorageAdministrationService_CreateFilesystem_FullMethodName, "", "workspace", codes.OK},
+		{"workspace cannot impersonate", workspace, letfsv1.StorageAdministrationService_CreateFilesystem_FullMethodName, actor, "", codes.PermissionDenied},
 		{"workspace cannot use ingest", workspace, letfsv1.IngestService_PrepareParse_FullMethodName, "", "", codes.PermissionDenied},
 		{"workspace cannot use public methods", workspace, letfsv1.FilesystemService_GetNode_FullMethodName, actor, "", codes.PermissionDenied},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			md := metadata.Pairs("authorization", "Bearer "+test.token)
 			if test.actor != "" {
-				md.Set("x-openlet-user-id", test.actor)
+				md.Set("x-openlet-account-id", test.actor)
 			}
 			ctx, err := authentication.Authenticate(metadata.NewIncomingContext(t.Context(), md), test.method)
 			require.Equal(t, test.code, status.Code(err))
@@ -106,7 +106,7 @@ func TestExplicitDelegationKeepsServiceIdentity(t *testing.T) {
 	for _, id := range []string{"", actor, "invalid", "00000000-0000-0000-0000-000000000000"} {
 		md := metadata.Pairs("authorization", "Bearer "+token)
 		if id != "" {
-			md.Set("x-openlet-user-id", id)
+			md.Set("x-openlet-account-id", id)
 		}
 		ctx, err := authentication.Authenticate(metadata.NewIncomingContext(t.Context(), md), method)
 		if id != "" && id != actor {

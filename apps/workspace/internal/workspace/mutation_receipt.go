@@ -14,10 +14,10 @@ type MutationReceipt struct {
 	Hash string
 }
 
-func (s *Store) MutationApplied(ctx context.Context, actor, ws uuid.UUID, receipt MutationReceipt) (bool, error) {
+func mutationApplied(ctx context.Context, tx pgx.Tx, actor, ws uuid.UUID, receipt MutationReceipt) (bool, error) {
 	var savedHash string
 	var savedWorkspace uuid.UUID
-	err := s.DB.QueryRow(ctx, `SELECT request_hash,workspace_id FROM idempotency_keys WHERE actor_id=$1 AND request_key=$2`, actor, receipt.Key).Scan(&savedHash, &savedWorkspace)
+	err := tx.QueryRow(ctx, `SELECT request_hash,workspace_id FROM idempotency_keys WHERE actor_id=$1 AND request_key=$2`, actor, receipt.Key).Scan(&savedHash, &savedWorkspace)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}

@@ -21,7 +21,7 @@ def authenticate_gateway(
     }
     gateway = normalized.get("x-gateway-token", [])
     subjects = normalized.get("x-clerk-sub", [])
-    actors = normalized.get("x-openlet-user-id", [])
+    actors = normalized.get("x-openlet-account-id", [])
     if len(gateway) != 1 or not token or not hmac.compare_digest(gateway[0], token):
         raise GatewayAuthenticationError("gateway authentication required")
     if len(subjects) != 1 or not subjects[0]:

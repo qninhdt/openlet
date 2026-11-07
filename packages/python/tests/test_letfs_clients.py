@@ -7,7 +7,6 @@ from openlet.clients.letfs import (
     ArchiveFrame,
     FilesystemClient,
     ProcessingClient,
-    Storage,
     StorageAdministrationClient,
 )
 from openlet.errors import AppError
@@ -19,15 +18,22 @@ TOKEN = "isolated-filesystem-service-credential-123"
 
 
 class Filesystem(letfs_rpc.FilesystemServiceServicer):
+    async def GetFilesystem(self, request, context):
+        return pb.GetFilesystemResponse(
+            filesystem=pb.Filesystem(
+                id=request.filesystem_id,
+                limit_bytes=1024,
+                state="active",
+            )
+        )
+
     async def GetNode(self, request, context):
-        assert [
-            (item.path, item.filesystem_id) for item in request.path_context.mounts
-        ] == [("/", request.filesystem_id)]
+        assert request.scope_id == "shared"
         return pb.GetNodeResponse(
             node=pb.Node(
                 id=request.node_id,
-                filesystem_id=(
-                    "foreign" if request.node_id == "foreign" else request.filesystem_id
+                scope_id=(
+                    "foreign" if request.node_id == "foreign" else request.scope_id
                 ),
                 parent_id="root",
                 name="report.pdf",
@@ -39,7 +45,7 @@ class Filesystem(letfs_rpc.FilesystemServiceServicer):
         )
 
     async def StreamArchive(self, request, context):
-        assert request.path_context.mounts[0].filesystem_id == request.filesystem_id
+        assert request.scope_id == "shared"
         yield pb.StreamArchiveResponse(
             metadata=pb.ArchiveMetadata(filename="files.zip", mime="application/zip")
         )
@@ -47,20 +53,45 @@ class Filesystem(letfs_rpc.FilesystemServiceServicer):
 
 
 class Administration(letfs_rpc.StorageAdministrationServiceServicer):
-    async def CreateStorage(self, request, context):
-        return pb.CreateStorageResponse(
-            bucket=pb.Bucket(
-                id=request.bucket.bucket_id,
-                limit_bytes=request.bucket.limit_bytes,
-                state="active",
-            ),
+    async def CreateFilesystem(self, request, context):
+        return pb.CreateFilesystemResponse(
             filesystem=pb.Filesystem(
-                id=request.filesystem.filesystem_id,
-                bucket_id=request.filesystem.bucket_id,
-                root_id="root",
+                id=request.filesystem_id,
+                limit_bytes=request.limit_bytes,
                 state="active",
-            ),
+            )
         )
+
+    async def CreateScopes(self, request, context):
+        scopes = [
+            pb.Scope(
+                id=id,
+                filesystem_id=request.filesystem_id,
+                root_id="root-" + id,
+                state="active",
+                allow_blob_files=(
+                    not request.allow_blob_files
+                    if request.filesystem_id == "mismatch-blob"
+                    else request.allow_blob_files
+                ),
+                allow_indexing=(
+                    not request.allow_indexing
+                    if request.filesystem_id == "mismatch-index"
+                    else request.allow_indexing
+                ),
+            )
+            for id in request.scope_ids
+        ]
+        match request.filesystem_id:
+            case "missing":
+                scopes.pop()
+            case "duplicate":
+                scopes[-1].id = scopes[0].id
+            case "foreign":
+                scopes[-1].filesystem_id = "other"
+            case "empty-root":
+                scopes[-1].root_id = ""
+        return pb.CreateScopesResponse(scopes=scopes)
 
 
 @pytest.fixture
@@ -78,29 +109,59 @@ async def letfs_server():
         await server.stop(None)
 
 
-async def test_filesystem_client_supplies_default_mount_and_native_stream(letfs_server):
+async def test_filesystem_client_supplies_scope_and_native_stream(letfs_server):
     async with RpcClient(letfs_server, TOKEN, allow_plaintext=True) as rpc:
         client = FilesystemClient(rpc)
-        node = await client.get_node("drive", "file")
+        node = await client.get_node("drive", "shared", "file")
         assert node.id == "file"
-        assert node.filesystem_id == "drive"
+        assert node.scope_id == "shared"
         assert node.media_type == "application/pdf"
         with pytest.raises(AppError) as captured:
-            await client.get_node("drive", "foreign")
+            await client.get_node("drive", "shared", "foreign")
         assert captured.value.reason == "FILESYSTEM_SCOPE_CONFLICT"
-        frames = [item async for item in client.stream_archive("drive", "root")]
+        frames = [
+            item async for item in client.stream_archive("drive", "shared", "root")
+        ]
         assert frames == [
             ArchiveFrame("files.zip", "application/zip"),
             ArchiveFrame(data=b"zip"),
         ]
 
 
-async def test_storage_administration_client_uses_native_scope_validation(letfs_server):
+@pytest.mark.parametrize("allow_blob_files", [False, True])
+@pytest.mark.parametrize("allow_indexing", [False, True])
+async def test_storage_administration_scope_options(
+    letfs_server, allow_blob_files, allow_indexing
+):
     async with RpcClient(letfs_server, TOKEN, allow_plaintext=True) as rpc:
-        result = await StorageAdministrationClient(rpc).create_storage(
-            Storage(1024, "bucket", "drive")
+        client = StorageAdministrationClient(rpc)
+        filesystem = await client.create_filesystem("notes", 1024, "key")
+        assert filesystem.id == "notes"
+        scopes = await client.create_scopes(
+            "notes",
+            ["scope"],
+            "key",
+            allow_blob_files=allow_blob_files,
+            allow_indexing=allow_indexing,
         )
-        assert result == Storage(1024, "bucket", "drive", "root")
+        assert scopes[0].allow_blob_files is allow_blob_files
+        assert scopes[0].allow_indexing is allow_indexing
+        for mismatch in ("mismatch-blob", "mismatch-index"):
+            with pytest.raises(AppError, match="invalid scope result"):
+                await client.create_scopes(
+                    mismatch,
+                    ["scope"],
+                    "key",
+                    allow_blob_files=allow_blob_files,
+                    allow_indexing=allow_indexing,
+                )
+        defaults = await client.create_scopes("notes", ["defaults"], "default-key")
+        assert defaults[0].allow_blob_files and defaults[0].allow_indexing
+
+
+async def test_filesystem_client_reads_metadata(letfs_server):
+    async with RpcClient(letfs_server, TOKEN, allow_plaintext=True) as rpc:
+        assert (await FilesystemClient(rpc).get_filesystem("notes")).limit_bytes == 1024
 
 
 async def test_closing_archive_cancels_rpc_before_channel_closes():
@@ -120,7 +181,7 @@ async def test_closing_archive_cancels_rpc_before_channel_closes():
     await server.start()
     try:
         async with RpcClient(f"127.0.0.1:{port}", TOKEN, allow_plaintext=True) as rpc:
-            stream = FilesystemClient(rpc).stream_archive("drive", "root")
+            stream = FilesystemClient(rpc).stream_archive("drive", "shared", "root")
             assert await anext(stream) == ArchiveFrame(data=b"first")
             await stream.aclose()
             await asyncio.wait_for(stopped.wait(), timeout=2)
@@ -131,7 +192,6 @@ async def test_closing_archive_cancels_rpc_before_channel_closes():
 def test_native_clients_cover_every_current_letfs_rpc():
     filesystem_methods = {
         "GetFilesystem": "get_filesystem",
-        "GetBucketUsage": "get_bucket_usage",
         "CreateNode": "create_directory",
         "ListNodes": "list_nodes",
         "GetNode": "get_node",
@@ -140,7 +200,6 @@ def test_native_clients_cover_every_current_letfs_rpc():
         "UpdateNode": "update_node",
         "ReplaceContent": "replace_content",
         "CreateCopy": "create_copy",
-        "GetCopy": "get_copy",
         "GetProcessing": "get_processing",
         "ReprocessNode": "reprocess_node",
         "TrashNode": "trash_node",
@@ -159,14 +218,9 @@ def test_native_clients_cover_every_current_letfs_rpc():
         "StreamArchive": "stream_archive",
     }
     administration_methods = {
-        "CreateStorage": "create_storage",
         "DeleteFilesystem": "delete_filesystem",
-        "CreateBucket": "create_bucket",
         "CreateFilesystem": "create_filesystem",
-        "FreezeBucket": "freeze_bucket",
-        "ListBucketFilesystems": "list_filesystems",
-        "CompleteBucketDeletion": "complete_bucket_deletion",
-        "ReleaseProvisioning": "release_provisioning",
+        "CreateScopes": "create_scopes",
     }
     processing_methods = {
         "PrepareParse": "prepare_parse",
@@ -201,3 +255,14 @@ def test_native_clients_cover_every_current_letfs_rpc():
         for name in administration_methods.values()
     )
     assert all(hasattr(ProcessingClient, name) for name in processing_methods.values())
+
+
+@pytest.mark.parametrize(
+    "filesystem", ["missing", "duplicate", "foreign", "empty-root"]
+)
+async def test_scope_creation_rejects_malformed_response(letfs_server, filesystem):
+    async with RpcClient(letfs_server, TOKEN, allow_plaintext=True) as rpc:
+        with pytest.raises(AppError, match="invalid scope result"):
+            await StorageAdministrationClient(rpc).create_scopes(
+                filesystem, ["a", "b"], "key"
+            )

@@ -19,12 +19,14 @@ func TestProcessFileRunsRequiredStagesOnTheirQueues(t *testing.T) {
 	for _, scenario := range []struct {
 		name          string
 		parse, enrich bool
+		skipIndex     bool
 		fail          string
 		want          []string
 	}{
 		{name: "parse and enrich", parse: true, enrich: true, want: []string{"process_file", "enrich_file", "index_file"}},
 		{name: "enrich only", enrich: true, want: []string{"enrich_file", "index_file"}},
 		{name: "index only", want: []string{"index_file"}},
+		{name: "indexing disabled", parse: true, enrich: true, skipIndex: true, want: []string{"process_file", "enrich_file"}},
 		{name: "parse failure", parse: true, enrich: true, fail: "process_file", want: []string{"process_file"}},
 		{name: "enrichment failure", parse: true, enrich: true, fail: "enrich_file", want: []string{"process_file", "enrich_file"}},
 	} {
@@ -50,7 +52,7 @@ func TestProcessFileRunsRequiredStagesOnTheirQueues(t *testing.T) {
 					return input, nil
 				}, activity.RegisterOptions{Name: name})
 			}
-			env.ExecuteWorkflow(ProcessFile, ProcessFileInput{Source: source, ParseRequired: scenario.parse, EnrichmentRequired: scenario.enrich})
+			env.ExecuteWorkflow(ProcessFile, ProcessFileInput{Source: source, ParseRequired: scenario.parse, EnrichmentRequired: scenario.enrich, SkipIndex: scenario.skipIndex})
 			require.Equal(t, scenario.want, calls)
 			if scenario.fail != "" {
 				require.Error(t, env.GetWorkflowError())

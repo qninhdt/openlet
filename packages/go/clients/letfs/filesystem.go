@@ -16,33 +16,24 @@ type FilesystemClient struct {
 }
 
 type Filesystem struct {
-	ID, BucketID, RootID uuid.UUID
-	State                string
-}
-
-type BucketUsage struct {
-	ID                      uuid.UUID
-	LimitBytes, UsedBytes   int64
-	State                   string
-	InlineLimitBytes        int64
-	MaxFileBytes            int64
-	MultipartThresholdBytes int64
-	MultipartPartBytes      int64
+	ID                               uuid.UUID
+	LimitBytes, UsedBytes, NodeCount int64
+	State                            string
 }
 
 type Node struct {
-	ID, FilesystemID uuid.UUID
-	ParentID         *uuid.UUID
-	Name, Kind       string
-	Revision         int64
-	SizeBytes        int64
-	MediaType        *string
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
-	Title            *string
-	Description      *string
-	SemanticType     *string
-	Context          *string
+	ID, ScopeID  uuid.UUID
+	ParentID     *uuid.UUID
+	Name, Kind   string
+	Revision     int64
+	SizeBytes    int64
+	MediaType    *string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	Title        *string
+	Description  *string
+	SemanticType *string
+	Context      *string
 }
 
 type NodePage struct {
@@ -50,11 +41,6 @@ type NodePage struct {
 	NextCursor *string
 }
 
-type Mount struct {
-	Path         string
-	FilesystemID uuid.UUID
-}
-type PathContext struct{ Mounts []Mount }
 type Locator struct {
 	NodeID                                  *uuid.UUID
 	Path                                    *string
@@ -102,20 +88,6 @@ func parseID(raw string) (uuid.UUID, error) {
 	return id, nil
 }
 
-func pathContext(value PathContext) (*letfsv1.PathContext, error) {
-	if len(value.Mounts) < 1 || len(value.Mounts) > 32 {
-		return nil, apperr.New(apperr.Invalid, "VALIDATION", "path context requires 1 to 32 mounts")
-	}
-	mounts := make([]*letfsv1.Mount, len(value.Mounts))
-	for i, mount := range value.Mounts {
-		if mount.Path == "" || mount.FilesystemID == uuid.Nil {
-			return nil, apperr.New(apperr.Invalid, "VALIDATION", "invalid path mount")
-		}
-		mounts[i] = &letfsv1.Mount{Path: mount.Path, FilesystemId: mount.FilesystemID.String()}
-	}
-	return &letfsv1.PathContext{Mounts: mounts}, nil
-}
-
 func nativeFilesystem(value *letfsv1.Filesystem) (Filesystem, error) {
 	if value == nil {
 		return Filesystem{}, scopeError()
@@ -124,15 +96,10 @@ func nativeFilesystem(value *letfsv1.Filesystem) (Filesystem, error) {
 	if err != nil {
 		return Filesystem{}, err
 	}
-	bucket, err := parseID(value.GetBucketId())
-	if err != nil {
-		return Filesystem{}, err
+	if value.GetLimitBytes() < 0 || value.GetUsedBytes() < 0 || value.GetNodeCount() < 0 {
+		return Filesystem{}, scopeError()
 	}
-	root, err := parseID(value.GetRootId())
-	if err != nil {
-		return Filesystem{}, err
-	}
-	return Filesystem{ID: id, BucketID: bucket, RootID: root, State: value.GetState()}, nil
+	return Filesystem{ID: id, LimitBytes: value.LimitBytes, UsedBytes: value.UsedBytes, NodeCount: value.NodeCount, State: value.State}, nil
 }
 
 func nativeNode(value *letfsv1.Node, filesystem uuid.UUID) (Node, error) {
@@ -143,11 +110,11 @@ func nativeNode(value *letfsv1.Node, filesystem uuid.UUID) (Node, error) {
 	if err != nil {
 		return Node{}, err
 	}
-	fs, err := parseID(value.GetFilesystemId())
+	fs, err := parseID(value.GetScopeId())
 	if err != nil || fs != filesystem {
 		return Node{}, scopeError()
 	}
-	result := Node{ID: id, FilesystemID: fs, Name: value.GetName(), Kind: value.GetKind(), Revision: value.GetRevision(), SizeBytes: value.GetSizeBytes(), MediaType: value.MediaType, Title: value.Title, Description: value.Description, SemanticType: value.SemanticType, Context: value.Context}
+	result := Node{ID: id, ScopeID: fs, Name: value.GetName(), Kind: value.GetKind(), Revision: value.GetRevision(), SizeBytes: value.GetSizeBytes(), MediaType: value.MediaType, Title: value.Title, Description: value.Description, SemanticType: value.SemanticType, Context: value.Context}
 	if value.ParentId != nil {
 		parent, err := parseID(value.GetParentId())
 		if err != nil {
@@ -178,45 +145,22 @@ func (c FilesystemClient) GetFilesystem(ctx context.Context, id uuid.UUID) (File
 	return value, nil
 }
 
-func (c FilesystemClient) GetBucketUsage(ctx context.Context, id uuid.UUID) (BucketUsage, error) {
+func (c FilesystemClient) GetNode(ctx context.Context, filesystem, scope, node uuid.UUID) (Node, error) {
 	ctx, cancel := bounded(ctx)
 	defer cancel()
-	response, err := c.API.GetBucketUsage(ctx, &letfsv1.GetBucketUsageRequest{BucketId: id.String()})
-	if err != nil {
-		return BucketUsage{}, rpc.DecodeError(err)
-	}
-	bucket, limits := response.GetBucket(), response.GetUploadLimits()
-	parsed, err := parseID(bucket.GetId())
-	if err != nil || parsed != id || limits == nil {
-		return BucketUsage{}, scopeError()
-	}
-	return BucketUsage{ID: parsed, LimitBytes: bucket.GetLimitBytes(), UsedBytes: bucket.GetUsedBytes(), State: bucket.GetState(), InlineLimitBytes: limits.GetInlineLimitBytes(), MaxFileBytes: limits.GetMaxFileBytes(), MultipartThresholdBytes: limits.GetMultipartThresholdBytes(), MultipartPartBytes: limits.GetMultipartPartBytes()}, nil
-}
-
-func (c FilesystemClient) GetNode(ctx context.Context, filesystem, node uuid.UUID, paths PathContext) (Node, error) {
-	pathInput, err := pathContext(paths)
-	if err != nil {
-		return Node{}, err
-	}
-	ctx, cancel := bounded(ctx)
-	defer cancel()
-	response, err := c.API.GetNode(ctx, &letfsv1.GetNodeRequest{FilesystemId: filesystem.String(), NodeId: node.String(), PathContext: pathInput})
+	response, err := c.API.GetNode(ctx, &letfsv1.GetNodeRequest{FilesystemId: filesystem.String(), ScopeId: scope.String(), NodeId: node.String()})
 	if err != nil {
 		return Node{}, rpc.DecodeError(err)
 	}
-	value, err := nativeNode(response.GetNode(), filesystem)
+	value, err := nativeNode(response.GetNode(), scope)
 	if err != nil || value.ID != node {
 		return Node{}, scopeError()
 	}
 	return value, nil
 }
 
-func (c FilesystemClient) ListNodes(ctx context.Context, filesystem, parent uuid.UUID, paths PathContext, limit int32, cursor *string) (NodePage, error) {
-	pathInput, err := pathContext(paths)
-	if err != nil {
-		return NodePage{}, err
-	}
-	request := &letfsv1.ListNodesRequest{FilesystemId: filesystem.String(), Parent: nodeLocator(parent), PathContext: pathInput, Limit: &limit, Cursor: cursor}
+func (c FilesystemClient) ListNodes(ctx context.Context, filesystem, scope, parent uuid.UUID, limit int32, cursor *string) (NodePage, error) {
+	request := &letfsv1.ListNodesRequest{FilesystemId: filesystem.String(), ScopeId: scope.String(), Parent: nodeLocator(parent), Limit: &limit, Cursor: cursor}
 	ctx, cancel := bounded(ctx)
 	defer cancel()
 	response, err := c.API.ListNodes(ctx, request)
@@ -225,7 +169,7 @@ func (c FilesystemClient) ListNodes(ctx context.Context, filesystem, parent uuid
 	}
 	items := make([]Node, len(response.GetItems()))
 	for i, item := range response.GetItems() {
-		items[i], err = nativeNode(item, filesystem)
+		items[i], err = nativeNode(item, scope)
 		if err != nil {
 			return NodePage{}, err
 		}
@@ -263,42 +207,34 @@ func nativeLocator(value Locator) (*letfsv1.Locator, error) {
 	return out, nil
 }
 
-func (c FilesystemClient) ResolveNode(ctx context.Context, filesystem uuid.UUID, locator Locator, paths PathContext) (Node, error) {
-	pathInput, err := pathContext(paths)
-	if err != nil {
-		return Node{}, err
-	}
+func (c FilesystemClient) ResolveNode(ctx context.Context, filesystem, scope uuid.UUID, locator Locator) (Node, error) {
 	locatorInput, err := nativeLocator(locator)
 	if err != nil {
 		return Node{}, err
 	}
 	ctx, cancel := bounded(ctx)
 	defer cancel()
-	response, err := c.API.ResolveNode(ctx, &letfsv1.ResolveNodeRequest{FilesystemId: filesystem.String(), Locator: locatorInput, PathContext: pathInput})
+	response, err := c.API.ResolveNode(ctx, &letfsv1.ResolveNodeRequest{FilesystemId: filesystem.String(), ScopeId: scope.String(), Locator: locatorInput})
 	if err != nil {
 		return Node{}, rpc.DecodeError(err)
 	}
-	return nativeNode(response.GetNode(), filesystem)
+	return nativeNode(response.GetNode(), scope)
 }
 
-func (c FilesystemClient) BatchStat(ctx context.Context, filesystem uuid.UUID, ids []uuid.UUID, paths PathContext) ([]Node, error) {
-	pathInput, err := pathContext(paths)
-	if err != nil {
-		return nil, err
-	}
+func (c FilesystemClient) BatchStat(ctx context.Context, filesystem, scope uuid.UUID, ids []uuid.UUID) ([]Node, error) {
 	locators := make([]*letfsv1.Locator, len(ids))
 	for i, id := range ids {
 		locators[i] = nodeLocator(id)
 	}
 	ctx, cancel := bounded(ctx)
 	defer cancel()
-	response, err := c.API.BatchStat(ctx, &letfsv1.BatchStatRequest{FilesystemId: filesystem.String(), Locators: locators, PathContext: pathInput})
+	response, err := c.API.BatchStat(ctx, &letfsv1.BatchStatRequest{FilesystemId: filesystem.String(), ScopeId: scope.String(), Locators: locators})
 	if err != nil {
 		return nil, rpc.DecodeError(err)
 	}
 	items := make([]Node, len(response.GetItems()))
 	for i, item := range response.GetItems() {
-		items[i], err = nativeNode(item, filesystem)
+		items[i], err = nativeNode(item, scope)
 		if err != nil {
 			return nil, err
 		}
@@ -306,42 +242,30 @@ func (c FilesystemClient) BatchStat(ctx context.Context, filesystem uuid.UUID, i
 	return items, nil
 }
 
-func (c FilesystemClient) CreateDirectory(ctx context.Context, filesystem, key, parent uuid.UUID, paths PathContext, name string) (Node, error) {
-	pathInput, err := pathContext(paths)
-	if err != nil {
-		return Node{}, err
-	}
-	request := &letfsv1.CreateNodeRequest{FilesystemId: filesystem.String(), IdempotencyKey: key.String(), PathContext: pathInput, Input: &letfsv1.CreateNodeRequest_Directory{Directory: &letfsv1.DirectoryCreation{Parent: nodeLocator(parent), Name: name}}}
+func (c FilesystemClient) CreateDirectory(ctx context.Context, filesystem, scope, key, parent uuid.UUID, name string) (Node, error) {
+	request := &letfsv1.CreateNodeRequest{FilesystemId: filesystem.String(), ScopeId: scope.String(), IdempotencyKey: key.String(), Input: &letfsv1.CreateNodeRequest_Directory{Directory: &letfsv1.DirectoryCreation{Parent: nodeLocator(parent), Name: name}}}
 	ctx, cancel := bounded(ctx)
 	defer cancel()
 	response, err := c.API.CreateNode(ctx, request)
 	if err != nil {
 		return Node{}, rpc.DecodeError(err)
 	}
-	return nativeNode(response.GetNode(), filesystem)
+	return nativeNode(response.GetNode(), scope)
 }
 
-func (c FilesystemClient) CreateFile(ctx context.Context, filesystem, key, parent uuid.UUID, paths PathContext, name, mediaType string, content []byte) (Node, error) {
-	pathInput, err := pathContext(paths)
-	if err != nil {
-		return Node{}, err
-	}
-	request := &letfsv1.CreateNodeRequest{FilesystemId: filesystem.String(), IdempotencyKey: key.String(), PathContext: pathInput, Input: &letfsv1.CreateNodeRequest_File{File: &letfsv1.InlineFileCreation{Parent: nodeLocator(parent), Name: name, MediaType: mediaType, Content: content}}}
+func (c FilesystemClient) CreateFile(ctx context.Context, filesystem, scope, key, parent uuid.UUID, name, mediaType string, content []byte) (Node, error) {
+	request := &letfsv1.CreateNodeRequest{FilesystemId: filesystem.String(), ScopeId: scope.String(), IdempotencyKey: key.String(), Input: &letfsv1.CreateNodeRequest_File{File: &letfsv1.InlineFileCreation{Parent: nodeLocator(parent), Name: name, MediaType: mediaType, Content: content}}}
 	ctx, cancel := bounded(ctx)
 	defer cancel()
 	response, err := c.API.CreateNode(ctx, request)
 	if err != nil {
 		return Node{}, rpc.DecodeError(err)
 	}
-	return nativeNode(response.GetNode(), filesystem)
+	return nativeNode(response.GetNode(), scope)
 }
 
-func (c FilesystemClient) UpdateNode(ctx context.Context, filesystem, node uuid.UUID, paths PathContext, revision *int64, name *string, parent *uuid.UUID) (Node, error) {
-	pathInput, err := pathContext(paths)
-	if err != nil {
-		return Node{}, err
-	}
-	request := &letfsv1.UpdateNodeRequest{FilesystemId: filesystem.String(), Locator: nodeLocator(node), PathContext: pathInput, Revision: revision, Name: name}
+func (c FilesystemClient) UpdateNode(ctx context.Context, filesystem, scope, node uuid.UUID, revision *int64, name *string, parent *uuid.UUID) (Node, error) {
+	request := &letfsv1.UpdateNodeRequest{FilesystemId: filesystem.String(), ScopeId: scope.String(), Locator: nodeLocator(node), Revision: revision, Name: name}
 	if parent != nil {
 		request.Parent = nodeLocator(*parent)
 	}
@@ -351,7 +275,7 @@ func (c FilesystemClient) UpdateNode(ctx context.Context, filesystem, node uuid.
 	if err != nil {
 		return Node{}, rpc.DecodeError(err)
 	}
-	value, err := nativeNode(response.GetNode(), filesystem)
+	value, err := nativeNode(response.GetNode(), scope)
 	if err != nil || value.ID != node {
 		return Node{}, scopeError()
 	}
@@ -408,79 +332,63 @@ func searchFilters(value SearchFilters) (*letfsv1.SearchFilters, error) {
 	return out, nil
 }
 
-func (c FilesystemClient) Search(ctx context.Context, filesystem uuid.UUID, paths PathContext, query string, limit int32, cursor *string) (SearchPage, error) {
-	pathInput, err := pathContext(paths)
-	if err != nil {
-		return SearchPage{}, err
-	}
+func (c FilesystemClient) Search(ctx context.Context, filesystem, scope uuid.UUID, query string, limit int32, cursor *string) (SearchPage, error) {
 	ctx, cancel := bounded(ctx)
 	defer cancel()
-	response, err := c.API.SearchFiles(ctx, &letfsv1.SearchFilesRequest{FilesystemId: filesystem.String(), PathContext: pathInput, Query: query, Limit: &limit, Cursor: cursor})
+	response, err := c.API.SearchFiles(ctx, &letfsv1.SearchFilesRequest{FilesystemId: filesystem.String(), ScopeId: scope.String(), Query: query, Limit: &limit, Cursor: cursor})
 	if err != nil {
 		return SearchPage{}, rpc.DecodeError(err)
 	}
-	items, err := nativeSearch(response.GetItems(), filesystem)
+	items, err := nativeSearch(response.GetItems(), scope)
 	if err != nil {
 		return SearchPage{}, err
 	}
 	return SearchPage{Items: items, NextCursor: response.NextCursor, Degraded: response.GetDegraded(), DegradedReason: response.DegradedReason}, nil
 }
 
-func (c FilesystemClient) SemanticSearch(ctx context.Context, filesystem uuid.UUID, paths PathContext, query string, limit int32, cursor *string) (SearchPage, error) {
-	pathInput, err := pathContext(paths)
-	if err != nil {
-		return SearchPage{}, err
-	}
+func (c FilesystemClient) SemanticSearch(ctx context.Context, filesystem, scope uuid.UUID, query string, limit int32, cursor *string) (SearchPage, error) {
 	ctx, cancel := bounded(ctx)
 	defer cancel()
-	response, err := c.API.SemanticSearch(ctx, &letfsv1.SemanticSearchRequest{FilesystemId: filesystem.String(), PathContext: pathInput, Query: query, Limit: &limit, Cursor: cursor})
+	response, err := c.API.SemanticSearch(ctx, &letfsv1.SemanticSearchRequest{FilesystemId: filesystem.String(), ScopeId: scope.String(), Query: query, Limit: &limit, Cursor: cursor})
 	if err != nil {
 		return SearchPage{}, rpc.DecodeError(err)
 	}
-	items, err := nativeSearch(response.GetItems(), filesystem)
+	items, err := nativeSearch(response.GetItems(), scope)
 	if err != nil {
 		return SearchPage{}, err
 	}
 	return SearchPage{Items: items, NextCursor: response.NextCursor, Degraded: response.GetDegraded(), DegradedReason: response.DegradedReason}, nil
 }
 
-func (c FilesystemClient) SearchWithOptions(ctx context.Context, filesystem uuid.UUID, paths PathContext, options SearchOptions) (SearchPage, error) {
-	pathInput, err := pathContext(paths)
-	if err != nil {
-		return SearchPage{}, err
-	}
+func (c FilesystemClient) SearchWithOptions(ctx context.Context, filesystem, scope uuid.UUID, options SearchOptions) (SearchPage, error) {
 	filters, err := searchFilters(options.Filters)
 	if err != nil {
 		return SearchPage{}, err
 	}
 	ctx, cancel := bounded(ctx)
 	defer cancel()
-	response, err := c.API.SearchFiles(ctx, &letfsv1.SearchFilesRequest{FilesystemId: filesystem.String(), Query: options.Query, Filters: filters, Limit: options.Limit, Cursor: options.Cursor, Sort: options.Sort, Direction: options.Direction, PathContext: pathInput})
+	response, err := c.API.SearchFiles(ctx, &letfsv1.SearchFilesRequest{FilesystemId: filesystem.String(), ScopeId: scope.String(), Query: options.Query, Filters: filters, Limit: options.Limit, Cursor: options.Cursor, Sort: options.Sort, Direction: options.Direction})
 	if err != nil {
 		return SearchPage{}, rpc.DecodeError(err)
 	}
-	items, err := nativeSearch(response.GetItems(), filesystem)
+	items, err := nativeSearch(response.GetItems(), scope)
 	if err != nil {
 		return SearchPage{}, err
 	}
 	return SearchPage{Items: items, NextCursor: response.NextCursor, Degraded: response.GetDegraded(), DegradedReason: response.DegradedReason}, nil
 }
-func (c FilesystemClient) SemanticSearchWithOptions(ctx context.Context, filesystem uuid.UUID, paths PathContext, options SearchOptions) (SearchPage, error) {
-	pathInput, err := pathContext(paths)
-	if err != nil {
-		return SearchPage{}, err
-	}
+func (c FilesystemClient) SemanticSearchWithOptions(ctx context.Context, filesystem, scope uuid.UUID, options SearchOptions) (SearchPage, error) {
 	filters, err := searchFilters(options.Filters)
 	if err != nil {
 		return SearchPage{}, err
 	}
 	ctx, cancel := bounded(ctx)
 	defer cancel()
-	response, err := c.API.SemanticSearch(ctx, &letfsv1.SemanticSearchRequest{FilesystemId: filesystem.String(), Query: options.Query, Filters: filters, Limit: options.Limit, Cursor: options.Cursor, PathContext: pathInput})
+	response, err := c.API.SemanticSearch(ctx, &letfsv1.SemanticSearchRequest{FilesystemId: filesystem.String(), ScopeId: scope.String(), Query: options.Query, Filters: filters, Limit: options.Limit, Cursor: options.Cursor})
 	if err != nil {
 		return SearchPage{}, rpc.DecodeError(err)
 	}
-	items, err := nativeSearch(response.GetItems(), filesystem)
+	items, err := nativeSearch(response.GetItems(), scope)
 	if err != nil {
 		return SearchPage{}, err
 	}

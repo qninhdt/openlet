@@ -27,20 +27,20 @@ type processingState struct {
 }
 
 func (s *Store) processingSession(ctx context.Context, source Generation, lifecycle bool) (*session, error) {
-	var fs uuid.UUID
-	if err := s.DB.QueryRow(ctx, `SELECT filesystem_id FROM nodes WHERE id=$1`, source.FileID).Scan(&fs); err != nil {
+	var scopeID uuid.UUID
+	if err := s.DB.QueryRow(ctx, `SELECT scope_id FROM nodes WHERE id=$1`, source.FileID).Scan(&scopeID); err != nil {
 		return nil, databaseError(err)
 	}
 	if lifecycle {
-		return s.lifecycleSession(ctx, fs)
+		return s.lifecycleSession(ctx, scopeID)
 	}
-	return s.openSession(ctx, fs, true)
+	return s.openSession(ctx, scopeID, true)
 }
 
 func (s *session) currentProcessing(ctx context.Context, source Generation) (processingState, error) {
 	var p processingState
 	err := s.tx.QueryRow(ctx, `SELECT f.node_id,f.desired_generation,f.processing_format,f.publication_status,f.object_key,f.inline_bytes
- FROM files f JOIN nodes n ON n.id=f.node_id WHERE f.node_id=$1 AND n.filesystem_id=$2 FOR UPDATE OF f`, source.FileID, s.fs).
+ FROM files f JOIN nodes n ON n.id=f.node_id WHERE f.node_id=$1 AND n.scope_id=$2 FOR UPDATE OF f`, source.FileID, s.scopeID).
 		Scan(&p.id, &p.generation, &p.format, &p.publication, &p.key, &p.content)
 	if err != nil {
 		return p, databaseError(err)
@@ -55,7 +55,7 @@ func (s *session) currentProcessing(ctx context.Context, source Generation) (pro
 }
 
 func (s *session) processingSource(ctx context.Context, p processingState) (Node, error) {
-	node, err := s.resolveOne(ctx, []Mount{{Path: "/", FilesystemID: s.fs}}, Locator{NodeID: &p.id})
+	node, err := s.resolveOne(ctx, Locator{NodeID: &p.id})
 	if err != nil {
 		return Node{}, err
 	}

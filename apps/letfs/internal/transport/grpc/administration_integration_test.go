@@ -14,6 +14,7 @@ import (
 	"github.com/qninhdt/openlet/apps/letfs/internal/testfixture"
 	letfsv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/letfs/v1"
 	"github.com/qninhdt/openlet/packages/go/rpc"
+	sharedfixture "github.com/qninhdt/openlet/packages/go/testfixture"
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/sdk/worker"
 	grpcgo "google.golang.org/grpc"
@@ -25,7 +26,7 @@ import (
 
 func TestIntegrationStorageLifecycleOverAuthenticatedRPC(t *testing.T) {
 	db := testfixture.Postgres(t, "../../../migrations/0001_initial.sql")
-	tc, _ := testfixture.Temporal(t)
+	tc, _ := sharedfixture.Temporal(t)
 	store := &filesystem.Store{DB: db, MaxNodes: 100}
 	jobs := &temporal.Jobs{Client: tc}
 	service := &filesystem.Service{Store: store, Deletions: jobs}
@@ -33,10 +34,10 @@ func TestIntegrationStorageLifecycleOverAuthenticatedRPC(t *testing.T) {
 	temporal.Register(owner, &temporal.Activities{Store: store, Jobs: jobs})
 	require.NoError(t, owner.Start())
 	t.Cleanup(owner.Stop)
-
 	const token = "isolated-storage-lifecycle-token-123456"
-	methods := []string{letfsv1.StorageAdministrationService_CreateStorage_FullMethodName, letfsv1.StorageAdministrationService_DeleteFilesystem_FullMethodName}
-	authentication, err := rpc.NewAuthenticator([]rpc.Credential{{Service: "workspace", Token: token, Methods: methods}})
+	const gateway = "isolated-storage-gateway-token-1234567"
+	methods := []string{letfsv1.StorageAdministrationService_CreateFilesystem_FullMethodName, letfsv1.StorageAdministrationService_CreateScopes_FullMethodName, letfsv1.StorageAdministrationService_DeleteFilesystem_FullMethodName}
+	authentication, err := rpc.NewAuthenticator([]rpc.Credential{{Service: "workspace", Token: token, Methods: methods}, {Service: "gateway", Token: gateway, Gateway: true, Methods: methods}})
 	require.NoError(t, err)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -48,99 +49,51 @@ func TestIntegrationStorageLifecycleOverAuthenticatedRPC(t *testing.T) {
 	connection, err := grpcgo.NewClient(listener.Addr().String(), grpcgo.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, connection.Close()) })
-	client := letfsv1.NewStorageAdministrationServiceClient(connection)
+	api := letfsv1.NewStorageAdministrationServiceClient(connection)
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
 	authorized := metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer "+token))
-
-	bucketID, filesystemID := uuid.Must(uuid.NewV7()).String(), uuid.Must(uuid.NewV7()).String()
-	request := &letfsv1.CreateStorageRequest{
-		Bucket:     &letfsv1.CreateBucketRequest{BucketId: bucketID, IdempotencyKey: uuid.NewString(), LimitBytes: 1024},
-		Filesystem: &letfsv1.CreateFilesystemRequest{FilesystemId: filesystemID, BucketId: bucketID, IdempotencyKey: uuid.NewString(), RootName: "documents"},
-	}
-	_, err = client.CreateStorage(ctx, request)
+	fs := uuid.Must(uuid.NewV7()).String()
+	input := &letfsv1.CreateFilesystemRequest{FilesystemId: fs, IdempotencyKey: uuid.NewString(), LimitBytes: 1024}
+	_, err = api.CreateFilesystem(ctx, input)
 	require.Equal(t, codes.Unauthenticated, status.Code(err))
-	created, err := client.CreateStorage(authorized, request)
+	public := metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer "+gateway, "x-openlet-account-id", uuid.NewString()))
+	_, err = api.CreateFilesystem(public, input)
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
+	created, err := api.CreateFilesystem(authorized, input)
 	require.NoError(t, err)
-	require.Equal(t, bucketID, created.Bucket.Id)
-	require.Equal(t, filesystemID, created.Filesystem.Id)
-	replayed, err := client.CreateStorage(authorized, request)
+	require.Equal(t, fs, created.Filesystem.Id)
+	replayed, err := api.CreateFilesystem(authorized, input)
 	require.NoError(t, err)
-	require.Equal(t, created.Filesystem.RootId, replayed.Filesystem.RootId)
-
-	deletion, err := client.DeleteFilesystem(authorized, &letfsv1.DeleteFilesystemRequest{FilesystemId: filesystemID})
+	require.Equal(t, created.Filesystem, replayed.Filesystem)
+	var nodes int
+	require.NoError(t, db.QueryRow(ctx, "SELECT count(*) FROM nodes").Scan(&nodes))
+	require.Zero(t, nodes, "filesystem provisioning has no business scope defaults")
+	scopes := &letfsv1.CreateScopesRequest{FilesystemId: fs, IdempotencyKey: uuid.NewString(), ScopeIds: []string{uuid.Must(uuid.NewV7()).String(), uuid.Must(uuid.NewV7()).String()}}
+	first, err := api.CreateScopes(authorized, scopes)
+	require.NoError(t, err)
+	again, err := api.CreateScopes(authorized, scopes)
+	require.NoError(t, err)
+	require.Equal(t, first, again)
+	require.Len(t, first.Scopes, 2)
+	require.NotEmpty(t, first.Scopes[0].RootId)
+	require.True(t, first.Scopes[0].AllowBlobFiles)
+	require.True(t, first.Scopes[0].AllowIndexing)
+	disabled := false
+	restricted, err := api.CreateScopes(authorized, &letfsv1.CreateScopesRequest{FilesystemId: fs, IdempotencyKey: uuid.NewString(), ScopeIds: []string{uuid.Must(uuid.NewV7()).String()}, AllowBlobFiles: &disabled, AllowIndexing: &disabled})
+	require.NoError(t, err)
+	require.False(t, restricted.Scopes[0].AllowBlobFiles)
+	require.False(t, restricted.Scopes[0].AllowIndexing)
+	deletion, err := api.DeleteFilesystem(authorized, &letfsv1.DeleteFilesystemRequest{FilesystemId: fs})
 	require.NoError(t, err)
 	require.False(t, deletion.Completed)
-	var deleted uuid.UUID
-	require.NoError(t, tc.GetWorkflow(ctx, "delete-filesystem/"+filesystemID, "").Get(ctx, &deleted))
-	require.Equal(t, filesystemID, deleted.String())
-	deletion, err = client.DeleteFilesystem(authorized, &letfsv1.DeleteFilesystemRequest{FilesystemId: filesystemID})
+	require.Eventually(t, func() bool {
+		var state string
+		return db.QueryRow(ctx, "SELECT state FROM filesystems WHERE id=$1", fs).Scan(&state) == nil && state == "deleted"
+	}, 30*time.Second, 100*time.Millisecond)
+	deletion, err = api.DeleteFilesystem(authorized, &letfsv1.DeleteFilesystemRequest{FilesystemId: fs})
 	require.NoError(t, err)
 	require.True(t, deletion.Completed)
-}
-
-func TestIntegrationGenericAdministrationOverAuthenticatedRPC(t *testing.T) {
-	db := testfixture.Postgres(t, "../../../migrations/0001_initial.sql")
-	const ownerToken = "isolated-storage-owner-token-123456789"
-	const otherToken = "isolated-other-owner-token-12345678901"
-	const gatewayToken = "isolated-public-gateway-token-12345678"
-	methods := []string{letfsv1.StorageAdministrationService_CreateBucket_FullMethodName,
-		letfsv1.StorageAdministrationService_CreateFilesystem_FullMethodName, letfsv1.StorageAdministrationService_FreezeBucket_FullMethodName,
-		letfsv1.StorageAdministrationService_ListBucketFilesystems_FullMethodName, letfsv1.StorageAdministrationService_CompleteBucketDeletion_FullMethodName,
-		letfsv1.StorageAdministrationService_ReleaseProvisioning_FullMethodName}
-	authentication, err := rpc.NewAuthenticator([]rpc.Credential{
-		{Service: "workspace", Token: ownerToken, Methods: methods},
-		{Service: "independent-resource", Token: otherToken, Methods: methods},
-		{Service: "gateway", Token: gatewayToken, Gateway: true, Methods: methods},
-	})
-	require.NoError(t, err)
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	server := grpcgo.NewServer(grpcgo.UnaryInterceptor(authentication.Unary()))
-	store := &filesystem.Store{DB: db, MaxNodes: 100}
-	letfsv1.RegisterStorageAdministrationServiceServer(server, &Administration{Store: store, Service: &filesystem.Service{Store: store}})
-	done := make(chan error, 1)
-	go func() { done <- server.Serve(listener) }()
-	t.Cleanup(func() { server.Stop(); require.NoError(t, <-done) })
-	connection, err := grpcgo.NewClient(listener.Addr().String(), grpcgo.WithTransportCredentials(insecure.NewCredentials()))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, connection.Close()) })
-	client := letfsv1.NewStorageAdministrationServiceClient(connection)
-	deadline, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-	owner := metadata.NewOutgoingContext(deadline, metadata.Pairs("authorization", "Bearer "+ownerToken))
-	other := metadata.NewOutgoingContext(deadline, metadata.Pairs("authorization", "Bearer "+otherToken))
-	bucketID, fsID, key := uuid.Must(uuid.NewV7()).String(), uuid.Must(uuid.NewV7()).String(), uuid.NewString()
-	request := &letfsv1.CreateBucketRequest{BucketId: bucketID, IdempotencyKey: key, LimitBytes: 9223372036854775807}
-	bucket, err := client.CreateBucket(owner, request)
-	require.NoError(t, err)
-	require.Equal(t, request.LimitBytes, bucket.Bucket.LimitBytes)
-	require.Equal(t, bucketID, bucket.Bucket.Id)
-	replayed, err := client.CreateBucket(owner, request)
-	require.NoError(t, err)
-	require.Equal(t, bucket.Bucket.Id, replayed.Bucket.Id)
-	fs, err := client.CreateFilesystem(owner, &letfsv1.CreateFilesystemRequest{FilesystemId: fsID, BucketId: bucketID, IdempotencyKey: uuid.NewString(), RootName: "documents"})
-	require.NoError(t, err)
-	require.Equal(t, fsID, fs.Filesystem.Id)
-	require.NotEmpty(t, fs.Filesystem.RootId)
-	_, err = client.ReleaseProvisioning(owner, &letfsv1.ReleaseProvisioningRequest{BucketId: bucketID, FilesystemId: fsID, RootId: fs.Filesystem.RootId})
-	require.NoError(t, err)
-	_, err = client.FreezeBucket(other, &letfsv1.FreezeBucketRequest{BucketId: bucketID, IdempotencyKey: uuid.NewString()})
-	require.NoError(t, err)
-	_, err = client.CreateBucket(deadline, request)
-	require.Equal(t, codes.Unauthenticated, status.Code(err))
-	spoofed := metadata.NewOutgoingContext(deadline, metadata.Pairs("authorization", "Bearer "+otherToken, "x-openlet-service", "workspace"))
-	_, err = client.FreezeBucket(spoofed, &letfsv1.FreezeBucketRequest{BucketId: bucketID, IdempotencyKey: uuid.NewString()})
-	require.Equal(t, codes.Unauthenticated, status.Code(err))
-	public := metadata.NewOutgoingContext(deadline, metadata.Pairs("authorization", "Bearer "+gatewayToken, "x-openlet-user-id", uuid.NewString()))
-	_, err = client.CreateBucket(public, &letfsv1.CreateBucketRequest{BucketId: uuid.Must(uuid.NewV7()).String(), IdempotencyKey: uuid.NewString(), LimitBytes: 1})
-	require.Equal(t, codes.PermissionDenied, status.Code(err), "domain boundary rejects a gateway even if an allowlist is misconfigured")
-	var count int
-	require.NoError(t, db.QueryRow(deadline, "SELECT count(*) FROM quota_buckets").Scan(&count))
-	require.Equal(t, 1, count)
-	_, err = client.FreezeBucket(owner, &letfsv1.FreezeBucketRequest{BucketId: bucketID, IdempotencyKey: uuid.NewString()})
-	require.NoError(t, err)
-	listed, err := client.ListBucketFilesystems(owner, &letfsv1.ListBucketFilesystemsRequest{BucketId: bucketID})
-	require.NoError(t, err)
-	require.Equal(t, []string{fsID}, listed.FilesystemIds)
+	require.NoError(t, db.QueryRow(ctx, "SELECT count(*) FROM nodes").Scan(&nodes))
+	require.Zero(t, nodes)
 }

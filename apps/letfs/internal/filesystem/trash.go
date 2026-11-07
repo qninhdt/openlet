@@ -26,26 +26,26 @@ func (entry *TrashEntry) fields() []any {
 const trashColumns = `id,node_id,original_parent_id,original_name,actor_id,state,created_at`
 
 func (s *session) queueObject(ctx context.Context, id uuid.UUID) error {
-	_, err := s.tx.Exec(ctx, `INSERT INTO object_deletions(object_key,bucket_id)
- SELECT object_key,$2 FROM files WHERE node_id=$1 AND object_key IS NOT NULL ON CONFLICT DO NOTHING`, id, s.bucket)
+	_, err := s.tx.Exec(ctx, `INSERT INTO object_deletions(object_key,filesystem_id)
+ SELECT object_key,$2 FROM files WHERE node_id=$1 AND object_key IS NOT NULL ON CONFLICT DO NOTHING`, id, s.filesystemID)
 	return databaseError(err)
 }
 
 func (s *session) trashEntry(ctx context.Context, id uuid.UUID, lock bool) (TrashEntry, error) {
-	query := `SELECT ` + trashColumns + ` FROM trash_entries WHERE filesystem_id=$1 AND id=$2`
+	query := `SELECT ` + trashColumns + ` FROM trash_entries WHERE scope_id=$1 AND id=$2`
 	if lock {
 		query += ` FOR UPDATE`
 	}
 	var entry TrashEntry
-	err := s.tx.QueryRow(ctx, query, s.fs, id).Scan(entry.fields()...)
+	err := s.tx.QueryRow(ctx, query, s.scopeID, id).Scan(entry.fields()...)
 	return entry, databaseError(err)
 }
 
-func (s *Store) GetTrash(ctx context.Context, fs, id uuid.UUID) (TrashEntry, error) {
-	if _, err := s.authorize(ctx, fs, "filesystem", authz.TrashRead); err != nil {
+func (s *Store) GetTrash(ctx context.Context, scopeID, id uuid.UUID) (TrashEntry, error) {
+	if _, err := s.authorize(ctx, scopeID, "scope", authz.ScopeReadMetadata); err != nil {
 		return TrashEntry{}, err
 	}
-	session, err := s.openSession(ctx, fs, false)
+	session, err := s.openSession(ctx, scopeID, false)
 	if err != nil {
 		return TrashEntry{}, err
 	}
@@ -58,21 +58,21 @@ type TrashPage struct {
 	NextCursor *string      `json:"next_cursor"`
 }
 
-func (s *Store) ListTrash(ctx context.Context, fs uuid.UUID, cursor *string, limit *int32) (TrashPage, error) {
-	if _, err := s.authorize(ctx, fs, "filesystem", authz.TrashRead); err != nil {
+func (s *Store) ListTrash(ctx context.Context, scopeID uuid.UUID, cursor *string, limit *int32) (TrashPage, error) {
+	if _, err := s.authorize(ctx, scopeID, "scope", authz.ScopeReadMetadata); err != nil {
 		return TrashPage{}, err
 	}
-	scope := "trash/" + fs.String()
+	scope := "trash/" + scopeID.String()
 	after, count, err := page(scope, cursor, limit)
 	if err != nil {
 		return TrashPage{}, err
 	}
-	session, err := s.openSession(ctx, fs, false)
+	session, err := s.openSession(ctx, scopeID, false)
 	if err != nil {
 		return TrashPage{}, err
 	}
 	defer session.tx.Rollback(ctx)
-	rows, err := session.tx.Query(ctx, `SELECT `+trashColumns+` FROM trash_entries WHERE filesystem_id=$1 AND id>$2 ORDER BY id LIMIT $3`, fs, after, count+1)
+	rows, err := session.tx.Query(ctx, `SELECT `+trashColumns+` FROM trash_entries WHERE scope_id=$1 AND id>$2 ORDER BY id LIMIT $3`, scopeID, after, count+1)
 	if err != nil {
 		return TrashPage{}, databaseError(err)
 	}
@@ -96,17 +96,17 @@ func (s *Store) ListTrash(ctx context.Context, fs uuid.UUID, cursor *string, lim
 	return result, nil
 }
 
-func (s *Store) TrashNode(ctx context.Context, fs uuid.UUID, mounts []Mount, locator Locator, revision *int64) (TrashEntry, error) {
-	actor, err := s.authorize(ctx, fs, "filesystem", authz.NodeTrash)
+func (s *Store) TrashNode(ctx context.Context, scopeID uuid.UUID, locator Locator, revision *int64) (TrashEntry, error) {
+	actor, err := s.authorize(ctx, scopeID, "scope", authz.ScopeTrash)
 	if err != nil {
 		return TrashEntry{}, err
 	}
-	session, err := s.openSession(ctx, fs, true)
+	session, err := s.openSession(ctx, scopeID, true)
 	if err != nil {
 		return TrashEntry{}, err
 	}
 	defer session.tx.Rollback(ctx)
-	node, err := session.resolveOne(ctx, mounts, locator)
+	node, err := session.resolveOne(ctx, locator)
 	if err != nil {
 		return TrashEntry{}, err
 	}
@@ -126,7 +126,7 @@ func (s *Store) TrashNode(ctx context.Context, fs uuid.UUID, mounts []Mount, loc
 		return TrashEntry{}, err
 	}
 	id := uuid.Must(uuid.NewV7())
-	_, err = session.tx.Exec(ctx, `INSERT INTO trash_entries(id,filesystem_id,node_id,original_parent_id,original_name,actor_id) VALUES($1,$2,$3,$4,$5,$6)`, id, fs, node.ID, node.ParentID, node.Name, actor)
+	_, err = session.tx.Exec(ctx, `INSERT INTO trash_entries(id,scope_id,node_id,original_parent_id,original_name,actor_id) VALUES($1,$2,$3,$4,$5,$6)`, id, scopeID, node.ID, node.ParentID, node.Name, actor)
 	if err != nil {
 		return TrashEntry{}, databaseError(err)
 	}
@@ -144,11 +144,11 @@ func (s *Store) TrashNode(ctx context.Context, fs uuid.UUID, mounts []Mount, loc
 	return entry, databaseError(session.tx.Commit(ctx))
 }
 
-func (s *Store) RestoreTrash(ctx context.Context, fs, id uuid.UUID) (Node, error) {
-	if _, err := s.authorize(ctx, fs, "filesystem", authz.TrashRestore); err != nil {
+func (s *Store) RestoreTrash(ctx context.Context, scopeID, id uuid.UUID) (Node, error) {
+	if _, err := s.authorize(ctx, scopeID, "scope", authz.ScopeRestore); err != nil {
 		return Node{}, err
 	}
-	session, err := s.openSession(ctx, fs, true)
+	session, err := s.openSession(ctx, scopeID, true)
 	if err != nil {
 		return Node{}, err
 	}
@@ -163,7 +163,7 @@ func (s *Store) RestoreTrash(ctx context.Context, fs, id uuid.UUID) (Node, error
 	if entry.ParentID == nil {
 		return Node{}, apperr.New(apperr.Missing, "NOT_FOUND", "original parent not found")
 	}
-	parent, err := session.resolveOne(ctx, []Mount{{Path: "/", FilesystemID: fs}}, Locator{NodeID: entry.ParentID})
+	parent, err := session.resolveOne(ctx, Locator{NodeID: entry.ParentID})
 	if err != nil {
 		return Node{}, err
 	}

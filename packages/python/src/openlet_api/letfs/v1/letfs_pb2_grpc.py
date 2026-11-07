@@ -39,11 +39,6 @@ class FilesystemServiceStub:
                 request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.GetFilesystemRequest.SerializeToString,
                 response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.GetFilesystemResponse.FromString,
                 _registered_method=True)
-        self.GetBucketUsage = channel.unary_unary(
-                '/openlet_api.letfs.v1.FilesystemService/GetBucketUsage',
-                request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.GetBucketUsageRequest.SerializeToString,
-                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.GetBucketUsageResponse.FromString,
-                _registered_method=True)
         self.CreateNode = channel.unary_unary(
                 '/openlet_api.letfs.v1.FilesystemService/CreateNode',
                 request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateNodeRequest.SerializeToString,
@@ -83,11 +78,6 @@ class FilesystemServiceStub:
                 '/openlet_api.letfs.v1.FilesystemService/CreateCopy',
                 request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateCopyRequest.SerializeToString,
                 response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateCopyResponse.FromString,
-                _registered_method=True)
-        self.GetCopy = channel.unary_unary(
-                '/openlet_api.letfs.v1.FilesystemService/GetCopy',
-                request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.GetCopyRequest.SerializeToString,
-                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.GetCopyResponse.FromString,
                 _registered_method=True)
         self.GetProcessing = channel.unary_unary(
                 '/openlet_api.letfs.v1.FilesystemService/GetProcessing',
@@ -180,12 +170,6 @@ class FilesystemServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def GetBucketUsage(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
     def CreateNode(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -229,12 +213,6 @@ class FilesystemServiceServicer:
         raise NotImplementedError('Method not implemented!')
 
     def CreateCopy(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def GetCopy(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -345,11 +323,6 @@ def add_FilesystemServiceServicer_to_server(servicer, server):
                     request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.GetFilesystemRequest.FromString,
                     response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.GetFilesystemResponse.SerializeToString,
             ),
-            'GetBucketUsage': grpc.unary_unary_rpc_method_handler(
-                    servicer.GetBucketUsage,
-                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.GetBucketUsageRequest.FromString,
-                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.GetBucketUsageResponse.SerializeToString,
-            ),
             'CreateNode': grpc.unary_unary_rpc_method_handler(
                     servicer.CreateNode,
                     request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateNodeRequest.FromString,
@@ -389,11 +362,6 @@ def add_FilesystemServiceServicer_to_server(servicer, server):
                     servicer.CreateCopy,
                     request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateCopyRequest.FromString,
                     response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateCopyResponse.SerializeToString,
-            ),
-            'GetCopy': grpc.unary_unary_rpc_method_handler(
-                    servicer.GetCopy,
-                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.GetCopyRequest.FromString,
-                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.GetCopyResponse.SerializeToString,
             ),
             'GetProcessing': grpc.unary_unary_rpc_method_handler(
                     servicer.GetProcessing,
@@ -503,33 +471,6 @@ class FilesystemService:
             '/openlet_api.letfs.v1.FilesystemService/GetFilesystem',
             openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.GetFilesystemRequest.SerializeToString,
             openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.GetFilesystemResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def GetBucketUsage(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/openlet_api.letfs.v1.FilesystemService/GetBucketUsage',
-            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.GetBucketUsageRequest.SerializeToString,
-            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.GetBucketUsageResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -746,33 +687,6 @@ class FilesystemService:
             '/openlet_api.letfs.v1.FilesystemService/CreateCopy',
             openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateCopyRequest.SerializeToString,
             openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateCopyResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def GetCopy(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/openlet_api.letfs.v1.FilesystemService/GetCopy',
-            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.GetCopyRequest.SerializeToString,
-            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.GetCopyResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -1903,45 +1817,20 @@ class StorageAdministrationServiceStub:
         Args:
             channel: A grpc.Channel.
         """
-        self.CreateStorage = channel.unary_unary(
-                '/openlet_api.letfs.v1.StorageAdministrationService/CreateStorage',
-                request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateStorageRequest.SerializeToString,
-                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateStorageResponse.FromString,
-                _registered_method=True)
         self.DeleteFilesystem = channel.unary_unary(
                 '/openlet_api.letfs.v1.StorageAdministrationService/DeleteFilesystem',
                 request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.DeleteFilesystemRequest.SerializeToString,
                 response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.DeleteFilesystemResponse.FromString,
-                _registered_method=True)
-        self.CreateBucket = channel.unary_unary(
-                '/openlet_api.letfs.v1.StorageAdministrationService/CreateBucket',
-                request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateBucketRequest.SerializeToString,
-                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateBucketResponse.FromString,
                 _registered_method=True)
         self.CreateFilesystem = channel.unary_unary(
                 '/openlet_api.letfs.v1.StorageAdministrationService/CreateFilesystem',
                 request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateFilesystemRequest.SerializeToString,
                 response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateFilesystemResponse.FromString,
                 _registered_method=True)
-        self.FreezeBucket = channel.unary_unary(
-                '/openlet_api.letfs.v1.StorageAdministrationService/FreezeBucket',
-                request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.FreezeBucketRequest.SerializeToString,
-                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.FreezeBucketResponse.FromString,
-                _registered_method=True)
-        self.ListBucketFilesystems = channel.unary_unary(
-                '/openlet_api.letfs.v1.StorageAdministrationService/ListBucketFilesystems',
-                request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ListBucketFilesystemsRequest.SerializeToString,
-                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ListBucketFilesystemsResponse.FromString,
-                _registered_method=True)
-        self.CompleteBucketDeletion = channel.unary_unary(
-                '/openlet_api.letfs.v1.StorageAdministrationService/CompleteBucketDeletion',
-                request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CompleteBucketDeletionRequest.SerializeToString,
-                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CompleteBucketDeletionResponse.FromString,
-                _registered_method=True)
-        self.ReleaseProvisioning = channel.unary_unary(
-                '/openlet_api.letfs.v1.StorageAdministrationService/ReleaseProvisioning',
-                request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ReleaseProvisioningRequest.SerializeToString,
-                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ReleaseProvisioningResponse.FromString,
+        self.CreateScopes = channel.unary_unary(
+                '/openlet_api.letfs.v1.StorageAdministrationService/CreateScopes',
+                request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateScopesRequest.SerializeToString,
+                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateScopesResponse.FromString,
                 _registered_method=True)
 
 
@@ -1949,19 +1838,7 @@ class StorageAdministrationServiceServicer:
     """These methods require explicit service authority, never a public user JWT.
     """
 
-    def CreateStorage(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
     def DeleteFilesystem(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def CreateBucket(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -1973,25 +1850,7 @@ class StorageAdministrationServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def FreezeBucket(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def ListBucketFilesystems(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def CompleteBucketDeletion(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def ReleaseProvisioning(self, request, context):
+    def CreateScopes(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -2000,45 +1859,20 @@ class StorageAdministrationServiceServicer:
 
 def add_StorageAdministrationServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
-            'CreateStorage': grpc.unary_unary_rpc_method_handler(
-                    servicer.CreateStorage,
-                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateStorageRequest.FromString,
-                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateStorageResponse.SerializeToString,
-            ),
             'DeleteFilesystem': grpc.unary_unary_rpc_method_handler(
                     servicer.DeleteFilesystem,
                     request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.DeleteFilesystemRequest.FromString,
                     response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.DeleteFilesystemResponse.SerializeToString,
-            ),
-            'CreateBucket': grpc.unary_unary_rpc_method_handler(
-                    servicer.CreateBucket,
-                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateBucketRequest.FromString,
-                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateBucketResponse.SerializeToString,
             ),
             'CreateFilesystem': grpc.unary_unary_rpc_method_handler(
                     servicer.CreateFilesystem,
                     request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateFilesystemRequest.FromString,
                     response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateFilesystemResponse.SerializeToString,
             ),
-            'FreezeBucket': grpc.unary_unary_rpc_method_handler(
-                    servicer.FreezeBucket,
-                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.FreezeBucketRequest.FromString,
-                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.FreezeBucketResponse.SerializeToString,
-            ),
-            'ListBucketFilesystems': grpc.unary_unary_rpc_method_handler(
-                    servicer.ListBucketFilesystems,
-                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ListBucketFilesystemsRequest.FromString,
-                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ListBucketFilesystemsResponse.SerializeToString,
-            ),
-            'CompleteBucketDeletion': grpc.unary_unary_rpc_method_handler(
-                    servicer.CompleteBucketDeletion,
-                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CompleteBucketDeletionRequest.FromString,
-                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CompleteBucketDeletionResponse.SerializeToString,
-            ),
-            'ReleaseProvisioning': grpc.unary_unary_rpc_method_handler(
-                    servicer.ReleaseProvisioning,
-                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ReleaseProvisioningRequest.FromString,
-                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ReleaseProvisioningResponse.SerializeToString,
+            'CreateScopes': grpc.unary_unary_rpc_method_handler(
+                    servicer.CreateScopes,
+                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateScopesRequest.FromString,
+                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateScopesResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -2051,33 +1885,6 @@ def add_StorageAdministrationServiceServicer_to_server(servicer, server):
 class StorageAdministrationService:
     """These methods require explicit service authority, never a public user JWT.
     """
-
-    @staticmethod
-    def CreateStorage(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/openlet_api.letfs.v1.StorageAdministrationService/CreateStorage',
-            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateStorageRequest.SerializeToString,
-            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateStorageResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
 
     @staticmethod
     def DeleteFilesystem(request,
@@ -2096,33 +1903,6 @@ class StorageAdministrationService:
             '/openlet_api.letfs.v1.StorageAdministrationService/DeleteFilesystem',
             openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.DeleteFilesystemRequest.SerializeToString,
             openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.DeleteFilesystemResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def CreateBucket(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/openlet_api.letfs.v1.StorageAdministrationService/CreateBucket',
-            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateBucketRequest.SerializeToString,
-            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateBucketResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -2161,7 +1941,7 @@ class StorageAdministrationService:
             _registered_method=True)
 
     @staticmethod
-    def FreezeBucket(request,
+    def CreateScopes(request,
             target,
             options=(),
             channel_credentials=None,
@@ -2174,90 +1954,9 @@ class StorageAdministrationService:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/openlet_api.letfs.v1.StorageAdministrationService/FreezeBucket',
-            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.FreezeBucketRequest.SerializeToString,
-            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.FreezeBucketResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def ListBucketFilesystems(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/openlet_api.letfs.v1.StorageAdministrationService/ListBucketFilesystems',
-            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ListBucketFilesystemsRequest.SerializeToString,
-            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ListBucketFilesystemsResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def CompleteBucketDeletion(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/openlet_api.letfs.v1.StorageAdministrationService/CompleteBucketDeletion',
-            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CompleteBucketDeletionRequest.SerializeToString,
-            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CompleteBucketDeletionResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def ReleaseProvisioning(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/openlet_api.letfs.v1.StorageAdministrationService/ReleaseProvisioning',
-            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ReleaseProvisioningRequest.SerializeToString,
-            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ReleaseProvisioningResponse.FromString,
+            '/openlet_api.letfs.v1.StorageAdministrationService/CreateScopes',
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateScopesRequest.SerializeToString,
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateScopesResponse.FromString,
             options,
             channel_credentials,
             insecure,

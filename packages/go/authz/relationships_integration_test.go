@@ -14,28 +14,22 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 )
 
-func TestIntegrationRoleCapabilitiesAndInheritedFreshness(t *testing.T) {
+func TestIntegrationFixedRolesAndIndependentAccountAccess(t *testing.T) {
 	client, address, server := graph(t)
 	independent := connect(t, address)
 	ctx := t.Context()
+	shared := touch("scope", "shared", "editor", "workspace", "team")
+	shared.Relationship.Subject.OptionalRelation = "member"
 	write(t, client,
-		touch("role", "reader", "node_read", "user", "*"),
-		touch("role", "editor", "node_read", "user", "*"),
-		touch("role", "editor", "content_write", "user", "*"),
-		touch("role", "owner", "node_read", "user", "*"),
-		touch("role", "owner", "workspace_transfer", "user", "*"),
-		touch("role_grant", "team-reader", "role", "role", "reader"),
-		touch("role_grant", "team-reader", "member", "user", "viewer"),
-		touch("role_grant", "team-editor", "role", "role", "editor"),
-		touch("role_grant", "team-editor", "member", "user", "editor"),
-		touch("role_grant", "team-owner", "role", "role", "owner"),
-		touch("role_grant", "team-owner", "member", "user", "owner"),
-		touch("workspace", "team", "grant", "role_grant", "team-reader"),
-		touch("workspace", "team", "grant", "role_grant", "team-editor"),
-		touch("workspace", "team", "grant", "role_grant", "team-owner"),
-		touch("workspace", "team", "enabled", "user", "*"),
-		touch("filesystem", "drive", "workspace", "workspace", "team"),
-		touch("filesystem", "foreign", "workspace", "workspace", "other"),
+		touch("account", "agent", "self", "account", "agent"),
+		touch("account", "agent", "owner", "account", "owner"),
+		touch("workspace", "team", "owner", "account", "owner"),
+		touch("workspace", "team", "admin", "account", "admin"),
+		touch("workspace", "team", "member", "account", "agent"),
+		shared,
+		touch("scope", "private", "manager", "account", "agent"),
+		touch("scope", "view", "viewer", "account", "viewer"),
+		touch("filesystem", "drive", "deleter", "account", "owner"),
 	)
 	for _, test := range []struct {
 		actor    string
@@ -43,40 +37,37 @@ func TestIntegrationRoleCapabilitiesAndInheritedFreshness(t *testing.T) {
 		resource Resource
 		want     bool
 	}{
-		{"viewer", NodeRead, Resource{"filesystem", "drive"}, true},
-		{"viewer", ContentWrite, Resource{"filesystem", "drive"}, false},
-		{"editor", ContentWrite, Resource{"filesystem", "drive"}, true},
-		{"editor", WorkspaceTransfer, Resource{"workspace", "team"}, false},
-		{"owner", WorkspaceTransfer, Resource{"workspace", "team"}, true},
-		{"owner", NodeRead, Resource{"filesystem", "foreign"}, false},
-		{"viewer", BucketRead, Resource{"quota_bucket", "bucket"}, false},
+		{"owner", AccountUpdate, Resource{"account", "agent"}, true},
+		{"owner", ScopeReadContent, Resource{"scope", "private"}, false},
+		{"admin", ScopeReadContent, Resource{"scope", "private"}, false},
+		{"agent", ScopeManageAccess, Resource{"scope", "private"}, true},
+		{"agent", ScopeWrite, Resource{"scope", "shared"}, true},
+		{"agent", WorkspaceDelete, Resource{"workspace", "team"}, false},
+		{"admin", WorkspaceManageMembers, Resource{"workspace", "team"}, true},
+		{"admin", WorkspaceDelete, Resource{"workspace", "team"}, false},
+		{"owner", FilesystemDelete, Resource{"filesystem", "drive"}, true},
+		{"owner", ScopeWrite, Resource{"scope", "shared"}, false},
+		{"viewer", ScopeReadContent, Resource{"scope", "view"}, true},
+		{"viewer", ScopeWrite, Resource{"scope", "view"}, false},
+		{"viewer", ScopeReadMetadata, Resource{"scope", "private"}, false},
 	} {
 		allowed, err := Check(ctx, independent, test.actor, test.action, test.resource)
 		require.NoError(t, err)
-		require.Equal(t, test.want, allowed, "%s %s %s", test.actor, test.action, test.resource.ID)
+		require.Equal(t, test.want, allowed, "%s %s %v", test.actor, test.action, test.resource)
 	}
-	write(t, client, remove("role_grant", "team-reader", "member", "user", "viewer"))
-	allowed, err := Check(ctx, independent, "viewer", NodeRead, Resource{"filesystem", "drive"})
+	write(t, client, remove("workspace", "team", "member", "account", "agent"))
+	allowed, err := Check(ctx, independent, "agent", ScopeWrite, Resource{"scope", "shared"})
 	require.NoError(t, err)
-	require.False(t, allowed, "fresh inherited check uses no returned token from the writer")
-
-	write(t, client,
-		remove("role_grant", "team-owner", "member", "user", "owner"),
-		touch("role_grant", "team-owner", "member", "user", "editor"),
-		touch("role_grant", "team-editor", "member", "user", "owner"),
-		remove("role_grant", "team-editor", "member", "user", "editor"),
-	)
-	for actor, want := range map[string]bool{"owner": false, "editor": true} {
-		allowed, err := Check(ctx, independent, actor, WorkspaceTransfer, Resource{"workspace", "team"})
-		require.NoError(t, err)
-		require.Equal(t, want, allowed)
-	}
+	require.False(t, allowed, "fresh userset checks observe membership removal")
+	allowed, err = Check(ctx, independent, "agent", ScopeManageAccess, Resource{"scope", "private"})
+	require.NoError(t, err)
+	require.True(t, allowed, "independent direct grants survive unrelated membership changes")
 	require.NoError(t, server.Stop(ctx, nil))
 	checkCtx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	allowed, err = Check(checkCtx, independent, "editor", WorkspaceTransfer, Resource{"workspace", "team"})
+	allowed, err = Check(checkCtx, independent, "agent", ScopeManageAccess, Resource{"scope", "private"})
 	require.Error(t, err)
-	require.False(t, allowed, "an outage must not reuse the previously granted permission")
+	require.False(t, allowed)
 }
 
 func graph(t *testing.T) (*authzed.Client, string, testcontainers.Container) {

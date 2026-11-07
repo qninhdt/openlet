@@ -17,11 +17,11 @@ func TestStorageMaintenanceOrdersAndBoundsActivities(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
 	var stages []string
-	for _, name := range []string{"expire_uploads_batch", "reconcile_resources_batch", "delete_objects_batch"} {
+	for _, name := range []string{"ExpireUploads", "ReconcileResources", "DeleteObjects"} {
 		env.RegisterActivityWithOptions(func(ctx context.Context) (int, error) {
 			stages = append(stages, name)
 			info := activity.GetInfo(ctx)
-			if name == "expire_uploads_batch" {
+			if name == "ExpireUploads" {
 				require.Zero(t, info.HeartbeatTimeout)
 			} else {
 				require.Equal(t, 30*time.Second, info.HeartbeatTimeout)
@@ -31,7 +31,7 @@ func TestStorageMaintenanceOrdersAndBoundsActivities(t *testing.T) {
 	}
 	env.ExecuteWorkflow(StorageMaintenance)
 	require.NoError(t, env.GetWorkflowError())
-	require.Equal(t, []string{"expire_uploads_batch", "reconcile_resources_batch", "delete_objects_batch"}, stages)
+	require.Equal(t, []string{"ExpireUploads", "ReconcileResources", "DeleteObjects"}, stages)
 }
 
 func TestStorageMaintenanceReportsCombinedErrorsAndStillCleansObjects(t *testing.T) {
@@ -41,15 +41,15 @@ func TestStorageMaintenanceReportsCombinedErrorsAndStillCleansObjects(t *testing
 	env.RegisterActivityWithOptions(func(context.Context) (int, error) {
 		stages = append(stages, "expire")
 		return 0, temporal.NewNonRetryableApplicationError("uploads unavailable", "UPLOADS_UNAVAILABLE", nil)
-	}, activity.RegisterOptions{Name: "expire_uploads_batch"})
+	}, activity.RegisterOptions{Name: "ExpireUploads"})
 	env.RegisterActivityWithOptions(func(context.Context) (int, error) {
 		stages = append(stages, "reconcile")
 		return 0, temporal.NewNonRetryableApplicationError("Temporal unavailable", "DEPENDENCY_UNAVAILABLE", nil)
-	}, activity.RegisterOptions{Name: "reconcile_resources_batch"})
+	}, activity.RegisterOptions{Name: "ReconcileResources"})
 	env.RegisterActivityWithOptions(func(context.Context) (int, error) {
 		stages = append(stages, "delete")
 		return 0, nil
-	}, activity.RegisterOptions{Name: "delete_objects_batch"})
+	}, activity.RegisterOptions{Name: "DeleteObjects"})
 	env.ExecuteWorkflow(StorageMaintenance)
 	require.Equal(t, []string{"expire", "reconcile", "delete"}, stages)
 	err := env.GetWorkflowError()

@@ -30,38 +30,53 @@ async function temporal(args: string[]): Promise<string> {
   return result.stdout;
 }
 
-export async function filesystemDeletionIsRunning(filesystemId: string): Promise<boolean> {
-  const executions = JSON.parse(await temporal(['workflow', 'list', '--query', `WorkflowId = 'delete-filesystem/${filesystemId}' AND ExecutionStatus = 'Running'`, '--limit', '1', '--output', 'json']));
+async function childExecution(parentId: string, type: string): Promise<string> {
+  let id = '';
+  await expect.poll(async () => {
+    const history = JSON.parse(await temporal(['workflow', 'show', '--workflow-id', parentId, '--output', 'json']));
+    const children = history.events.filter((event: any) => event.childWorkflowExecutionStartedEventAttributes?.workflowType?.name === type);
+    id = children.at(-1)?.childWorkflowExecutionStartedEventAttributes?.workflowExecution?.workflowId ?? '';
+    return id;
+  }).not.toBe('');
+  return id;
+}
+
+export async function workspaceDeletionExecution(workspaceId: string) {
+  return childExecution(`workspace-changes/${workspaceId}`, 'DeleteWorkspace');
+}
+export async function filesystemDeletionIsRunning(workspaceId: string): Promise<boolean> {
+  const deletion = await workspaceDeletionExecution(workspaceId);
+  const id = await childExecution(deletion, 'DeleteFilesystem');
+  const executions = JSON.parse(await temporal(['workflow', 'list', '--query', `WorkflowId = '${id}' AND ExecutionStatus = 'Running'`, '--limit', '1', '--output', 'json']));
   return executions.length === 1;
 }
 export async function terminateWorkspaceDeletion(workspaceId: string) {
-  await temporal(['workflow', 'terminate', '--workflow-id', `delete-workspace/${workspaceId}`, '--reason', 'API recovery verification']);
+  await temporal(['workflow', 'terminate', '--workflow-id', await workspaceDeletionExecution(workspaceId), '--reason', 'API recovery verification']);
 }
-
-export async function recordLifecycleHistories(subject: string, workspaceId: string, userId: string, filesystemId: string) {
-  const workflows: Record<string, string> = {
-    OnboardUser: `onboard/${subject}`,
-    CreateWorkspace: `create-workspace/${userId}/${userId}`,
-    DeleteWorkspace: `delete-workspace/${workspaceId}`,
-    DeleteFilesystem: `delete-filesystem/${filesystemId}`,
-  };
-  for (const name of ['OnboardUser', 'CreateWorkspace', 'DeleteWorkspace', 'DeleteFilesystem']) {
-    const workflowId = workflows[name];
-    await recordWorkflowHistory(name, workflowId);
-  }
-  await triggerStorageMaintenance();
-  let maintenanceId = '';
+export async function recordLatestHistory(name: string, type: string) {
+  let id = '';
   await expect.poll(async () => {
-    const completed = JSON.parse(await temporal(['workflow', 'list', '--query', "WorkflowType = 'StorageMaintenance' AND ExecutionStatus = 'Completed'", '--limit', '1', '--output', 'json']));
-    maintenanceId = completed[0]?.execution?.workflowId ?? '';
-    return maintenanceId;
+    const executions = JSON.parse(await temporal(['workflow', 'list', '--query', `WorkflowType = '${type}' AND ExecutionStatus = 'Completed'`, '--limit', '1', '--output', 'json']));
+    id = executions[0]?.execution?.workflowId ?? '';
+    return id;
   }).not.toBe('');
-  await recordWorkflowHistory('StorageMaintenance', maintenanceId);
-  for (const [name, queue] of [['WorkspaceMaintenance', 'openlet-workspace']]) {
-    const workflowId = `replay/${name}/${randomUUID()}`;
-    await temporal(['workflow', 'execute', '--workflow-id', workflowId, '--type', name, '--task-queue', queue]);
-    await recordWorkflowHistory(name, workflowId);
-  }
+  return recordWorkflowHistory(name, id);
+}
+export async function recordLifecycleHistories(subject: string, workspaceId: string) {
+  const onboard = `onboard/${subject}`;
+  await recordWorkflowHistory('OnboardUser', onboard);
+  await recordWorkflowHistory('CreateWorkspace', await childExecution(onboard, 'CreateWorkspace'));
+  const deletion = await workspaceDeletionExecution(workspaceId);
+  await recordWorkflowHistory('DeleteWorkspace', deletion);
+  const filesystemDeletion = await childExecution(deletion, 'DeleteFilesystem');
+  await recordWorkflowHistory('DeleteFilesystem', filesystemDeletion);
+  await recordWorkflowHistory('DeleteScope', await childExecution(filesystemDeletion, 'DeleteScope'));
+  await recordWorkflowHistory('WorkspaceChanges', `workspace-changes/${workspaceId}`, false, true);
+  await triggerStorageMaintenance();
+  await recordLatestHistory('StorageMaintenance', 'StorageMaintenance');
+  const workflowId = `replay/WorkspaceMaintenance/${randomUUID()}`;
+  await temporal(['workflow', 'execute', '--workflow-id', workflowId, '--type', 'WorkspaceMaintenance', '--task-queue', 'openlet-workspace']);
+  await recordWorkflowHistory('WorkspaceMaintenance', workflowId);
 }
 
 export async function setTemporalRunning(running: boolean) {
@@ -72,17 +87,8 @@ export async function temporalIsHealthy(): Promise<boolean> {
   try { await temporal(['operator', 'cluster', 'health']); return true; }
   catch { return false; }
 }
-export async function recordCopyHistory(name: 'CopyNode' | 'CopyNodeRecovery', filesystemId: string, copyId: string, continued = false) {
-  const directory = join(state, 'histories');
-  const workflowId = `copy/${filesystemId}/${copyId}`;
-  const output = await recordWorkflowHistory(name, workflowId);
-  const history = JSON.parse(output);
-  const started = history.events[0].workflowExecutionStartedEventAttributes;
-  if (continued && !started.continuedExecutionRunId) throw new Error('Copy did not Continue-As-New');
-  if (continued) {
-    const previous = await temporal(['workflow', 'show', '--workflow-id', workflowId, '--run-id', started.continuedExecutionRunId, '--output', 'json']);
-    await writeFile(join(directory, 'CopyNodeContinued.json'), previous, { mode: 0o600 });
-  }
+export async function recordCopyHistory(name: string, filesystemId: string, copyId: string, failed = false) {
+  return recordWorkflowHistory(name,`copy/${filesystemId}/${copyId}`,failed);
 }
 
 export async function triggerStorageMaintenance() {

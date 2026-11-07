@@ -147,11 +147,11 @@ func TestBoundedJSONPreconditionsAndMutationResponse(t *testing.T) {
 		if _, err := requiredRevision(r); err != nil {
 			sharedhttp.WriteError(w, r, err)
 		} else {
-			writeJSON(w, r, 202, "/v1/filesystems/drive/copies/copy", `"8"`, nodeResponse{Revision: 8})
+			writeJSON(w, r, 202, "/v1/filesystems/drive/scopes/scope/trash-entries/entry", `"8"`, nodeResponse{Revision: 8})
 		}
 		require.Equal(t, test.status, w.Code)
 		if test.status == 202 {
-			require.Equal(t, "/v1/filesystems/drive/copies/copy", w.Header().Get("Location"))
+			require.Equal(t, "/v1/filesystems/drive/scopes/scope/trash-entries/entry", w.Header().Get("Location"))
 		}
 	}
 	r := httptest.NewRequest("GET", "/", nil)

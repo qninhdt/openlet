@@ -178,7 +178,7 @@ class RpcClient:
         headers: dict[str, str] = {}
         propagate.inject(headers)
         if actor_id is not None:
-            headers["x-openlet-user-id"] = str(actor_id)
+            headers["x-openlet-account-id"] = str(actor_id)
         attempts = 3 if retry_transient else 1
         for attempt in range(attempts):
             try:
@@ -206,7 +206,7 @@ class RpcClient:
         headers: dict[str, str] = {}
         propagate.inject(headers)
         if actor_id is not None:
-            headers["x-openlet-user-id"] = str(actor_id)
+            headers["x-openlet-account-id"] = str(actor_id)
         call = method(
             request,
             metadata=self._metadata + tuple(headers.items()),
@@ -257,7 +257,7 @@ class Authenticator(grpc.aio.ServerInterceptor):
         for key, value in metadata:
             values.setdefault(key.lower(), []).append(value)
         authorization = values.get("authorization", [])
-        actors = values.get("x-openlet-user-id", [])
+        actors = values.get("x-openlet-account-id", [])
         if (
             len(authorization) != 1
             or len(actors) > 1

@@ -10,7 +10,7 @@ Account and Workspace use at most 16 database connections each; letfs uses 16. T
 
 Envoy uses local rate limiting, bounded headers and a 120-second route/stream deadline. Go HTTP servers bound reads/writes to 125 seconds; internal S3 control I/O is bounded to 120 seconds. Object upload/download bytes transfer directly between caller and S3, outside those HTTP deadlines. Go workers have fixed task slots, bounded pages and finite copy limits. Compose grants 155 seconds to Go shutdown (HTTP drain then worker drain) and 135 seconds to letfs (concurrent HTTP/worker drain). A hard kill relies on durable activity state and Temporal retry.
 
-The authoritative quota is logical bytes in letfs. Trash remains charged, committed copies charge full bytes, and deleting a charged node releases its bytes in the same transaction. Physical cleanup can lag. The direct quota-bucket resource exposes usage and effective upload limits under its own action check. Cleanup logs contain outcome categories, without object keys or file contents. PostgreSQL lock-wait logging is enabled; test-only `pg_stat_statements` proves bounded query counts.
+The authoritative quota is logical bytes in letfs. Trash remains charged, committed copies charge full bytes, and deleting a charged node releases its bytes in the same transaction. Physical cleanup can lag. GET filesystem metadata exposes usage under filesystem:read; scope operations enforce their own actions. Cleanup logs contain outcome categories, without object keys or file contents. PostgreSQL lock-wait logging is enabled; test-only `pg_stat_statements` proves bounded query counts.
 
 ## Local Docker build cache
 
@@ -34,7 +34,7 @@ data may prevent reaching the target; evicted cache must be rebuilt when needed.
 
 `workspace-maintenance` only expires completed Workspace receipts. Account has no maintenance schedule; neither owner periodically scans SpiceDB membership. Terminal authorization/provisioning executions require explicit inspection in Temporal; a terminated run cannot execute its SQL failure handler. Retry admitted Workspace deletion through DELETE to resume a closed child.
 
-Do not reactivate deleting resources or repair counters manually. Workspace deletion retries use its original identity/revision; purge retries use its trash-entry identity. Durable deleting/purging resources and remaining nodes preserve progress, without operation/checkpoint tables. Current owner authorization still applies. Unknown workflow status does not authorize destructive cleanup. Lost responses do not undo committed effects; failed copies retain ordinary partial content.
+Do not reactivate deleting resources or repair counters manually. Workspace deletion retries use its resource identity; purge retries use its trash-entry identity. Durable deleting/purging resources and remaining nodes preserve progress, without operation/checkpoint tables. Current owner authorization still applies. Unknown workflow status does not authorize destructive cleanup. Lost responses do not undo committed effects; failed copies retain ordinary partial content.
 
 Workflow replay remains app-owned. [Testing](testing.md) documents fresh histories
 captured by the rewritten API suite and their native replay commands.
@@ -118,6 +118,4 @@ recorded privately under `.local/provider/r2-cors-before.json` and
 `.local/provider/r2-browser-cors.json`. Configure a real application origin before
 frontend integration. Provider endpoints remain in `.local/provider/r2.env`.
 
-Application migration history has been squashed into one baseline per database.
-There is no upgrade migration from the previous schema. Back up before an explicit
-reset; restore only into an isolated target and resume writers deliberately.
+Application baselines now describe account/scope storage directly. There is no compatibility migration from the former model. LetFS’s fresh baseline owns `allow_blob_files` and `allow_indexing` on scopes; the obsolete filesystem-option migration is removed. Use fresh isolated databases for acceptance; do not apply a rewritten baseline over an existing development environment. Persistent reset/migration requires explicit authorization.

@@ -8,16 +8,14 @@ import (
 	"github.com/exaring/otelpgx"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/qninhdt/openlet/apps/account/internal/account"
 	"github.com/qninhdt/openlet/apps/account/internal/clients/clerk"
 	"github.com/qninhdt/openlet/apps/account/internal/config"
 	jobs "github.com/qninhdt/openlet/apps/account/internal/temporal"
 	accountRPC "github.com/qninhdt/openlet/apps/account/internal/transport/grpc"
 	api "github.com/qninhdt/openlet/apps/account/internal/transport/http"
-	"github.com/qninhdt/openlet/apps/account/internal/user"
 	"github.com/qninhdt/openlet/packages/go/authz"
-	workspaceclient "github.com/qninhdt/openlet/packages/go/clients/workspace"
 	accountv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/account/v1"
-	workspacev1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/workspace/v1"
 	sharedrpc "github.com/qninhdt/openlet/packages/go/rpc"
 	"github.com/qninhdt/openlet/packages/go/telemetry"
 	sharedtemporal "github.com/qninhdt/openlet/packages/go/temporal"
@@ -95,17 +93,17 @@ func run() error {
 	}
 	defer graphConnection.Close()
 	graph := v1.NewPermissionsServiceClient(graphConnection)
-	contract, e := authz.LoadContract("/contracts/schema.zed", "/contracts/roles.json")
+	contract, e := authz.LoadContract("/contracts/schema.zed")
 	if e != nil {
 		return e
 	}
 	graphReady := func(ctx context.Context) error {
-		return contract.Verify(ctx, v1.NewSchemaServiceClient(graphConnection), graph)
+		return contract.Verify(ctx, v1.NewSchemaServiceClient(graphConnection))
 	}
 	if e = graphReady(startupCtx); e != nil {
-		return errors.New("authorization schema or role policy unavailable")
+		return errors.New("authorization schema unavailable")
 	}
-	store := &user.Store{DB: db}
+	store := &account.Store{DB: db}
 	if len(os.Args) == 2 && os.Args[1] == "--rebuild-authorization" {
 		return store.RebuildRelationships(ctx, graph)
 	}
@@ -118,19 +116,17 @@ func run() error {
 		return errors.New("Temporal unavailable")
 	}
 	defer tc.Close()
-	workspaceConnection, e := sharedrpc.Dial(cfg.WorkspaceRPCAddress, cfg.AccountToken, sharedrpc.Transport{AllowPlaintext: cfg.AllowPlaintextRPC})
-	if e != nil {
-		return e
-	}
-	defer workspaceConnection.Close()
 	clerkClient := clerk.Client{BaseURL: cfg.ClerkURL, Secret: cfg.ClerkSecret}
-	service := &user.Service{Store: store, Graph: graph, Clerk: clerkClient, Workspace: workspaceclient.Client{API: workspacev1.NewWorkspaceAdministrationServiceClient(workspaceConnection)}}
-	service.StartOnboarding = func(ctx context.Context, subject string) (user.Onboarding, error) {
+	service := &account.Service{Store: store, Graph: graph, Clerk: clerkClient}
+	service.StartOnboarding = func(ctx context.Context, subject string) (account.Onboarding, error) {
 		return jobs.StartOnboarding(ctx, tc, subject)
+	}
+	service.StartManaged = func(ctx context.Context, in account.ManagedCreation) (account.Profile, error) {
+		return jobs.StartManaged(ctx, tc, in)
 	}
 	authentication, e := sharedrpc.NewAuthenticator([]sharedrpc.Credential{{
 		Service: "workspace", Token: cfg.WorkspaceToken,
-		Methods: []string{accountv1.AccountService_GetUserSummaries_FullMethodName, accountv1.AccountService_GetVerifiedEmails_FullMethodName},
+		Methods: []string{accountv1.AccountService_GetAccountSummaries_FullMethodName, accountv1.AccountService_GetVerifiedEmails_FullMethodName},
 	}})
 	if e != nil {
 		return e
@@ -159,6 +155,7 @@ func run() error {
 	activities := &jobs.Activities{Service: service}
 	owner := temporalworker.New(tc, jobs.Queue, temporalworker.Options{MaxConcurrentActivityExecutionSize: 16, WorkerStopTimeout: 20 * time.Second})
 	owner.RegisterWorkflow(jobs.OnboardUser)
+	owner.RegisterWorkflow(jobs.AccountChanges)
 	owner.RegisterActivity(activities)
 	if e = owner.Start(); e != nil {
 		return errors.New("worker startup failed")

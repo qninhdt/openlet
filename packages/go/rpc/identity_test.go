@@ -9,12 +9,12 @@ import (
 )
 
 func TestWithActorReplacesDelegationWithoutMutatingCallerMetadata(t *testing.T) {
-	original := metadata.Pairs("x-openlet-user-id", uuid.NewString(), "traceparent", "context")
+	original := metadata.Pairs("x-openlet-account-id", uuid.NewString(), "traceparent", "context")
 	ctx := metadata.NewOutgoingContext(t.Context(), original)
 	actor := uuid.New()
 	outgoing, ok := metadata.FromOutgoingContext(WithActor(ctx, actor))
 	require.True(t, ok)
-	require.Equal(t, []string{actor.String()}, outgoing.Get("x-openlet-user-id"))
+	require.Equal(t, []string{actor.String()}, outgoing.Get("x-openlet-account-id"))
 	require.Equal(t, []string{"context"}, outgoing.Get("traceparent"))
-	require.NotEqual(t, original.Get("x-openlet-user-id"), outgoing.Get("x-openlet-user-id"))
+	require.NotEqual(t, original.Get("x-openlet-account-id"), outgoing.Get("x-openlet-account-id"))
 }

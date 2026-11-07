@@ -18,25 +18,25 @@ func TestGatewayUserAndSubjectOnlyBootstrap(t *testing.T) {
 		err       error
 	}{
 		{"user", false, nil, nil},
-		{"bootstrap", true, func(h http.Header) { h.Del("X-Openlet-User-ID") }, nil},
-		{"bootstrap ignores actor", true, func(h http.Header) { h.Set("X-Openlet-User-ID", "untrusted") }, nil},
+		{"bootstrap", true, func(h http.Header) { h.Del("X-Openlet-Account-ID") }, nil},
+		{"bootstrap ignores actor", true, func(h http.Header) { h.Set("X-Openlet-Account-ID", "untrusted") }, nil},
 		{"missing credential", false, func(h http.Header) { h.Del("X-Gateway-Token") }, ErrGatewayCredential},
 		{"wrong credential", false, func(h http.Header) { h.Set("X-Gateway-Token", "other") }, ErrGatewayCredential},
 		{"duplicate credential", true, func(h http.Header) { h.Add("X-Gateway-Token", token) }, ErrGatewayCredential},
 		{"missing subject", false, func(h http.Header) { h.Del("X-Clerk-Sub") }, ErrGatewaySubject},
 		{"empty subject", true, func(h http.Header) { h.Set("X-Clerk-Sub", "") }, ErrGatewaySubject},
 		{"duplicate subject", true, func(h http.Header) { h.Add("X-Clerk-Sub", "user_other") }, ErrGatewaySubject},
-		{"missing actor", false, func(h http.Header) { h.Del("X-Openlet-User-ID") }, ErrOnboardingRequired},
-		{"invalid actor", false, func(h http.Header) { h.Set("X-Openlet-User-ID", "untrusted") }, ErrOnboardingRequired},
-		{"nil actor", false, func(h http.Header) { h.Set("X-Openlet-User-ID", uuid.Nil.String()) }, ErrOnboardingRequired},
-		{"duplicate actor", false, func(h http.Header) { h.Add("X-Openlet-User-ID", actor) }, ErrOnboardingRequired},
-		{"duplicate bootstrap actor", true, func(h http.Header) { h.Add("X-Openlet-User-ID", actor) }, ErrOnboardingRequired},
+		{"missing actor", false, func(h http.Header) { h.Del("X-Openlet-Account-ID") }, ErrOnboardingRequired},
+		{"invalid actor", false, func(h http.Header) { h.Set("X-Openlet-Account-ID", "untrusted") }, ErrOnboardingRequired},
+		{"nil actor", false, func(h http.Header) { h.Set("X-Openlet-Account-ID", uuid.Nil.String()) }, ErrOnboardingRequired},
+		{"duplicate actor", false, func(h http.Header) { h.Add("X-Openlet-Account-ID", actor) }, ErrOnboardingRequired},
+		{"duplicate bootstrap actor", true, func(h http.Header) { h.Add("X-Openlet-Account-ID", actor) }, ErrOnboardingRequired},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			headers := http.Header{}
 			headers.Set("X-Gateway-Token", token)
 			headers.Set("X-Clerk-Sub", "user_test")
-			headers.Set("X-Openlet-User-ID", actor)
+			headers.Set("X-Openlet-Account-ID", actor)
 			if test.change != nil {
 				test.change(headers)
 			}

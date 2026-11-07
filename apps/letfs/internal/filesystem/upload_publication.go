@@ -26,16 +26,16 @@ func multipartEvidence(parts []storage.PartReceipt, expected int32) error {
 	return nil
 }
 
-func (s *Store) CompleteUpload(ctx context.Context, fs, id uuid.UUID, parts []storage.PartReceipt) (UploadPublication, error) {
-	actor, err := s.authorize(ctx, fs, "filesystem", authz.UploadComplete)
+func (s *Store) CompleteUpload(ctx context.Context, scopeID, id uuid.UUID, parts []storage.PartReceipt) (UploadPublication, error) {
+	actor, err := s.authorize(ctx, scopeID, "scope", authz.ScopeWrite)
 	if err != nil {
 		return UploadPublication{}, err
 	}
-	return s.completeUpload(ctx, fs, id, uploadAccess{actor: actor}, parts)
+	return s.completeUpload(ctx, scopeID, id, uploadAccess{actor: actor}, parts)
 }
 
-func (s *Store) completeUpload(ctx context.Context, fs, id uuid.UUID, access uploadAccess, parts []storage.PartReceipt) (UploadPublication, error) {
-	session, err := s.openSession(ctx, fs, true)
+func (s *Store) completeUpload(ctx context.Context, scopeID, id uuid.UUID, access uploadAccess, parts []storage.PartReceipt) (UploadPublication, error) {
+	session, err := s.openSession(ctx, scopeID, true)
 	if err != nil {
 		return UploadPublication{}, err
 	}
@@ -120,16 +120,16 @@ func (s *Store) completeUpload(ctx context.Context, fs, id uuid.UUID, access upl
 			return UploadPublication{}, storageError(ctx, err)
 		}
 		if head.Size != upload.SizeBytes {
-			if err = s.abortUpload(ctx, fs, id, access); err != nil {
+			if err = s.abortUpload(ctx, scopeID, id, access); err != nil {
 				return UploadPublication{}, err
 			}
 			return UploadPublication{}, uploadState("UPLOAD_EVIDENCE_MISMATCH")
 		}
 	}
-	result, err := s.publishUpload(ctx, fs, id, access)
+	result, err := s.publishUpload(ctx, scopeID, id, access)
 	switch apperr.KindOf(err) {
 	case apperr.Invalid, apperr.Missing, apperr.Exists, apperr.Conflict, apperr.Precondition, apperr.Forbidden, apperr.Limit:
-		if cleanupErr := s.abortUpload(ctx, fs, id, access); cleanupErr != nil && errorReason(cleanupErr) != "UPLOAD_FINALIZED" {
+		if cleanupErr := s.abortUpload(ctx, scopeID, id, access); cleanupErr != nil && errorReason(cleanupErr) != "UPLOAD_FINALIZED" {
 			return UploadPublication{}, cleanupErr
 		}
 	}
@@ -143,8 +143,8 @@ func errorReason(err error) string {
 	return ""
 }
 
-func (s *Store) publishUpload(ctx context.Context, fs, id uuid.UUID, access uploadAccess) (UploadPublication, error) {
-	session, err := s.openSession(ctx, fs, true)
+func (s *Store) publishUpload(ctx context.Context, scopeID, id uuid.UUID, access uploadAccess) (UploadPublication, error) {
+	session, err := s.openSession(ctx, scopeID, true)
 	if err != nil {
 		return UploadPublication{}, err
 	}
@@ -213,7 +213,7 @@ func (s *Store) publishUpload(ctx context.Context, fs, id uuid.UUID, access uplo
 			return UploadPublication{}, err
 		}
 		nodeID = uuid.Must(uuid.NewV7())
-		_, err = session.tx.Exec(ctx, `INSERT INTO nodes(id,filesystem_id,parent_id,name,kind,size_bytes) VALUES($1,$2,$3,$4,'file',$5)`, nodeID, fs, parent, name, upload.SizeBytes)
+		_, err = session.tx.Exec(ctx, `INSERT INTO nodes(id,scope_id,parent_id,name,kind,size_bytes) VALUES($1,$2,$3,$4,'file',$5)`, nodeID, scopeID, parent, name, upload.SizeBytes)
 		if err == nil {
 			err = session.bump(ctx, parent)
 		}
@@ -257,22 +257,22 @@ func (s *session) completeUploadReceipt(ctx context.Context, id uuid.UUID) error
 }
 
 func (s *session) queueCandidate(ctx context.Context, id uuid.UUID) error {
-	_, err := s.tx.Exec(ctx, `INSERT INTO object_deletions(object_key,bucket_id,ambiguous_write,eligible_at)
- SELECT candidate_key,bucket_id,transfer_deadline IS NOT NULL,greatest(now()+interval '15 minutes',transfer_deadline) FROM uploads WHERE id=$1 AND candidate_key IS NOT NULL
- ON CONFLICT(object_key) DO UPDATE SET ambiguous_write=object_deletions.ambiguous_write OR excluded.ambiguous_write,eligible_at=greatest(object_deletions.eligible_at,excluded.eligible_at)`, id)
+	_, err := s.tx.Exec(ctx, `INSERT INTO object_deletions(object_key,filesystem_id,ambiguous_write,eligible_at)
+ SELECT candidate_key,$2,transfer_deadline IS NOT NULL,greatest(now()+interval '15 minutes',transfer_deadline) FROM uploads WHERE id=$1 AND candidate_key IS NOT NULL
+ ON CONFLICT(object_key) DO UPDATE SET ambiguous_write=object_deletions.ambiguous_write OR excluded.ambiguous_write,eligible_at=greatest(object_deletions.eligible_at,excluded.eligible_at)`, id, s.filesystemID)
 	return databaseError(err)
 }
 
-func (s *Store) AbortUpload(ctx context.Context, fs, id uuid.UUID) error {
-	actor, err := s.authorize(ctx, fs, "filesystem", authz.UploadAbort)
+func (s *Store) AbortUpload(ctx context.Context, scopeID, id uuid.UUID) error {
+	actor, err := s.authorize(ctx, scopeID, "scope", authz.ScopeWrite)
 	if err != nil {
 		return err
 	}
-	return s.abortUpload(ctx, fs, id, uploadAccess{actor: actor})
+	return s.abortUpload(ctx, scopeID, id, uploadAccess{actor: actor})
 }
 
-func (s *Store) abortUpload(ctx context.Context, fs, id uuid.UUID, access uploadAccess) error {
-	session, err := s.lifecycleSession(ctx, fs)
+func (s *Store) abortUpload(ctx context.Context, scopeID, id uuid.UUID, access uploadAccess) error {
+	session, err := s.lifecycleSession(ctx, scopeID)
 	if err != nil {
 		return err
 	}

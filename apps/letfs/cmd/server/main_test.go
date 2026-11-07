@@ -20,18 +20,18 @@ func TestAuthenticationSeparatesPublicStreamsAndOwnerAdministration(t *testing.T
 	auth, err := authentication(cfg)
 	require.NoError(t, err)
 	actor := uuid.New()
-	browser := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer "+cfg.GatewayToken, "x-openlet-user-id", actor.String()))
+	browser := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer "+cfg.GatewayToken, "x-openlet-account-id", actor.String()))
 	ctx, err := auth.Authenticate(browser, letfsv1.FilesystemService_StreamArchive_FullMethodName)
 	require.NoError(t, err)
 	principal, ok := identity.FromContext(ctx)
 	require.True(t, ok)
 	require.Equal(t, actor, principal.ActorID)
-	_, err = auth.Authenticate(browser, letfsv1.StorageAdministrationService_CreateBucket_FullMethodName)
+	_, err = auth.Authenticate(browser, letfsv1.StorageAdministrationService_CreateFilesystem_FullMethodName)
 	require.Equal(t, codes.PermissionDenied, status.Code(err))
 	owner := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer "+cfg.WorkspaceToken))
 	_, err = auth.Authenticate(owner, letfsv1.FilesystemService_StreamArchive_FullMethodName)
 	require.Equal(t, codes.PermissionDenied, status.Code(err))
-	_, err = auth.Authenticate(owner, letfsv1.StorageAdministrationService_CreateBucket_FullMethodName)
+	_, err = auth.Authenticate(owner, letfsv1.StorageAdministrationService_CreateFilesystem_FullMethodName)
 	require.NoError(t, err)
 }
 
@@ -46,7 +46,7 @@ func TestIngestCredentialCannotUsePublicOrOwnerMethods(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "ingest", principal.Service)
 	require.False(t, principal.Gateway)
-	for _, method := range []string{letfsv1.FilesystemService_GetNode_FullMethodName, letfsv1.StorageAdministrationService_CreateBucket_FullMethodName} {
+	for _, method := range []string{letfsv1.FilesystemService_GetNode_FullMethodName, letfsv1.StorageAdministrationService_CreateFilesystem_FullMethodName} {
 		_, err = auth.Authenticate(ingest, method)
 		require.Equal(t, codes.PermissionDenied, status.Code(err))
 	}

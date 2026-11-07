@@ -148,7 +148,6 @@ services:
       context: ../..
       dockerfile: apps/workspace/Dockerfile
     environment:
-      ACCOUNT_SERVICE_TOKEN_FILE: /run/secrets/account_service_token
       <<: *telemetry-env
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_NAMESPACE: openlet
@@ -156,16 +155,13 @@ services:
       WORKSPACE_SERVICE_TOKEN_FILE: /run/secrets/workspace_service_token
       DATABASE_URL_FILE: /run/secrets/workspace_database_url
       ACCOUNT_RPC_ADDRESS: account:9090
-      LETFS_RPC_ADDRESS: letfs:9090
       ALLOW_PLAINTEXT_RPC: 'true'
       SPICEDB_ADDRESS: spicedb:50051
       SPICEDB_GRPC_PRESHARED_KEY_FILE: /run/secrets/spicedb_key
-      MAX_OWNED_WORKSPACES: ${MAX_OWNED_WORKSPACES:-100}
       MAX_MEMBERS: ${MAX_MEMBERS:-100}
       DEFAULT_QUOTA_BYTES: ${DEFAULT_QUOTA_BYTES:-10737418240}
       INVITE_TTL: ${INVITE_TTL:-168h}
     secrets:
-    - account_service_token
     - spicedb_key
     - workspace_database_url
     - gateway_token
@@ -363,8 +359,6 @@ services:
       context: ../..
       dockerfile: apps/account/Dockerfile
     environment:
-      ACCOUNT_SERVICE_TOKEN_FILE: /run/secrets/account_service_token
-      WORKSPACE_RPC_ADDRESS: workspace:9090
       <<: *telemetry-env
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_NAMESPACE: openlet
@@ -377,7 +371,6 @@ services:
       CLERK_SECRET_KEY_FILE: /run/secrets/clerk_secret_key
       CLERK_API_URL: ${CLERK_API_URL:-https://api.clerk.com/v1}
     secrets:
-    - account_service_token
     - spicedb_key
     - account_database_url
     - gateway_token
@@ -535,7 +528,5 @@ secrets:
     file: ${OPENLET_STATE_DIR:-../../.local}/secrets/gateway_token
   workspace_service_token:
     file: ${OPENLET_STATE_DIR:-../../.local}/secrets/workspace_service_token
-  account_service_token:
-    file: ${OPENLET_STATE_DIR:-../../.local}/secrets/account_service_token
   ingest_service_token:
     file: ${OPENLET_STATE_DIR:-../../.local}/secrets/ingest_service_token

@@ -34,14 +34,14 @@ func TestIntegrationArchiveRPCFramesCancellationAndBlockedSendDeadline(t *testin
 	store := &filesystem.Store{DB: db, Graph: graph, MaxNodes: 100, ArchiveSlots: semaphore.NewWeighted(1),
 		Archive: filesystem.ArchiveConfig{MaxEntries: 10, MaxSourceBytes: 1000000, MaxOutputBytes: 2000000, Runtime: time.Second}}
 	owner := identity.WithPrincipal(t.Context(), identity.Principal{Service: "resource-owner"})
-	bucket, fs := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
-	_, err := store.CreateBucket(owner, uuid.New(), filesystem.CreateBucket{ID: bucket, LimitBytes: 1000000})
+	filesystemID, fs := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	_, err := store.CreateFilesystem(owner, uuid.New(), filesystem.CreateFilesystem{ID: filesystemID, LimitBytes: 1000000})
 	require.NoError(t, err)
-	created, err := store.CreateFilesystem(owner, uuid.New(), filesystem.CreateFilesystem{ID: fs, BucketID: bucket, RootName: "files"})
+	created, err := createTestScope(owner, store, uuid.New(), filesystemID, fs)
 	require.NoError(t, err)
 	file, actor := uuid.New(), uuid.New()
 	payload := bytes.Repeat([]byte{0, 255, 9, 18}, 65536)
-	_, err = db.Exec(t.Context(), `INSERT INTO nodes(id,filesystem_id,parent_id,name,kind,size_bytes) VALUES($1,$2,$3,'inline.bin','file',$4)`, file, fs, created.RootID, len(payload))
+	_, err = db.Exec(t.Context(), `INSERT INTO nodes(id,scope_id,parent_id,name,kind,size_bytes) VALUES($1,$2,$3,'inline.bin','file',$4)`, file, fs, created.RootID, len(payload))
 	require.NoError(t, err)
 	_, err = db.Exec(t.Context(), `INSERT INTO files(node_id,storage_kind,inline_bytes) VALUES($1,'inline',$2)`, file, payload)
 	require.NoError(t, err)
@@ -60,18 +60,18 @@ func TestIntegrationArchiveRPCFramesCancellationAndBlockedSendDeadline(t *testin
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, connection.Close()) })
 	client := letfsv1.NewFilesystemServiceClient(connection)
-	ctx := metadata.NewOutgoingContext(t.Context(), metadata.Pairs("authorization", "Bearer "+token, "x-openlet-user-id", actor.String()))
-	input := &letfsv1.StreamArchiveRequest{FilesystemId: fs.String(), NodeId: created.RootID.String(), PathContext: &letfsv1.PathContext{Mounts: []*letfsv1.Mount{{Path: "/drive", FilesystemId: fs.String()}}}}
+	ctx := metadata.NewOutgoingContext(t.Context(), metadata.Pairs("authorization", "Bearer "+token, "x-openlet-account-id", actor.String()))
+	input := &letfsv1.StreamArchiveRequest{FilesystemId: filesystemID.String(), ScopeId: fs.String(), NodeId: created.RootID.String()}
 	stream, err := client.StreamArchive(ctx, input)
 	require.NoError(t, err)
 	_, err = stream.Recv()
 	require.Equal(t, codes.PermissionDenied, status.Code(err))
-	testfixture.Grant(t, graph, "filesystem", fs, actor, authz.Archive)
+	testfixture.Grant(t, graph, "scope", fs, actor, authz.ScopeReadContent)
 	stream, err = client.StreamArchive(ctx, input)
 	require.NoError(t, err)
 	first, err := stream.Recv()
 	require.NoError(t, err)
-	require.Equal(t, "files.zip", first.GetMetadata().Filename)
+	require.Equal(t, "root.zip", first.GetMetadata().Filename)
 	require.Equal(t, "application/zip", first.GetMetadata().Mime)
 	var output bytes.Buffer
 	for {

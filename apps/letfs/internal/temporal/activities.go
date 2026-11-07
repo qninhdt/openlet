@@ -2,6 +2,8 @@ package temporal
 
 import (
 	"context"
+	"github.com/google/uuid"
+	"github.com/qninhdt/openlet/packages/go/identity"
 	"time"
 
 	"github.com/qninhdt/openlet/apps/letfs/internal/filesystem"
@@ -32,23 +34,35 @@ func heartbeat(ctx context.Context) func() {
 	}()
 	return func() { cancel(); <-done }
 }
-func (a *Activities) CopyItem(ctx context.Context, step CopyStep) error {
+func (a *Activities) CopyTreeData(ctx context.Context, in filesystem.CopyAdmission) error {
 	stop := heartbeat(ctx)
 	defer stop()
-	return sharedtemporal.Error(a.Store.CommitCopyItem(ctx, step.Admission, step.Item))
+	return sharedtemporal.Error(a.Store.CopyTreeData(ctx, in))
 }
-func (a *Activities) NextCopyItem(ctx context.Context, input CopyNext) (*filesystem.CopyItem, error) {
-	item, err := a.Store.NextCopyItem(ctx, input.Admission, input.Frame)
-	return item, sharedtemporal.Error(err)
+func (a *Activities) CreateFilesystem(ctx context.Context, in sharedtemporal.FilesystemCreation) error {
+	ctx = identity.WithPrincipal(ctx, identity.Principal{Service: "temporal"})
+	_, err := a.Store.CreateFilesystem(ctx, in.Key, filesystem.CreateFilesystem{ID: in.ID, LimitBytes: in.LimitBytes})
+	return sharedtemporal.Error(err)
 }
-func (a *Activities) FinishCopyFile(ctx context.Context, input CopyNext) error {
-	return sharedtemporal.Error(a.Store.FinishCopyFile(ctx, input.Admission, input.Frame))
+func (a *Activities) CreateScopes(ctx context.Context, in sharedtemporal.ScopesCreation) error {
+	ctx = identity.WithPrincipal(ctx, identity.Principal{Service: "temporal"})
+	_, err := a.Store.CreateScopes(ctx, in.Key, in.FilesystemID, in.IDs, in.AllowBlobFiles, in.AllowIndexing)
+	return sharedtemporal.Error(err)
 }
-func (a *Activities) CompleteCopy(ctx context.Context, admission filesystem.CopyAdmission) error {
-	return sharedtemporal.Error(a.Store.CompleteCopy(ctx, admission))
+func (a *Activities) ListScopesForDeletion(ctx context.Context, in sharedtemporal.FilesystemDeletion) ([]uuid.UUID, error) {
+	values, err := a.Store.ListScopesForDeletion(ctx, in.FilesystemID, in.After)
+	return values, sharedtemporal.Error(err)
 }
-
-func (a *Activities) DeleteNodesBatch(ctx context.Context, input filesystem.DeletionInput) (bool, error) {
-	done, err := a.Store.DeletionBatch(ctx, input.FilesystemID, input.EntryID)
-	return done, sharedtemporal.Error(err)
+func (a *Activities) RemoveFilesystem(ctx context.Context, id uuid.UUID) error {
+	return sharedtemporal.Error(a.Store.RemoveFilesystem(ctx, id))
+}
+func (a *Activities) DeleteScopeData(ctx context.Context, in sharedtemporal.ScopeDeletion) error {
+	stop := heartbeat(ctx)
+	defer stop()
+	return sharedtemporal.Error(a.Store.DeleteScopeData(ctx, in.FilesystemID, in.ScopeID))
+}
+func (a *Activities) PurgeTrashData(ctx context.Context, in filesystem.DeletionInput) error {
+	stop := heartbeat(ctx)
+	defer stop()
+	return sharedtemporal.Error(a.Store.PurgeTrashData(ctx, in))
 }

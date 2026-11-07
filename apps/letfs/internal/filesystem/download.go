@@ -16,16 +16,16 @@ type Download struct {
 	SignedURL            string
 }
 
-func (s *Store) GetDownload(ctx context.Context, fs uuid.UUID, mounts []Mount, id uuid.UUID, revision *int64) (Download, error) {
-	if _, err := s.authorize(ctx, fs, "filesystem", authz.ContentRead); err != nil {
+func (s *Store) GetDownload(ctx context.Context, scopeID uuid.UUID, id uuid.UUID, revision *int64) (Download, error) {
+	if _, err := s.authorize(ctx, scopeID, "scope", authz.ScopeReadContent); err != nil {
 		return Download{}, err
 	}
-	session, err := s.openSession(ctx, fs, false)
+	session, err := s.openSession(ctx, scopeID, false)
 	if err != nil {
 		return Download{}, err
 	}
 	defer session.tx.Rollback(ctx)
-	node, err := session.resolveOne(ctx, mounts, Locator{NodeID: &id})
+	node, err := session.resolveOne(ctx, Locator{NodeID: &id})
 	if err != nil {
 		return Download{}, err
 	}

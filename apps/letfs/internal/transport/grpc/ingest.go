@@ -42,7 +42,7 @@ func (s *Ingest) PrepareIndex(ctx context.Context, input *letfsv1.PrepareIndexRe
 	if value.Complete {
 		return &letfsv1.PrepareIndexResponse{Result: &letfsv1.PrepareIndexResponse_Complete{Complete: &letfsv1.IndexComplete{SourceId: source.FileID.String()}}}, nil
 	}
-	result := &letfsv1.IndexInput{FilesystemId: value.FilesystemID.String(), SourceId: source.FileID.String(), Generation: source.Generation,
+	result := &letfsv1.IndexInput{FilesystemId: value.FilesystemID.String(), ScopeId: value.ScopeID.String(), SourceId: source.FileID.String(), Generation: source.Generation,
 		Nodes: inventoryMessages(value.Nodes), VectorSpace: &letfsv1.VectorSpace{Model: value.VectorSpace.Model, Collection: value.VectorSpace.Collection, Dimension: value.VectorSpace.Dimension}, MaxOutputBytes: s.Store.ProcessingMaxOutputBytes}
 	return &letfsv1.PrepareIndexResponse{Result: &letfsv1.PrepareIndexResponse_Input{Input: result}}, nil
 }

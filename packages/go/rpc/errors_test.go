@@ -25,7 +25,6 @@ func TestApplicationErrorsKeepNativeAndHTTPContracts(t *testing.T) {
 		{codes.FailedPrecondition, "PRECONDITION_REQUIRED", 428},
 		{codes.FailedPrecondition, "REVISION_MISMATCH", 412},
 		{codes.FailedPrecondition, "TARGET_MISMATCH", 412},
-		{codes.NotFound, "COPY_EXPIRED", 410},
 		{codes.ResourceExhausted, "REQUEST_LIMIT", 413},
 		{codes.OutOfRange, "INVALID_RANGE", 416},
 		{codes.NotFound, "NOT_FOUND", 404},

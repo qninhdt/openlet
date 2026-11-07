@@ -21,7 +21,7 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-type UserSummary struct {
+type AccountSummary struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	DisplayName   string                 `protobuf:"bytes,2,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
@@ -30,20 +30,20 @@ type UserSummary struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *UserSummary) Reset() {
-	*x = UserSummary{}
+func (x *AccountSummary) Reset() {
+	*x = AccountSummary{}
 	mi := &file_openlet_api_account_v1_account_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *UserSummary) String() string {
+func (x *AccountSummary) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*UserSummary) ProtoMessage() {}
+func (*AccountSummary) ProtoMessage() {}
 
-func (x *UserSummary) ProtoReflect() protoreflect.Message {
+func (x *AccountSummary) ProtoReflect() protoreflect.Message {
 	mi := &file_openlet_api_account_v1_account_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -55,26 +55,26 @@ func (x *UserSummary) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use UserSummary.ProtoReflect.Descriptor instead.
-func (*UserSummary) Descriptor() ([]byte, []int) {
+// Deprecated: Use AccountSummary.ProtoReflect.Descriptor instead.
+func (*AccountSummary) Descriptor() ([]byte, []int) {
 	return file_openlet_api_account_v1_account_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *UserSummary) GetId() string {
+func (x *AccountSummary) GetId() string {
 	if x != nil {
 		return x.Id
 	}
 	return ""
 }
 
-func (x *UserSummary) GetDisplayName() string {
+func (x *AccountSummary) GetDisplayName() string {
 	if x != nil {
 		return x.DisplayName
 	}
 	return ""
 }
 
-func (x *UserSummary) GetAvatarUrl() string {
+func (x *AccountSummary) GetAvatarUrl() string {
 	if x != nil {
 		return x.AvatarUrl
 	}
@@ -82,27 +82,27 @@ func (x *UserSummary) GetAvatarUrl() string {
 }
 
 // At most 100 IDs. A caller must verify the exact set of returned IDs.
-type GetUserSummariesRequest struct {
+type GetAccountSummariesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Ids           []string               `protobuf:"bytes,1,rep,name=ids,proto3" json:"ids,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *GetUserSummariesRequest) Reset() {
-	*x = GetUserSummariesRequest{}
+func (x *GetAccountSummariesRequest) Reset() {
+	*x = GetAccountSummariesRequest{}
 	mi := &file_openlet_api_account_v1_account_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *GetUserSummariesRequest) String() string {
+func (x *GetAccountSummariesRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*GetUserSummariesRequest) ProtoMessage() {}
+func (*GetAccountSummariesRequest) ProtoMessage() {}
 
-func (x *GetUserSummariesRequest) ProtoReflect() protoreflect.Message {
+func (x *GetAccountSummariesRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_openlet_api_account_v1_account_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -114,39 +114,39 @@ func (x *GetUserSummariesRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use GetUserSummariesRequest.ProtoReflect.Descriptor instead.
-func (*GetUserSummariesRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use GetAccountSummariesRequest.ProtoReflect.Descriptor instead.
+func (*GetAccountSummariesRequest) Descriptor() ([]byte, []int) {
 	return file_openlet_api_account_v1_account_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *GetUserSummariesRequest) GetIds() []string {
+func (x *GetAccountSummariesRequest) GetIds() []string {
 	if x != nil {
 		return x.Ids
 	}
 	return nil
 }
 
-type GetUserSummariesResponse struct {
+type GetAccountSummariesResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Users         []*UserSummary         `protobuf:"bytes,1,rep,name=users,proto3" json:"users,omitempty"`
+	Accounts      []*AccountSummary      `protobuf:"bytes,1,rep,name=accounts,proto3" json:"accounts,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *GetUserSummariesResponse) Reset() {
-	*x = GetUserSummariesResponse{}
+func (x *GetAccountSummariesResponse) Reset() {
+	*x = GetAccountSummariesResponse{}
 	mi := &file_openlet_api_account_v1_account_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *GetUserSummariesResponse) String() string {
+func (x *GetAccountSummariesResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*GetUserSummariesResponse) ProtoMessage() {}
+func (*GetAccountSummariesResponse) ProtoMessage() {}
 
-func (x *GetUserSummariesResponse) ProtoReflect() protoreflect.Message {
+func (x *GetAccountSummariesResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_openlet_api_account_v1_account_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -158,21 +158,21 @@ func (x *GetUserSummariesResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use GetUserSummariesResponse.ProtoReflect.Descriptor instead.
-func (*GetUserSummariesResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use GetAccountSummariesResponse.ProtoReflect.Descriptor instead.
+func (*GetAccountSummariesResponse) Descriptor() ([]byte, []int) {
 	return file_openlet_api_account_v1_account_proto_rawDescGZIP(), []int{2}
 }
 
-func (x *GetUserSummariesResponse) GetUsers() []*UserSummary {
+func (x *GetAccountSummariesResponse) GetAccounts() []*AccountSummary {
 	if x != nil {
-		return x.Users
+		return x.Accounts
 	}
 	return nil
 }
 
 type GetVerifiedEmailsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	UserId        string                 `protobuf:"bytes,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	AccountId     string                 `protobuf:"bytes,1,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -207,9 +207,9 @@ func (*GetVerifiedEmailsRequest) Descriptor() ([]byte, []int) {
 	return file_openlet_api_account_v1_account_proto_rawDescGZIP(), []int{3}
 }
 
-func (x *GetVerifiedEmailsRequest) GetUserId() string {
+func (x *GetVerifiedEmailsRequest) GetAccountId() string {
 	if x != nil {
-		return x.UserId
+		return x.AccountId
 	}
 	return ""
 }
@@ -262,22 +262,23 @@ var File_openlet_api_account_v1_account_proto protoreflect.FileDescriptor
 
 const file_openlet_api_account_v1_account_proto_rawDesc = "" +
 	"\n" +
-	"$openlet_api/account/v1/account.proto\x12\x16openlet_api.account.v1\"_\n" +
-	"\vUserSummary\x12\x0e\n" +
+	"$openlet_api/account/v1/account.proto\x12\x16openlet_api.account.v1\"b\n" +
+	"\x0eAccountSummary\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12!\n" +
 	"\fdisplay_name\x18\x02 \x01(\tR\vdisplayName\x12\x1d\n" +
 	"\n" +
-	"avatar_url\x18\x03 \x01(\tR\tavatarUrl\"+\n" +
-	"\x17GetUserSummariesRequest\x12\x10\n" +
-	"\x03ids\x18\x01 \x03(\tR\x03ids\"U\n" +
-	"\x18GetUserSummariesResponse\x129\n" +
-	"\x05users\x18\x01 \x03(\v2#.openlet_api.account.v1.UserSummaryR\x05users\"3\n" +
-	"\x18GetVerifiedEmailsRequest\x12\x17\n" +
-	"\auser_id\x18\x01 \x01(\tR\x06userId\"3\n" +
+	"avatar_url\x18\x03 \x01(\tR\tavatarUrl\".\n" +
+	"\x1aGetAccountSummariesRequest\x12\x10\n" +
+	"\x03ids\x18\x01 \x03(\tR\x03ids\"a\n" +
+	"\x1bGetAccountSummariesResponse\x12B\n" +
+	"\baccounts\x18\x01 \x03(\v2&.openlet_api.account.v1.AccountSummaryR\baccounts\"9\n" +
+	"\x18GetVerifiedEmailsRequest\x12\x1d\n" +
+	"\n" +
+	"account_id\x18\x01 \x01(\tR\taccountId\"3\n" +
 	"\x19GetVerifiedEmailsResponse\x12\x16\n" +
-	"\x06emails\x18\x01 \x03(\tR\x06emails2\x81\x02\n" +
-	"\x0eAccountService\x12u\n" +
-	"\x10GetUserSummaries\x12/.openlet_api.account.v1.GetUserSummariesRequest\x1a0.openlet_api.account.v1.GetUserSummariesResponse\x12x\n" +
+	"\x06emails\x18\x01 \x03(\tR\x06emails2\x8a\x02\n" +
+	"\x0eAccountService\x12~\n" +
+	"\x13GetAccountSummaries\x122.openlet_api.account.v1.GetAccountSummariesRequest\x1a3.openlet_api.account.v1.GetAccountSummariesResponse\x12x\n" +
 	"\x11GetVerifiedEmails\x120.openlet_api.account.v1.GetVerifiedEmailsRequest\x1a1.openlet_api.account.v1.GetVerifiedEmailsResponseBMZKgithub.com/qninhdt/openlet/packages/go/gen/openlet_api/account/v1;accountv1b\x06proto3"
 
 var (
@@ -294,17 +295,17 @@ func file_openlet_api_account_v1_account_proto_rawDescGZIP() []byte {
 
 var file_openlet_api_account_v1_account_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
 var file_openlet_api_account_v1_account_proto_goTypes = []any{
-	(*UserSummary)(nil),               // 0: openlet_api.account.v1.UserSummary
-	(*GetUserSummariesRequest)(nil),   // 1: openlet_api.account.v1.GetUserSummariesRequest
-	(*GetUserSummariesResponse)(nil),  // 2: openlet_api.account.v1.GetUserSummariesResponse
-	(*GetVerifiedEmailsRequest)(nil),  // 3: openlet_api.account.v1.GetVerifiedEmailsRequest
-	(*GetVerifiedEmailsResponse)(nil), // 4: openlet_api.account.v1.GetVerifiedEmailsResponse
+	(*AccountSummary)(nil),              // 0: openlet_api.account.v1.AccountSummary
+	(*GetAccountSummariesRequest)(nil),  // 1: openlet_api.account.v1.GetAccountSummariesRequest
+	(*GetAccountSummariesResponse)(nil), // 2: openlet_api.account.v1.GetAccountSummariesResponse
+	(*GetVerifiedEmailsRequest)(nil),    // 3: openlet_api.account.v1.GetVerifiedEmailsRequest
+	(*GetVerifiedEmailsResponse)(nil),   // 4: openlet_api.account.v1.GetVerifiedEmailsResponse
 }
 var file_openlet_api_account_v1_account_proto_depIdxs = []int32{
-	0, // 0: openlet_api.account.v1.GetUserSummariesResponse.users:type_name -> openlet_api.account.v1.UserSummary
-	1, // 1: openlet_api.account.v1.AccountService.GetUserSummaries:input_type -> openlet_api.account.v1.GetUserSummariesRequest
+	0, // 0: openlet_api.account.v1.GetAccountSummariesResponse.accounts:type_name -> openlet_api.account.v1.AccountSummary
+	1, // 1: openlet_api.account.v1.AccountService.GetAccountSummaries:input_type -> openlet_api.account.v1.GetAccountSummariesRequest
 	3, // 2: openlet_api.account.v1.AccountService.GetVerifiedEmails:input_type -> openlet_api.account.v1.GetVerifiedEmailsRequest
-	2, // 3: openlet_api.account.v1.AccountService.GetUserSummaries:output_type -> openlet_api.account.v1.GetUserSummariesResponse
+	2, // 3: openlet_api.account.v1.AccountService.GetAccountSummaries:output_type -> openlet_api.account.v1.GetAccountSummariesResponse
 	4, // 4: openlet_api.account.v1.AccountService.GetVerifiedEmails:output_type -> openlet_api.account.v1.GetVerifiedEmailsResponse
 	3, // [3:5] is the sub-list for method output_type
 	1, // [1:3] is the sub-list for method input_type

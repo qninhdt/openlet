@@ -85,10 +85,10 @@ type EnrichmentManifest struct {
 
 func (s *session) inventory(ctx context.Context, source uuid.UUID, limit int64) ([]ProcessingNode, error) {
 	rows, err := s.tx.Query(ctx, `WITH RECURSIVE tree AS (
- SELECT n.*,''::text COLLATE "C" AS path,0 AS depth FROM nodes n WHERE n.id=$1 AND n.filesystem_id=$2
+ SELECT n.*,''::text COLLATE "C" AS path,0 AS depth FROM nodes n WHERE n.id=$1 AND n.scope_id=$2
  UNION ALL SELECT n.*,CASE WHEN t.path='' THEN n.name ELSE t.path||'/'||n.name END,t.depth+1
- FROM nodes n JOIN tree t ON n.parent_id=t.id WHERE n.filesystem_id=$2 AND t.depth<128)
- SELECT `+nodeColumns+`,false,n.path,f.inline_bytes,f.object_key FROM tree n LEFT JOIN files f ON f.node_id=n.id ORDER BY n.depth,n.path LIMIT $3`, source, s.fs, limit+2)
+ FROM nodes n JOIN tree t ON n.parent_id=t.id WHERE n.scope_id=$2 AND t.depth<128)
+ SELECT `+nodeColumns+`,false,n.path,f.inline_bytes,f.object_key FROM tree n LEFT JOIN files f ON f.node_id=n.id ORDER BY n.depth,n.path LIMIT $3`, source, s.scopeID, limit+2)
 	if err != nil {
 		return nil, databaseError(err)
 	}
@@ -383,6 +383,11 @@ func (s *Store) CompleteEnrichment(ctx context.Context, a Generation, manifest E
 	_, err = session.tx.Exec(ctx, `UPDATE files SET publication_status='enriched',processing_error=NULL,processing_updated_at=now() WHERE node_id=$1`, a.FileID)
 	if err != nil {
 		return databaseError(err)
+	}
+	if !session.allowIndexing {
+		if err = session.completeProcessingReceipt(ctx, a); err != nil {
+			return err
+		}
 	}
 	return databaseError(session.tx.Commit(ctx))
 }

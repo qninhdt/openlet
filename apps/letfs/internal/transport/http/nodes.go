@@ -12,17 +12,18 @@ import (
 
 func (s *Server) createNode(w http.ResponseWriter, r *http.Request) error {
 	var input struct {
-		Kind      string  `json:"kind"`
-		ParentID  string  `json:"parent_id"`
-		Name      string  `json:"name"`
-		Content   *[]byte `json:"content_base64,omitempty"`
-		MediaType *string `json:"media_type,omitempty"`
-		SourceID  *string `json:"source_id,omitempty"`
+		Kind               string  `json:"kind"`
+		ParentID           string  `json:"parent_id"`
+		Name               string  `json:"name"`
+		Content            *[]byte `json:"content_base64,omitempty"`
+		MediaType          *string `json:"media_type,omitempty"`
+		DestinationScopeID *string `json:"destination_scope_id,omitempty"`
+		SourceID           *string `json:"source_id,omitempty"`
 	}
 	if err := decodeJSON(w, r, &input); err != nil {
 		return err
 	}
-	fs, mounts, err := requestContext(r)
+	fs, err := s.requestContext(r)
 	if err != nil {
 		return err
 	}
@@ -46,7 +47,21 @@ func (s *Server) createNode(w http.ResponseWriter, r *http.Request) error {
 		if err != nil {
 			return err
 		}
-		result, err := s.Service.CreateCopy(r.Context(), fs, mounts, key, filesystem.CreateCopy{SourceID: source, ParentID: parent, Name: input.Name, Revision: rev})
+		destination := fs
+		if input.DestinationScopeID != nil {
+			destination, err = parseID(*input.DestinationScopeID)
+			if err != nil {
+				return err
+			}
+			filesystemID, err := parseID(fsID(r))
+			if err != nil {
+				return err
+			}
+			if err = s.Store.ValidateScope(r.Context(), filesystemID, destination); err != nil {
+				return err
+			}
+		}
+		result, err := s.Service.CreateCopy(r.Context(), fs, key, filesystem.CreateCopy{DestinationScopeID: destination, SourceID: source, ParentID: parent, Name: input.Name, Revision: rev})
 		if err != nil {
 			return err
 		}
@@ -71,7 +86,7 @@ func (s *Server) createNode(w http.ResponseWriter, r *http.Request) error {
 	default:
 		return invalid()
 	}
-	node, err := s.Service.CreateNode(r.Context(), fs, mounts, key, creation)
+	node, err := s.Service.CreateNode(r.Context(), fs, key, creation)
 	if err != nil {
 		return err
 	}
@@ -80,7 +95,7 @@ func (s *Server) createNode(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Server) getNode(w http.ResponseWriter, r *http.Request) error {
-	fs, mounts, err := requestContext(r)
+	fs, err := s.requestContext(r)
 	if err != nil {
 		return err
 	}
@@ -88,7 +103,7 @@ func (s *Server) getNode(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	node, err := s.Store.GetNode(r.Context(), fs, mounts, locator)
+	node, err := s.Store.GetNode(r.Context(), fs, locator)
 	if err != nil {
 		return err
 	}
@@ -97,7 +112,7 @@ func (s *Server) getNode(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Server) resolveNode(w http.ResponseWriter, r *http.Request) error {
-	fs, mounts, err := requestContext(r)
+	fs, err := s.requestContext(r)
 	if err != nil {
 		return err
 	}
@@ -105,7 +120,7 @@ func (s *Server) resolveNode(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	node, err := s.Store.ResolveNode(r.Context(), fs, mounts, locator)
+	node, err := s.Store.ResolveNode(r.Context(), fs, locator)
 	if err != nil {
 		return err
 	}
@@ -114,7 +129,7 @@ func (s *Server) resolveNode(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) error {
-	fs, mounts, err := requestContext(r)
+	fs, err := s.requestContext(r)
 	if err != nil {
 		return err
 	}
@@ -134,7 +149,7 @@ func (s *Server) listNodes(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	page, err := s.Store.ListNodes(r.Context(), fs, mounts, parent, cursor, limit)
+	page, err := s.Store.ListNodes(r.Context(), fs, parent, cursor, limit)
 	if err != nil {
 		return err
 	}
@@ -159,11 +174,11 @@ func (s *Server) batchStat(w http.ResponseWriter, r *http.Request) error {
 	if len(input.Locators) < 1 || len(input.Locators) > 100 {
 		return apperr.New(apperr.Invalid, "VALIDATION", "locator batch must contain 1..100 items")
 	}
-	fs, mounts, err := requestContext(r)
+	fs, err := s.requestContext(r)
 	if err != nil {
 		return err
 	}
-	values, err := s.Store.BatchStat(r.Context(), fs, mounts, input.Locators)
+	values, err := s.Store.BatchStat(r.Context(), fs, input.Locators)
 	if err != nil {
 		return err
 	}
@@ -189,7 +204,7 @@ func (s *Server) updateNode(w http.ResponseWriter, r *http.Request) error {
 	if err = decodeJSON(w, r, &input); err != nil {
 		return err
 	}
-	fs, mounts, err := requestContext(r)
+	fs, err := s.requestContext(r)
 	if err != nil {
 		return err
 	}
@@ -205,7 +220,7 @@ func (s *Server) updateNode(w http.ResponseWriter, r *http.Request) error {
 		}
 		patch.Parent = &parent
 	}
-	node, err := s.Service.UpdateNode(r.Context(), fs, mounts, patch)
+	node, err := s.Service.UpdateNode(r.Context(), fs, patch)
 	if err != nil {
 		return err
 	}
@@ -226,7 +241,7 @@ func (s *Server) replaceContent(w http.ResponseWriter, r *http.Request) error {
 		}
 		return invalid()
 	}
-	fs, mounts, err := requestContext(r)
+	fs, err := s.requestContext(r)
 	if err != nil {
 		return err
 	}
@@ -234,7 +249,7 @@ func (s *Server) replaceContent(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	node, err := s.Service.ReplaceContent(r.Context(), fs, mounts, locator, rev, content, contentType(r))
+	node, err := s.Service.ReplaceContent(r.Context(), fs, locator, rev, content, contentType(r))
 	if err != nil {
 		return err
 	}
@@ -243,7 +258,7 @@ func (s *Server) replaceContent(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Server) getContent(w http.ResponseWriter, r *http.Request) error {
-	fs, mounts, err := requestContext(r)
+	fs, err := s.requestContext(r)
 	if err != nil {
 		return err
 	}
@@ -259,32 +274,15 @@ func (s *Server) getContent(w http.ResponseWriter, r *http.Request) error {
 		value, _ := strconv.ParseInt(values[0], 10, 64)
 		rev = &value
 	}
-	download, err := s.Store.GetDownload(r.Context(), fs, mounts, id, rev)
+	download, err := s.Store.GetDownload(r.Context(), fs, id, rev)
 	if err != nil {
 		return err
 	}
 	return writeDownload(w, r, download)
 }
 
-func (s *Server) getCopy(w http.ResponseWriter, r *http.Request) error {
-	fs, err := parseID(fsID(r))
-	if err != nil {
-		return err
-	}
-	id, err := parseID(r.PathValue("copy"))
-	if err != nil {
-		return err
-	}
-	state, err := s.Service.GetCopy(r.Context(), fs, id)
-	if err != nil {
-		return err
-	}
-	respond(w, r, http.StatusOK, copyResponseFrom(state))
-	return nil
-}
-
 func (s *Server) getProcessing(w http.ResponseWriter, r *http.Request) error {
-	fs, mounts, err := requestContext(r)
+	fs, err := s.requestContext(r)
 	if err != nil {
 		return err
 	}
@@ -292,7 +290,7 @@ func (s *Server) getProcessing(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	value, err := s.Store.GetProcessing(r.Context(), fs, mounts, id)
+	value, err := s.Store.GetProcessing(r.Context(), fs, id)
 	if err != nil {
 		return err
 	}
@@ -310,7 +308,7 @@ func (s *Server) reprocess(w http.ResponseWriter, r *http.Request) error {
 	if err := decodeJSON(w, r, &input); err != nil {
 		return err
 	}
-	fs, mounts, err := requestContext(r)
+	fs, err := s.requestContext(r)
 	if err != nil {
 		return err
 	}
@@ -322,7 +320,7 @@ func (s *Server) reprocess(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	result, err := s.Service.Reprocess(r.Context(), fs, mounts, id, key)
+	result, err := s.Service.Reprocess(r.Context(), fs, id, key)
 	if err != nil {
 		return err
 	}

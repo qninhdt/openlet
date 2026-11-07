@@ -10,7 +10,7 @@ test('disconnecting a ZIP request cancels its pending S3 read', async ({ session
     await objectFile(session, storage, 'data.bin', Buffer.alloc(300_000, 0x61), folder.id);
     expect((await controls.put('/control/storage', { data: { method: 'GET', contains: '/objects/', mode: 'pause' } })).status()).toBe(200);
     const token = await mint(controls, identity);
-    transfer = fetch(`${gateway}/v1/filesystems/${session.filesystemId}/nodes/${folder.id}/archive`, {
+    transfer = fetch(`${gateway}/v1/filesystems/${session.filesystemId}/scopes/${session.scopeId}/nodes/${folder.id}/archive`, {
       headers: { authorization: `Bearer ${token}` }, signal: controller.signal,
     }).then(async response => { await response.arrayBuffer(); });
     // Observe the rejection immediately, while retaining it for the cancellation assertion.
@@ -34,7 +34,7 @@ test('S3 read failure aborts ZIP delivery instead of completing an archive with 
     await objectFile(session, storage, 'data.bin', Buffer.alloc(300_000, 0x62), folder.id);
     expect((await controls.put('/control/storage', { data: { method: 'GET', contains: '/objects/', mode: 'fail', count: 100 } })).status()).toBe(200);
     const token = await mint(controls, identity);
-    const outcome = await fetch(`${gateway}/v1/filesystems/${session.filesystemId}/nodes/${folder.id}/archive`, {
+    const outcome = await fetch(`${gateway}/v1/filesystems/${session.filesystemId}/scopes/${session.scopeId}/nodes/${folder.id}/archive`, {
       headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(150_000),
     }).then(async response => {
       if (response.status !== 200) { expect(response.status).toBe(503); return 'problem'; }

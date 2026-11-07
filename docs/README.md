@@ -1,6 +1,6 @@
 # Openlet backend documentation
 
-Public HTTP and private gRPC adapters share native business services. Go and Python packages provide reusable clients and infrastructure. The [current refactor record](../plans/261103-1348-service-refactor/tmp-refactor-decision.md) owns this round’s verification; historical checks do not establish acceptance of changed source.
+Public HTTP and private gRPC adapters share native business services. Go and Python packages provide reusable clients and infrastructure. The [current implementation record](../plans/261106-1517-account-scope-temporal-redesign/plan.md) owns this round’s verification; historical checks do not establish acceptance of changed source.
 
 - [Architecture and scope](architecture.md): stack, ownership, identity, repository layout and operation.
 - [Setup and verification](setup.md): foundation configuration, local commands and test isolation.

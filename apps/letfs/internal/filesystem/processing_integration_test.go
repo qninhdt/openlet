@@ -22,14 +22,14 @@ func TestIntegrationParsePreparationFencesGenerationAndLifecycle(t *testing.T) {
 	owner := identity.WithPrincipal(t.Context(), identity.Principal{Service: "resource-owner"})
 	actor := uuid.New()
 	ctx := identity.WithPrincipal(t.Context(), identity.Principal{Service: "gateway", Gateway: true, ActorID: actor})
-	bucket, fs := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
-	_, err := s.CreateBucket(owner, uuid.New(), CreateBucket{ID: bucket, LimitBytes: 1000})
+	filesystemID, fs := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	_, err := s.CreateFilesystem(owner, uuid.New(), CreateFilesystem{ID: filesystemID, LimitBytes: 1000})
 	require.NoError(t, err)
-	created, err := s.CreateFilesystem(owner, uuid.New(), CreateFilesystem{ID: fs, BucketID: bucket, RootName: "root"})
+	created, err := createTestScope(owner, &s, uuid.New(), filesystemID, fs)
 	require.NoError(t, err)
-	mounts := []Mount{{Path: "/", FilesystemID: fs}}
-	testfixture.Grant(t, graph, "filesystem", fs, actor, authz.NodeCreate, authz.NodeRead, authz.ContentWrite, authz.NodeTrash)
-	file, err := s.CreateNode(ctx, fs, mounts, uuid.New(), CreateNode{Parent: Locator{NodeID: created.RootID}, Name: "report.docx",
+
+	testfixture.Grant(t, graph, "scope", fs, actor, authz.ScopeWrite, authz.ScopeReadMetadata, authz.ScopeWrite, authz.ScopeTrash)
+	file, err := s.CreateNode(ctx, fs, uuid.New(), CreateNode{Parent: Locator{NodeID: created.RootID}, Name: "report.docx",
 		File: &InlineFile{Content: []byte{0, 255, 1}, MediaType: "application/octet-stream"}})
 	require.NoError(t, err)
 	pipeline := t.Context()
@@ -45,7 +45,7 @@ func TestIntegrationParsePreparationFencesGenerationAndLifecycle(t *testing.T) {
 	replayed, err := s.PrepareParse(pipeline, first)
 	require.NoError(t, err)
 	require.Equal(t, prepared, replayed)
-	file, err = s.ReplaceContent(ctx, fs, mounts, Locator{NodeID: &file.ID}, &file.Revision, []byte("replacement"), "application/octet-stream")
+	file, err = s.ReplaceContent(ctx, fs, Locator{NodeID: &file.ID}, &file.Revision, []byte("replacement"), "application/octet-stream")
 	require.NoError(t, err)
 	_, err = s.PrepareParse(pipeline, first)
 	require.Equal(t, "SOURCE_REPLACED", reason(err))
@@ -53,7 +53,7 @@ func TestIntegrationParsePreparationFencesGenerationAndLifecycle(t *testing.T) {
 	_, err = s.PrepareParse(pipeline, current)
 	require.NoError(t, err)
 	require.Equal(t, apperr.Invalid, apperr.KindOf(s.AbortParse(pipeline, current, "private provider text")))
-	_, err = s.FreezeBucket(owner, uuid.New(), bucket)
+	_, err = s.ListScopesForDeletion(owner, filesystemID, uuid.Nil)
 	require.NoError(t, err)
 	require.NoError(t, s.AbortParse(pipeline, current, "PROCESSING_CANCELLED"), "cleanup is still allowed after freeze")
 	var state, errorCode string
@@ -61,7 +61,7 @@ func TestIntegrationParsePreparationFencesGenerationAndLifecycle(t *testing.T) {
 	require.Equal(t, "failed", state)
 	require.Equal(t, "PROCESSING_CANCELLED", errorCode)
 	_, err = s.PrepareParse(pipeline, current)
-	require.Equal(t, "BUCKET_FROZEN", reason(err))
+	require.Equal(t, "NOT_FOUND", reason(err))
 	canceled, cancel := context.WithCancel(pipeline)
 	cancel()
 	_, err = s.PrepareParse(canceled, current)
@@ -75,14 +75,14 @@ func TestIntegrationParseOutputPublicationAtomicReplayAndScope(t *testing.T) {
 	owner := identity.WithPrincipal(t.Context(), identity.Principal{Service: "resource-owner"})
 	actor := uuid.New()
 	ctx := identity.WithPrincipal(t.Context(), identity.Principal{Service: "gateway", Gateway: true, ActorID: actor})
-	bucket, fs := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
-	_, err := s.CreateBucket(owner, uuid.New(), CreateBucket{ID: bucket, LimitBytes: 1000})
+	filesystemID, fs := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	_, err := s.CreateFilesystem(owner, uuid.New(), CreateFilesystem{ID: filesystemID, LimitBytes: 1000})
 	require.NoError(t, err)
-	created, err := s.CreateFilesystem(owner, uuid.New(), CreateFilesystem{ID: fs, BucketID: bucket, RootName: "root"})
+	created, err := createTestScope(owner, &s, uuid.New(), filesystemID, fs)
 	require.NoError(t, err)
-	mounts := []Mount{{Path: "/", FilesystemID: fs}}
-	testfixture.Grant(t, graph, "filesystem", fs, actor, authz.NodeCreate, authz.NodeRead, authz.NodeList, authz.ContentWrite, authz.UploadRead)
-	source, err := s.CreateNode(ctx, fs, mounts, uuid.New(), CreateNode{Parent: Locator{NodeID: created.RootID}, Name: "document.pdf", File: &InlineFile{Content: []byte("pdf"), MediaType: "application/pdf"}})
+
+	testfixture.Grant(t, graph, "scope", fs, actor, authz.ScopeWrite, authz.ScopeReadMetadata, authz.ScopeReadMetadata, authz.ScopeWrite, authz.ScopeWrite)
+	source, err := s.CreateNode(ctx, fs, uuid.New(), CreateNode{Parent: Locator{NodeID: created.RootID}, Name: "document.pdf", File: &InlineFile{Content: []byte("pdf"), MediaType: "application/pdf"}})
 	require.NoError(t, err)
 	a := Generation{FileID: source.ID, Generation: 1}
 	_, err = s.PrepareParse(t.Context(), a)
@@ -116,37 +116,37 @@ func TestIntegrationParseOutputPublicationAtomicReplayAndScope(t *testing.T) {
 	require.NoError(t, err)
 	// Finalizing an output reserves no visible node or quota until the complete manifest commits.
 	var used, beforeNodes int64
-	require.NoError(t, db.QueryRow(t.Context(), `SELECT used_bytes FROM quota_buckets WHERE id=$1`, bucket).Scan(&used))
+	require.NoError(t, db.QueryRow(t.Context(), `SELECT used_bytes FROM filesystems WHERE id=$1`, filesystemID).Scan(&used))
 	require.EqualValues(t, 3, used)
-	require.NoError(t, db.QueryRow(t.Context(), `SELECT node_count FROM filesystems WHERE id=$1`, fs).Scan(&beforeNodes))
+	require.NoError(t, db.QueryRow(t.Context(), `SELECT node_count FROM filesystems WHERE id=$1`, filesystemID).Scan(&beforeNodes))
 	manifest := ParseManifest{Uploads: []uuid.UUID{upload.ID}, Directories: []string{"empty", "pages"}}
 	require.Equal(t, "OUTPUTS_INCOMPLETE", reason(s.CompleteParse(t.Context(), a, ParseManifest{Uploads: []uuid.UUID{upload.ID, upload.ID}})))
 	collision := manifest
 	collision.Directories = []string{"pages/text.md"}
 	require.Equal(t, apperr.Invalid, apperr.KindOf(s.CompleteParse(t.Context(), a, collision)))
-	_, err = db.Exec(t.Context(), `UPDATE quota_buckets SET limit_bytes=used_bytes WHERE id=$1`, bucket)
+	_, err = db.Exec(t.Context(), `UPDATE filesystems SET limit_bytes=used_bytes WHERE id=$1`, filesystemID)
 	require.NoError(t, err)
 	require.Equal(t, "QUOTA_EXCEEDED", reason(s.CompleteParse(t.Context(), a, manifest)))
 	var children int64
 	require.NoError(t, db.QueryRow(t.Context(), `SELECT count(*) FROM nodes WHERE parent_id=$1`, source.ID).Scan(&children))
 	require.Zero(t, children)
-	_, err = db.Exec(t.Context(), `UPDATE quota_buckets SET limit_bytes=1000 WHERE id=$1`, bucket)
+	_, err = db.Exec(t.Context(), `UPDATE filesystems SET limit_bytes=1000 WHERE id=$1`, filesystemID)
 	require.NoError(t, err)
 	s.MaxNodes = beforeNodes + 2
 	require.Equal(t, "RESOURCE_LIMIT", reason(s.CompleteParse(t.Context(), a, manifest)))
-	require.NoError(t, db.QueryRow(t.Context(), `SELECT used_bytes FROM quota_buckets WHERE id=$1`, bucket).Scan(&used))
+	require.NoError(t, db.QueryRow(t.Context(), `SELECT used_bytes FROM filesystems WHERE id=$1`, filesystemID).Scan(&used))
 	require.EqualValues(t, 3, used, "quota debit rolls back if node admission fails")
 	s.MaxNodes = 100
 	require.NoError(t, s.CompleteParse(t.Context(), a, manifest))
 	require.NoError(t, s.CompleteParse(t.Context(), a, ParseManifest{Uploads: manifest.Uploads, Directories: []string{"pages", "empty"}}))
 	require.NoError(t, s.CompleteParse(t.Context(), a, ParseManifest{Uploads: manifest.Uploads}))
-	require.NoError(t, db.QueryRow(t.Context(), `SELECT used_bytes FROM quota_buckets WHERE id=$1`, bucket).Scan(&used))
+	require.NoError(t, db.QueryRow(t.Context(), `SELECT used_bytes FROM filesystems WHERE id=$1`, filesystemID).Scan(&used))
 	require.EqualValues(t, 6, used)
 	var count int64
-	require.NoError(t, db.QueryRow(t.Context(), `SELECT node_count FROM filesystems WHERE id=$1`, fs).Scan(&count))
+	require.NoError(t, db.QueryRow(t.Context(), `SELECT node_count FROM filesystems WHERE id=$1`, filesystemID).Scan(&count))
 	require.Equal(t, beforeNodes+3, count)
 	artifactPath := "/document.pdf/pages/text.md"
-	artifact, err := s.GetNode(ctx, fs, mounts, Locator{Path: &artifactPath})
+	artifact, err := s.GetNode(ctx, fs, Locator{Path: &artifactPath})
 	require.NoError(t, err)
 	require.Equal(t, "text/markdown", *artifact.MediaType)
 	require.True(t, artifact.readonly)
@@ -161,7 +161,7 @@ func TestIntegrationParseOutputPublicationAtomicReplayAndScope(t *testing.T) {
 	_, err = s.WriteOutputBytes(t.Context(), scope, []byte{0, 255, 1})
 	require.NoError(t, err, "lost acknowledgement can replay after publication without restoring upload bytes")
 	// A replacement invalidates both a publication replay and its old upload handle.
-	_, err = s.ReplaceContent(ctx, fs, mounts, Locator{NodeID: &source.ID}, &source.Revision, []byte("new"), "application/pdf")
+	_, err = s.ReplaceContent(ctx, fs, Locator{NodeID: &source.ID}, &source.Revision, []byte("new"), "application/pdf")
 	require.NoError(t, err)
 	require.Equal(t, "SOURCE_REPLACED", reason(s.CompleteParse(t.Context(), a, manifest)))
 	_, err = s.GetOutputUpload(t.Context(), scope)

@@ -31,6 +31,9 @@ func processingFormat(name string) (format string, parse bool) {
 
 func (s *session) recordIntent(ctx context.Context, node Node) error {
 	format, parse := processingFormat(node.Name)
+	if !s.allowBlobFiles {
+		format, parse = "text", false
+	}
 	publication := "not_required"
 	var storedFormat *string
 	if format != "" {
@@ -51,16 +54,16 @@ type Generation struct {
 
 // Detached roots are durable cleanup intent; trash has its own lifecycle.
 func (s *Store) DiscardForests(ctx context.Context) (int, error) {
-	rows, err := s.DB.Query(ctx, `SELECT n.id,n.filesystem_id FROM nodes n JOIN filesystems f ON f.id=n.filesystem_id
+	rows, err := s.DB.Query(ctx, `SELECT n.id,n.scope_id FROM nodes n JOIN scopes f ON f.id=n.scope_id
  WHERE n.parent_id IS NULL AND n.id IS DISTINCT FROM f.root_id
- AND NOT EXISTS(SELECT 1 FROM trash_entries t WHERE t.node_id=n.id) ORDER BY n.filesystem_id,n.id LIMIT 64`)
+ AND NOT EXISTS(SELECT 1 FROM trash_entries t WHERE t.node_id=n.id) ORDER BY n.scope_id,n.id LIMIT 64`)
 	if err != nil {
 		return 0, databaseError(err)
 	}
-	type root struct{ id, fs uuid.UUID }
+	type root struct{ id, scopeID uuid.UUID }
 	roots, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (root, error) {
 		var item root
-		err := row.Scan(&item.id, &item.fs)
+		err := row.Scan(&item.id, &item.scopeID)
 		return item, err
 	})
 	if err != nil {
@@ -72,7 +75,7 @@ func (s *Store) DiscardForests(ctx context.Context) (int, error) {
 		if !time.Now().Before(deadline) {
 			break
 		}
-		removed, err := s.discardForest(ctx, root.fs, root.id)
+		removed, err := s.discardForest(ctx, root.scopeID, root.id)
 		if err != nil {
 			return count, err
 		}
@@ -83,15 +86,15 @@ func (s *Store) DiscardForests(ctx context.Context) (int, error) {
 	return count, nil
 }
 
-func (s *Store) discardForest(ctx context.Context, fs, id uuid.UUID) (bool, error) {
-	session, err := s.lifecycleSession(ctx, fs)
+func (s *Store) discardForest(ctx context.Context, scopeID, id uuid.UUID) (bool, error) {
+	session, err := s.lifecycleSession(ctx, scopeID)
 	if err != nil {
 		return false, err
 	}
 	defer session.tx.Rollback(ctx)
 	var detached bool
-	err = session.tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM nodes n WHERE n.id=$1 AND n.filesystem_id=$2
- AND n.parent_id IS NULL AND n.id!=$3 AND NOT EXISTS(SELECT 1 FROM trash_entries t WHERE t.node_id=n.id))`, id, fs, session.root).Scan(&detached)
+	err = session.tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM nodes n WHERE n.id=$1 AND n.scope_id=$2
+ AND n.parent_id IS NULL AND n.id!=$3 AND NOT EXISTS(SELECT 1 FROM trash_entries t WHERE t.node_id=n.id))`, id, scopeID, session.root).Scan(&detached)
 	if err != nil {
 		return false, databaseError(err)
 	}
@@ -114,12 +117,12 @@ func (s *session) enqueueIndexDeletion(ctx context.Context, ids []uuid.UUID) err
 }
 
 func (s *session) discardUploads(ctx context.Context, source Generation) error {
-	_, err := s.tx.Exec(ctx, `INSERT INTO object_deletions(object_key,bucket_id,ambiguous_write,eligible_at)
- SELECT candidate_key,bucket_id,transfer_deadline IS NOT NULL,greatest(now()+interval '15 minutes',transfer_deadline) FROM uploads
+	_, err := s.tx.Exec(ctx, `INSERT INTO object_deletions(object_key,filesystem_id,ambiguous_write,eligible_at)
+ SELECT candidate_key,$3::uuid,transfer_deadline IS NOT NULL,greatest(now()+interval '15 minutes',transfer_deadline) FROM uploads
  WHERE processing_file_id=$1 AND processing_generation=$2
  AND result_node_id IS NULL AND candidate_key IS NOT NULL ON CONFLICT(object_key) DO UPDATE
  SET ambiguous_write=object_deletions.ambiguous_write OR excluded.ambiguous_write,
- eligible_at=greatest(object_deletions.eligible_at,excluded.eligible_at)`, source.FileID, source.Generation)
+ eligible_at=greatest(object_deletions.eligible_at,excluded.eligible_at)`, source.FileID, source.Generation, s.filesystemID)
 	if err != nil {
 		return databaseError(err)
 	}
@@ -156,14 +159,14 @@ func (s *session) invalidate(ctx context.Context, id uuid.UUID) error {
 	if err != nil {
 		return databaseError(err)
 	}
-	_, err = s.tx.Exec(ctx, `UPDATE nodes SET parent_id=NULL WHERE filesystem_id=$1 AND parent_id=$2`, s.fs, id)
+	_, err = s.tx.Exec(ctx, `UPDATE nodes SET parent_id=NULL WHERE scope_id=$1 AND parent_id=$2`, s.scopeID, id)
 	return databaseError(err)
 }
 
 func (s *session) fenceTrashed(ctx context.Context, root uuid.UUID) error {
-	rows, err := s.tx.Query(ctx, `WITH RECURSIVE tree AS (SELECT id,0 AS depth FROM nodes WHERE id=$1 AND filesystem_id=$2
- UNION ALL SELECT n.id,t.depth+1 FROM nodes n JOIN tree t ON n.parent_id=t.id WHERE n.filesystem_id=$2 AND t.depth<128)
- SELECT f.node_id,f.desired_generation FROM tree t JOIN files f ON f.node_id=t.id WHERE f.desired_generation>0 AND f.publication_status!='not_required'`, root, s.fs)
+	rows, err := s.tx.Query(ctx, `WITH RECURSIVE tree AS (SELECT id,0 AS depth FROM nodes WHERE id=$1 AND scope_id=$2
+ UNION ALL SELECT n.id,t.depth+1 FROM nodes n JOIN tree t ON n.parent_id=t.id WHERE n.scope_id=$2 AND t.depth<128)
+ SELECT f.node_id,f.desired_generation FROM tree t JOIN files f ON f.node_id=t.id WHERE f.desired_generation>0 AND f.publication_status!='not_required'`, root, s.scopeID)
 	if err != nil {
 		return databaseError(err)
 	}

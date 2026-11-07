@@ -20,7 +20,7 @@ test.describe('gateway baseline', () => {
       const request = rawRequest(`${gateway}/v1/me`, { headers: [
         'Host', new URL(gateway).host,
         'Authorization', `Bearer ${jwt}`,
-        'X-Openlet-User-ID', randomUUID(), 'X-Openlet-User-ID', randomUUID(),
+        'X-Openlet-Account-ID', randomUUID(), 'X-Openlet-Account-ID', randomUUID(),
         'X-Clerk-Sub', 'forged', 'X-Gateway-Token', 'forged', 'X-Service-Token', 'forged',
       ] }, response => { response.resume(); response.on('end', () => resolve(response.statusCode ?? 0)); });
       request.setTimeout(5000, () => request.destroy(new Error('gateway deadline')));
@@ -30,7 +30,7 @@ test.describe('gateway baseline', () => {
   });
 
   test('routes verified requests to real Account and Workspace without exposing internal resources', async ({ request, controls, identity }) => {
-    const jwt = await mint(controls, identity, { openlet_user_id: randomUUID() });
+    const jwt = await mint(controls, identity, { openlet_account_id: randomUUID() });
     const headers = { authorization: `Bearer ${jwt}` };
     const me = await request.get('/v1/me', { headers });
     expect(me.status()).toBe(404);
@@ -43,7 +43,7 @@ test.describe('gateway baseline', () => {
   });
 
   test('bounds gateway request bursts', async ({ request, controls, identity }) => {
-    const jwt = await mint(controls, identity, { openlet_user_id: randomUUID() });
+    const jwt = await mint(controls, identity, { openlet_account_id: randomUUID() });
     const statuses = await Promise.all(Array.from({ length: 400 }, async () => {
       const response = await request.get('/v1/me', { headers: { authorization: `Bearer ${jwt}` } });
       const status = response.status(); await response.dispose(); return status;

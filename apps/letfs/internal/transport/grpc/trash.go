@@ -18,11 +18,7 @@ func trashMessage(entry filesystem.TrashEntry) *letfsv1.TrashEntry {
 }
 
 func (s *Filesystem) TrashNode(ctx context.Context, input *letfsv1.TrashNodeRequest) (*letfsv1.TrashNodeResponse, error) {
-	fs, err := parseID(input.GetFilesystemId())
-	if err != nil {
-		return nil, err
-	}
-	mounts, err := pathInput(input.GetPathContext())
+	fs, err := s.scopeInput(ctx, input.GetFilesystemId(), input.GetScopeId())
 	if err != nil {
 		return nil, err
 	}
@@ -30,7 +26,7 @@ func (s *Filesystem) TrashNode(ctx context.Context, input *letfsv1.TrashNodeRequ
 	if err != nil {
 		return nil, err
 	}
-	entry, err := s.Service.TrashNode(ctx, fs, mounts, locator, input.Revision)
+	entry, err := s.Service.TrashNode(ctx, fs, locator, input.Revision)
 	if err != nil {
 		return nil, err
 	}
@@ -38,7 +34,7 @@ func (s *Filesystem) TrashNode(ctx context.Context, input *letfsv1.TrashNodeRequ
 }
 
 func (s *Filesystem) GetTrash(ctx context.Context, input *letfsv1.GetTrashRequest) (*letfsv1.GetTrashResponse, error) {
-	fs, err := parseID(input.GetFilesystemId())
+	fs, err := s.scopeInput(ctx, input.GetFilesystemId(), input.GetScopeId())
 	if err != nil {
 		return nil, err
 	}
@@ -54,7 +50,7 @@ func (s *Filesystem) GetTrash(ctx context.Context, input *letfsv1.GetTrashReques
 }
 
 func (s *Filesystem) ListTrash(ctx context.Context, input *letfsv1.ListTrashRequest) (*letfsv1.ListTrashResponse, error) {
-	fs, err := parseID(input.GetFilesystemId())
+	fs, err := s.scopeInput(ctx, input.GetFilesystemId(), input.GetScopeId())
 	if err != nil {
 		return nil, err
 	}
@@ -70,7 +66,7 @@ func (s *Filesystem) ListTrash(ctx context.Context, input *letfsv1.ListTrashRequ
 }
 
 func (s *Filesystem) RestoreTrash(ctx context.Context, input *letfsv1.RestoreTrashRequest) (*letfsv1.RestoreTrashResponse, error) {
-	fs, err := parseID(input.GetFilesystemId())
+	fs, err := s.scopeInput(ctx, input.GetFilesystemId(), input.GetScopeId())
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +82,7 @@ func (s *Filesystem) RestoreTrash(ctx context.Context, input *letfsv1.RestoreTra
 }
 
 func (s *Filesystem) PurgeTrash(ctx context.Context, input *letfsv1.PurgeTrashRequest) (*letfsv1.PurgeTrashResponse, error) {
-	fs, err := parseID(input.GetFilesystemId())
+	fs, err := s.scopeInput(ctx, input.GetFilesystemId(), input.GetScopeId())
 	if err != nil {
 		return nil, err
 	}

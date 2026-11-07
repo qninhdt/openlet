@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/qninhdt/openlet/apps/account/internal/user"
+	"github.com/qninhdt/openlet/apps/account/internal/account"
 	"github.com/qninhdt/openlet/packages/go/apperr"
 	"github.com/qninhdt/openlet/packages/go/httpapi"
 	"io"
@@ -15,11 +15,11 @@ func decode(w http.ResponseWriter, r *http.Request, out any) error {
 	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16384))
 	d.DisallowUnknownFields()
 	if err := d.Decode(out); err != nil {
-		return user.Fault{Code: "VALIDATION"}
+		return account.Fault{Code: "VALIDATION"}
 	}
 	var extra any
 	if d.Decode(&extra) != io.EOF {
-		return user.Fault{Code: "VALIDATION"}
+		return account.Fault{Code: "VALIDATION"}
 	}
 	return nil
 }
@@ -35,8 +35,10 @@ func failure(w http.ResponseWriter, r *http.Request, err error) {
 	}
 	httpapi.WriteError(w, r, err)
 }
-func identityID(r *http.Request) uuid.UUID { return uuid.MustParse(r.Header.Get("X-Openlet-User-ID")) }
-func writeOnboarding(w http.ResponseWriter, status int, value user.Onboarding) {
+func identityID(r *http.Request) uuid.UUID {
+	return uuid.MustParse(r.Header.Get("X-Openlet-Account-ID"))
+}
+func writeOnboarding(w http.ResponseWriter, status int, value account.Onboarding) {
 	w.Header().Set("Location", "/v1/me/onboarding")
 	respond(w, status, value)
 }
@@ -78,6 +80,57 @@ func (s *Server) updateMe(c *gin.Context) {
 		return
 	}
 	value, err := s.Service.UpdateProfile(c.Request.Context(), identityID(c.Request), in.Name, in.Avatar)
+	if err != nil {
+		failure(c.Writer, c.Request, err)
+		return
+	}
+	respond(c.Writer, http.StatusOK, value)
+}
+
+func (s *Server) createAccount(c *gin.Context) {
+	var in struct {
+		Name   string `json:"display_name"`
+		Avatar string `json:"avatar_url"`
+	}
+	if err := decode(c.Writer, c.Request, &in); err != nil {
+		failure(c.Writer, c.Request, err)
+		return
+	}
+	value, err := s.Service.CreateManaged(c.Request.Context(), identityID(c.Request), in.Name, in.Avatar)
+	if err != nil {
+		failure(c.Writer, c.Request, err)
+		return
+	}
+	respond(c.Writer, http.StatusCreated, value)
+}
+func (s *Server) getAccount(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil || id == uuid.Nil {
+		failure(c.Writer, c.Request, account.Fault{Code: "VALIDATION"})
+		return
+	}
+	value, err := s.Service.GetAccount(c.Request.Context(), identityID(c.Request), id)
+	if err != nil {
+		failure(c.Writer, c.Request, err)
+		return
+	}
+	respond(c.Writer, http.StatusOK, value)
+}
+func (s *Server) updateAccount(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil || id == uuid.Nil {
+		failure(c.Writer, c.Request, account.Fault{Code: "VALIDATION"})
+		return
+	}
+	var in struct {
+		Name   *string `json:"display_name"`
+		Avatar *string `json:"avatar_url"`
+	}
+	if err := decode(c.Writer, c.Request, &in); err != nil {
+		failure(c.Writer, c.Request, err)
+		return
+	}
+	value, err := s.Service.UpdateAccount(c.Request.Context(), identityID(c.Request), id, in.Name, in.Avatar)
 	if err != nil {
 		failure(c.Writer, c.Request, err)
 		return

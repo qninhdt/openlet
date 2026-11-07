@@ -9,25 +9,26 @@ import (
 	"github.com/qninhdt/openlet/apps/letfs/internal/filesystem"
 	"github.com/qninhdt/openlet/apps/letfs/internal/testfixture"
 	"github.com/qninhdt/openlet/packages/go/identity"
+	sharedfixture "github.com/qninhdt/openlet/packages/go/testfixture"
 	"github.com/stretchr/testify/require"
 )
 
 func TestIntegrationBackfillDryRunMissingAndIndexOnly(t *testing.T) {
-	tc, _ := testfixture.Temporal(t)
+	tc, _ := sharedfixture.Temporal(t)
 	db := testfixture.Postgres(t, "../../migrations/0001_initial.sql")
 	store := &filesystem.Store{DB: db, MaxNodes: 100, IndexSpace: filesystem.VectorSpace{Model: "embedding-v2", Collection: "files-v2", Dimension: 4}}
 	jobs := &Jobs{Client: tc}
 	activities := &Activities{Store: store, Jobs: jobs}
 	owner := identity.WithPrincipal(t.Context(), identity.Principal{Service: "resource-owner"})
-	bucket, fs := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
-	_, err := store.CreateBucket(owner, uuid.New(), filesystem.CreateBucket{ID: bucket, LimitBytes: 1000})
+	filesystemID, fs := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	_, err := store.CreateFilesystem(owner, uuid.New(), filesystem.CreateFilesystem{ID: filesystemID, LimitBytes: 1000})
 	require.NoError(t, err)
-	created, err := store.CreateFilesystem(owner, uuid.New(), filesystem.CreateFilesystem{ID: fs, BucketID: bucket, RootName: "root"})
+	created, err := createTestScope(owner, store, uuid.New(), filesystemID, fs)
 	require.NoError(t, err)
 	files := []uuid.UUID{}
 	for _, name := range []string{"a.txt", "b.pdf", "c.bin", "detached.txt"} {
 		id := uuid.Must(uuid.NewV7())
-		_, err = db.Exec(t.Context(), `INSERT INTO nodes(id,filesystem_id,parent_id,name,kind,size_bytes) VALUES($1,$2,$3,$4,'file',1)`, id, fs, created.RootID, name)
+		_, err = db.Exec(t.Context(), `INSERT INTO nodes(id,scope_id,parent_id,name,kind,size_bytes) VALUES($1,$2,$3,$4,'file',1)`, id, fs, created.RootID, name)
 		require.NoError(t, err)
 		_, err = db.Exec(t.Context(), `INSERT INTO files(node_id,storage_kind,inline_bytes) VALUES($1,'inline','x')`, id)
 		require.NoError(t, err)
@@ -38,7 +39,7 @@ func TestIntegrationBackfillDryRunMissingAndIndexOnly(t *testing.T) {
 	_, err = db.Exec(t.Context(), `UPDATE files SET desired_generation=2,processing_format='pdf',publication_status='ready' WHERE node_id=$1`, files[1])
 	require.NoError(t, err)
 	child := uuid.New()
-	_, err = db.Exec(t.Context(), `INSERT INTO nodes(id,filesystem_id,parent_id,name,kind) VALUES($1,$2,$3,'README.md','file')`, child, fs, files[1])
+	_, err = db.Exec(t.Context(), `INSERT INTO nodes(id,scope_id,parent_id,name,kind) VALUES($1,$2,$3,'README.md','file')`, child, fs, files[1])
 	require.NoError(t, err)
 	_, err = db.Exec(t.Context(), `INSERT INTO files(node_id,storage_kind,inline_bytes) VALUES($1,'inline','generated')`, child)
 	require.NoError(t, err)

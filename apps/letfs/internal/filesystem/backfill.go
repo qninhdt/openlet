@@ -8,10 +8,10 @@ import (
 )
 
 type BackfillCandidate struct {
-	FilesystemID uuid.UUID
-	Name         string
-	Revision     int64
-	Dispatch     ProcessingDispatch
+	ScopeID  uuid.UUID
+	Name     string
+	Revision int64
+	Dispatch ProcessingDispatch
 }
 
 func (s *Store) BackfillCandidates(ctx context.Context, mode string, after uuid.UUID, limit int) ([]BackfillCandidate, error) {
@@ -19,17 +19,18 @@ func (s *Store) BackfillCandidates(ctx context.Context, mode string, after uuid.
 		return nil, enrichmentValidation("invalid backfill mode or limit")
 	}
 	rows, err := s.DB.Query(ctx, `WITH RECURSIVE live AS (
- SELECT n.id,n.filesystem_id,n.kind,0 AS depth FROM nodes n JOIN filesystems fs ON fs.root_id=n.id JOIN quota_buckets b ON b.id=fs.bucket_id WHERE fs.state='active' AND b.state='active'
- UNION ALL SELECT n.id,n.filesystem_id,n.kind,l.depth+1 FROM nodes n JOIN live l ON n.parent_id=l.id AND n.filesystem_id=l.filesystem_id WHERE l.kind='directory' AND l.depth<128)
- SELECT n.filesystem_id,n.name,n.revision,f.node_id,f.desired_generation,f.publication_status,f.processing_updated_at
- FROM live l JOIN nodes n ON n.id=l.id JOIN files f ON f.node_id=n.id WHERE n.id>$1
+ SELECT n.id,n.scope_id,n.kind,0 AS depth FROM nodes n JOIN scopes scopeID ON scopeID.root_id=n.id JOIN filesystems b ON b.id=scopeID.filesystem_id WHERE scopeID.state='active' AND b.state='active'
+ UNION ALL SELECT n.id,n.scope_id,n.kind,l.depth+1 FROM nodes n JOIN live l ON n.parent_id=l.id AND n.scope_id=l.scope_id WHERE l.kind='directory' AND l.depth<128)
+ SELECT n.scope_id,n.name,n.revision,f.node_id,f.desired_generation,f.publication_status,f.processing_updated_at,scopeID.allow_indexing
+ FROM live l JOIN nodes n ON n.id=l.id JOIN files f ON f.node_id=n.id JOIN scopes scopeID ON scopeID.id=n.scope_id WHERE n.id>$1
+ AND (scopeID.allow_indexing OR f.publication_status NOT IN ('enriched','ready'))
  AND (($2='missing' AND f.publication_status!='ready') OR ($2='rebuild-index' AND f.publication_status='ready')) ORDER BY n.id LIMIT $3`, after, mode, limit+1)
 	if err != nil {
 		return nil, databaseError(err)
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (BackfillCandidate, error) {
 		var c BackfillCandidate
-		err := row.Scan(&c.FilesystemID, &c.Name, &c.Revision, &c.Dispatch.Source.FileID, &c.Dispatch.Source.Generation, &c.Dispatch.Publication, &c.Dispatch.UpdatedAt)
+		err := row.Scan(&c.ScopeID, &c.Name, &c.Revision, &c.Dispatch.Source.FileID, &c.Dispatch.Source.Generation, &c.Dispatch.Publication, &c.Dispatch.UpdatedAt, &c.Dispatch.AllowIndexing)
 		return c, databaseError(err)
 	})
 }
@@ -44,20 +45,20 @@ func (s *Store) AdmitBackfill(ctx context.Context, c BackfillCandidate, actor uu
 	if actor == uuid.Nil {
 		return false, enrichmentValidation("backfill actor required")
 	}
-	session, err := s.openSession(ctx, c.FilesystemID, true)
+	session, err := s.openSession(ctx, c.ScopeID, true)
 	if err != nil {
 		return false, err
 	}
 	defer session.tx.Rollback(ctx)
 	id := c.Dispatch.Source.FileID
-	node, err := session.resolveOne(ctx, []Mount{{Path: "/", FilesystemID: c.FilesystemID}}, Locator{NodeID: &id})
+	node, err := session.resolveOne(ctx, Locator{NodeID: &id})
 	if err != nil {
 		return false, err
 	}
 	if err = node.writable(); err != nil {
 		return false, err
 	}
-	current, err := scanDispatch(session.tx.QueryRow(ctx, `SELECT node_id,desired_generation,publication_status,processing_updated_at FROM files WHERE node_id=$1 FOR UPDATE`, id))
+	current, err := scanDispatch(session.tx.QueryRow(ctx, `SELECT node_id,desired_generation,publication_status,processing_updated_at,$2::boolean FROM files WHERE node_id=$1 FOR UPDATE`, id, session.allowIndexing))
 	if err != nil {
 		return false, err
 	}

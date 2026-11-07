@@ -29,20 +29,21 @@ test('coordinated recovery restores isolated metadata, exact bytes and an interr
     const guest = await onboard(controls, guestIdentity, playwright.request);
     try {
       const base = `/v1/workspaces/${session.workspaceId}`;
-      const invitation = await (await session.api.post(`${base}/invitations`, { data: { email: guestIdentity.email, role: 'viewer' } })).json();
+      const invitation = await (await session.api.post(`${base}/invitations`, { data: { email: guestIdentity.email, role: 'member' } })).json();
       expect((await guest.api.post('/v1/memberships', { data: { token: invitation.token } })).status()).toBe(201);
-      expect((await guest.api.get(`/v1/filesystems/${session.filesystemId}`)).status()).toBe(200);
-      const current = await session.api.get(base);
-      expect((await session.api.delete(`${base}/members/${guest.userId}`, { headers: { 'if-match': current.headers().etag } })).status()).toBe(204);
+      expect((await guest.api.get(`/v1/filesystems/${session.filesystemId}/scopes/${session.scopeId}/nodes:resolve?path=/`)).status()).toBe(200);
+      expect((await session.api.delete(`${base}/members/${guest.accountId}`, {})).status()).toBe(204);
     } finally { await guest.api.dispose(); }
     const deletion = await session.api.post('/v1/workspaces', { headers: { 'idempotency-key': randomUUID() }, data: { name: 'Deleted before recovery' } });
-    expect(deletion.status()).toBe(202);
+    expect(deletion.status()).toBe(200);
     const deletedBase = `/v1/workspaces/${(await deletion.json()).id}`;
-    await expect.poll(async () => (await (await session.api.get(deletedBase)).json()).status).toBe('active');
     const deletedResource = await session.api.get(deletedBase);
     const deletedFilesystem = (await deletedResource.json()).filesystem_id;
-    expect((await session.api.delete(deletedBase, { headers: { 'if-match': deletedResource.headers().etag } })).status()).toBe(202);
-    await expect.poll(async () => (await (await session.api.get(deletedBase)).json()).status).toBe('deleted');
+    expect((await session.api.delete(deletedBase)).status()).toBe(204);
+    expect((await session.api.get(deletedBase)).status()).toBe(403);
+    const personalBase = `/v1/filesystems/${session.filesystemId}/scopes/${session.personalScopeId}`;
+    const personalRoot = (await (await session.api.get(`${personalBase}/nodes:resolve?path=/`)).json()).id;
+    const personal = await inline({ ...session, scopeId: session.personalScopeId, rootId: personalRoot }, 'direct-grant.bin', Buffer.from('private'));
     const inlineBytes = Buffer.from([0, 255, 13, 10, 42]);
     const inlineFile = await inline(session, 'recover-inline.bin', inlineBytes);
     const observed = await execute('docker', ['compose', '--file', compose, '--project-name', project, 'exec', '-T', 'postgres', 'psql', '-XAt', '-U', 'openlet_admin', '-d', 'postgres', '-c',
@@ -74,9 +75,10 @@ test('coordinated recovery restores isolated metadata, exact bytes and an interr
     expect(beforeResume.stdout.trim().split('\n')).toEqual(['postgres']);
     // Erase only this isolated projection while SpiceDB and all graph writers are stopped.
     await execute('docker', ['compose', '--file', compose, '--project-name', restoredProject, 'exec', '-T', 'postgres', 'psql', '-XAt', '--set', 'ON_ERROR_STOP=1', '-U', 'openlet_admin', '-d', 'openlet_spicedb', '-c',
-      "DELETE FROM relation_tuple WHERE namespace <> 'role'"], { env: restoredEnv });
+      "DELETE FROM relation_tuple WHERE namespace IN ('account','workspace','filesystem') OR (namespace='scope' AND userset_namespace='workspace')"], { env: restoredEnv });
     await execute('docker', ['compose', '--file', compose, '--project-name', restoredProject, 'up', '--detach', '--wait', '--wait-timeout', '90', 'spicedb'], { env: restoredEnv, timeout: 120_000 });
-    await execute('docker', ['compose', '--file', compose, '--project-name', restoredProject, 'run', '--rm', '--no-deps', 'account', '--rebuild-authorization'], { env: restoredEnv, timeout: 120_000 });
+    try {
+    await execute('docker', ['compose', '--file', compose, '--project-name', restoredProject, 'run', '--rm', '--no-deps', '--build', 'account', '--rebuild-authorization'], { env: restoredEnv, timeout: 120_000 });
     const partial = await execute('docker', ['compose', '--file', compose, '--project-name', restoredProject, 'exec', '-T', 'postgres', 'psql', '-XAt', '-U', 'openlet_admin', '-d', 'openlet_spicedb', '-c',
       "SELECT count(*) FILTER (WHERE namespace='account'),count(*) FILTER (WHERE namespace='workspace') FROM relation_tuple"], { env: restoredEnv });
     const [accounts, workspaces] = partial.stdout.trim().split('|').map(Number);
@@ -86,11 +88,10 @@ test('coordinated recovery restores isolated metadata, exact bytes and an interr
     await execute('docker', ['compose', '--file', compose, '--project-name', restoredProject, 'stop', 'spicedb'], { env: restoredEnv });
     const interrupted = await execute('docker', ['compose', '--file', compose, '--project-name', restoredProject, 'ps', '--status', 'running', '--services'], { env: restoredEnv });
     expect(interrupted.stdout.trim().split('\n')).toEqual(['postgres']);
-    try {
       await execute('python3', [command, 'resume', '--compose', compose, '--project', restoredProject, '--state', restoredState], { env: restoredEnv, timeout: 120_000 });
     } catch (error) {
       const logs = await execute('docker', ['compose', '--file', compose, '--project-name', restoredProject, 'logs', '--no-color', '--tail', '100'], { env: restoredEnv, maxBuffer: 16 * 1024 * 1024 });
-      let diagnostic = logs.stdout + logs.stderr;
+      let diagnostic = logs.stdout + logs.stderr + String((error as { stdout?: string }).stdout ?? '');
       for (const file of await readdir(join(restoredState, 'secrets'))) {
         const secret = (await readFile(join(restoredState, 'secrets', file), 'utf8')).trim();
         if (secret) for (const value of [secret, encodeURIComponent(secret)]) diagnostic = diagnostic.replaceAll(value, '[REDACTED]');
@@ -100,23 +101,24 @@ test('coordinated recovery restores isolated metadata, exact bytes and an interr
     }
     restoredControls = await playwright.request.newContext({ baseURL: control, extraHTTPHeaders: { authorization: `Bearer ${(await readFile(join(restoredState, 'secrets/fixture_control_token'), 'utf8')).trim()}` } });
     expect((await restoredControls.post('/control/users', { data: identity })).status()).toBe(201);
-    const jwt = await mint(restoredControls, identity, { openlet_user_id: session.userId });
+    const jwt = await mint(restoredControls, identity, { openlet_account_id: session.accountId });
     restoredApi = await playwright.request.newContext({ baseURL: gateway, extraHTTPHeaders: { authorization: `Bearer ${jwt}` } });
-    const base = `/v1/filesystems/${session.filesystemId}`;
+    const base = `/v1/filesystems/${session.filesystemId}/scopes/${session.scopeId}`;
     await expect.poll(async () => {
-      const responses = await Promise.all([`/v1/workspaces/${session.workspaceId}`, base]
+      const responses = await Promise.all([`/v1/workspaces/${session.workspaceId}`, `${base}/nodes:resolve?path=/`]
         .map(path => restoredApi!.get(path)));
       return responses.map(response => response.status());
     }, { message: 'Workspace and filesystem routes must both recover before reading restored bytes' }).toEqual([200, 200]);
     expect(await (await restoredApi.get(`${base}/nodes/${inlineFile.id}/content`)).body()).toEqual(inlineBytes);
     expect((await restoredApi.get(`/v1/filesystems/${deletedFilesystem}`)).status()).toBe(403);
-    expect((await (await restoredApi.get(deletedBase)).json()).status).toBe('deleted');
+    expect((await restoredApi.get(deletedBase)).status()).toBe(403);
+    expect(await (await restoredApi.get(`${personalBase}/nodes/${personal.id}/content`)).body()).toEqual(Buffer.from('private'));
     expect((await restoredControls.post('/control/users', { data: guestIdentity })).status()).toBe(201);
-    const guestToken = await mint(restoredControls, guestIdentity, { openlet_user_id: guest.userId });
+    const guestToken = await mint(restoredControls, guestIdentity, { openlet_account_id: guest.accountId });
     const revoked = await playwright.request.newContext({ baseURL: gateway, extraHTTPHeaders: { authorization: `Bearer ${guestToken}` } });
     try {
       expect((await revoked.get(`/v1/workspaces/${session.workspaceId}`)).status()).toBe(404);
-      expect((await revoked.get(base)).status()).toBe(403);
+      expect((await revoked.get(`${base}/nodes:resolve?path=/`)).status()).toBe(403);
     } finally { await revoked.dispose(); }
     const content = await restoredApi.get(`${base}/nodes/${original.node_id}/content`, { maxRedirects: 0 });
     expect(content.status()).toBe(307);
@@ -130,7 +132,7 @@ test('coordinated recovery restores isolated metadata, exact bytes and an interr
     const search = await restoredApi.post(`${base}/search`, { data: { query: 'ORBITAL-RECOVERY-7421' } });
     expect(search.status()).toBe(200);
     expect((await search.json()).items.map((item: { node_id: string }) => item.node_id)).toContain(document.node_id);
-    expect(BigInt((await (await restoredApi.get(`/v1/quota-buckets/${session.bucketId}`)).json()).bucket.used_bytes)).toBeGreaterThanOrEqual(BigInt(bytes.length + documentBytes.length));
+    expect(BigInt((await (await restoredApi.get(`/v1/filesystems/${session.filesystemId}`)).json()).used_bytes)).toBeGreaterThanOrEqual(BigInt(bytes.length + documentBytes.length));
   } finally {
     await restoredApi?.dispose();
     await restoredControls?.dispose();
@@ -144,14 +146,14 @@ test('coordinated recovery restores isolated metadata, exact bytes and an interr
     }
     await execute('python3', [command, 'resume', '--compose', compose, '--project', project, '--state', state], { env, timeout: 120_000 });
     expect((await controls.post('/control/users', { data: identity })).status()).toBe(201);
-    const token = await mint(controls, identity, { openlet_user_id: session.userId });
+    const token = await mint(controls, identity, { openlet_account_id: session.accountId });
     const resumed = await playwright.request.newContext({ baseURL: gateway, extraHTTPHeaders: { authorization: `Bearer ${token}` } });
     try {
       await expect.poll(async () => {
-        const responses = await Promise.all(['/v1/me/onboarding', `/v1/filesystems/${session.filesystemId}`]
+        const responses = await Promise.all(['/v1/me/onboarding', `/v1/workspaces/${session.workspaceId}`, `/v1/filesystems/${session.filesystemId}/scopes/${session.scopeId}/nodes:resolve?path=/`]
           .map(path => resumed.get(path)));
         return responses.map(response => response.status());
-      }, { message: 'Both owner routes must recover before the next project starts' }).toEqual([200, 200]);
+      }, { message: 'All owner routes must recover before the next project starts' }).toEqual([200, 200, 200]);
     } finally { await resumed.dispose(); }
     await rm(recovery, { recursive: true, force: true });
   }

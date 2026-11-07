@@ -10,24 +10,21 @@ from openlet_api.letfs.v1 import letfs_pb2_grpc as rpc
 request = json.load(sys.stdin)
 metadata = [
     ("authorization", "Bearer " + request["service_token"]),
-    ("x-openlet-user-id", request["actor_id"]),
+    ("x-openlet-account-id", request["actor_id"]),
 ]
 with grpc.insecure_channel("letfs:9090") as channel:
     client = rpc.FilesystemServiceStub(channel)
-    context = pb.PathContext(
-        mounts=[pb.Mount(path="/files", filesystem_id=request["filesystem_id"])]
-    )
     node = pb.GetNodeRequest(
         filesystem_id=request["filesystem_id"],
         node_id=request["node_id"],
-        path_context=context,
+        scope_id=request["scope_id"],
     )
     if request["allowed"]:
         result = client.GetNode(node, metadata=metadata, timeout=10)
         assert result.node.id == request["node_id"]
-        assert result.node.filesystem_id == request["filesystem_id"]
+        assert result.node.scope_id == request["scope_id"]
         # Internal listeners reject duplicate actor identity instead of choosing one.
-        forged = metadata + [("x-openlet-user-id", request["foreign_user_id"])]
+        forged = metadata + [("x-openlet-account-id", request["foreign_account_id"])]
         try:
             client.GetNode(node, metadata=forged, timeout=10)
         except grpc.RpcError as error:
@@ -46,8 +43,8 @@ with grpc.insecure_channel("letfs:9090") as channel:
             raise AssertionError("revoked caller retained native filesystem access")
     for call, payload in [
         (
-            rpc.StorageAdministrationServiceStub(channel).CreateBucket,
-            pb.CreateBucketRequest(),
+            rpc.StorageAdministrationServiceStub(channel).CreateFilesystem,
+            pb.CreateFilesystemRequest(),
         ),
         (rpc.IngestServiceStub(channel).PrepareParse, pb.PrepareParseRequest()),
     ]:

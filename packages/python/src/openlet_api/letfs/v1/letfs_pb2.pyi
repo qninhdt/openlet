@@ -22,26 +22,9 @@ class DeleteFilesystemResponse(_message.Message):
     completed: bool
     def __init__(self, completed: _Optional[bool] = ...) -> None: ...
 
-class CreateStorageRequest(_message.Message):
-    __slots__ = ("bucket", "filesystem")
-    BUCKET_FIELD_NUMBER: _ClassVar[int]
-    FILESYSTEM_FIELD_NUMBER: _ClassVar[int]
-    bucket: CreateBucketRequest
-    filesystem: CreateFilesystemRequest
-    def __init__(self, bucket: _Optional[_Union[CreateBucketRequest, _Mapping]] = ..., filesystem: _Optional[_Union[CreateFilesystemRequest, _Mapping]] = ...) -> None: ...
-
-class CreateStorageResponse(_message.Message):
-    __slots__ = ("bucket", "filesystem")
-    BUCKET_FIELD_NUMBER: _ClassVar[int]
-    FILESYSTEM_FIELD_NUMBER: _ClassVar[int]
-    bucket: Bucket
-    filesystem: Filesystem
-    def __init__(self, bucket: _Optional[_Union[Bucket, _Mapping]] = ..., filesystem: _Optional[_Union[Filesystem, _Mapping]] = ...) -> None: ...
-
 class Node(_message.Message):
-    __slots__ = ("id", "filesystem_id", "parent_id", "name", "kind", "revision", "size_bytes", "media_type", "created_at", "updated_at", "title", "description", "semantic_type", "context")
+    __slots__ = ("id", "parent_id", "name", "kind", "revision", "size_bytes", "media_type", "created_at", "updated_at", "title", "description", "semantic_type", "context", "scope_id")
     ID_FIELD_NUMBER: _ClassVar[int]
-    FILESYSTEM_ID_FIELD_NUMBER: _ClassVar[int]
     PARENT_ID_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     KIND_FIELD_NUMBER: _ClassVar[int]
@@ -54,8 +37,8 @@ class Node(_message.Message):
     DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
     SEMANTIC_TYPE_FIELD_NUMBER: _ClassVar[int]
     CONTEXT_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_ID_FIELD_NUMBER: _ClassVar[int]
     id: str
-    filesystem_id: str
     parent_id: str
     name: str
     kind: str
@@ -68,17 +51,18 @@ class Node(_message.Message):
     description: str
     semantic_type: str
     context: str
-    def __init__(self, id: _Optional[str] = ..., filesystem_id: _Optional[str] = ..., parent_id: _Optional[str] = ..., name: _Optional[str] = ..., kind: _Optional[str] = ..., revision: _Optional[int] = ..., size_bytes: _Optional[int] = ..., media_type: _Optional[str] = ..., created_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., updated_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., title: _Optional[str] = ..., description: _Optional[str] = ..., semantic_type: _Optional[str] = ..., context: _Optional[str] = ...) -> None: ...
+    scope_id: str
+    def __init__(self, id: _Optional[str] = ..., parent_id: _Optional[str] = ..., name: _Optional[str] = ..., kind: _Optional[str] = ..., revision: _Optional[int] = ..., size_bytes: _Optional[int] = ..., media_type: _Optional[str] = ..., created_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., updated_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., title: _Optional[str] = ..., description: _Optional[str] = ..., semantic_type: _Optional[str] = ..., context: _Optional[str] = ..., scope_id: _Optional[str] = ...) -> None: ...
 
 class GetNodeRequest(_message.Message):
-    __slots__ = ("filesystem_id", "node_id", "path_context")
+    __slots__ = ("filesystem_id", "node_id", "scope_id")
     FILESYSTEM_ID_FIELD_NUMBER: _ClassVar[int]
     NODE_ID_FIELD_NUMBER: _ClassVar[int]
-    PATH_CONTEXT_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_ID_FIELD_NUMBER: _ClassVar[int]
     filesystem_id: str
     node_id: str
-    path_context: PathContext
-    def __init__(self, filesystem_id: _Optional[str] = ..., node_id: _Optional[str] = ..., path_context: _Optional[_Union[PathContext, _Mapping]] = ...) -> None: ...
+    scope_id: str
+    def __init__(self, filesystem_id: _Optional[str] = ..., node_id: _Optional[str] = ..., scope_id: _Optional[str] = ...) -> None: ...
 
 class GetNodeResponse(_message.Message):
     __slots__ = ("node",)
@@ -87,16 +71,16 @@ class GetNodeResponse(_message.Message):
     def __init__(self, node: _Optional[_Union[Node, _Mapping]] = ...) -> None: ...
 
 class GetDownloadRequest(_message.Message):
-    __slots__ = ("filesystem_id", "node_id", "revision", "path_context")
+    __slots__ = ("filesystem_id", "node_id", "revision", "scope_id")
     FILESYSTEM_ID_FIELD_NUMBER: _ClassVar[int]
     NODE_ID_FIELD_NUMBER: _ClassVar[int]
     REVISION_FIELD_NUMBER: _ClassVar[int]
-    PATH_CONTEXT_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_ID_FIELD_NUMBER: _ClassVar[int]
     filesystem_id: str
     node_id: str
     revision: int
-    path_context: PathContext
-    def __init__(self, filesystem_id: _Optional[str] = ..., node_id: _Optional[str] = ..., revision: _Optional[int] = ..., path_context: _Optional[_Union[PathContext, _Mapping]] = ...) -> None: ...
+    scope_id: str
+    def __init__(self, filesystem_id: _Optional[str] = ..., node_id: _Optional[str] = ..., revision: _Optional[int] = ..., scope_id: _Optional[str] = ...) -> None: ...
 
 class Download(_message.Message):
     __slots__ = ("mime", "filename", "etag", "size_bytes", "inline_content", "signed_url")
@@ -121,14 +105,14 @@ class GetDownloadResponse(_message.Message):
     def __init__(self, download: _Optional[_Union[Download, _Mapping]] = ...) -> None: ...
 
 class StreamArchiveRequest(_message.Message):
-    __slots__ = ("filesystem_id", "node_id", "path_context")
+    __slots__ = ("filesystem_id", "node_id", "scope_id")
     FILESYSTEM_ID_FIELD_NUMBER: _ClassVar[int]
     NODE_ID_FIELD_NUMBER: _ClassVar[int]
-    PATH_CONTEXT_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_ID_FIELD_NUMBER: _ClassVar[int]
     filesystem_id: str
     node_id: str
-    path_context: PathContext
-    def __init__(self, filesystem_id: _Optional[str] = ..., node_id: _Optional[str] = ..., path_context: _Optional[_Union[PathContext, _Mapping]] = ...) -> None: ...
+    scope_id: str
+    def __init__(self, filesystem_id: _Optional[str] = ..., node_id: _Optional[str] = ..., scope_id: _Optional[str] = ...) -> None: ...
 
 class ArchiveMetadata(_message.Message):
     __slots__ = ("filename", "mime")
@@ -190,133 +174,35 @@ class PrepareParseResponse(_message.Message):
     complete: ParseComplete
     def __init__(self, input: _Optional[_Union[ParseInput, _Mapping]] = ..., complete: _Optional[_Union[ParseComplete, _Mapping]] = ...) -> None: ...
 
-class CreateBucketRequest(_message.Message):
-    __slots__ = ("bucket_id", "idempotency_key", "limit_bytes")
-    BUCKET_ID_FIELD_NUMBER: _ClassVar[int]
+class CreateFilesystemRequest(_message.Message):
+    __slots__ = ("filesystem_id", "idempotency_key", "limit_bytes")
+    FILESYSTEM_ID_FIELD_NUMBER: _ClassVar[int]
     IDEMPOTENCY_KEY_FIELD_NUMBER: _ClassVar[int]
     LIMIT_BYTES_FIELD_NUMBER: _ClassVar[int]
-    bucket_id: str
+    filesystem_id: str
     idempotency_key: str
     limit_bytes: int
-    def __init__(self, bucket_id: _Optional[str] = ..., idempotency_key: _Optional[str] = ..., limit_bytes: _Optional[int] = ...) -> None: ...
+    def __init__(self, filesystem_id: _Optional[str] = ..., idempotency_key: _Optional[str] = ..., limit_bytes: _Optional[int] = ...) -> None: ...
 
-class Bucket(_message.Message):
-    __slots__ = ("id", "limit_bytes", "used_bytes", "state")
+class Filesystem(_message.Message):
+    __slots__ = ("id", "limit_bytes", "used_bytes", "node_count", "state")
     ID_FIELD_NUMBER: _ClassVar[int]
     LIMIT_BYTES_FIELD_NUMBER: _ClassVar[int]
     USED_BYTES_FIELD_NUMBER: _ClassVar[int]
+    NODE_COUNT_FIELD_NUMBER: _ClassVar[int]
     STATE_FIELD_NUMBER: _ClassVar[int]
     id: str
     limit_bytes: int
     used_bytes: int
+    node_count: int
     state: str
-    def __init__(self, id: _Optional[str] = ..., limit_bytes: _Optional[int] = ..., used_bytes: _Optional[int] = ..., state: _Optional[str] = ...) -> None: ...
-
-class CreateBucketResponse(_message.Message):
-    __slots__ = ("bucket",)
-    BUCKET_FIELD_NUMBER: _ClassVar[int]
-    bucket: Bucket
-    def __init__(self, bucket: _Optional[_Union[Bucket, _Mapping]] = ...) -> None: ...
-
-class CreateFilesystemRequest(_message.Message):
-    __slots__ = ("filesystem_id", "bucket_id", "idempotency_key", "root_name")
-    FILESYSTEM_ID_FIELD_NUMBER: _ClassVar[int]
-    BUCKET_ID_FIELD_NUMBER: _ClassVar[int]
-    IDEMPOTENCY_KEY_FIELD_NUMBER: _ClassVar[int]
-    ROOT_NAME_FIELD_NUMBER: _ClassVar[int]
-    filesystem_id: str
-    bucket_id: str
-    idempotency_key: str
-    root_name: str
-    def __init__(self, filesystem_id: _Optional[str] = ..., bucket_id: _Optional[str] = ..., idempotency_key: _Optional[str] = ..., root_name: _Optional[str] = ...) -> None: ...
-
-class Filesystem(_message.Message):
-    __slots__ = ("id", "bucket_id", "root_id", "state")
-    ID_FIELD_NUMBER: _ClassVar[int]
-    BUCKET_ID_FIELD_NUMBER: _ClassVar[int]
-    ROOT_ID_FIELD_NUMBER: _ClassVar[int]
-    STATE_FIELD_NUMBER: _ClassVar[int]
-    id: str
-    bucket_id: str
-    root_id: str
-    state: str
-    def __init__(self, id: _Optional[str] = ..., bucket_id: _Optional[str] = ..., root_id: _Optional[str] = ..., state: _Optional[str] = ...) -> None: ...
+    def __init__(self, id: _Optional[str] = ..., limit_bytes: _Optional[int] = ..., used_bytes: _Optional[int] = ..., node_count: _Optional[int] = ..., state: _Optional[str] = ...) -> None: ...
 
 class CreateFilesystemResponse(_message.Message):
     __slots__ = ("filesystem",)
     FILESYSTEM_FIELD_NUMBER: _ClassVar[int]
     filesystem: Filesystem
     def __init__(self, filesystem: _Optional[_Union[Filesystem, _Mapping]] = ...) -> None: ...
-
-class FreezeBucketRequest(_message.Message):
-    __slots__ = ("bucket_id", "idempotency_key")
-    BUCKET_ID_FIELD_NUMBER: _ClassVar[int]
-    IDEMPOTENCY_KEY_FIELD_NUMBER: _ClassVar[int]
-    bucket_id: str
-    idempotency_key: str
-    def __init__(self, bucket_id: _Optional[str] = ..., idempotency_key: _Optional[str] = ...) -> None: ...
-
-class FreezeBucketResponse(_message.Message):
-    __slots__ = ("bucket",)
-    BUCKET_FIELD_NUMBER: _ClassVar[int]
-    bucket: Bucket
-    def __init__(self, bucket: _Optional[_Union[Bucket, _Mapping]] = ...) -> None: ...
-
-class ListBucketFilesystemsRequest(_message.Message):
-    __slots__ = ("bucket_id", "after_id")
-    BUCKET_ID_FIELD_NUMBER: _ClassVar[int]
-    AFTER_ID_FIELD_NUMBER: _ClassVar[int]
-    bucket_id: str
-    after_id: str
-    def __init__(self, bucket_id: _Optional[str] = ..., after_id: _Optional[str] = ...) -> None: ...
-
-class ListBucketFilesystemsResponse(_message.Message):
-    __slots__ = ("filesystem_ids",)
-    FILESYSTEM_IDS_FIELD_NUMBER: _ClassVar[int]
-    filesystem_ids: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, filesystem_ids: _Optional[_Iterable[str]] = ...) -> None: ...
-
-class CompleteBucketDeletionRequest(_message.Message):
-    __slots__ = ("bucket_id", "idempotency_key")
-    BUCKET_ID_FIELD_NUMBER: _ClassVar[int]
-    IDEMPOTENCY_KEY_FIELD_NUMBER: _ClassVar[int]
-    bucket_id: str
-    idempotency_key: str
-    def __init__(self, bucket_id: _Optional[str] = ..., idempotency_key: _Optional[str] = ...) -> None: ...
-
-class CompleteBucketDeletionResponse(_message.Message):
-    __slots__ = ("bucket",)
-    BUCKET_FIELD_NUMBER: _ClassVar[int]
-    bucket: Bucket
-    def __init__(self, bucket: _Optional[_Union[Bucket, _Mapping]] = ...) -> None: ...
-
-class ReleaseProvisioningRequest(_message.Message):
-    __slots__ = ("bucket_id", "filesystem_id", "root_id")
-    BUCKET_ID_FIELD_NUMBER: _ClassVar[int]
-    FILESYSTEM_ID_FIELD_NUMBER: _ClassVar[int]
-    ROOT_ID_FIELD_NUMBER: _ClassVar[int]
-    bucket_id: str
-    filesystem_id: str
-    root_id: str
-    def __init__(self, bucket_id: _Optional[str] = ..., filesystem_id: _Optional[str] = ..., root_id: _Optional[str] = ...) -> None: ...
-
-class ReleaseProvisioningResponse(_message.Message):
-    __slots__ = ()
-    def __init__(self) -> None: ...
-
-class Mount(_message.Message):
-    __slots__ = ("path", "filesystem_id")
-    PATH_FIELD_NUMBER: _ClassVar[int]
-    FILESYSTEM_ID_FIELD_NUMBER: _ClassVar[int]
-    path: str
-    filesystem_id: str
-    def __init__(self, path: _Optional[str] = ..., filesystem_id: _Optional[str] = ...) -> None: ...
-
-class PathContext(_message.Message):
-    __slots__ = ("mounts",)
-    MOUNTS_FIELD_NUMBER: _ClassVar[int]
-    mounts: _containers.RepeatedCompositeFieldContainer[Mount]
-    def __init__(self, mounts: _Optional[_Iterable[_Union[Mount, _Mapping]]] = ...) -> None: ...
 
 class PathLocator(_message.Message):
     __slots__ = ("path", "cwd_id")
@@ -350,32 +236,6 @@ class GetFilesystemResponse(_message.Message):
     filesystem: Filesystem
     def __init__(self, filesystem: _Optional[_Union[Filesystem, _Mapping]] = ...) -> None: ...
 
-class GetBucketUsageRequest(_message.Message):
-    __slots__ = ("bucket_id",)
-    BUCKET_ID_FIELD_NUMBER: _ClassVar[int]
-    bucket_id: str
-    def __init__(self, bucket_id: _Optional[str] = ...) -> None: ...
-
-class UploadLimits(_message.Message):
-    __slots__ = ("inline_limit_bytes", "max_file_bytes", "multipart_threshold_bytes", "multipart_part_bytes")
-    INLINE_LIMIT_BYTES_FIELD_NUMBER: _ClassVar[int]
-    MAX_FILE_BYTES_FIELD_NUMBER: _ClassVar[int]
-    MULTIPART_THRESHOLD_BYTES_FIELD_NUMBER: _ClassVar[int]
-    MULTIPART_PART_BYTES_FIELD_NUMBER: _ClassVar[int]
-    inline_limit_bytes: int
-    max_file_bytes: int
-    multipart_threshold_bytes: int
-    multipart_part_bytes: int
-    def __init__(self, inline_limit_bytes: _Optional[int] = ..., max_file_bytes: _Optional[int] = ..., multipart_threshold_bytes: _Optional[int] = ..., multipart_part_bytes: _Optional[int] = ...) -> None: ...
-
-class GetBucketUsageResponse(_message.Message):
-    __slots__ = ("bucket", "upload_limits")
-    BUCKET_FIELD_NUMBER: _ClassVar[int]
-    UPLOAD_LIMITS_FIELD_NUMBER: _ClassVar[int]
-    bucket: Bucket
-    upload_limits: UploadLimits
-    def __init__(self, bucket: _Optional[_Union[Bucket, _Mapping]] = ..., upload_limits: _Optional[_Union[UploadLimits, _Mapping]] = ...) -> None: ...
-
 class DirectoryCreation(_message.Message):
     __slots__ = ("parent", "name")
     PARENT_FIELD_NUMBER: _ClassVar[int]
@@ -397,18 +257,18 @@ class InlineFileCreation(_message.Message):
     def __init__(self, parent: _Optional[_Union[Locator, _Mapping]] = ..., name: _Optional[str] = ..., content: _Optional[bytes] = ..., media_type: _Optional[str] = ...) -> None: ...
 
 class CreateNodeRequest(_message.Message):
-    __slots__ = ("filesystem_id", "idempotency_key", "path_context", "directory", "file")
+    __slots__ = ("filesystem_id", "idempotency_key", "directory", "file", "scope_id")
     FILESYSTEM_ID_FIELD_NUMBER: _ClassVar[int]
     IDEMPOTENCY_KEY_FIELD_NUMBER: _ClassVar[int]
-    PATH_CONTEXT_FIELD_NUMBER: _ClassVar[int]
     DIRECTORY_FIELD_NUMBER: _ClassVar[int]
     FILE_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_ID_FIELD_NUMBER: _ClassVar[int]
     filesystem_id: str
     idempotency_key: str
-    path_context: PathContext
     directory: DirectoryCreation
     file: InlineFileCreation
-    def __init__(self, filesystem_id: _Optional[str] = ..., idempotency_key: _Optional[str] = ..., path_context: _Optional[_Union[PathContext, _Mapping]] = ..., directory: _Optional[_Union[DirectoryCreation, _Mapping]] = ..., file: _Optional[_Union[InlineFileCreation, _Mapping]] = ...) -> None: ...
+    scope_id: str
+    def __init__(self, filesystem_id: _Optional[str] = ..., idempotency_key: _Optional[str] = ..., directory: _Optional[_Union[DirectoryCreation, _Mapping]] = ..., file: _Optional[_Union[InlineFileCreation, _Mapping]] = ..., scope_id: _Optional[str] = ...) -> None: ...
 
 class CreateNodeResponse(_message.Message):
     __slots__ = ("node",)
@@ -417,18 +277,18 @@ class CreateNodeResponse(_message.Message):
     def __init__(self, node: _Optional[_Union[Node, _Mapping]] = ...) -> None: ...
 
 class ListNodesRequest(_message.Message):
-    __slots__ = ("filesystem_id", "parent", "path_context", "limit", "cursor")
+    __slots__ = ("filesystem_id", "parent", "limit", "cursor", "scope_id")
     FILESYSTEM_ID_FIELD_NUMBER: _ClassVar[int]
     PARENT_FIELD_NUMBER: _ClassVar[int]
-    PATH_CONTEXT_FIELD_NUMBER: _ClassVar[int]
     LIMIT_FIELD_NUMBER: _ClassVar[int]
     CURSOR_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_ID_FIELD_NUMBER: _ClassVar[int]
     filesystem_id: str
     parent: Locator
-    path_context: PathContext
     limit: int
     cursor: str
-    def __init__(self, filesystem_id: _Optional[str] = ..., parent: _Optional[_Union[Locator, _Mapping]] = ..., path_context: _Optional[_Union[PathContext, _Mapping]] = ..., limit: _Optional[int] = ..., cursor: _Optional[str] = ...) -> None: ...
+    scope_id: str
+    def __init__(self, filesystem_id: _Optional[str] = ..., parent: _Optional[_Union[Locator, _Mapping]] = ..., limit: _Optional[int] = ..., cursor: _Optional[str] = ..., scope_id: _Optional[str] = ...) -> None: ...
 
 class ListNodesResponse(_message.Message):
     __slots__ = ("items", "next_cursor")
@@ -439,14 +299,14 @@ class ListNodesResponse(_message.Message):
     def __init__(self, items: _Optional[_Iterable[_Union[Node, _Mapping]]] = ..., next_cursor: _Optional[str] = ...) -> None: ...
 
 class ResolveNodeRequest(_message.Message):
-    __slots__ = ("filesystem_id", "locator", "path_context")
+    __slots__ = ("filesystem_id", "locator", "scope_id")
     FILESYSTEM_ID_FIELD_NUMBER: _ClassVar[int]
     LOCATOR_FIELD_NUMBER: _ClassVar[int]
-    PATH_CONTEXT_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_ID_FIELD_NUMBER: _ClassVar[int]
     filesystem_id: str
     locator: Locator
-    path_context: PathContext
-    def __init__(self, filesystem_id: _Optional[str] = ..., locator: _Optional[_Union[Locator, _Mapping]] = ..., path_context: _Optional[_Union[PathContext, _Mapping]] = ...) -> None: ...
+    scope_id: str
+    def __init__(self, filesystem_id: _Optional[str] = ..., locator: _Optional[_Union[Locator, _Mapping]] = ..., scope_id: _Optional[str] = ...) -> None: ...
 
 class ResolveNodeResponse(_message.Message):
     __slots__ = ("node",)
@@ -455,14 +315,14 @@ class ResolveNodeResponse(_message.Message):
     def __init__(self, node: _Optional[_Union[Node, _Mapping]] = ...) -> None: ...
 
 class BatchStatRequest(_message.Message):
-    __slots__ = ("filesystem_id", "locators", "path_context")
+    __slots__ = ("filesystem_id", "locators", "scope_id")
     FILESYSTEM_ID_FIELD_NUMBER: _ClassVar[int]
     LOCATORS_FIELD_NUMBER: _ClassVar[int]
-    PATH_CONTEXT_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_ID_FIELD_NUMBER: _ClassVar[int]
     filesystem_id: str
     locators: _containers.RepeatedCompositeFieldContainer[Locator]
-    path_context: PathContext
-    def __init__(self, filesystem_id: _Optional[str] = ..., locators: _Optional[_Iterable[_Union[Locator, _Mapping]]] = ..., path_context: _Optional[_Union[PathContext, _Mapping]] = ...) -> None: ...
+    scope_id: str
+    def __init__(self, filesystem_id: _Optional[str] = ..., locators: _Optional[_Iterable[_Union[Locator, _Mapping]]] = ..., scope_id: _Optional[str] = ...) -> None: ...
 
 class BatchStatResponse(_message.Message):
     __slots__ = ("items",)
@@ -471,20 +331,20 @@ class BatchStatResponse(_message.Message):
     def __init__(self, items: _Optional[_Iterable[_Union[Node, _Mapping]]] = ...) -> None: ...
 
 class UpdateNodeRequest(_message.Message):
-    __slots__ = ("filesystem_id", "locator", "path_context", "revision", "name", "parent")
+    __slots__ = ("filesystem_id", "locator", "revision", "name", "parent", "scope_id")
     FILESYSTEM_ID_FIELD_NUMBER: _ClassVar[int]
     LOCATOR_FIELD_NUMBER: _ClassVar[int]
-    PATH_CONTEXT_FIELD_NUMBER: _ClassVar[int]
     REVISION_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     PARENT_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_ID_FIELD_NUMBER: _ClassVar[int]
     filesystem_id: str
     locator: Locator
-    path_context: PathContext
     revision: int
     name: str
     parent: Locator
-    def __init__(self, filesystem_id: _Optional[str] = ..., locator: _Optional[_Union[Locator, _Mapping]] = ..., path_context: _Optional[_Union[PathContext, _Mapping]] = ..., revision: _Optional[int] = ..., name: _Optional[str] = ..., parent: _Optional[_Union[Locator, _Mapping]] = ...) -> None: ...
+    scope_id: str
+    def __init__(self, filesystem_id: _Optional[str] = ..., locator: _Optional[_Union[Locator, _Mapping]] = ..., revision: _Optional[int] = ..., name: _Optional[str] = ..., parent: _Optional[_Union[Locator, _Mapping]] = ..., scope_id: _Optional[str] = ...) -> None: ...
 
 class UpdateNodeResponse(_message.Message):
     __slots__ = ("node",)
@@ -493,20 +353,20 @@ class UpdateNodeResponse(_message.Message):
     def __init__(self, node: _Optional[_Union[Node, _Mapping]] = ...) -> None: ...
 
 class ReplaceContentRequest(_message.Message):
-    __slots__ = ("filesystem_id", "locator", "path_context", "revision", "content", "media_type")
+    __slots__ = ("filesystem_id", "locator", "revision", "content", "media_type", "scope_id")
     FILESYSTEM_ID_FIELD_NUMBER: _ClassVar[int]
     LOCATOR_FIELD_NUMBER: _ClassVar[int]
-    PATH_CONTEXT_FIELD_NUMBER: _ClassVar[int]
     REVISION_FIELD_NUMBER: _ClassVar[int]
     CONTENT_FIELD_NUMBER: _ClassVar[int]
     MEDIA_TYPE_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_ID_FIELD_NUMBER: _ClassVar[int]
     filesystem_id: str
     locator: Locator
-    path_context: PathContext
     revision: int
     content: bytes
     media_type: str
-    def __init__(self, filesystem_id: _Optional[str] = ..., locator: _Optional[_Union[Locator, _Mapping]] = ..., path_context: _Optional[_Union[PathContext, _Mapping]] = ..., revision: _Optional[int] = ..., content: _Optional[bytes] = ..., media_type: _Optional[str] = ...) -> None: ...
+    scope_id: str
+    def __init__(self, filesystem_id: _Optional[str] = ..., locator: _Optional[_Union[Locator, _Mapping]] = ..., revision: _Optional[int] = ..., content: _Optional[bytes] = ..., media_type: _Optional[str] = ..., scope_id: _Optional[str] = ...) -> None: ...
 
 class ReplaceContentResponse(_message.Message):
     __slots__ = ("node",)
@@ -515,54 +375,34 @@ class ReplaceContentResponse(_message.Message):
     def __init__(self, node: _Optional[_Union[Node, _Mapping]] = ...) -> None: ...
 
 class Copy(_message.Message):
-    __slots__ = ("id", "destination_root_id", "status", "committed_nodes", "committed_bytes", "error_code")
+    __slots__ = ("id", "destination_root_id")
     ID_FIELD_NUMBER: _ClassVar[int]
     DESTINATION_ROOT_ID_FIELD_NUMBER: _ClassVar[int]
-    STATUS_FIELD_NUMBER: _ClassVar[int]
-    COMMITTED_NODES_FIELD_NUMBER: _ClassVar[int]
-    COMMITTED_BYTES_FIELD_NUMBER: _ClassVar[int]
-    ERROR_CODE_FIELD_NUMBER: _ClassVar[int]
     id: str
     destination_root_id: str
-    status: str
-    committed_nodes: int
-    committed_bytes: int
-    error_code: str
-    def __init__(self, id: _Optional[str] = ..., destination_root_id: _Optional[str] = ..., status: _Optional[str] = ..., committed_nodes: _Optional[int] = ..., committed_bytes: _Optional[int] = ..., error_code: _Optional[str] = ...) -> None: ...
+    def __init__(self, id: _Optional[str] = ..., destination_root_id: _Optional[str] = ...) -> None: ...
 
 class CreateCopyRequest(_message.Message):
-    __slots__ = ("filesystem_id", "source_id", "parent_id", "name", "revision", "idempotency_key", "path_context")
+    __slots__ = ("destination_scope_id", "filesystem_id", "source_id", "parent_id", "name", "revision", "idempotency_key", "scope_id")
+    DESTINATION_SCOPE_ID_FIELD_NUMBER: _ClassVar[int]
     FILESYSTEM_ID_FIELD_NUMBER: _ClassVar[int]
     SOURCE_ID_FIELD_NUMBER: _ClassVar[int]
     PARENT_ID_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
     REVISION_FIELD_NUMBER: _ClassVar[int]
     IDEMPOTENCY_KEY_FIELD_NUMBER: _ClassVar[int]
-    PATH_CONTEXT_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_ID_FIELD_NUMBER: _ClassVar[int]
+    destination_scope_id: str
     filesystem_id: str
     source_id: str
     parent_id: str
     name: str
     revision: int
     idempotency_key: str
-    path_context: PathContext
-    def __init__(self, filesystem_id: _Optional[str] = ..., source_id: _Optional[str] = ..., parent_id: _Optional[str] = ..., name: _Optional[str] = ..., revision: _Optional[int] = ..., idempotency_key: _Optional[str] = ..., path_context: _Optional[_Union[PathContext, _Mapping]] = ...) -> None: ...
+    scope_id: str
+    def __init__(self, destination_scope_id: _Optional[str] = ..., filesystem_id: _Optional[str] = ..., source_id: _Optional[str] = ..., parent_id: _Optional[str] = ..., name: _Optional[str] = ..., revision: _Optional[int] = ..., idempotency_key: _Optional[str] = ..., scope_id: _Optional[str] = ...) -> None: ...
 
 class CreateCopyResponse(_message.Message):
-    __slots__ = ("copy",)
-    COPY_FIELD_NUMBER: _ClassVar[int]
-    copy: Copy
-    def __init__(self, copy: _Optional[_Union[Copy, _Mapping]] = ...) -> None: ...
-
-class GetCopyRequest(_message.Message):
-    __slots__ = ("filesystem_id", "copy_id")
-    FILESYSTEM_ID_FIELD_NUMBER: _ClassVar[int]
-    COPY_ID_FIELD_NUMBER: _ClassVar[int]
-    filesystem_id: str
-    copy_id: str
-    def __init__(self, filesystem_id: _Optional[str] = ..., copy_id: _Optional[str] = ...) -> None: ...
-
-class GetCopyResponse(_message.Message):
     __slots__ = ("copy",)
     COPY_FIELD_NUMBER: _ClassVar[int]
     copy: Copy
@@ -581,14 +421,14 @@ class Processing(_message.Message):
     def __init__(self, desired_generation: _Optional[int] = ..., publication_status: _Optional[str] = ..., error_code: _Optional[str] = ..., file_id: _Optional[str] = ...) -> None: ...
 
 class GetProcessingRequest(_message.Message):
-    __slots__ = ("filesystem_id", "node_id", "path_context")
+    __slots__ = ("filesystem_id", "node_id", "scope_id")
     FILESYSTEM_ID_FIELD_NUMBER: _ClassVar[int]
     NODE_ID_FIELD_NUMBER: _ClassVar[int]
-    PATH_CONTEXT_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_ID_FIELD_NUMBER: _ClassVar[int]
     filesystem_id: str
     node_id: str
-    path_context: PathContext
-    def __init__(self, filesystem_id: _Optional[str] = ..., node_id: _Optional[str] = ..., path_context: _Optional[_Union[PathContext, _Mapping]] = ...) -> None: ...
+    scope_id: str
+    def __init__(self, filesystem_id: _Optional[str] = ..., node_id: _Optional[str] = ..., scope_id: _Optional[str] = ...) -> None: ...
 
 class GetProcessingResponse(_message.Message):
     __slots__ = ("processing",)
@@ -597,16 +437,16 @@ class GetProcessingResponse(_message.Message):
     def __init__(self, processing: _Optional[_Union[Processing, _Mapping]] = ...) -> None: ...
 
 class ReprocessNodeRequest(_message.Message):
-    __slots__ = ("filesystem_id", "node_id", "idempotency_key", "path_context")
+    __slots__ = ("filesystem_id", "node_id", "idempotency_key", "scope_id")
     FILESYSTEM_ID_FIELD_NUMBER: _ClassVar[int]
     NODE_ID_FIELD_NUMBER: _ClassVar[int]
     IDEMPOTENCY_KEY_FIELD_NUMBER: _ClassVar[int]
-    PATH_CONTEXT_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_ID_FIELD_NUMBER: _ClassVar[int]
     filesystem_id: str
     node_id: str
     idempotency_key: str
-    path_context: PathContext
-    def __init__(self, filesystem_id: _Optional[str] = ..., node_id: _Optional[str] = ..., idempotency_key: _Optional[str] = ..., path_context: _Optional[_Union[PathContext, _Mapping]] = ...) -> None: ...
+    scope_id: str
+    def __init__(self, filesystem_id: _Optional[str] = ..., node_id: _Optional[str] = ..., idempotency_key: _Optional[str] = ..., scope_id: _Optional[str] = ...) -> None: ...
 
 class ReprocessNodeResponse(_message.Message):
     __slots__ = ("file_id", "generation", "workflow_id")
@@ -637,16 +477,16 @@ class TrashEntry(_message.Message):
     def __init__(self, id: _Optional[str] = ..., node_id: _Optional[str] = ..., parent_id: _Optional[str] = ..., name: _Optional[str] = ..., actor_id: _Optional[str] = ..., status: _Optional[str] = ..., created_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
 class TrashNodeRequest(_message.Message):
-    __slots__ = ("filesystem_id", "locator", "path_context", "revision")
+    __slots__ = ("filesystem_id", "locator", "revision", "scope_id")
     FILESYSTEM_ID_FIELD_NUMBER: _ClassVar[int]
     LOCATOR_FIELD_NUMBER: _ClassVar[int]
-    PATH_CONTEXT_FIELD_NUMBER: _ClassVar[int]
     REVISION_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_ID_FIELD_NUMBER: _ClassVar[int]
     filesystem_id: str
     locator: Locator
-    path_context: PathContext
     revision: int
-    def __init__(self, filesystem_id: _Optional[str] = ..., locator: _Optional[_Union[Locator, _Mapping]] = ..., path_context: _Optional[_Union[PathContext, _Mapping]] = ..., revision: _Optional[int] = ...) -> None: ...
+    scope_id: str
+    def __init__(self, filesystem_id: _Optional[str] = ..., locator: _Optional[_Union[Locator, _Mapping]] = ..., revision: _Optional[int] = ..., scope_id: _Optional[str] = ...) -> None: ...
 
 class TrashNodeResponse(_message.Message):
     __slots__ = ("entry",)
@@ -655,14 +495,16 @@ class TrashNodeResponse(_message.Message):
     def __init__(self, entry: _Optional[_Union[TrashEntry, _Mapping]] = ...) -> None: ...
 
 class ListTrashRequest(_message.Message):
-    __slots__ = ("filesystem_id", "limit", "cursor")
+    __slots__ = ("filesystem_id", "limit", "cursor", "scope_id")
     FILESYSTEM_ID_FIELD_NUMBER: _ClassVar[int]
     LIMIT_FIELD_NUMBER: _ClassVar[int]
     CURSOR_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_ID_FIELD_NUMBER: _ClassVar[int]
     filesystem_id: str
     limit: int
     cursor: str
-    def __init__(self, filesystem_id: _Optional[str] = ..., limit: _Optional[int] = ..., cursor: _Optional[str] = ...) -> None: ...
+    scope_id: str
+    def __init__(self, filesystem_id: _Optional[str] = ..., limit: _Optional[int] = ..., cursor: _Optional[str] = ..., scope_id: _Optional[str] = ...) -> None: ...
 
 class ListTrashResponse(_message.Message):
     __slots__ = ("items", "next_cursor")
@@ -673,12 +515,14 @@ class ListTrashResponse(_message.Message):
     def __init__(self, items: _Optional[_Iterable[_Union[TrashEntry, _Mapping]]] = ..., next_cursor: _Optional[str] = ...) -> None: ...
 
 class GetTrashRequest(_message.Message):
-    __slots__ = ("filesystem_id", "entry_id")
+    __slots__ = ("filesystem_id", "entry_id", "scope_id")
     FILESYSTEM_ID_FIELD_NUMBER: _ClassVar[int]
     ENTRY_ID_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_ID_FIELD_NUMBER: _ClassVar[int]
     filesystem_id: str
     entry_id: str
-    def __init__(self, filesystem_id: _Optional[str] = ..., entry_id: _Optional[str] = ...) -> None: ...
+    scope_id: str
+    def __init__(self, filesystem_id: _Optional[str] = ..., entry_id: _Optional[str] = ..., scope_id: _Optional[str] = ...) -> None: ...
 
 class GetTrashResponse(_message.Message):
     __slots__ = ("entry",)
@@ -687,12 +531,14 @@ class GetTrashResponse(_message.Message):
     def __init__(self, entry: _Optional[_Union[TrashEntry, _Mapping]] = ...) -> None: ...
 
 class RestoreTrashRequest(_message.Message):
-    __slots__ = ("filesystem_id", "entry_id")
+    __slots__ = ("filesystem_id", "entry_id", "scope_id")
     FILESYSTEM_ID_FIELD_NUMBER: _ClassVar[int]
     ENTRY_ID_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_ID_FIELD_NUMBER: _ClassVar[int]
     filesystem_id: str
     entry_id: str
-    def __init__(self, filesystem_id: _Optional[str] = ..., entry_id: _Optional[str] = ...) -> None: ...
+    scope_id: str
+    def __init__(self, filesystem_id: _Optional[str] = ..., entry_id: _Optional[str] = ..., scope_id: _Optional[str] = ...) -> None: ...
 
 class RestoreTrashResponse(_message.Message):
     __slots__ = ("node",)
@@ -701,12 +547,14 @@ class RestoreTrashResponse(_message.Message):
     def __init__(self, node: _Optional[_Union[Node, _Mapping]] = ...) -> None: ...
 
 class PurgeTrashRequest(_message.Message):
-    __slots__ = ("filesystem_id", "entry_id")
+    __slots__ = ("filesystem_id", "entry_id", "scope_id")
     FILESYSTEM_ID_FIELD_NUMBER: _ClassVar[int]
     ENTRY_ID_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_ID_FIELD_NUMBER: _ClassVar[int]
     filesystem_id: str
     entry_id: str
-    def __init__(self, filesystem_id: _Optional[str] = ..., entry_id: _Optional[str] = ...) -> None: ...
+    scope_id: str
+    def __init__(self, filesystem_id: _Optional[str] = ..., entry_id: _Optional[str] = ..., scope_id: _Optional[str] = ...) -> None: ...
 
 class PurgeTrashResponse(_message.Message):
     __slots__ = ("entry",)
@@ -794,24 +642,24 @@ class Upload(_message.Message):
     def __init__(self, id: _Optional[str] = ..., status: _Optional[str] = ..., transport: _Optional[str] = ..., expires_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., size_bytes: _Optional[int] = ..., part_size_bytes: _Optional[int] = ..., part_count: _Optional[int] = ..., transfer: _Optional[_Union[SignedUpload, _Mapping]] = ..., publication: _Optional[_Union[UploadPublication, _Mapping]] = ..., receipt: _Optional[_Union[UploadReceipt, _Mapping]] = ...) -> None: ...
 
 class CreateUploadRequest(_message.Message):
-    __slots__ = ("filesystem_id", "idempotency_key", "path_context", "size_bytes", "media_type", "content_md5", "destination", "replacement")
+    __slots__ = ("filesystem_id", "idempotency_key", "size_bytes", "media_type", "content_md5", "destination", "replacement", "scope_id")
     FILESYSTEM_ID_FIELD_NUMBER: _ClassVar[int]
     IDEMPOTENCY_KEY_FIELD_NUMBER: _ClassVar[int]
-    PATH_CONTEXT_FIELD_NUMBER: _ClassVar[int]
     SIZE_BYTES_FIELD_NUMBER: _ClassVar[int]
     MEDIA_TYPE_FIELD_NUMBER: _ClassVar[int]
     CONTENT_MD5_FIELD_NUMBER: _ClassVar[int]
     DESTINATION_FIELD_NUMBER: _ClassVar[int]
     REPLACEMENT_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_ID_FIELD_NUMBER: _ClassVar[int]
     filesystem_id: str
     idempotency_key: str
-    path_context: PathContext
     size_bytes: int
     media_type: str
     content_md5: str
     destination: UploadDestination
     replacement: UploadReplacement
-    def __init__(self, filesystem_id: _Optional[str] = ..., idempotency_key: _Optional[str] = ..., path_context: _Optional[_Union[PathContext, _Mapping]] = ..., size_bytes: _Optional[int] = ..., media_type: _Optional[str] = ..., content_md5: _Optional[str] = ..., destination: _Optional[_Union[UploadDestination, _Mapping]] = ..., replacement: _Optional[_Union[UploadReplacement, _Mapping]] = ...) -> None: ...
+    scope_id: str
+    def __init__(self, filesystem_id: _Optional[str] = ..., idempotency_key: _Optional[str] = ..., size_bytes: _Optional[int] = ..., media_type: _Optional[str] = ..., content_md5: _Optional[str] = ..., destination: _Optional[_Union[UploadDestination, _Mapping]] = ..., replacement: _Optional[_Union[UploadReplacement, _Mapping]] = ..., scope_id: _Optional[str] = ...) -> None: ...
 
 class CreateUploadResponse(_message.Message):
     __slots__ = ("upload",)
@@ -820,12 +668,14 @@ class CreateUploadResponse(_message.Message):
     def __init__(self, upload: _Optional[_Union[Upload, _Mapping]] = ...) -> None: ...
 
 class GetUploadRequest(_message.Message):
-    __slots__ = ("filesystem_id", "upload_id")
+    __slots__ = ("filesystem_id", "upload_id", "scope_id")
     FILESYSTEM_ID_FIELD_NUMBER: _ClassVar[int]
     UPLOAD_ID_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_ID_FIELD_NUMBER: _ClassVar[int]
     filesystem_id: str
     upload_id: str
-    def __init__(self, filesystem_id: _Optional[str] = ..., upload_id: _Optional[str] = ...) -> None: ...
+    scope_id: str
+    def __init__(self, filesystem_id: _Optional[str] = ..., upload_id: _Optional[str] = ..., scope_id: _Optional[str] = ...) -> None: ...
 
 class GetUploadResponse(_message.Message):
     __slots__ = ("upload",)
@@ -834,14 +684,16 @@ class GetUploadResponse(_message.Message):
     def __init__(self, upload: _Optional[_Union[Upload, _Mapping]] = ...) -> None: ...
 
 class GetUploadPartsRequest(_message.Message):
-    __slots__ = ("filesystem_id", "upload_id", "numbers")
+    __slots__ = ("filesystem_id", "upload_id", "numbers", "scope_id")
     FILESYSTEM_ID_FIELD_NUMBER: _ClassVar[int]
     UPLOAD_ID_FIELD_NUMBER: _ClassVar[int]
     NUMBERS_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_ID_FIELD_NUMBER: _ClassVar[int]
     filesystem_id: str
     upload_id: str
     numbers: _containers.RepeatedScalarFieldContainer[int]
-    def __init__(self, filesystem_id: _Optional[str] = ..., upload_id: _Optional[str] = ..., numbers: _Optional[_Iterable[int]] = ...) -> None: ...
+    scope_id: str
+    def __init__(self, filesystem_id: _Optional[str] = ..., upload_id: _Optional[str] = ..., numbers: _Optional[_Iterable[int]] = ..., scope_id: _Optional[str] = ...) -> None: ...
 
 class UploadPart(_message.Message):
     __slots__ = ("part_number", "transfer")
@@ -866,14 +718,16 @@ class PartReceipt(_message.Message):
     def __init__(self, part_number: _Optional[int] = ..., etag: _Optional[str] = ...) -> None: ...
 
 class CompleteUploadRequest(_message.Message):
-    __slots__ = ("filesystem_id", "upload_id", "parts")
+    __slots__ = ("filesystem_id", "upload_id", "parts", "scope_id")
     FILESYSTEM_ID_FIELD_NUMBER: _ClassVar[int]
     UPLOAD_ID_FIELD_NUMBER: _ClassVar[int]
     PARTS_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_ID_FIELD_NUMBER: _ClassVar[int]
     filesystem_id: str
     upload_id: str
     parts: _containers.RepeatedCompositeFieldContainer[PartReceipt]
-    def __init__(self, filesystem_id: _Optional[str] = ..., upload_id: _Optional[str] = ..., parts: _Optional[_Iterable[_Union[PartReceipt, _Mapping]]] = ...) -> None: ...
+    scope_id: str
+    def __init__(self, filesystem_id: _Optional[str] = ..., upload_id: _Optional[str] = ..., parts: _Optional[_Iterable[_Union[PartReceipt, _Mapping]]] = ..., scope_id: _Optional[str] = ...) -> None: ...
 
 class CompleteUploadResponse(_message.Message):
     __slots__ = ("publication",)
@@ -882,12 +736,14 @@ class CompleteUploadResponse(_message.Message):
     def __init__(self, publication: _Optional[_Union[UploadPublication, _Mapping]] = ...) -> None: ...
 
 class AbortUploadRequest(_message.Message):
-    __slots__ = ("filesystem_id", "upload_id")
+    __slots__ = ("filesystem_id", "upload_id", "scope_id")
     FILESYSTEM_ID_FIELD_NUMBER: _ClassVar[int]
     UPLOAD_ID_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_ID_FIELD_NUMBER: _ClassVar[int]
     filesystem_id: str
     upload_id: str
-    def __init__(self, filesystem_id: _Optional[str] = ..., upload_id: _Optional[str] = ...) -> None: ...
+    scope_id: str
+    def __init__(self, filesystem_id: _Optional[str] = ..., upload_id: _Optional[str] = ..., scope_id: _Optional[str] = ...) -> None: ...
 
 class AbortUploadResponse(_message.Message):
     __slots__ = ()
@@ -912,7 +768,7 @@ class SearchFilters(_message.Message):
     def __init__(self, parent: _Optional[_Union[Locator, _Mapping]] = ..., semantic_type: _Optional[str] = ..., media_type: _Optional[str] = ..., created_after: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., created_before: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., updated_after: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., updated_before: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
 class SearchFilesRequest(_message.Message):
-    __slots__ = ("filesystem_id", "query", "filters", "limit", "cursor", "sort", "direction", "path_context")
+    __slots__ = ("filesystem_id", "query", "filters", "limit", "cursor", "sort", "direction", "scope_id")
     FILESYSTEM_ID_FIELD_NUMBER: _ClassVar[int]
     QUERY_FIELD_NUMBER: _ClassVar[int]
     FILTERS_FIELD_NUMBER: _ClassVar[int]
@@ -920,7 +776,7 @@ class SearchFilesRequest(_message.Message):
     CURSOR_FIELD_NUMBER: _ClassVar[int]
     SORT_FIELD_NUMBER: _ClassVar[int]
     DIRECTION_FIELD_NUMBER: _ClassVar[int]
-    PATH_CONTEXT_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_ID_FIELD_NUMBER: _ClassVar[int]
     filesystem_id: str
     query: str
     filters: SearchFilters
@@ -928,8 +784,8 @@ class SearchFilesRequest(_message.Message):
     cursor: str
     sort: str
     direction: str
-    path_context: PathContext
-    def __init__(self, filesystem_id: _Optional[str] = ..., query: _Optional[str] = ..., filters: _Optional[_Union[SearchFilters, _Mapping]] = ..., limit: _Optional[int] = ..., cursor: _Optional[str] = ..., sort: _Optional[str] = ..., direction: _Optional[str] = ..., path_context: _Optional[_Union[PathContext, _Mapping]] = ...) -> None: ...
+    scope_id: str
+    def __init__(self, filesystem_id: _Optional[str] = ..., query: _Optional[str] = ..., filters: _Optional[_Union[SearchFilters, _Mapping]] = ..., limit: _Optional[int] = ..., cursor: _Optional[str] = ..., sort: _Optional[str] = ..., direction: _Optional[str] = ..., scope_id: _Optional[str] = ...) -> None: ...
 
 class Breadcrumb(_message.Message):
     __slots__ = ("node_id", "filename")
@@ -972,20 +828,20 @@ class SearchFilesResponse(_message.Message):
     def __init__(self, items: _Optional[_Iterable[_Union[SearchResult, _Mapping]]] = ..., next_cursor: _Optional[str] = ..., degraded: _Optional[bool] = ..., degraded_reason: _Optional[str] = ...) -> None: ...
 
 class SemanticSearchRequest(_message.Message):
-    __slots__ = ("filesystem_id", "query", "filters", "limit", "cursor", "path_context")
+    __slots__ = ("filesystem_id", "query", "filters", "limit", "cursor", "scope_id")
     FILESYSTEM_ID_FIELD_NUMBER: _ClassVar[int]
     QUERY_FIELD_NUMBER: _ClassVar[int]
     FILTERS_FIELD_NUMBER: _ClassVar[int]
     LIMIT_FIELD_NUMBER: _ClassVar[int]
     CURSOR_FIELD_NUMBER: _ClassVar[int]
-    PATH_CONTEXT_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_ID_FIELD_NUMBER: _ClassVar[int]
     filesystem_id: str
     query: str
     filters: SearchFilters
     limit: int
     cursor: str
-    path_context: PathContext
-    def __init__(self, filesystem_id: _Optional[str] = ..., query: _Optional[str] = ..., filters: _Optional[_Union[SearchFilters, _Mapping]] = ..., limit: _Optional[int] = ..., cursor: _Optional[str] = ..., path_context: _Optional[_Union[PathContext, _Mapping]] = ...) -> None: ...
+    scope_id: str
+    def __init__(self, filesystem_id: _Optional[str] = ..., query: _Optional[str] = ..., filters: _Optional[_Union[SearchFilters, _Mapping]] = ..., limit: _Optional[int] = ..., cursor: _Optional[str] = ..., scope_id: _Optional[str] = ...) -> None: ...
 
 class SemanticSearchResponse(_message.Message):
     __slots__ = ("items", "next_cursor", "degraded", "degraded_reason")
@@ -1204,20 +1060,22 @@ class PrepareIndexRequest(_message.Message):
     def __init__(self, source: _Optional[_Union[ProcessingGeneration, _Mapping]] = ...) -> None: ...
 
 class IndexInput(_message.Message):
-    __slots__ = ("filesystem_id", "source_id", "generation", "nodes", "vector_space", "max_output_bytes")
+    __slots__ = ("filesystem_id", "source_id", "generation", "nodes", "vector_space", "max_output_bytes", "scope_id")
     FILESYSTEM_ID_FIELD_NUMBER: _ClassVar[int]
     SOURCE_ID_FIELD_NUMBER: _ClassVar[int]
     GENERATION_FIELD_NUMBER: _ClassVar[int]
     NODES_FIELD_NUMBER: _ClassVar[int]
     VECTOR_SPACE_FIELD_NUMBER: _ClassVar[int]
     MAX_OUTPUT_BYTES_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_ID_FIELD_NUMBER: _ClassVar[int]
     filesystem_id: str
     source_id: str
     generation: int
     nodes: _containers.RepeatedCompositeFieldContainer[InventoryNode]
     vector_space: VectorSpace
     max_output_bytes: int
-    def __init__(self, filesystem_id: _Optional[str] = ..., source_id: _Optional[str] = ..., generation: _Optional[int] = ..., nodes: _Optional[_Iterable[_Union[InventoryNode, _Mapping]]] = ..., vector_space: _Optional[_Union[VectorSpace, _Mapping]] = ..., max_output_bytes: _Optional[int] = ...) -> None: ...
+    scope_id: str
+    def __init__(self, filesystem_id: _Optional[str] = ..., source_id: _Optional[str] = ..., generation: _Optional[int] = ..., nodes: _Optional[_Iterable[_Union[InventoryNode, _Mapping]]] = ..., vector_space: _Optional[_Union[VectorSpace, _Mapping]] = ..., max_output_bytes: _Optional[int] = ..., scope_id: _Optional[str] = ...) -> None: ...
 
 class IndexComplete(_message.Message):
     __slots__ = ("source_id",)
@@ -1320,3 +1178,39 @@ class WriteOutputBytesResponse(_message.Message):
     RECEIPT_FIELD_NUMBER: _ClassVar[int]
     receipt: UploadReceipt
     def __init__(self, receipt: _Optional[_Union[UploadReceipt, _Mapping]] = ...) -> None: ...
+
+class Scope(_message.Message):
+    __slots__ = ("id", "filesystem_id", "root_id", "state", "allow_blob_files", "allow_indexing")
+    ID_FIELD_NUMBER: _ClassVar[int]
+    FILESYSTEM_ID_FIELD_NUMBER: _ClassVar[int]
+    ROOT_ID_FIELD_NUMBER: _ClassVar[int]
+    STATE_FIELD_NUMBER: _ClassVar[int]
+    ALLOW_BLOB_FILES_FIELD_NUMBER: _ClassVar[int]
+    ALLOW_INDEXING_FIELD_NUMBER: _ClassVar[int]
+    id: str
+    filesystem_id: str
+    root_id: str
+    state: str
+    allow_blob_files: bool
+    allow_indexing: bool
+    def __init__(self, id: _Optional[str] = ..., filesystem_id: _Optional[str] = ..., root_id: _Optional[str] = ..., state: _Optional[str] = ..., allow_blob_files: _Optional[bool] = ..., allow_indexing: _Optional[bool] = ...) -> None: ...
+
+class CreateScopesRequest(_message.Message):
+    __slots__ = ("filesystem_id", "scope_ids", "idempotency_key", "allow_blob_files", "allow_indexing")
+    FILESYSTEM_ID_FIELD_NUMBER: _ClassVar[int]
+    SCOPE_IDS_FIELD_NUMBER: _ClassVar[int]
+    IDEMPOTENCY_KEY_FIELD_NUMBER: _ClassVar[int]
+    ALLOW_BLOB_FILES_FIELD_NUMBER: _ClassVar[int]
+    ALLOW_INDEXING_FIELD_NUMBER: _ClassVar[int]
+    filesystem_id: str
+    scope_ids: _containers.RepeatedScalarFieldContainer[str]
+    idempotency_key: str
+    allow_blob_files: bool
+    allow_indexing: bool
+    def __init__(self, filesystem_id: _Optional[str] = ..., scope_ids: _Optional[_Iterable[str]] = ..., idempotency_key: _Optional[str] = ..., allow_blob_files: _Optional[bool] = ..., allow_indexing: _Optional[bool] = ...) -> None: ...
+
+class CreateScopesResponse(_message.Message):
+    __slots__ = ("scopes",)
+    SCOPES_FIELD_NUMBER: _ClassVar[int]
+    scopes: _containers.RepeatedCompositeFieldContainer[Scope]
+    def __init__(self, scopes: _Optional[_Iterable[_Union[Scope, _Mapping]]] = ...) -> None: ...

@@ -55,7 +55,7 @@ func NewAuthenticator(credentials []Credential) (*Authenticator, error) {
 // Authenticate verifies native gRPC caller identity and method scope.
 func (a *Authenticator) Authenticate(ctx context.Context, method string) (context.Context, error) {
 	md, _ := metadata.FromIncomingContext(ctx)
-	if len(md.Get("authorization")) != 1 || len(md.Get("x-openlet-user-id")) > 1 || len(md.Get("x-openlet-service")) != 0 {
+	if len(md.Get("authorization")) != 1 || len(md.Get("x-openlet-account-id")) > 1 || len(md.Get("x-openlet-service")) != 0 {
 		return nil, status.Error(codes.Unauthenticated, "invalid caller metadata")
 	}
 	token, ok := strings.CutPrefix(md.Get("authorization")[0], "Bearer ")
@@ -74,7 +74,7 @@ func (a *Authenticator) Authenticate(ctx context.Context, method string) (contex
 			return nil, status.Error(codes.PermissionDenied, "caller cannot invoke method")
 		}
 		principal := identity.Principal{Service: credential.Service, Gateway: credential.Gateway}
-		if actors := md.Get("x-openlet-user-id"); len(actors) == 1 {
+		if actors := md.Get("x-openlet-account-id"); len(actors) == 1 {
 			if !credential.Gateway && !credential.DelegateActor {
 				return nil, status.Error(codes.PermissionDenied, "caller cannot delegate user")
 			}

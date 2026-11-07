@@ -7,7 +7,7 @@ import (
 )
 
 func (s *Filesystem) GetDownload(ctx context.Context, input *letfsv1.GetDownloadRequest) (*letfsv1.GetDownloadResponse, error) {
-	fs, err := parseID(input.GetFilesystemId())
+	fs, err := s.scopeInput(ctx, input.GetFilesystemId(), input.GetScopeId())
 	if err != nil {
 		return nil, err
 	}
@@ -15,11 +15,7 @@ func (s *Filesystem) GetDownload(ctx context.Context, input *letfsv1.GetDownload
 	if err != nil {
 		return nil, err
 	}
-	mounts, err := pathInput(input.GetPathContext())
-	if err != nil {
-		return nil, err
-	}
-	value, err := s.Store.GetDownload(ctx, fs, mounts, id, input.Revision)
+	value, err := s.Store.GetDownload(ctx, fs, id, input.Revision)
 	if err != nil {
 		return nil, err
 	}

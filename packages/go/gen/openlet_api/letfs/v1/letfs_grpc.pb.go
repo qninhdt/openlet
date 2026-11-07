@@ -20,7 +20,6 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	FilesystemService_GetFilesystem_FullMethodName  = "/openlet_api.letfs.v1.FilesystemService/GetFilesystem"
-	FilesystemService_GetBucketUsage_FullMethodName = "/openlet_api.letfs.v1.FilesystemService/GetBucketUsage"
 	FilesystemService_CreateNode_FullMethodName     = "/openlet_api.letfs.v1.FilesystemService/CreateNode"
 	FilesystemService_ListNodes_FullMethodName      = "/openlet_api.letfs.v1.FilesystemService/ListNodes"
 	FilesystemService_GetNode_FullMethodName        = "/openlet_api.letfs.v1.FilesystemService/GetNode"
@@ -29,7 +28,6 @@ const (
 	FilesystemService_UpdateNode_FullMethodName     = "/openlet_api.letfs.v1.FilesystemService/UpdateNode"
 	FilesystemService_ReplaceContent_FullMethodName = "/openlet_api.letfs.v1.FilesystemService/ReplaceContent"
 	FilesystemService_CreateCopy_FullMethodName     = "/openlet_api.letfs.v1.FilesystemService/CreateCopy"
-	FilesystemService_GetCopy_FullMethodName        = "/openlet_api.letfs.v1.FilesystemService/GetCopy"
 	FilesystemService_GetProcessing_FullMethodName  = "/openlet_api.letfs.v1.FilesystemService/GetProcessing"
 	FilesystemService_ReprocessNode_FullMethodName  = "/openlet_api.letfs.v1.FilesystemService/ReprocessNode"
 	FilesystemService_TrashNode_FullMethodName      = "/openlet_api.letfs.v1.FilesystemService/TrashNode"
@@ -53,7 +51,6 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type FilesystemServiceClient interface {
 	GetFilesystem(ctx context.Context, in *GetFilesystemRequest, opts ...grpc.CallOption) (*GetFilesystemResponse, error)
-	GetBucketUsage(ctx context.Context, in *GetBucketUsageRequest, opts ...grpc.CallOption) (*GetBucketUsageResponse, error)
 	CreateNode(ctx context.Context, in *CreateNodeRequest, opts ...grpc.CallOption) (*CreateNodeResponse, error)
 	ListNodes(ctx context.Context, in *ListNodesRequest, opts ...grpc.CallOption) (*ListNodesResponse, error)
 	GetNode(ctx context.Context, in *GetNodeRequest, opts ...grpc.CallOption) (*GetNodeResponse, error)
@@ -62,7 +59,6 @@ type FilesystemServiceClient interface {
 	UpdateNode(ctx context.Context, in *UpdateNodeRequest, opts ...grpc.CallOption) (*UpdateNodeResponse, error)
 	ReplaceContent(ctx context.Context, in *ReplaceContentRequest, opts ...grpc.CallOption) (*ReplaceContentResponse, error)
 	CreateCopy(ctx context.Context, in *CreateCopyRequest, opts ...grpc.CallOption) (*CreateCopyResponse, error)
-	GetCopy(ctx context.Context, in *GetCopyRequest, opts ...grpc.CallOption) (*GetCopyResponse, error)
 	GetProcessing(ctx context.Context, in *GetProcessingRequest, opts ...grpc.CallOption) (*GetProcessingResponse, error)
 	ReprocessNode(ctx context.Context, in *ReprocessNodeRequest, opts ...grpc.CallOption) (*ReprocessNodeResponse, error)
 	TrashNode(ctx context.Context, in *TrashNodeRequest, opts ...grpc.CallOption) (*TrashNodeResponse, error)
@@ -94,16 +90,6 @@ func (c *filesystemServiceClient) GetFilesystem(ctx context.Context, in *GetFile
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetFilesystemResponse)
 	err := c.cc.Invoke(ctx, FilesystemService_GetFilesystem_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *filesystemServiceClient) GetBucketUsage(ctx context.Context, in *GetBucketUsageRequest, opts ...grpc.CallOption) (*GetBucketUsageResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(GetBucketUsageResponse)
-	err := c.cc.Invoke(ctx, FilesystemService_GetBucketUsage_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -184,16 +170,6 @@ func (c *filesystemServiceClient) CreateCopy(ctx context.Context, in *CreateCopy
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CreateCopyResponse)
 	err := c.cc.Invoke(ctx, FilesystemService_CreateCopy_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *filesystemServiceClient) GetCopy(ctx context.Context, in *GetCopyRequest, opts ...grpc.CallOption) (*GetCopyResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(GetCopyResponse)
-	err := c.cc.Invoke(ctx, FilesystemService_GetCopy_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -374,7 +350,6 @@ type FilesystemService_StreamArchiveClient = grpc.ServerStreamingClient[StreamAr
 // for forward compatibility.
 type FilesystemServiceServer interface {
 	GetFilesystem(context.Context, *GetFilesystemRequest) (*GetFilesystemResponse, error)
-	GetBucketUsage(context.Context, *GetBucketUsageRequest) (*GetBucketUsageResponse, error)
 	CreateNode(context.Context, *CreateNodeRequest) (*CreateNodeResponse, error)
 	ListNodes(context.Context, *ListNodesRequest) (*ListNodesResponse, error)
 	GetNode(context.Context, *GetNodeRequest) (*GetNodeResponse, error)
@@ -383,7 +358,6 @@ type FilesystemServiceServer interface {
 	UpdateNode(context.Context, *UpdateNodeRequest) (*UpdateNodeResponse, error)
 	ReplaceContent(context.Context, *ReplaceContentRequest) (*ReplaceContentResponse, error)
 	CreateCopy(context.Context, *CreateCopyRequest) (*CreateCopyResponse, error)
-	GetCopy(context.Context, *GetCopyRequest) (*GetCopyResponse, error)
 	GetProcessing(context.Context, *GetProcessingRequest) (*GetProcessingResponse, error)
 	ReprocessNode(context.Context, *ReprocessNodeRequest) (*ReprocessNodeResponse, error)
 	TrashNode(context.Context, *TrashNodeRequest) (*TrashNodeResponse, error)
@@ -414,9 +388,6 @@ type UnimplementedFilesystemServiceServer struct{}
 func (UnimplementedFilesystemServiceServer) GetFilesystem(context.Context, *GetFilesystemRequest) (*GetFilesystemResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetFilesystem not implemented")
 }
-func (UnimplementedFilesystemServiceServer) GetBucketUsage(context.Context, *GetBucketUsageRequest) (*GetBucketUsageResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetBucketUsage not implemented")
-}
 func (UnimplementedFilesystemServiceServer) CreateNode(context.Context, *CreateNodeRequest) (*CreateNodeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateNode not implemented")
 }
@@ -440,9 +411,6 @@ func (UnimplementedFilesystemServiceServer) ReplaceContent(context.Context, *Rep
 }
 func (UnimplementedFilesystemServiceServer) CreateCopy(context.Context, *CreateCopyRequest) (*CreateCopyResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateCopy not implemented")
-}
-func (UnimplementedFilesystemServiceServer) GetCopy(context.Context, *GetCopyRequest) (*GetCopyResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetCopy not implemented")
 }
 func (UnimplementedFilesystemServiceServer) GetProcessing(context.Context, *GetProcessingRequest) (*GetProcessingResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetProcessing not implemented")
@@ -527,24 +495,6 @@ func _FilesystemService_GetFilesystem_Handler(srv interface{}, ctx context.Conte
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(FilesystemServiceServer).GetFilesystem(ctx, req.(*GetFilesystemRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _FilesystemService_GetBucketUsage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetBucketUsageRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(FilesystemServiceServer).GetBucketUsage(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: FilesystemService_GetBucketUsage_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(FilesystemServiceServer).GetBucketUsage(ctx, req.(*GetBucketUsageRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -689,24 +639,6 @@ func _FilesystemService_CreateCopy_Handler(srv interface{}, ctx context.Context,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(FilesystemServiceServer).CreateCopy(ctx, req.(*CreateCopyRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _FilesystemService_GetCopy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetCopyRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(FilesystemServiceServer).GetCopy(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: FilesystemService_GetCopy_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(FilesystemServiceServer).GetCopy(ctx, req.(*GetCopyRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1004,10 +936,6 @@ var FilesystemService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _FilesystemService_GetFilesystem_Handler,
 		},
 		{
-			MethodName: "GetBucketUsage",
-			Handler:    _FilesystemService_GetBucketUsage_Handler,
-		},
-		{
 			MethodName: "CreateNode",
 			Handler:    _FilesystemService_CreateNode_Handler,
 		},
@@ -1038,10 +966,6 @@ var FilesystemService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CreateCopy",
 			Handler:    _FilesystemService_CreateCopy_Handler,
-		},
-		{
-			MethodName: "GetCopy",
-			Handler:    _FilesystemService_GetCopy_Handler,
 		},
 		{
 			MethodName: "GetProcessing",
@@ -1753,14 +1677,9 @@ var IngestService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	StorageAdministrationService_CreateStorage_FullMethodName          = "/openlet_api.letfs.v1.StorageAdministrationService/CreateStorage"
-	StorageAdministrationService_DeleteFilesystem_FullMethodName       = "/openlet_api.letfs.v1.StorageAdministrationService/DeleteFilesystem"
-	StorageAdministrationService_CreateBucket_FullMethodName           = "/openlet_api.letfs.v1.StorageAdministrationService/CreateBucket"
-	StorageAdministrationService_CreateFilesystem_FullMethodName       = "/openlet_api.letfs.v1.StorageAdministrationService/CreateFilesystem"
-	StorageAdministrationService_FreezeBucket_FullMethodName           = "/openlet_api.letfs.v1.StorageAdministrationService/FreezeBucket"
-	StorageAdministrationService_ListBucketFilesystems_FullMethodName  = "/openlet_api.letfs.v1.StorageAdministrationService/ListBucketFilesystems"
-	StorageAdministrationService_CompleteBucketDeletion_FullMethodName = "/openlet_api.letfs.v1.StorageAdministrationService/CompleteBucketDeletion"
-	StorageAdministrationService_ReleaseProvisioning_FullMethodName    = "/openlet_api.letfs.v1.StorageAdministrationService/ReleaseProvisioning"
+	StorageAdministrationService_DeleteFilesystem_FullMethodName = "/openlet_api.letfs.v1.StorageAdministrationService/DeleteFilesystem"
+	StorageAdministrationService_CreateFilesystem_FullMethodName = "/openlet_api.letfs.v1.StorageAdministrationService/CreateFilesystem"
+	StorageAdministrationService_CreateScopes_FullMethodName     = "/openlet_api.letfs.v1.StorageAdministrationService/CreateScopes"
 )
 
 // StorageAdministrationServiceClient is the client API for StorageAdministrationService service.
@@ -1769,14 +1688,9 @@ const (
 //
 // These methods require explicit service authority, never a public user JWT.
 type StorageAdministrationServiceClient interface {
-	CreateStorage(ctx context.Context, in *CreateStorageRequest, opts ...grpc.CallOption) (*CreateStorageResponse, error)
 	DeleteFilesystem(ctx context.Context, in *DeleteFilesystemRequest, opts ...grpc.CallOption) (*DeleteFilesystemResponse, error)
-	CreateBucket(ctx context.Context, in *CreateBucketRequest, opts ...grpc.CallOption) (*CreateBucketResponse, error)
 	CreateFilesystem(ctx context.Context, in *CreateFilesystemRequest, opts ...grpc.CallOption) (*CreateFilesystemResponse, error)
-	FreezeBucket(ctx context.Context, in *FreezeBucketRequest, opts ...grpc.CallOption) (*FreezeBucketResponse, error)
-	ListBucketFilesystems(ctx context.Context, in *ListBucketFilesystemsRequest, opts ...grpc.CallOption) (*ListBucketFilesystemsResponse, error)
-	CompleteBucketDeletion(ctx context.Context, in *CompleteBucketDeletionRequest, opts ...grpc.CallOption) (*CompleteBucketDeletionResponse, error)
-	ReleaseProvisioning(ctx context.Context, in *ReleaseProvisioningRequest, opts ...grpc.CallOption) (*ReleaseProvisioningResponse, error)
+	CreateScopes(ctx context.Context, in *CreateScopesRequest, opts ...grpc.CallOption) (*CreateScopesResponse, error)
 }
 
 type storageAdministrationServiceClient struct {
@@ -1787,30 +1701,10 @@ func NewStorageAdministrationServiceClient(cc grpc.ClientConnInterface) StorageA
 	return &storageAdministrationServiceClient{cc}
 }
 
-func (c *storageAdministrationServiceClient) CreateStorage(ctx context.Context, in *CreateStorageRequest, opts ...grpc.CallOption) (*CreateStorageResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(CreateStorageResponse)
-	err := c.cc.Invoke(ctx, StorageAdministrationService_CreateStorage_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *storageAdministrationServiceClient) DeleteFilesystem(ctx context.Context, in *DeleteFilesystemRequest, opts ...grpc.CallOption) (*DeleteFilesystemResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DeleteFilesystemResponse)
 	err := c.cc.Invoke(ctx, StorageAdministrationService_DeleteFilesystem_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *storageAdministrationServiceClient) CreateBucket(ctx context.Context, in *CreateBucketRequest, opts ...grpc.CallOption) (*CreateBucketResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(CreateBucketResponse)
-	err := c.cc.Invoke(ctx, StorageAdministrationService_CreateBucket_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1827,40 +1721,10 @@ func (c *storageAdministrationServiceClient) CreateFilesystem(ctx context.Contex
 	return out, nil
 }
 
-func (c *storageAdministrationServiceClient) FreezeBucket(ctx context.Context, in *FreezeBucketRequest, opts ...grpc.CallOption) (*FreezeBucketResponse, error) {
+func (c *storageAdministrationServiceClient) CreateScopes(ctx context.Context, in *CreateScopesRequest, opts ...grpc.CallOption) (*CreateScopesResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(FreezeBucketResponse)
-	err := c.cc.Invoke(ctx, StorageAdministrationService_FreezeBucket_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *storageAdministrationServiceClient) ListBucketFilesystems(ctx context.Context, in *ListBucketFilesystemsRequest, opts ...grpc.CallOption) (*ListBucketFilesystemsResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ListBucketFilesystemsResponse)
-	err := c.cc.Invoke(ctx, StorageAdministrationService_ListBucketFilesystems_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *storageAdministrationServiceClient) CompleteBucketDeletion(ctx context.Context, in *CompleteBucketDeletionRequest, opts ...grpc.CallOption) (*CompleteBucketDeletionResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(CompleteBucketDeletionResponse)
-	err := c.cc.Invoke(ctx, StorageAdministrationService_CompleteBucketDeletion_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *storageAdministrationServiceClient) ReleaseProvisioning(ctx context.Context, in *ReleaseProvisioningRequest, opts ...grpc.CallOption) (*ReleaseProvisioningResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ReleaseProvisioningResponse)
-	err := c.cc.Invoke(ctx, StorageAdministrationService_ReleaseProvisioning_FullMethodName, in, out, cOpts...)
+	out := new(CreateScopesResponse)
+	err := c.cc.Invoke(ctx, StorageAdministrationService_CreateScopes_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1873,14 +1737,9 @@ func (c *storageAdministrationServiceClient) ReleaseProvisioning(ctx context.Con
 //
 // These methods require explicit service authority, never a public user JWT.
 type StorageAdministrationServiceServer interface {
-	CreateStorage(context.Context, *CreateStorageRequest) (*CreateStorageResponse, error)
 	DeleteFilesystem(context.Context, *DeleteFilesystemRequest) (*DeleteFilesystemResponse, error)
-	CreateBucket(context.Context, *CreateBucketRequest) (*CreateBucketResponse, error)
 	CreateFilesystem(context.Context, *CreateFilesystemRequest) (*CreateFilesystemResponse, error)
-	FreezeBucket(context.Context, *FreezeBucketRequest) (*FreezeBucketResponse, error)
-	ListBucketFilesystems(context.Context, *ListBucketFilesystemsRequest) (*ListBucketFilesystemsResponse, error)
-	CompleteBucketDeletion(context.Context, *CompleteBucketDeletionRequest) (*CompleteBucketDeletionResponse, error)
-	ReleaseProvisioning(context.Context, *ReleaseProvisioningRequest) (*ReleaseProvisioningResponse, error)
+	CreateScopes(context.Context, *CreateScopesRequest) (*CreateScopesResponse, error)
 	mustEmbedUnimplementedStorageAdministrationServiceServer()
 }
 
@@ -1891,29 +1750,14 @@ type StorageAdministrationServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedStorageAdministrationServiceServer struct{}
 
-func (UnimplementedStorageAdministrationServiceServer) CreateStorage(context.Context, *CreateStorageRequest) (*CreateStorageResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method CreateStorage not implemented")
-}
 func (UnimplementedStorageAdministrationServiceServer) DeleteFilesystem(context.Context, *DeleteFilesystemRequest) (*DeleteFilesystemResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteFilesystem not implemented")
-}
-func (UnimplementedStorageAdministrationServiceServer) CreateBucket(context.Context, *CreateBucketRequest) (*CreateBucketResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method CreateBucket not implemented")
 }
 func (UnimplementedStorageAdministrationServiceServer) CreateFilesystem(context.Context, *CreateFilesystemRequest) (*CreateFilesystemResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateFilesystem not implemented")
 }
-func (UnimplementedStorageAdministrationServiceServer) FreezeBucket(context.Context, *FreezeBucketRequest) (*FreezeBucketResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method FreezeBucket not implemented")
-}
-func (UnimplementedStorageAdministrationServiceServer) ListBucketFilesystems(context.Context, *ListBucketFilesystemsRequest) (*ListBucketFilesystemsResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method ListBucketFilesystems not implemented")
-}
-func (UnimplementedStorageAdministrationServiceServer) CompleteBucketDeletion(context.Context, *CompleteBucketDeletionRequest) (*CompleteBucketDeletionResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method CompleteBucketDeletion not implemented")
-}
-func (UnimplementedStorageAdministrationServiceServer) ReleaseProvisioning(context.Context, *ReleaseProvisioningRequest) (*ReleaseProvisioningResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method ReleaseProvisioning not implemented")
+func (UnimplementedStorageAdministrationServiceServer) CreateScopes(context.Context, *CreateScopesRequest) (*CreateScopesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateScopes not implemented")
 }
 func (UnimplementedStorageAdministrationServiceServer) mustEmbedUnimplementedStorageAdministrationServiceServer() {
 }
@@ -1937,24 +1781,6 @@ func RegisterStorageAdministrationServiceServer(s grpc.ServiceRegistrar, srv Sto
 	s.RegisterService(&StorageAdministrationService_ServiceDesc, srv)
 }
 
-func _StorageAdministrationService_CreateStorage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(CreateStorageRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(StorageAdministrationServiceServer).CreateStorage(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: StorageAdministrationService_CreateStorage_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(StorageAdministrationServiceServer).CreateStorage(ctx, req.(*CreateStorageRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _StorageAdministrationService_DeleteFilesystem_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(DeleteFilesystemRequest)
 	if err := dec(in); err != nil {
@@ -1969,24 +1795,6 @@ func _StorageAdministrationService_DeleteFilesystem_Handler(srv interface{}, ctx
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(StorageAdministrationServiceServer).DeleteFilesystem(ctx, req.(*DeleteFilesystemRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _StorageAdministrationService_CreateBucket_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(CreateBucketRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(StorageAdministrationServiceServer).CreateBucket(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: StorageAdministrationService_CreateBucket_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(StorageAdministrationServiceServer).CreateBucket(ctx, req.(*CreateBucketRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2009,74 +1817,20 @@ func _StorageAdministrationService_CreateFilesystem_Handler(srv interface{}, ctx
 	return interceptor(ctx, in, info, handler)
 }
 
-func _StorageAdministrationService_FreezeBucket_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(FreezeBucketRequest)
+func _StorageAdministrationService_CreateScopes_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateScopesRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(StorageAdministrationServiceServer).FreezeBucket(ctx, in)
+		return srv.(StorageAdministrationServiceServer).CreateScopes(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: StorageAdministrationService_FreezeBucket_FullMethodName,
+		FullMethod: StorageAdministrationService_CreateScopes_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(StorageAdministrationServiceServer).FreezeBucket(ctx, req.(*FreezeBucketRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _StorageAdministrationService_ListBucketFilesystems_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ListBucketFilesystemsRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(StorageAdministrationServiceServer).ListBucketFilesystems(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: StorageAdministrationService_ListBucketFilesystems_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(StorageAdministrationServiceServer).ListBucketFilesystems(ctx, req.(*ListBucketFilesystemsRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _StorageAdministrationService_CompleteBucketDeletion_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(CompleteBucketDeletionRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(StorageAdministrationServiceServer).CompleteBucketDeletion(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: StorageAdministrationService_CompleteBucketDeletion_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(StorageAdministrationServiceServer).CompleteBucketDeletion(ctx, req.(*CompleteBucketDeletionRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _StorageAdministrationService_ReleaseProvisioning_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ReleaseProvisioningRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(StorageAdministrationServiceServer).ReleaseProvisioning(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: StorageAdministrationService_ReleaseProvisioning_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(StorageAdministrationServiceServer).ReleaseProvisioning(ctx, req.(*ReleaseProvisioningRequest))
+		return srv.(StorageAdministrationServiceServer).CreateScopes(ctx, req.(*CreateScopesRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2089,36 +1843,16 @@ var StorageAdministrationService_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*StorageAdministrationServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "CreateStorage",
-			Handler:    _StorageAdministrationService_CreateStorage_Handler,
-		},
-		{
 			MethodName: "DeleteFilesystem",
 			Handler:    _StorageAdministrationService_DeleteFilesystem_Handler,
-		},
-		{
-			MethodName: "CreateBucket",
-			Handler:    _StorageAdministrationService_CreateBucket_Handler,
 		},
 		{
 			MethodName: "CreateFilesystem",
 			Handler:    _StorageAdministrationService_CreateFilesystem_Handler,
 		},
 		{
-			MethodName: "FreezeBucket",
-			Handler:    _StorageAdministrationService_FreezeBucket_Handler,
-		},
-		{
-			MethodName: "ListBucketFilesystems",
-			Handler:    _StorageAdministrationService_ListBucketFilesystems_Handler,
-		},
-		{
-			MethodName: "CompleteBucketDeletion",
-			Handler:    _StorageAdministrationService_CompleteBucketDeletion_Handler,
-		},
-		{
-			MethodName: "ReleaseProvisioning",
-			Handler:    _StorageAdministrationService_ReleaseProvisioning_Handler,
+			MethodName: "CreateScopes",
+			Handler:    _StorageAdministrationService_CreateScopes_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

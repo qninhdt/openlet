@@ -27,7 +27,7 @@ func Check(ctx context.Context, client v1.PermissionsServiceClient, actor string
 		Consistency: fullyConsistent(),
 		Resource:    &v1.ObjectReference{ObjectType: resource.Type, ObjectId: resource.ID},
 		Permission:  string(action),
-		Subject:     &v1.SubjectReference{Object: &v1.ObjectReference{ObjectType: "user", ObjectId: actor}},
+		Subject:     &v1.SubjectReference{Object: &v1.ObjectReference{ObjectType: "account", ObjectId: actor}},
 	})
 	if err != nil {
 		return false, dependencyError(ctx, err)
@@ -53,7 +53,7 @@ func BulkCheck(ctx context.Context, client v1.PermissionsServiceClient, actor st
 		indices[resource] = i
 		items[i] = &v1.CheckBulkPermissionsRequestItem{
 			Resource: &v1.ObjectReference{ObjectType: resource.Type, ObjectId: resource.ID}, Permission: string(action),
-			Subject: &v1.SubjectReference{Object: &v1.ObjectReference{ObjectType: "user", ObjectId: actor}},
+			Subject: &v1.SubjectReference{Object: &v1.ObjectReference{ObjectType: "account", ObjectId: actor}},
 		}
 	}
 	response, err := client.CheckBulkPermissions(ctx, &v1.CheckBulkPermissionsRequest{Consistency: fullyConsistent(), Items: items})

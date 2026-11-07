@@ -34,31 +34,29 @@ func (s *Server) Handler() http.Handler {
 		})
 	}
 	route("GET /v1/filesystems/{filesystem}", s.getFilesystem)
-	route("GET /v1/quota-buckets/{bucket}", s.getUsage)
-	route("POST /v1/filesystems/{filesystem}/nodes", s.createNode)
-	route("GET /v1/filesystems/{filesystem}/nodes", s.listNodes)
-	route("GET /v1/filesystems/{filesystem}/nodes:resolve", s.resolveNode)
-	route("GET /v1/filesystems/{filesystem}/nodes/{node}", s.getNode)
-	route("PATCH /v1/filesystems/{filesystem}/nodes/{node}", s.updateNode)
-	route("PUT /v1/filesystems/{filesystem}/nodes/{node}/content", s.replaceContent)
-	route("GET /v1/filesystems/{filesystem}/nodes/{node}/content", s.getContent)
-	route("GET /v1/filesystems/{filesystem}/nodes/{node}/archive", s.getArchive)
-	route("GET /v1/filesystems/{filesystem}/nodes/{node}/processing", s.getProcessing)
-	route("POST /v1/filesystems/{filesystem}/nodes/{node}/processing-runs", s.reprocess)
-	route("GET /v1/filesystems/{filesystem}/copies/{copy}", s.getCopy)
-	route("POST /v1/filesystems/{filesystem}/files/batch-stat", s.batchStat)
-	route("DELETE /v1/filesystems/{filesystem}/nodes/{node}", s.trashNode)
-	route("GET /v1/filesystems/{filesystem}/trash-entries", s.listTrash)
-	route("GET /v1/filesystems/{filesystem}/trash-entries/{entry}", s.getTrash)
-	route("POST /v1/filesystems/{filesystem}/trash-entries/{entry}", s.restoreTrash)
-	route("DELETE /v1/filesystems/{filesystem}/trash-entries/{entry}", s.purgeTrash)
-	route("POST /v1/filesystems/{filesystem}/uploads", s.createUpload)
-	route("GET /v1/filesystems/{filesystem}/uploads/{upload}", s.getUpload)
-	route("GET /v1/filesystems/{filesystem}/uploads/{upload}/parts", s.getUploadParts)
-	route("PUT /v1/filesystems/{filesystem}/uploads/{upload}/completion", s.completeUpload)
-	route("DELETE /v1/filesystems/{filesystem}/uploads/{upload}", s.abortUpload)
-	route("GET /v1/filesystems/{filesystem}/search", s.searchFiles)
-	route("POST /v1/filesystems/{filesystem}/search", s.semanticSearch)
+	route("POST /v1/filesystems/{filesystem}/scopes/{scope}/nodes", s.createNode)
+	route("GET /v1/filesystems/{filesystem}/scopes/{scope}/nodes", s.listNodes)
+	route("GET /v1/filesystems/{filesystem}/scopes/{scope}/nodes:resolve", s.resolveNode)
+	route("GET /v1/filesystems/{filesystem}/scopes/{scope}/nodes/{node}", s.getNode)
+	route("PATCH /v1/filesystems/{filesystem}/scopes/{scope}/nodes/{node}", s.updateNode)
+	route("PUT /v1/filesystems/{filesystem}/scopes/{scope}/nodes/{node}/content", s.replaceContent)
+	route("GET /v1/filesystems/{filesystem}/scopes/{scope}/nodes/{node}/content", s.getContent)
+	route("GET /v1/filesystems/{filesystem}/scopes/{scope}/nodes/{node}/archive", s.getArchive)
+	route("GET /v1/filesystems/{filesystem}/scopes/{scope}/nodes/{node}/processing", s.getProcessing)
+	route("POST /v1/filesystems/{filesystem}/scopes/{scope}/nodes/{node}/processing-runs", s.reprocess)
+	route("POST /v1/filesystems/{filesystem}/scopes/{scope}/files/batch-stat", s.batchStat)
+	route("DELETE /v1/filesystems/{filesystem}/scopes/{scope}/nodes/{node}", s.trashNode)
+	route("GET /v1/filesystems/{filesystem}/scopes/{scope}/trash-entries", s.listTrash)
+	route("GET /v1/filesystems/{filesystem}/scopes/{scope}/trash-entries/{entry}", s.getTrash)
+	route("POST /v1/filesystems/{filesystem}/scopes/{scope}/trash-entries/{entry}", s.restoreTrash)
+	route("DELETE /v1/filesystems/{filesystem}/scopes/{scope}/trash-entries/{entry}", s.purgeTrash)
+	route("POST /v1/filesystems/{filesystem}/scopes/{scope}/uploads", s.createUpload)
+	route("GET /v1/filesystems/{filesystem}/scopes/{scope}/uploads/{upload}", s.getUpload)
+	route("GET /v1/filesystems/{filesystem}/scopes/{scope}/uploads/{upload}/parts", s.getUploadParts)
+	route("PUT /v1/filesystems/{filesystem}/scopes/{scope}/uploads/{upload}/completion", s.completeUpload)
+	route("DELETE /v1/filesystems/{filesystem}/scopes/{scope}/uploads/{upload}", s.abortUpload)
+	route("GET /v1/filesystems/{filesystem}/scopes/{scope}/search", s.searchFiles)
+	route("POST /v1/filesystems/{filesystem}/scopes/{scope}/search", s.semanticSearch)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		sharedhttp.WriteError(w, r, apperr.New(apperr.Missing, "NOT_FOUND", "resource not found"))
 	})
@@ -97,10 +95,6 @@ func (s *Server) Handler() http.Handler {
 			defer cancel()
 			r = r.WithContext(ctx)
 		}
-		if values, ok := r.URL.Query()["mount_path"]; ok && (len(values) != 1 || values[0] == "") {
-			sharedhttp.WriteError(w, r, invalid())
-			return
-		}
 		started := time.Now()
 		defer func() {
 			slog.InfoContext(r.Context(), "HTTP request", "request_id", id.String(), "method", r.Method, "route", r.Pattern, "elapsed_ms", time.Since(started).Milliseconds())
@@ -122,19 +116,16 @@ func nodeLocator(id string) (filesystem.Locator, error) {
 	value, err := parseID(id)
 	return filesystem.Locator{NodeID: &value}, err
 }
-func mountPath(r *http.Request) string {
-	path := r.URL.Query().Get("mount_path")
-	if path == "" {
-		path = "/"
-	}
-	return path
-}
-func requestContext(r *http.Request) (uuid.UUID, []filesystem.Mount, error) {
+func (s *Server) requestContext(r *http.Request) (uuid.UUID, error) {
 	fs, err := parseID(fsID(r))
 	if err != nil {
-		return uuid.Nil, nil, err
+		return uuid.Nil, err
 	}
-	return fs, []filesystem.Mount{{Path: mountPath(r), FilesystemID: fs}}, nil
+	scope, err := parseID(r.PathValue("scope"))
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return scope, s.Store.ValidateScope(r.Context(), fs, scope)
 }
 func requestKey(r *http.Request) (uuid.UUID, error) {
 	values := r.Header.Values("Idempotency-Key")
@@ -184,17 +175,15 @@ func respond(w http.ResponseWriter, r *http.Request, code int, value any) {
 	case nodeResponse:
 		etag = `"` + strconv.FormatInt(item.Revision, 10) + `"`
 		if code == http.StatusCreated {
-			location = "/v1/filesystems/" + fsID(r) + "/nodes/" + item.ID
+			location = "/v1/filesystems/" + fsID(r) + "/scopes/" + r.PathValue("scope") + "/nodes/" + item.ID
 		}
-	case copyResponse:
-		location = "/v1/filesystems/" + fsID(r) + "/copies/" + item.ID
 	case uploadResponse:
 		if code == http.StatusCreated {
-			location = "/v1/filesystems/" + fsID(r) + "/uploads/" + item.ID
+			location = "/v1/filesystems/" + fsID(r) + "/scopes/" + r.PathValue("scope") + "/uploads/" + item.ID
 		}
 	case trashResponse:
 		if code == http.StatusCreated || code == http.StatusAccepted {
-			location = "/v1/filesystems/" + fsID(r) + "/trash-entries/" + item.ID
+			location = "/v1/filesystems/" + fsID(r) + "/scopes/" + r.PathValue("scope") + "/trash-entries/" + item.ID
 		}
 	case publicationResponse:
 		etag = `"` + strconv.FormatInt(item.Revision, 10) + `"`
@@ -210,25 +199,7 @@ func (s *Server) getFilesystem(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	respond(w, r, 200, filesystemResponse{result.ID.String(), result.BucketID.String(), result.RootID.String(), result.State})
-	return nil
-}
-func (s *Server) getUsage(w http.ResponseWriter, r *http.Request) error {
-	id, err := parseID(r.PathValue("bucket"))
-	if err != nil {
-		return err
-	}
-	bucket, err := s.Store.GetBucketUsage(r.Context(), id)
-	if err != nil {
-		return err
-	}
-	respond(w, r, 200, struct {
-		Bucket       bucketResponse       `json:"bucket"`
-		UploadLimits uploadLimitsResponse `json:"upload_limits"`
-	}{
-		Bucket:       bucketResponse{bucket.ID.String(), bucket.LimitBytes, bucket.UsedBytes, bucket.State},
-		UploadLimits: uploadLimitsResponse{s.Store.InlineLimit, s.Store.MaxFileBytes, s.Store.MultipartThreshold, s.Store.MultipartPartBytes},
-	})
+	respond(w, r, 200, filesystemResponse{ID: result.ID.String(), LimitBytes: result.LimitBytes, UsedBytes: result.UsedBytes, NodeCount: result.NodeCount, State: result.State})
 	return nil
 }
 func queryLocator(r *http.Request) (filesystem.Locator, error) {

@@ -4,12 +4,10 @@ from openlet.clients.letfs import (
     ProcessingClient,
     StorageAdministrationClient,
 )
-from openlet.clients.workspace import WorkspaceClient
 
 __all__ = [
     "AccountClient",
     "FilesystemClient",
     "ProcessingClient",
     "StorageAdministrationClient",
-    "WorkspaceClient",
 ]

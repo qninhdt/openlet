@@ -24,7 +24,7 @@ func AuthenticateGateway(headers http.Header, token string, bootstrap bool) (Pri
 		return Principal{}, ErrGatewaySubject
 	}
 	principal := Principal{Service: "gateway", Subject: headers.Get("X-Clerk-Sub"), Gateway: true}
-	actors := headers.Values("X-Openlet-User-ID")
+	actors := headers.Values("X-Openlet-Account-ID")
 	if len(actors) > 1 {
 		return Principal{}, ErrOnboardingRequired
 	}

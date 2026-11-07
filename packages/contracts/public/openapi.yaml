@@ -40,9 +40,6 @@
           "409": {
             "$ref": "#/components/responses/Problem"
           },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
           "412": {
             "$ref": "#/components/responses/Problem"
           },
@@ -58,7 +55,8 @@
           "503": {
             "$ref": "#/components/responses/Problem"
           }
-        }
+        },
+        "parameters": []
       },
       "patch": {
         "operationId": "updateProfile",
@@ -86,9 +84,6 @@
             "$ref": "#/components/responses/Problem"
           },
           "409": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "410": {
             "$ref": "#/components/responses/Problem"
           },
           "412": {
@@ -126,7 +121,8 @@
               }
             }
           }
-        }
+        },
+        "parameters": []
       }
     },
     "/v1/me/onboarding": {
@@ -158,9 +154,6 @@
           "409": {
             "$ref": "#/components/responses/Problem"
           },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
           "412": {
             "$ref": "#/components/responses/Problem"
           },
@@ -177,7 +170,7 @@
             "$ref": "#/components/responses/Problem"
           }
         },
-        "description": "Clerk-identity singleton. Accepts a verified bootstrap JWT without openlet_user_id and no Idempotency-Key. PUT durably admits a provisioning user (202) or returns an existing active/failed resource (200). workspace_id is null until Workspace creation completes. Location is /v1/me/onboarding."
+        "parameters": []
       },
       "put": {
         "operationId": "putOnboarding",
@@ -225,9 +218,6 @@
           "409": {
             "$ref": "#/components/responses/Problem"
           },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
           "412": {
             "$ref": "#/components/responses/Problem"
           },
@@ -244,7 +234,7 @@
             "$ref": "#/components/responses/Problem"
           }
         },
-        "description": "Clerk-identity singleton. Accepts a verified bootstrap JWT without openlet_user_id and no Idempotency-Key. PUT durably admits a provisioning user (202) or returns an existing active/failed resource (200). workspace_id is null until Workspace creation completes. Location is /v1/me/onboarding."
+        "parameters": []
       }
     },
     "/v1/workspaces": {
@@ -276,16 +266,7 @@
           "409": {
             "$ref": "#/components/responses/Problem"
           },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "412": {
-            "$ref": "#/components/responses/Problem"
-          },
           "413": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "428": {
             "$ref": "#/components/responses/Problem"
           },
           "429": {
@@ -294,34 +275,12 @@
           "503": {
             "$ref": "#/components/responses/Problem"
           }
-        }
+        },
+        "parameters": []
       },
       "post": {
         "operationId": "createWorkspace",
         "responses": {
-          "202": {
-            "description": "Durably accepted",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Workspace"
-                }
-              }
-            },
-            "headers": {
-              "Location": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "Resource, scoped monitor, or signed object URL"
-              },
-              "ETag": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
           "400": {
             "$ref": "#/components/responses/Problem"
           },
@@ -337,16 +296,7 @@
           "409": {
             "$ref": "#/components/responses/Problem"
           },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "412": {
-            "$ref": "#/components/responses/Problem"
-          },
           "413": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "428": {
             "$ref": "#/components/responses/Problem"
           },
           "429": {
@@ -390,7 +340,7 @@
             }
           }
         },
-        "description": "Commit Workspace, owner membership and a caller-scoped create receipt before dispatch. 202 + Location identifies the provisioning resource; the same key and normalized payload replays it (200 after completion). Changed input returns 409. Receipts expire 24 hours after completion."
+        "description": "Returns after storage, SQL and graph publication complete; same-key replay returns the existing resource."
       }
     },
     "/v1/workspaces/{ws}": {
@@ -406,13 +356,7 @@
                 }
               }
             },
-            "headers": {
-              "ETag": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
+            "headers": {}
           },
           "400": {
             "$ref": "#/components/responses/Problem"
@@ -429,16 +373,7 @@
           "409": {
             "$ref": "#/components/responses/Problem"
           },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "412": {
-            "$ref": "#/components/responses/Problem"
-          },
           "413": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "428": {
             "$ref": "#/components/responses/Problem"
           },
           "429": {
@@ -466,13 +401,7 @@
                 }
               }
             },
-            "headers": {
-              "ETag": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
+            "headers": {}
           },
           "400": {
             "$ref": "#/components/responses/Problem"
@@ -489,16 +418,7 @@
           "409": {
             "$ref": "#/components/responses/Problem"
           },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "412": {
-            "$ref": "#/components/responses/Problem"
-          },
           "413": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "428": {
             "$ref": "#/components/responses/Problem"
           },
           "429": {
@@ -511,12 +431,8 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/ws"
-          },
-          {
-            "$ref": "#/components/parameters/IfMatch"
           }
         ],
-        "description": "Ownership transfer uses dedicated authorization and one transaction; owner_id is not an unrestricted profile field.",
         "requestBody": {
           "required": true,
           "content": {
@@ -526,13 +442,11 @@
                 "properties": {
                   "name": {
                     "type": "string"
-                  },
-                  "owner_id": {
-                    "type": "string",
-                    "format": "uuid"
                   }
                 },
-                "required": [],
+                "required": [
+                  "name"
+                ],
                 "additionalProperties": false
               }
             }
@@ -542,29 +456,6 @@
       "delete": {
         "operationId": "deleteWorkspace",
         "responses": {
-          "202": {
-            "description": "Durably accepted",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Workspace"
-                }
-              }
-            },
-            "headers": {
-              "Location": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "Resource, scoped monitor, or signed object URL"
-              },
-              "ETag": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
           "400": {
             "$ref": "#/components/responses/Problem"
           },
@@ -580,16 +471,7 @@
           "409": {
             "$ref": "#/components/responses/Problem"
           },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "412": {
-            "$ref": "#/components/responses/Problem"
-          },
           "413": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "428": {
             "$ref": "#/components/responses/Problem"
           },
           "429": {
@@ -605,12 +487,8 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/ws"
-          },
-          {
-            "$ref": "#/components/parameters/IfMatch"
           }
-        ],
-        "description": "Owner-only If-Match transition to a deleting tombstone, admitted before dispatch. No idempotency key. Repeating the accepted deletion returns its lifecycle (202) or completed deletion (204); the same resource never restarts creation. The retained owner can read the tombstone. Failed provisioning can also be deleted, including partially allocated storage."
+        ]
       }
     },
     "/v1/workspaces/{ws}/members": {
@@ -642,16 +520,7 @@
           "409": {
             "$ref": "#/components/responses/Problem"
           },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "412": {
-            "$ref": "#/components/responses/Problem"
-          },
           "413": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "428": {
             "$ref": "#/components/responses/Problem"
           },
           "429": {
@@ -666,46 +535,66 @@
             "$ref": "#/components/parameters/ws"
           }
         ]
+      },
+      "post": {
+        "operationId": "addMember",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ws"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Acknowledged result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "account_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "role": {
+                    "enum": [
+                      "admin",
+                      "member"
+                    ]
+                  }
+                },
+                "required": [
+                  "account_id",
+                  "role"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
       }
     },
-    "/v1/workspaces/{ws}/members/{user}": {
+    "/v1/workspaces/{ws}/members/{account}": {
       "patch": {
         "operationId": "updateMember",
         "responses": {
           "204": {
-            "description": "Completed without a body"
+            "description": "Membership and graph published"
           },
-          "400": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "401": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "403": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "404": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "409": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "412": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "413": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "428": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "429": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "503": {
+          "default": {
             "$ref": "#/components/responses/Problem"
           }
         },
@@ -714,10 +603,7 @@
             "$ref": "#/components/parameters/ws"
           },
           {
-            "$ref": "#/components/parameters/user"
-          },
-          {
-            "$ref": "#/components/parameters/IfMatch"
+            "$ref": "#/components/parameters/account"
           }
         ],
         "requestBody": {
@@ -730,8 +616,8 @@
                   "role": {
                     "type": "string",
                     "enum": [
-                      "editor",
-                      "viewer"
+                      "admin",
+                      "member"
                     ]
                   }
                 },
@@ -765,16 +651,7 @@
           "409": {
             "$ref": "#/components/responses/Problem"
           },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "412": {
-            "$ref": "#/components/responses/Problem"
-          },
           "413": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "428": {
             "$ref": "#/components/responses/Problem"
           },
           "429": {
@@ -789,10 +666,7 @@
             "$ref": "#/components/parameters/ws"
           },
           {
-            "$ref": "#/components/parameters/user"
-          },
-          {
-            "$ref": "#/components/parameters/IfMatch"
+            "$ref": "#/components/parameters/account"
           }
         ]
       }
@@ -826,16 +700,7 @@
           "409": {
             "$ref": "#/components/responses/Problem"
           },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "412": {
-            "$ref": "#/components/responses/Problem"
-          },
           "413": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "428": {
             "$ref": "#/components/responses/Problem"
           },
           "429": {
@@ -897,16 +762,7 @@
           "409": {
             "$ref": "#/components/responses/Problem"
           },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "412": {
-            "$ref": "#/components/responses/Problem"
-          },
           "413": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "428": {
             "$ref": "#/components/responses/Problem"
           },
           "429": {
@@ -935,8 +791,8 @@
                   "role": {
                     "type": "string",
                     "enum": [
-                      "editor",
-                      "viewer"
+                      "admin",
+                      "member"
                     ]
                   }
                 },
@@ -973,16 +829,7 @@
           "409": {
             "$ref": "#/components/responses/Problem"
           },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "412": {
-            "$ref": "#/components/responses/Problem"
-          },
           "413": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "428": {
             "$ref": "#/components/responses/Problem"
           },
           "429": {
@@ -1049,9 +896,6 @@
           "409": {
             "$ref": "#/components/responses/Problem"
           },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
           "412": {
             "$ref": "#/components/responses/Problem"
           },
@@ -1086,10 +930,11 @@
               }
             }
           }
-        }
+        },
+        "parameters": []
       }
     },
-    "/v1/filesystems/{filesystem}/nodes": {
+    "/v1/filesystems/{filesystem}/scopes/{scope}/nodes": {
       "get": {
         "operationId": "listNodes",
         "responses": {
@@ -1116,9 +961,6 @@
             "$ref": "#/components/responses/Problem"
           },
           "409": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "410": {
             "$ref": "#/components/responses/Problem"
           },
           "412": {
@@ -1172,10 +1014,9 @@
             }
           },
           {
-            "$ref": "#/components/parameters/mount_path"
+            "$ref": "#/components/parameters/scope"
           }
-        ],
-        "description": "List a directory by parent_id or the supported path/cwd locator; selectors are mutually exclusive. Cursor is scoped to the selected directory."
+        ]
       },
       "post": {
         "operationId": "createNode",
@@ -1211,14 +1052,6 @@
                   "$ref": "#/components/schemas/Copy"
                 }
               }
-            },
-            "headers": {
-              "Location": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "Resource, scoped monitor, or signed object URL"
-              }
             }
           },
           "400": {
@@ -1234,9 +1067,6 @@
             "$ref": "#/components/responses/Problem"
           },
           "409": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "410": {
             "$ref": "#/components/responses/Problem"
           },
           "412": {
@@ -1272,10 +1102,9 @@
             "description": "Required for source_id copy."
           },
           {
-            "$ref": "#/components/parameters/mount_path"
+            "$ref": "#/components/parameters/scope"
           }
         ],
-        "description": "Strict create replay is independent from sibling-name uniqueness. source_id selects partial copy and requires source If-Match. Copy returns a scoped copies monitor Location; no whole-tree snapshot or rollback.",
         "requestBody": {
           "required": true,
           "content": {
@@ -1288,7 +1117,7 @@
         }
       }
     },
-    "/v1/filesystems/{filesystem}/nodes/{node}": {
+    "/v1/filesystems/{filesystem}/scopes/{scope}/nodes/{node}": {
       "get": {
         "operationId": "getNode",
         "responses": {
@@ -1324,9 +1153,6 @@
           "409": {
             "$ref": "#/components/responses/Problem"
           },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
           "412": {
             "$ref": "#/components/responses/Problem"
           },
@@ -1351,7 +1177,7 @@
             "$ref": "#/components/parameters/node"
           },
           {
-            "$ref": "#/components/parameters/mount_path"
+            "$ref": "#/components/parameters/scope"
           }
         ]
       },
@@ -1390,9 +1216,6 @@
           "409": {
             "$ref": "#/components/responses/Problem"
           },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
           "412": {
             "$ref": "#/components/responses/Problem"
           },
@@ -1420,7 +1243,7 @@
             "$ref": "#/components/parameters/IfMatch"
           },
           {
-            "$ref": "#/components/parameters/mount_path"
+            "$ref": "#/components/parameters/scope"
           }
         ],
         "requestBody": {
@@ -1481,9 +1304,6 @@
           "409": {
             "$ref": "#/components/responses/Problem"
           },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
           "412": {
             "$ref": "#/components/responses/Problem"
           },
@@ -1511,12 +1331,12 @@
             "$ref": "#/components/parameters/IfMatch"
           },
           {
-            "$ref": "#/components/parameters/mount_path"
+            "$ref": "#/components/parameters/scope"
           }
         ]
       }
     },
-    "/v1/filesystems/{filesystem}/nodes/{node}/content": {
+    "/v1/filesystems/{filesystem}/scopes/{scope}/nodes/{node}/content": {
       "get": {
         "operationId": "getContent",
         "responses": {
@@ -1568,9 +1388,6 @@
           "409": {
             "$ref": "#/components/responses/Problem"
           },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
           "412": {
             "$ref": "#/components/responses/Problem"
           },
@@ -1602,10 +1419,9 @@
             }
           },
           {
-            "$ref": "#/components/parameters/mount_path"
+            "$ref": "#/components/parameters/scope"
           }
-        ],
-        "description": "Inline bytes or307 signed S3 GET. Preserve Range on direct GET; signed responses are private/no-store."
+        ]
       },
       "put": {
         "operationId": "replaceInlineContent",
@@ -1642,9 +1458,6 @@
           "409": {
             "$ref": "#/components/responses/Problem"
           },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
           "412": {
             "$ref": "#/components/responses/Problem"
           },
@@ -1672,7 +1485,7 @@
             "$ref": "#/components/parameters/IfMatch"
           },
           {
-            "$ref": "#/components/parameters/mount_path"
+            "$ref": "#/components/parameters/scope"
           }
         ],
         "requestBody": {
@@ -1688,7 +1501,7 @@
         }
       }
     },
-    "/v1/filesystems/{filesystem}/nodes/{node}/archive": {
+    "/v1/filesystems/{filesystem}/scopes/{scope}/nodes/{node}/archive": {
       "get": {
         "operationId": "streamArchive",
         "responses": {
@@ -1718,9 +1531,6 @@
           "409": {
             "$ref": "#/components/responses/Problem"
           },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
           "412": {
             "$ref": "#/components/responses/Problem"
           },
@@ -1745,75 +1555,12 @@
             "$ref": "#/components/parameters/node"
           },
           {
-            "$ref": "#/components/parameters/mount_path"
+            "$ref": "#/components/parameters/scope"
           }
-        ],
-        "description": "Bounded direct stream relative to selected directory, includes empty directories. Selected source changes/missing bytes abort stream. Disconnect cancels reads. No export job or ZIP object."
+        ]
       }
     },
-    "/v1/filesystems/{filesystem}/copies/{copy}": {
-      "get": {
-        "operationId": "getCopy",
-        "responses": {
-          "200": {
-            "description": "Current resource/result",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Copy"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "401": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "403": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "404": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "409": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "412": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "413": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "428": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "429": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "503": {
-            "$ref": "#/components/responses/Problem"
-          }
-        },
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/filesystem"
-          },
-          {
-            "$ref": "#/components/parameters/copy"
-          },
-          {
-            "$ref": "#/components/parameters/mount_path"
-          }
-        ],
-        "description": "Temporal-backed monitor; no SQL job. Reauthorizes current membership and admission actor/current owner. Missing or expired Temporal history returns 410 COPY_EXPIRED; copied nodes remain. Counts report acknowledged committed effects across runs; after an unacknowledged effect is subsequently changed/deleted they can be lower bounds."
-      }
-    },
-    "/v1/filesystems/{filesystem}/trash-entries": {
+    "/v1/filesystems/{filesystem}/scopes/{scope}/trash-entries": {
       "get": {
         "operationId": "listTrashEntries",
         "responses": {
@@ -1842,9 +1589,6 @@
           "409": {
             "$ref": "#/components/responses/Problem"
           },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
           "412": {
             "$ref": "#/components/responses/Problem"
           },
@@ -1866,80 +1610,12 @@
             "$ref": "#/components/parameters/filesystem"
           },
           {
-            "$ref": "#/components/parameters/mount_path"
+            "$ref": "#/components/parameters/scope"
           }
         ]
       }
     },
-    "/v1/filesystems/{filesystem}/trash-entries/{entry}:restore": {
-      "post": {
-        "operationId": "restoreTrashEntry",
-        "responses": {
-          "200": {
-            "description": "Current resource/result",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Node"
-                }
-              }
-            },
-            "headers": {
-              "ETag": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "401": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "403": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "404": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "409": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "412": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "413": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "428": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "429": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "503": {
-            "$ref": "#/components/responses/Problem"
-          }
-        },
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/filesystem"
-          },
-          {
-            "$ref": "#/components/parameters/entry"
-          },
-          {
-            "$ref": "#/components/parameters/mount_path"
-          }
-        ]
-      }
-    },
-    "/v1/filesystems/{filesystem}/trash-entries/{entry}": {
+    "/v1/filesystems/{filesystem}/scopes/{scope}/trash-entries/{entry}": {
       "delete": {
         "operationId": "purgeTrashEntry",
         "responses": {
@@ -1976,9 +1652,6 @@
           "409": {
             "$ref": "#/components/responses/Problem"
           },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
           "412": {
             "$ref": "#/components/responses/Problem"
           },
@@ -2006,10 +1679,9 @@
             "$ref": "#/components/parameters/entry"
           },
           {
-            "$ref": "#/components/parameters/mount_path"
+            "$ref": "#/components/parameters/scope"
           }
-        ],
-        "description": "Marks purging before traversal. Restore is then rejected. Repeated request does not debit quota twice."
+        ]
       },
       "get": {
         "operationId": "getTrashEntry",
@@ -2039,9 +1711,6 @@
           "409": {
             "$ref": "#/components/responses/Problem"
           },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
           "412": {
             "$ref": "#/components/responses/Problem"
           },
@@ -2066,12 +1735,12 @@
             "$ref": "#/components/parameters/entry"
           },
           {
-            "$ref": "#/components/parameters/mount_path"
+            "$ref": "#/components/parameters/scope"
           }
         ]
       }
     },
-    "/v1/filesystems/{filesystem}/uploads": {
+    "/v1/filesystems/{filesystem}/scopes/{scope}/uploads": {
       "post": {
         "operationId": "createUpload",
         "responses": {
@@ -2108,9 +1777,6 @@
           "409": {
             "$ref": "#/components/responses/Problem"
           },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
           "412": {
             "$ref": "#/components/responses/Problem"
           },
@@ -2144,7 +1810,7 @@
             "description": "Required for replacement by node_id."
           },
           {
-            "$ref": "#/components/parameters/mount_path"
+            "$ref": "#/components/parameters/scope"
           }
         ],
         "requestBody": {
@@ -2159,7 +1825,7 @@
         }
       }
     },
-    "/v1/filesystems/{filesystem}/uploads/{upload}": {
+    "/v1/filesystems/{filesystem}/scopes/{scope}/uploads/{upload}": {
       "get": {
         "operationId": "getUpload",
         "responses": {
@@ -2188,9 +1854,6 @@
           "409": {
             "$ref": "#/components/responses/Problem"
           },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
           "412": {
             "$ref": "#/components/responses/Problem"
           },
@@ -2215,7 +1878,7 @@
             "$ref": "#/components/parameters/upload"
           },
           {
-            "$ref": "#/components/parameters/mount_path"
+            "$ref": "#/components/parameters/scope"
           }
         ]
       },
@@ -2240,9 +1903,6 @@
           "409": {
             "$ref": "#/components/responses/Problem"
           },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
           "412": {
             "$ref": "#/components/responses/Problem"
           },
@@ -2267,12 +1927,12 @@
             "$ref": "#/components/parameters/upload"
           },
           {
-            "$ref": "#/components/parameters/mount_path"
+            "$ref": "#/components/parameters/scope"
           }
         ]
       }
     },
-    "/v1/filesystems/{filesystem}/uploads/{upload}/parts": {
+    "/v1/filesystems/{filesystem}/scopes/{scope}/uploads/{upload}/parts": {
       "get": {
         "operationId": "signUploadParts",
         "responses": {
@@ -2299,9 +1959,6 @@
             "$ref": "#/components/responses/Problem"
           },
           "409": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "410": {
             "$ref": "#/components/responses/Problem"
           },
           "412": {
@@ -2346,13 +2003,12 @@
             "explode": false
           },
           {
-            "$ref": "#/components/parameters/mount_path"
+            "$ref": "#/components/parameters/scope"
           }
-        ],
-        "description": "Signs bounded native multipart part numbers without recreating the session. Cache-Control:no-store."
+        ]
       }
     },
-    "/v1/filesystems/{filesystem}/uploads/{upload}/completion": {
+    "/v1/filesystems/{filesystem}/scopes/{scope}/uploads/{upload}/completion": {
       "put": {
         "operationId": "completeUpload",
         "responses": {
@@ -2381,9 +2037,6 @@
           "409": {
             "$ref": "#/components/responses/Problem"
           },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
           "412": {
             "$ref": "#/components/responses/Problem"
           },
@@ -2408,10 +2061,9 @@
             "$ref": "#/components/parameters/upload"
           },
           {
-            "$ref": "#/components/parameters/mount_path"
+            "$ref": "#/components/parameters/scope"
           }
         ],
-        "description": "Session identity provides retry safety. Freeze multipart receipts, reconcile unknown completion, verify supported object evidence and commit publication/quota once. Retry may omit previously frozen parts.",
         "requestBody": {
           "required": true,
           "content": {
@@ -2424,7 +2076,7 @@
         }
       }
     },
-    "/v1/filesystems/{filesystem}/search": {
+    "/v1/filesystems/{filesystem}/scopes/{scope}/search": {
       "get": {
         "operationId": "searchNames",
         "responses": {
@@ -2451,9 +2103,6 @@
             "$ref": "#/components/responses/Problem"
           },
           "409": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "410": {
             "$ref": "#/components/responses/Problem"
           },
           "412": {
@@ -2574,10 +2223,9 @@
             }
           },
           {
-            "$ref": "#/components/parameters/mount_path"
+            "$ref": "#/components/parameters/scope"
           }
-        ],
-        "description": "Filename search remains available while publication/indexing is pending or failed."
+        ]
       },
       "post": {
         "operationId": "searchFiles",
@@ -2607,9 +2255,6 @@
           "409": {
             "$ref": "#/components/responses/Problem"
           },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
           "412": {
             "$ref": "#/components/responses/Problem"
           },
@@ -2631,10 +2276,9 @@
             "$ref": "#/components/parameters/filesystem"
           },
           {
-            "$ref": "#/components/parameters/mount_path"
+            "$ref": "#/components/parameters/scope"
           }
         ],
-        "description": "Read-only complex search. Semantic results require current publication/index/vector-space readiness and current authorization.",
         "requestBody": {
           "required": true,
           "content": {
@@ -2647,7 +2291,7 @@
         }
       }
     },
-    "/v1/filesystems/{filesystem}/nodes/{node}/processing": {
+    "/v1/filesystems/{filesystem}/scopes/{scope}/nodes/{node}/processing": {
       "get": {
         "operationId": "getProcessing",
         "responses": {
@@ -2676,9 +2320,6 @@
           "409": {
             "$ref": "#/components/responses/Problem"
           },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
           "412": {
             "$ref": "#/components/responses/Problem"
           },
@@ -2703,12 +2344,12 @@
             "$ref": "#/components/parameters/node"
           },
           {
-            "$ref": "#/components/parameters/mount_path"
+            "$ref": "#/components/parameters/scope"
           }
         ]
       }
     },
-    "/v1/filesystems/{filesystem}/nodes/{node}/processing-runs": {
+    "/v1/filesystems/{filesystem}/scopes/{scope}/nodes/{node}/processing-runs": {
       "post": {
         "operationId": "reprocessFile",
         "responses": {
@@ -2745,9 +2386,6 @@
           "409": {
             "$ref": "#/components/responses/Problem"
           },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
           "412": {
             "$ref": "#/components/responses/Problem"
           },
@@ -2775,10 +2413,9 @@
             "$ref": "#/components/parameters/IdempotencyKey"
           },
           {
-            "$ref": "#/components/parameters/mount_path"
+            "$ref": "#/components/parameters/scope"
           }
         ],
-        "description": "One caller-key admits one generation. Same-key response-loss retry must not repeat model costs. Location identifies current node processing readiness, not a SQL run entity.",
         "requestBody": {
           "required": true,
           "content": {
@@ -2794,62 +2431,7 @@
         }
       }
     },
-    "/v1/quota-buckets/{bucket}": {
-      "get": {
-        "operationId": "getBucketUsage",
-        "responses": {
-          "200": {
-            "description": "Current resource/result",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "../generated/letfs.openapi.json#/components/schemas/openlet_api.letfs.v1.GetBucketUsageResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "401": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "403": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "404": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "409": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "412": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "413": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "428": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "429": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "503": {
-            "$ref": "#/components/responses/Problem"
-          }
-        },
-        "parameters": [
-          {
-            "$ref": "#/components/parameters/bucket"
-          }
-        ]
-      }
-    },
-    "/v1/filesystems/{filesystem}/nodes:resolve": {
+    "/v1/filesystems/{filesystem}/scopes/{scope}/nodes:resolve": {
       "get": {
         "operationId": "resolveNode",
         "responses": {
@@ -2883,9 +2465,6 @@
             "$ref": "#/components/responses/Problem"
           },
           "409": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "410": {
             "$ref": "#/components/responses/Problem"
           },
           "412": {
@@ -2949,10 +2528,9 @@
             }
           },
           {
-            "$ref": "#/components/parameters/mount_path"
+            "$ref": "#/components/parameters/scope"
           }
-        ],
-        "description": "Resolve an ID or mounted path to current metadata. path accepts cwd_id and root @UUID aliases. ID/path selectors are mutually exclusive; expected_node_id/expected_parent_id reject changed bindings."
+        ]
       }
     },
     "/v1/filesystems/{filesystem}": {
@@ -2984,9 +2562,6 @@
           "409": {
             "$ref": "#/components/responses/Problem"
           },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
           "412": {
             "$ref": "#/components/responses/Problem"
           },
@@ -3010,7 +2585,7 @@
         ]
       }
     },
-    "/v1/filesystems/{filesystem}/files/batch-stat": {
+    "/v1/filesystems/{filesystem}/scopes/{scope}/files/batch-stat": {
       "post": {
         "operationId": "batchStat",
         "responses": {
@@ -3039,9 +2614,6 @@
           "409": {
             "$ref": "#/components/responses/Problem"
           },
-          "410": {
-            "$ref": "#/components/responses/Problem"
-          },
           "412": {
             "$ref": "#/components/responses/Problem"
           },
@@ -3063,10 +2635,9 @@
             "$ref": "#/components/parameters/filesystem"
           },
           {
-            "$ref": "#/components/parameters/mount_path"
+            "$ref": "#/components/parameters/scope"
           }
         ],
-        "description": "List a directory by parent_id or the supported path/cwd locator; selectors are mutually exclusive. Cursor is scoped to the selected directory.",
         "requestBody": {
           "required": true,
           "content": {
@@ -3091,6 +2662,272 @@
             }
           }
         }
+      }
+    },
+    "/v1/accounts": {
+      "post": {
+        "operationId": "createAccount",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": "Acknowledged result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Profile"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "display_name": {
+                    "type": "string"
+                  },
+                  "avatar_url": {
+                    "type": "string"
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/accounts/{account}": {
+      "get": {
+        "operationId": "getAccount",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/account"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Acknowledged result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Profile"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateAccount",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/account"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Acknowledged result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Profile"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "display_name": {
+                    "type": "string"
+                  },
+                  "avatar_url": {
+                    "type": "string"
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workspaces/{ws}/scopes/{scope}/access/{account}": {
+      "put": {
+        "operationId": "putScopeAccess",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ws"
+          },
+          {
+            "$ref": "#/components/parameters/scope"
+          },
+          {
+            "$ref": "#/components/parameters/account"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Acknowledged result"
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "role": {
+                    "enum": [
+                      "manager",
+                      "editor",
+                      "viewer"
+                    ]
+                  }
+                },
+                "required": [
+                  "role"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteScopeAccess",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ws"
+          },
+          {
+            "$ref": "#/components/parameters/scope"
+          },
+          {
+            "$ref": "#/components/parameters/account"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Acknowledged result"
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "role": {
+                    "enum": [
+                      "manager",
+                      "editor",
+                      "viewer"
+                    ]
+                  }
+                },
+                "required": [
+                  "role"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/filesystems/{filesystem}/scopes/{scope}/trash-entries/{entry}:restore": {
+      "post": {
+        "operationId": "restoreTrashEntry",
+        "responses": {
+          "200": {
+            "description": "Current resource/result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Node"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "412": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "413": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "428": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "429": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/filesystem"
+          },
+          {
+            "$ref": "#/components/parameters/entry"
+          },
+          {
+            "$ref": "#/components/parameters/scope"
+          }
+        ]
       }
     }
   },
@@ -3139,24 +2976,6 @@
           "format": "uuid"
         }
       },
-      "copy": {
-        "name": "copy",
-        "in": "path",
-        "required": true,
-        "schema": {
-          "type": "string",
-          "format": "uuid"
-        }
-      },
-      "user": {
-        "name": "user",
-        "in": "path",
-        "required": true,
-        "schema": {
-          "type": "string",
-          "format": "uuid"
-        }
-      },
       "invitation": {
         "name": "invitation",
         "in": "path",
@@ -3194,8 +3013,8 @@
           "format": "uuid"
         }
       },
-      "bucket": {
-        "name": "bucket",
+      "scope": {
+        "name": "scope",
         "in": "path",
         "required": true,
         "schema": {
@@ -3203,14 +3022,13 @@
           "format": "uuid"
         }
       },
-      "mount_path": {
-        "name": "mount_path",
-        "in": "query",
-        "description": "Virtual mount label chosen by the caller for this filesystem; defaults to /. Does not grant access.",
+      "account": {
+        "name": "account",
+        "in": "path",
+        "required": true,
         "schema": {
           "type": "string",
-          "maxLength": 4096,
-          "default": "/"
+          "format": "uuid"
         }
       }
     },
@@ -3239,12 +3057,23 @@
           },
           "avatar_url": {
             "type": "string"
+          },
+          "type": {
+            "enum": [
+              "user",
+              "agent"
+            ]
+          },
+          "owner_id": {
+            "type": "string",
+            "format": "uuid"
           }
         },
         "required": [
           "id",
           "display_name",
-          "avatar_url"
+          "avatar_url",
+          "type"
         ],
         "additionalProperties": false
       },
@@ -3305,25 +3134,30 @@
             }
           }
         ],
-        "description": "Filesystem-scoped ID or mounted path, optionally relative to cwd_id. The first filesystem-relative @<canonical UUID> segment at the root aliases a live node. Files support child traversal/listing; strict descendants of files are read-only. Directory-style trailing syntax is invalid for content reads."
+        "description": "Scope-bound ID or path, optionally relative to cwd_id; every node must reach the selected live scope root."
       },
       "Member": {
         "type": "object",
         "properties": {
-          "user": {
-            "$ref": "#/components/schemas/Profile"
+          "account": {
+            "$ref": "#/components/schemas/AccountSummary"
           },
           "role": {
             "enum": [
               "owner",
-              "editor",
-              "viewer"
+              "admin",
+              "member"
             ]
+          },
+          "personal_scope_id": {
+            "type": "string",
+            "format": "uuid"
           }
         },
         "required": [
-          "user",
-          "role"
+          "account",
+          "role",
+          "personal_scope_id"
         ],
         "additionalProperties": false
       },
@@ -3663,34 +3497,6 @@
         ],
         "additionalProperties": false
       },
-      "UploadLimits": {
-        "type": "object",
-        "properties": {
-          "inline_limit_bytes": {
-            "type": "string",
-            "pattern": "^(0|[1-9][0-9]*)$"
-          },
-          "max_file_bytes": {
-            "type": "string",
-            "pattern": "^(0|[1-9][0-9]*)$"
-          },
-          "multipart_threshold_bytes": {
-            "type": "string",
-            "pattern": "^(0|[1-9][0-9]*)$"
-          },
-          "multipart_part_bytes": {
-            "type": "string",
-            "pattern": "^(0|[1-9][0-9]*)$"
-          }
-        },
-        "required": [
-          "inline_limit_bytes",
-          "max_file_bytes",
-          "multipart_threshold_bytes",
-          "multipart_part_bytes"
-        ],
-        "additionalProperties": false
-      },
       "Problem": {
         "type": "object",
         "required": [
@@ -3729,33 +3535,24 @@
       "Onboarding": {
         "type": "object",
         "properties": {
-          "user_id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "workspace_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid",
-            "description": "Null until the Workspace child workflow returns its owned resource ID."
-          },
           "status": {
             "type": "string",
             "enum": [
-              "provisioning",
+              "pending",
               "active",
               "failed"
             ]
           },
           "refresh_session": {
             "type": "boolean"
+          },
+          "account_id": {
+            "type": "string",
+            "format": "uuid"
           }
         },
         "required": [
-          "user_id",
-          "workspace_id",
+          "account_id",
           "status",
           "refresh_session"
         ],
@@ -3776,59 +3573,38 @@
           "status": {
             "type": "string",
             "enum": [
-              "provisioning",
               "active",
               "deleting",
-              "deleted",
-              "failed"
+              "deleted"
             ]
-          },
-          "revision": {
-            "type": "string",
-            "pattern": "^(0|[1-9][0-9]*)$"
           },
           "role": {
             "type": "string",
             "enum": [
               "owner",
-              "editor",
-              "viewer"
+              "admin",
+              "member"
             ]
           },
-          "quota_bucket_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid"
-          },
           "filesystem_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid"
-          },
-          "root_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid"
-          },
-          "limit_bytes": {
             "type": "string",
-            "pattern": "^(0|[1-9][0-9]*)$"
+            "format": "uuid"
           },
-          "error_code": {
-            "type": "string"
+          "shared_scope_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "personal_scope_id": {
+            "type": "string",
+            "format": "uuid"
           }
         },
         "required": [
           "id",
           "name",
           "status",
-          "revision"
+          "filesystem_id",
+          "shared_scope_id"
         ],
         "additionalProperties": false
       },
@@ -3849,8 +3625,8 @@
           },
           "role": {
             "enum": [
-              "editor",
-              "viewer"
+              "admin",
+              "member"
             ]
           },
           "expires_at": {
@@ -3881,10 +3657,6 @@
         "type": "object",
         "properties": {
           "id": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "filesystem_id": {
             "type": "string",
             "format": "uuid"
           },
@@ -3954,11 +3726,15 @@
               "null"
             ],
             "pattern": "^(document:(research_paper|report|article|book|manual|contract|other)|text:(content|summary|notes|overview|transcript|other)|image:(photo|screenshot|chart|diagram|illustration|other)|table:(records|summary|time_series|other)|spreadsheet:(dataset|financial|tracker|other)|presentation:(lecture|pitch|report|other)|code:(source|configuration|notebook|other)|other:unknown)$"
+          },
+          "scope_id": {
+            "type": "string",
+            "format": "uuid"
           }
         },
         "required": [
           "id",
-          "filesystem_id",
+          "scope_id",
           "parent_id",
           "name",
           "kind",
@@ -4036,6 +3812,10 @@
               },
               "name": {
                 "type": "string"
+              },
+              "destination_scope_id": {
+                "type": "string",
+                "format": "uuid"
               }
             },
             "required": [
@@ -4232,40 +4012,13 @@
           "destination_root_id": {
             "type": "string",
             "format": "uuid"
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "accepted",
-              "running",
-              "succeeded",
-              "failed"
-            ]
-          },
-          "committed_nodes": {
-            "type": "string",
-            "pattern": "^(0|[1-9][0-9]*)$"
-          },
-          "committed_bytes": {
-            "type": "string",
-            "pattern": "^(0|[1-9][0-9]*)$"
-          },
-          "error_code": {
-            "type": [
-              "string",
-              "null"
-            ]
           }
         },
         "required": [
           "id",
-          "destination_root_id",
-          "status",
-          "committed_nodes",
-          "committed_bytes"
+          "destination_root_id"
         ],
-        "additionalProperties": false,
-        "description": "Temporal-backed monitor; no SQL job. Reauthorizes current membership and admission actor/current owner. Missing or expired Temporal history returns 410 COPY_EXPIRED; copied nodes remain. Counts report acknowledged committed effects across runs; after an unacknowledged effect is subsequently changed/deleted they can be lower bounds."
+        "additionalProperties": false
       },
       "Processing": {
         "type": "object",
@@ -4412,6 +4165,27 @@
         "required": [
           "items",
           "next_cursor"
+        ],
+        "additionalProperties": false
+      },
+      "AccountSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "avatar_url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "display_name",
+          "avatar_url"
         ],
         "additionalProperties": false
       }

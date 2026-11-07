@@ -22,9 +22,9 @@ const StorageMaintenanceName = "StorageMaintenance"
 func StorageMaintenance(ctx workflow.Context) error {
 	short := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{StartToCloseTimeout: 30 * time.Second, RetryPolicy: &sdktemporal.RetryPolicy{MaximumAttempts: 3}})
 	bounded := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{StartToCloseTimeout: 240 * time.Second, HeartbeatTimeout: 30 * time.Second, RetryPolicy: &sdktemporal.RetryPolicy{MaximumAttempts: 3}})
-	expiryErr := workflow.ExecuteActivity(short, "expire_uploads_batch").Get(short, nil)
-	recoveryErr := workflow.ExecuteActivity(bounded, "reconcile_resources_batch").Get(bounded, nil)
-	cleanupErr := workflow.ExecuteActivity(bounded, "delete_objects_batch").Get(bounded, nil)
+	expiryErr := workflow.ExecuteActivity(short, "ExpireUploads").Get(short, nil)
+	recoveryErr := workflow.ExecuteActivity(bounded, "ReconcileResources").Get(bounded, nil)
+	cleanupErr := workflow.ExecuteActivity(bounded, "DeleteObjects").Get(bounded, nil)
 	return errors.Join(expiryErr, recoveryErr, cleanupErr)
 }
 
@@ -66,14 +66,14 @@ func (a *Activities) reconcileResources(ctx context.Context) (int, error) {
 	if err != nil {
 		return count, err
 	}
-	rows, err := a.Store.DB.Query(ctx, `SELECT filesystem_id,id FROM trash_entries WHERE state='purging' ORDER BY created_at,id LIMIT 64`)
+	rows, err := a.Store.DB.Query(ctx, `SELECT scope_id,id FROM trash_entries WHERE state='purging' ORDER BY created_at,id LIMIT 64`)
 	if err != nil {
 		return count, err
 	}
 	purges, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (filesystem.DeletionInput, error) {
 		var input filesystem.DeletionInput
 		var id uuid.UUID
-		err := row.Scan(&input.FilesystemID, &id)
+		err := row.Scan(&input.ScopeID, &id)
 		input.EntryID = &id
 		return input, err
 	})
@@ -82,6 +82,36 @@ func (a *Activities) reconcileResources(ctx context.Context) (int, error) {
 	}
 	for _, purge := range purges {
 		if err = a.Jobs.StartDeletion(ctx, purge); err != nil {
+			return count, err
+		}
+	}
+	rows, err = a.Store.DB.Query(ctx, `SELECT id FROM filesystems WHERE state='deleting' ORDER BY id LIMIT 64`)
+	if err != nil {
+		return count, err
+	}
+	deleting, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+	if err != nil {
+		return count, err
+	}
+	for _, id := range deleting {
+		if err = a.Jobs.StartDeletion(ctx, filesystem.DeletionInput{FilesystemID: id}); err != nil {
+			return count, err
+		}
+	}
+	rows, err = a.Store.DB.Query(ctx, `SELECT sc.filesystem_id,sc.id FROM scopes sc JOIN filesystems fs ON fs.id=sc.filesystem_id WHERE sc.state='deleting' AND fs.state='active' ORDER BY sc.id LIMIT 64`)
+	if err != nil {
+		return count, err
+	}
+	scopes, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (filesystem.DeletionInput, error) {
+		var in filesystem.DeletionInput
+		err := row.Scan(&in.FilesystemID, &in.ScopeID)
+		return in, err
+	})
+	if err != nil {
+		return count, err
+	}
+	for _, scope := range scopes {
+		if err = a.Jobs.StartDeletion(ctx, scope); err != nil {
 			return count, err
 		}
 	}
@@ -137,7 +167,7 @@ func (a *Activities) reconcileResources(ctx context.Context) (int, error) {
 		if running == nil {
 			err = a.Jobs.StartCopy(ctx, admission)
 		} else if !*running {
-			err = a.Store.CompleteCopy(ctx, admission)
+			err = a.Store.CloseCopyAdmission(ctx, admission)
 		}
 		if err != nil {
 			return count, err

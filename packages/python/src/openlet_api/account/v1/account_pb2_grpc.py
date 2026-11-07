@@ -34,10 +34,10 @@ class AccountServiceStub:
         Args:
             channel: A grpc.Channel.
         """
-        self.GetUserSummaries = channel.unary_unary(
-                '/openlet_api.account.v1.AccountService/GetUserSummaries',
-                request_serializer=openlet__api_dot_account_dot_v1_dot_account__pb2.GetUserSummariesRequest.SerializeToString,
-                response_deserializer=openlet__api_dot_account_dot_v1_dot_account__pb2.GetUserSummariesResponse.FromString,
+        self.GetAccountSummaries = channel.unary_unary(
+                '/openlet_api.account.v1.AccountService/GetAccountSummaries',
+                request_serializer=openlet__api_dot_account_dot_v1_dot_account__pb2.GetAccountSummariesRequest.SerializeToString,
+                response_deserializer=openlet__api_dot_account_dot_v1_dot_account__pb2.GetAccountSummariesResponse.FromString,
                 _registered_method=True)
         self.GetVerifiedEmails = channel.unary_unary(
                 '/openlet_api.account.v1.AccountService/GetVerifiedEmails',
@@ -49,7 +49,7 @@ class AccountServiceStub:
 class AccountServiceServicer:
     """Missing associated documentation comment in .proto file."""
 
-    def GetUserSummaries(self, request, context):
+    def GetAccountSummaries(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -64,10 +64,10 @@ class AccountServiceServicer:
 
 def add_AccountServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
-            'GetUserSummaries': grpc.unary_unary_rpc_method_handler(
-                    servicer.GetUserSummaries,
-                    request_deserializer=openlet__api_dot_account_dot_v1_dot_account__pb2.GetUserSummariesRequest.FromString,
-                    response_serializer=openlet__api_dot_account_dot_v1_dot_account__pb2.GetUserSummariesResponse.SerializeToString,
+            'GetAccountSummaries': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetAccountSummaries,
+                    request_deserializer=openlet__api_dot_account_dot_v1_dot_account__pb2.GetAccountSummariesRequest.FromString,
+                    response_serializer=openlet__api_dot_account_dot_v1_dot_account__pb2.GetAccountSummariesResponse.SerializeToString,
             ),
             'GetVerifiedEmails': grpc.unary_unary_rpc_method_handler(
                     servicer.GetVerifiedEmails,
@@ -86,7 +86,7 @@ class AccountService:
     """Missing associated documentation comment in .proto file."""
 
     @staticmethod
-    def GetUserSummaries(request,
+    def GetAccountSummaries(request,
             target,
             options=(),
             channel_credentials=None,
@@ -99,9 +99,9 @@ class AccountService:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/openlet_api.account.v1.AccountService/GetUserSummaries',
-            openlet__api_dot_account_dot_v1_dot_account__pb2.GetUserSummariesRequest.SerializeToString,
-            openlet__api_dot_account_dot_v1_dot_account__pb2.GetUserSummariesResponse.FromString,
+            '/openlet_api.account.v1.AccountService/GetAccountSummaries',
+            openlet__api_dot_account_dot_v1_dot_account__pb2.GetAccountSummariesRequest.SerializeToString,
+            openlet__api_dot_account_dot_v1_dot_account__pb2.GetAccountSummariesResponse.FromString,
             options,
             channel_credentials,
             insecure,

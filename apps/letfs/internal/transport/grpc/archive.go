@@ -13,7 +13,7 @@ import (
 )
 
 func (s *Filesystem) StreamArchive(input *letfsv1.StreamArchiveRequest, stream grpcgo.ServerStreamingServer[letfsv1.StreamArchiveResponse]) error {
-	fs, err := parseID(input.GetFilesystemId())
+	fs, err := s.scopeInput(stream.Context(), input.GetFilesystemId(), input.GetScopeId())
 	if err != nil {
 		return err
 	}
@@ -21,11 +21,7 @@ func (s *Filesystem) StreamArchive(input *letfsv1.StreamArchiveRequest, stream g
 	if err != nil {
 		return err
 	}
-	mounts, err := pathInput(input.GetPathContext())
-	if err != nil {
-		return err
-	}
-	archive, err := s.Store.OpenArchive(stream.Context(), fs, mounts, id)
+	archive, err := s.Store.OpenArchive(stream.Context(), fs, id)
 	if err != nil {
 		return err
 	}

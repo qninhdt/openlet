@@ -10,17 +10,17 @@ from openlet_api.account.v1 import account_pb2_grpc as account_rpc
 ACTOR = "019a3b66-0000-7000-8000-000000000001"
 GATEWAY_TOKEN = "isolated-public-gateway-credential-12345"
 SERVICE_TOKEN = "isolated-owner-service-credential-12345"
-SUMMARIES = "/openlet_api.account.v1.AccountService/GetUserSummaries"
+SUMMARIES = "/openlet_api.account.v1.AccountService/GetAccountSummaries"
 EMAILS = "/openlet_api.account.v1.AccountService/GetVerifiedEmails"
 STREAM = "/openlet_api.test.v1.StreamService/Read"
 
 
 class Account(account_rpc.AccountServiceServicer):
-    async def GetUserSummaries(self, request, context):
+    async def GetAccountSummaries(self, request, context):
         caller = principal()
-        return pb.GetUserSummariesResponse(
-            users=[
-                pb.UserSummary(
+        return pb.GetAccountSummariesResponse(
+            accounts=[
+                pb.AccountSummary(
                     id=str(caller.actor_id),
                     display_name=caller.service,
                 )
@@ -96,12 +96,12 @@ async def account_server():
         await server.stop(None)
 
 
-async def invoke(stub, metadata, method="GetUserSummaries"):
+async def invoke(stub, metadata, method="GetAccountSummaries"):
     call = getattr(stub, method)
     request = (
-        pb.GetUserSummariesRequest(ids=[ACTOR])
-        if method == "GetUserSummaries"
-        else pb.GetVerifiedEmailsRequest(user_id=ACTOR)
+        pb.GetAccountSummariesRequest(ids=[ACTOR])
+        if method == "GetAccountSummaries"
+        else pb.GetVerifiedEmailsRequest(account_id=ACTOR)
     )
     return await call(request, metadata=metadata, timeout=2)
 
@@ -113,11 +113,11 @@ async def test_authenticated_rpc_wire_enforces_identity_and_method_scope(
         stub = account_rpc.AccountServiceStub(channel)
         gateway = (
             ("authorization", f"Bearer {GATEWAY_TOKEN}"),
-            ("x-openlet-user-id", ACTOR),
+            ("x-openlet-account-id", ACTOR),
         )
         response = await invoke(stub, gateway)
-        assert response.users[0].id == ACTOR
-        assert response.users[0].display_name == "gateway"
+        assert response.accounts[0].id == ACTOR
+        assert response.accounts[0].display_name == "gateway"
 
         cases = [
             ((), grpc.StatusCode.UNAUTHENTICATED),
@@ -126,7 +126,7 @@ async def test_authenticated_rpc_wire_enforces_identity_and_method_scope(
                 grpc.StatusCode.UNAUTHENTICATED,
             ),
             (
-                gateway + (("x-openlet-user-id", ACTOR),),
+                gateway + (("x-openlet-account-id", ACTOR),),
                 grpc.StatusCode.UNAUTHENTICATED,
             ),
             (
@@ -140,7 +140,7 @@ async def test_authenticated_rpc_wire_enforces_identity_and_method_scope(
             (
                 (
                     ("authorization", f"Bearer {SERVICE_TOKEN}"),
-                    ("x-openlet-user-id", ACTOR),
+                    ("x-openlet-account-id", ACTOR),
                 ),
                 grpc.StatusCode.PERMISSION_DENIED,
             ),
@@ -167,7 +167,7 @@ async def test_server_preserves_safe_application_error_details(account_server):
                 stub,
                 (
                     ("authorization", f"Bearer {GATEWAY_TOKEN}"),
-                    ("x-openlet-user-id", ACTOR),
+                    ("x-openlet-account-id", ACTOR),
                 ),
                 "GetVerifiedEmails",
             )

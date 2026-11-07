@@ -39,9 +39,9 @@ type archiveEntry struct {
 }
 
 type archivePlan struct {
-	FilesystemID uuid.UUID
-	Name         string
-	Entries      []archiveEntry
+	ScopeID uuid.UUID
+	Name    string
+	Entries []archiveEntry
 }
 
 type ArchiveStream struct {
@@ -85,13 +85,13 @@ func archiveCollisionKey(value string) string {
 	return norm.NFC.String(strings.ToLower(norm.NFC.String(value)))
 }
 
-func (s *Store) preflightArchive(ctx context.Context, fs uuid.UUID, mounts []Mount, id uuid.UUID) (archivePlan, error) {
-	session, err := s.openSession(ctx, fs, false)
+func (s *Store) preflightArchive(ctx context.Context, scopeID uuid.UUID, id uuid.UUID) (archivePlan, error) {
+	session, err := s.openSession(ctx, scopeID, false)
 	if err != nil {
 		return archivePlan{}, err
 	}
 	defer session.tx.Rollback(ctx)
-	node, err := session.resolveOne(ctx, mounts, Locator{NodeID: &id})
+	node, err := session.resolveOne(ctx, Locator{NodeID: &id})
 	if err != nil {
 		return archivePlan{}, err
 	}
@@ -99,14 +99,14 @@ func (s *Store) preflightArchive(ctx context.Context, fs uuid.UUID, mounts []Mou
 		return archivePlan{}, err
 	}
 	rows, err := session.tx.Query(ctx, `WITH RECURSIVE tree AS (
- SELECT n.*,''::text COLLATE "C" AS path,0 AS depth FROM nodes n WHERE n.filesystem_id=$1 AND n.id=$2
- UNION ALL SELECT n.*,CASE WHEN t.path='' THEN n.name ELSE t.path||'/'||n.name END,t.depth+1 FROM tree t JOIN nodes n ON n.filesystem_id=$1 AND n.parent_id=t.id WHERE t.kind='directory' AND t.depth<128)
- SELECT t.id,t.parent_id,t.name,t.path,t.kind,t.revision,t.size_bytes,f.object_key,f.storage_kind FROM tree t LEFT JOIN files f ON f.node_id=t.id LIMIT $3`, fs, id, s.Archive.MaxEntries+2)
+ SELECT n.*,''::text COLLATE "C" AS path,0 AS depth FROM nodes n WHERE n.scope_id=$1 AND n.id=$2
+ UNION ALL SELECT n.*,CASE WHEN t.path='' THEN n.name ELSE t.path||'/'||n.name END,t.depth+1 FROM tree t JOIN nodes n ON n.scope_id=$1 AND n.parent_id=t.id WHERE t.kind='directory' AND t.depth<128)
+ SELECT t.id,t.parent_id,t.name,t.path,t.kind,t.revision,t.size_bytes,f.object_key,f.storage_kind FROM tree t LEFT JOIN files f ON f.node_id=t.id LIMIT $3`, scopeID, id, s.Archive.MaxEntries+2)
 	if err != nil {
 		return archivePlan{}, databaseError(err)
 	}
 	defer rows.Close()
-	result := archivePlan{FilesystemID: fs, Name: node.Name + ".zip"}
+	result := archivePlan{ScopeID: scopeID, Name: node.Name + ".zip"}
 	names, total := make(map[string]bool), int64(0)
 	for rows.Next() {
 		var entry archiveEntry
@@ -146,8 +146,8 @@ func archiveLimit() error {
 	return apperr.New(apperr.Limit, "RESOURCE_LIMIT", "archive resource limit")
 }
 
-func (s *Store) OpenArchive(ctx context.Context, fs uuid.UUID, mounts []Mount, id uuid.UUID) (*ArchiveStream, error) {
-	if _, err := s.authorize(ctx, fs, "filesystem", authz.Archive); err != nil {
+func (s *Store) OpenArchive(ctx context.Context, scopeID uuid.UUID, id uuid.UUID) (*ArchiveStream, error) {
+	if _, err := s.authorize(ctx, scopeID, "scope", authz.ScopeReadContent); err != nil {
 		return nil, err
 	}
 	if s.Archive.Validate() != nil || s.ArchiveSlots == nil {
@@ -157,7 +157,7 @@ func (s *Store) OpenArchive(ctx context.Context, fs uuid.UUID, mounts []Mount, i
 		return nil, archiveLimit()
 	}
 	ctx, cancel := context.WithTimeout(ctx, s.Archive.Runtime)
-	plan, err := s.preflightArchive(ctx, fs, mounts, id)
+	plan, err := s.preflightArchive(ctx, scopeID, id)
 	if err != nil {
 		cancel()
 		s.ArchiveSlots.Release(1)
@@ -176,15 +176,15 @@ func (s *Store) OpenArchive(ctx context.Context, fs uuid.UUID, mounts []Mount, i
 }
 
 func (s *Store) archivePayload(ctx context.Context, plan archivePlan, entry archiveEntry, expected map[uuid.UUID]archiveEntry) ([]byte, error) {
-	session, err := s.openSession(ctx, plan.FilesystemID, false)
+	session, err := s.openSession(ctx, plan.ScopeID, false)
 	if err != nil {
 		return nil, err
 	}
 	defer session.tx.Rollback(ctx)
 	rows, err := session.tx.Query(ctx, `WITH RECURSIVE ancestors AS (
- SELECT n.*,0 AS depth FROM nodes n WHERE n.id=$1 AND n.filesystem_id=$2
- UNION ALL SELECT n.*,a.depth+1 FROM ancestors a JOIN nodes n ON n.id=a.parent_id AND n.filesystem_id=$2 WHERE a.id!=$3 AND a.depth<128)
- SELECT a.id,a.parent_id,a.name,a.kind,a.revision,a.size_bytes,f.object_key,CASE WHEN a.id=$1 THEN f.inline_bytes END FROM ancestors a LEFT JOIN files f ON f.node_id=a.id ORDER BY depth`, entry.ID, plan.FilesystemID, session.root)
+ SELECT n.*,0 AS depth FROM nodes n WHERE n.id=$1 AND n.scope_id=$2
+ UNION ALL SELECT n.*,a.depth+1 FROM ancestors a JOIN nodes n ON n.id=a.parent_id AND n.scope_id=$2 WHERE a.id!=$3 AND a.depth<128)
+ SELECT a.id,a.parent_id,a.name,a.kind,a.revision,a.size_bytes,f.object_key,CASE WHEN a.id=$1 THEN f.inline_bytes END FROM ancestors a LEFT JOIN files f ON f.node_id=a.id ORDER BY depth`, entry.ID, plan.ScopeID, session.root)
 	if err != nil {
 		return nil, databaseError(err)
 	}

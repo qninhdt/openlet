@@ -5,83 +5,54 @@ package temporal
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/qninhdt/openlet/apps/workspace/internal/workspace"
-	"github.com/stretchr/testify/mock"
+	shared "github.com/qninhdt/openlet/packages/go/temporal"
 	"github.com/stretchr/testify/require"
+	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 )
 
-func TestStartErrorReturnsNativeWorkspaceFaults(t *testing.T) {
-	err := startError(temporal.NewNonRetryableApplicationError("rejected", "RESOURCE_LIMIT", nil))
+func TestStartErrorReturnsWorkspaceFault(t *testing.T) {
 	var fault workspace.Fault
-	require.ErrorAs(t, err, &fault)
+	require.ErrorAs(t, startError(temporal.NewNonRetryableApplicationError("rejected", "RESOURCE_LIMIT", nil)), &fault)
 	require.Equal(t, "RESOURCE_LIMIT", fault.Code)
 	require.ErrorIs(t, startError(temporal.NewCanceledError()), context.Canceled)
 }
 
-func TestCreateWorkspaceProvisionsPreparedStorageBeforeCompletion(t *testing.T) {
+func TestCreateWorkspaceAllocatesStorageAndSavesMapping(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
-	in := workspace.CreateInput{ActorID: uuid.New(), Key: uuid.New(), Name: "Team"}
-	id, bucket, filesystem, root := uuid.New(), uuid.New(), uuid.New(), uuid.New()
-	value := workspace.Workspace{ID: id, Status: "provisioning"}
-	storage := workspace.Storage{WorkspaceID: id, BucketID: bucket, FilesystemID: filesystem, LimitBytes: "100"}
-	completedStorage := storage
-	completedStorage.RootID = root
-	var activities *Activities
-	env.OnActivity(activities.PrepareWorkspace, mock.Anything, in).Return(workspace.Provisioning{Workspace: value, Storage: storage}, nil).After(time.Second).Once()
-	env.OnActivity(activities.CreateStorage, mock.Anything, storage).Return(completedStorage, nil).Once()
-	env.OnActivity(activities.CompleteWorkspace, mock.Anything, completedStorage, in).Return(nil).Once()
-	admissions := 0
-	env.RegisterDelayedCallback(func() {
-		env.UpdateWorkflow("admission", "matching", &testsuite.TestUpdateCallback{OnComplete: func(result any, err error) {
-			require.NoError(t, err)
-			require.Equal(t, value, result)
-			admissions++
-		}}, in)
-		changed := in
-		changed.Name = "Different"
-		env.UpdateWorkflow("admission", "conflict", &testsuite.TestUpdateCallback{OnComplete: func(_ any, err error) {
-			require.ErrorContains(t, err, "IDEMPOTENCY_CONFLICT")
-			admissions++
-		}}, changed)
-	}, 0)
-	env.ExecuteWorkflow(CreateWorkspace, in)
+	in := shared.WorkspaceCreation{ActorID: uuid.New(), Key: uuid.New(), Name: "Team"}
+	var fs uuid.UUID
+	var scopes []uuid.UUID
+	var order []string
+	env.RegisterActivityWithOptions(func(_ context.Context, got shared.FilesystemCreation) error {
+		fs = got.ID
+		require.NotEqual(t, uuid.Nil, fs)
+		require.EqualValues(t, 100, got.LimitBytes)
+		order = append(order, "filesystem")
+		return nil
+	}, activity.RegisterOptions{Name: shared.CreateFilesystemActivity})
+	env.RegisterActivityWithOptions(func(_ context.Context, got shared.ScopesCreation) error {
+		require.Equal(t, fs, got.FilesystemID)
+		require.Len(t, got.IDs, 2)
+		scopes = got.IDs
+		order = append(order, "scopes")
+		return nil
+	}, activity.RegisterOptions{Name: shared.CreateScopesActivity})
+	env.RegisterActivityWithOptions(func(_ context.Context, got workspace.Creation) (workspace.Workspace, error) {
+		require.Equal(t, in, got.Input)
+		require.Equal(t, fs, got.FilesystemID)
+		require.Equal(t, scopes, []uuid.UUID{got.SharedScopeID, got.PersonalScopeID})
+		require.NotEqual(t, scopes[0], scopes[1])
+		order = append(order, "save")
+		return workspace.Workspace{ID: got.ID, FilesystemID: fs, Status: "active"}, nil
+	}, activity.RegisterOptions{Name: "SaveWorkspace"})
+	w := Workflows{QuotaLimit: 100}
+	env.ExecuteWorkflow(w.CreateWorkspace, in)
 	require.NoError(t, env.GetWorkflowError())
-	var result uuid.UUID
-	require.NoError(t, env.GetWorkflowResult(&result))
-	require.Equal(t, id, result)
-	require.Equal(t, 2, admissions)
-	env.AssertExpectations(t)
-}
-
-func TestCreateWorkspaceStorageFailureMarksWorkspaceFailed(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	env := suite.NewTestWorkflowEnvironment()
-	in := workspace.CreateInput{ActorID: uuid.New(), Key: uuid.New(), Name: "Team"}
-	storage := workspace.Storage{WorkspaceID: uuid.New(), BucketID: uuid.New(), FilesystemID: uuid.New(), LimitBytes: "100"}
-	var activities *Activities
-	env.OnActivity(activities.PrepareWorkspace, mock.Anything, in).Return(workspace.Provisioning{Workspace: workspace.Workspace{ID: storage.WorkspaceID}, Storage: storage}, nil).Once()
-	env.OnActivity(activities.CreateStorage, mock.Anything, storage).Return(workspace.Storage{}, temporal.NewNonRetryableApplicationError("rejected", "STORAGE_SCOPE_CONFLICT", nil)).Once()
-	env.OnActivity(activities.FailWorkspace, mock.Anything, in).Return(nil).Once()
-	env.ExecuteWorkflow(CreateWorkspace, in)
-	require.Error(t, env.GetWorkflowError())
-	env.AssertNotCalled(t, "CompleteWorkspace", mock.Anything, mock.Anything)
-	env.AssertExpectations(t)
-}
-
-func TestCreateWorkspaceRejectsInvalidAdmission(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	env := suite.NewTestWorkflowEnvironment()
-	var activities *Activities
-	in := workspace.CreateInput{}
-	env.OnActivity(activities.PrepareWorkspace, mock.Anything, in).Return(workspace.Provisioning{}, temporal.NewNonRetryableApplicationError("invalid", "VALIDATION", nil)).Once()
-	env.OnActivity(activities.FailWorkspace, mock.Anything, in).Return(nil).Once()
-	env.ExecuteWorkflow(CreateWorkspace, in)
-	require.Error(t, env.GetWorkflowError())
-	env.AssertExpectations(t)
+	require.Equal(t, []string{"filesystem", "scopes", "save"}, order)
 }

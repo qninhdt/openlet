@@ -23,25 +23,22 @@ func nodeMessage(node filesystem.Node) *letfsv1.Node {
 		value := node.ParentID.String()
 		parent = &value
 	}
-	return &letfsv1.Node{Id: node.ID.String(), FilesystemId: node.FilesystemID.String(), ParentId: parent,
+	return &letfsv1.Node{Id: node.ID.String(), ScopeId: node.ScopeID.String(), ParentId: parent,
 		Name: node.Name, Kind: node.Kind, Revision: node.Revision, SizeBytes: node.SizeBytes,
 		CreatedAt: timestamppb.New(node.CreatedAt), UpdatedAt: timestamppb.New(node.UpdatedAt), MediaType: node.MediaType,
 		Title: node.Title, Description: node.Description, SemanticType: node.SemanticType, Context: node.Context}
 }
 
-func pathInput(value *letfsv1.PathContext) ([]filesystem.Mount, error) {
-	if len(value.GetMounts()) < 1 || len(value.GetMounts()) > 32 {
-		return nil, rpc.Fault(codes.InvalidArgument, "VALIDATION", "1..32 mounts required")
+func (s *Filesystem) scopeInput(ctx context.Context, fs, scope string) (uuid.UUID, error) {
+	filesystemID, err := parseID(fs)
+	if err != nil {
+		return uuid.Nil, err
 	}
-	mounts := make([]filesystem.Mount, len(value.Mounts))
-	for i, mount := range value.Mounts {
-		id, err := parseID(mount.GetFilesystemId())
-		if err != nil {
-			return nil, err
-		}
-		mounts[i] = filesystem.Mount{Path: mount.GetPath(), FilesystemID: id}
+	scopeID, err := parseID(scope)
+	if err != nil {
+		return uuid.Nil, err
 	}
-	return mounts, nil
+	return scopeID, s.Store.ValidateScope(ctx, filesystemID, scopeID)
 }
 
 func optionalID(value *string) (*uuid.UUID, error) {
@@ -90,26 +87,11 @@ func (s *Filesystem) GetFilesystem(ctx context.Context, input *letfsv1.GetFilesy
 	if err != nil {
 		return nil, err
 	}
-	return &letfsv1.GetFilesystemResponse{Filesystem: &letfsv1.Filesystem{Id: value.ID.String(), BucketId: value.BucketID.String(), RootId: value.RootID.String(), State: value.State}}, nil
-}
-
-func (s *Filesystem) GetBucketUsage(ctx context.Context, input *letfsv1.GetBucketUsageRequest) (*letfsv1.GetBucketUsageResponse, error) {
-	id, err := parseID(input.GetBucketId())
-	if err != nil {
-		return nil, err
-	}
-	value, err := s.Store.GetBucketUsage(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	return &letfsv1.GetBucketUsageResponse{Bucket: bucketMessage(value), UploadLimits: &letfsv1.UploadLimits{
-		InlineLimitBytes: s.Store.InlineLimit, MaxFileBytes: s.Store.MaxFileBytes,
-		MultipartThresholdBytes: s.Store.MultipartThreshold, MultipartPartBytes: s.Store.MultipartPartBytes,
-	}}, nil
+	return &letfsv1.GetFilesystemResponse{Filesystem: filesystemMessage(value)}, nil
 }
 
 func (s *Filesystem) GetNode(ctx context.Context, input *letfsv1.GetNodeRequest) (*letfsv1.GetNodeResponse, error) {
-	fs, err := parseID(input.GetFilesystemId())
+	fs, err := s.scopeInput(ctx, input.GetFilesystemId(), input.GetScopeId())
 	if err != nil {
 		return nil, err
 	}
@@ -117,11 +99,7 @@ func (s *Filesystem) GetNode(ctx context.Context, input *letfsv1.GetNodeRequest)
 	if err != nil {
 		return nil, err
 	}
-	mounts, err := pathInput(input.GetPathContext())
-	if err != nil {
-		return nil, err
-	}
-	value, err := s.Store.GetNode(ctx, fs, mounts, filesystem.Locator{NodeID: &id})
+	value, err := s.Store.GetNode(ctx, fs, filesystem.Locator{NodeID: &id})
 	if err != nil {
 		return nil, err
 	}
@@ -129,11 +107,7 @@ func (s *Filesystem) GetNode(ctx context.Context, input *letfsv1.GetNodeRequest)
 }
 
 func (s *Filesystem) ResolveNode(ctx context.Context, input *letfsv1.ResolveNodeRequest) (*letfsv1.ResolveNodeResponse, error) {
-	fs, err := parseID(input.GetFilesystemId())
-	if err != nil {
-		return nil, err
-	}
-	mounts, err := pathInput(input.GetPathContext())
+	fs, err := s.scopeInput(ctx, input.GetFilesystemId(), input.GetScopeId())
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +115,7 @@ func (s *Filesystem) ResolveNode(ctx context.Context, input *letfsv1.ResolveNode
 	if err != nil {
 		return nil, err
 	}
-	value, err := s.Store.ResolveNode(ctx, fs, mounts, locator)
+	value, err := s.Store.ResolveNode(ctx, fs, locator)
 	if err != nil {
 		return nil, err
 	}
@@ -149,11 +123,7 @@ func (s *Filesystem) ResolveNode(ctx context.Context, input *letfsv1.ResolveNode
 }
 
 func (s *Filesystem) BatchStat(ctx context.Context, input *letfsv1.BatchStatRequest) (*letfsv1.BatchStatResponse, error) {
-	fs, err := parseID(input.GetFilesystemId())
-	if err != nil {
-		return nil, err
-	}
-	mounts, err := pathInput(input.GetPathContext())
+	fs, err := s.scopeInput(ctx, input.GetFilesystemId(), input.GetScopeId())
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +137,7 @@ func (s *Filesystem) BatchStat(ctx context.Context, input *letfsv1.BatchStatRequ
 			return nil, err
 		}
 	}
-	values, err := s.Store.BatchStat(ctx, fs, mounts, locators)
+	values, err := s.Store.BatchStat(ctx, fs, locators)
 	if err != nil {
 		return nil, err
 	}
@@ -179,11 +149,7 @@ func (s *Filesystem) BatchStat(ctx context.Context, input *letfsv1.BatchStatRequ
 }
 
 func (s *Filesystem) ListNodes(ctx context.Context, input *letfsv1.ListNodesRequest) (*letfsv1.ListNodesResponse, error) {
-	fs, err := parseID(input.GetFilesystemId())
-	if err != nil {
-		return nil, err
-	}
-	mounts, err := pathInput(input.GetPathContext())
+	fs, err := s.scopeInput(ctx, input.GetFilesystemId(), input.GetScopeId())
 	if err != nil {
 		return nil, err
 	}
@@ -191,7 +157,7 @@ func (s *Filesystem) ListNodes(ctx context.Context, input *letfsv1.ListNodesRequ
 	if err != nil {
 		return nil, err
 	}
-	page, err := s.Store.ListNodes(ctx, fs, mounts, parent, input.Cursor, input.Limit)
+	page, err := s.Store.ListNodes(ctx, fs, parent, input.Cursor, input.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -203,15 +169,11 @@ func (s *Filesystem) ListNodes(ctx context.Context, input *letfsv1.ListNodesRequ
 }
 
 func (s *Filesystem) CreateNode(ctx context.Context, input *letfsv1.CreateNodeRequest) (*letfsv1.CreateNodeResponse, error) {
-	fs, err := parseID(input.GetFilesystemId())
+	fs, err := s.scopeInput(ctx, input.GetFilesystemId(), input.GetScopeId())
 	if err != nil {
 		return nil, err
 	}
 	key, err := parseID(input.GetIdempotencyKey())
-	if err != nil {
-		return nil, err
-	}
-	mounts, err := pathInput(input.GetPathContext())
 	if err != nil {
 		return nil, err
 	}
@@ -232,7 +194,7 @@ func (s *Filesystem) CreateNode(ctx context.Context, input *letfsv1.CreateNodeRe
 	if err != nil {
 		return nil, err
 	}
-	node, err := s.Service.CreateNode(ctx, fs, mounts, key, creation)
+	node, err := s.Service.CreateNode(ctx, fs, key, creation)
 	if err != nil {
 		return nil, err
 	}
@@ -240,11 +202,7 @@ func (s *Filesystem) CreateNode(ctx context.Context, input *letfsv1.CreateNodeRe
 }
 
 func (s *Filesystem) UpdateNode(ctx context.Context, input *letfsv1.UpdateNodeRequest) (*letfsv1.UpdateNodeResponse, error) {
-	fs, err := parseID(input.GetFilesystemId())
-	if err != nil {
-		return nil, err
-	}
-	mounts, err := pathInput(input.GetPathContext())
+	fs, err := s.scopeInput(ctx, input.GetFilesystemId(), input.GetScopeId())
 	if err != nil {
 		return nil, err
 	}
@@ -260,7 +218,7 @@ func (s *Filesystem) UpdateNode(ctx context.Context, input *letfsv1.UpdateNodeRe
 		}
 		patch.Parent = &parent
 	}
-	node, err := s.Service.UpdateNode(ctx, fs, mounts, patch)
+	node, err := s.Service.UpdateNode(ctx, fs, patch)
 	if err != nil {
 		return nil, err
 	}
@@ -268,11 +226,7 @@ func (s *Filesystem) UpdateNode(ctx context.Context, input *letfsv1.UpdateNodeRe
 }
 
 func (s *Filesystem) ReplaceContent(ctx context.Context, input *letfsv1.ReplaceContentRequest) (*letfsv1.ReplaceContentResponse, error) {
-	fs, err := parseID(input.GetFilesystemId())
-	if err != nil {
-		return nil, err
-	}
-	mounts, err := pathInput(input.GetPathContext())
+	fs, err := s.scopeInput(ctx, input.GetFilesystemId(), input.GetScopeId())
 	if err != nil {
 		return nil, err
 	}
@@ -280,7 +234,7 @@ func (s *Filesystem) ReplaceContent(ctx context.Context, input *letfsv1.ReplaceC
 	if err != nil {
 		return nil, err
 	}
-	node, err := s.Service.ReplaceContent(ctx, fs, mounts, locator, input.Revision, input.Content, input.MediaType)
+	node, err := s.Service.ReplaceContent(ctx, fs, locator, input.Revision, input.Content, input.MediaType)
 	if err != nil {
 		return nil, err
 	}

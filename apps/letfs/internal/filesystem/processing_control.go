@@ -26,16 +26,16 @@ type ProcessingStatus struct {
 	ErrorCode         *string
 }
 
-func (s *Store) GetProcessing(ctx context.Context, fs uuid.UUID, mounts []Mount, id uuid.UUID) (ProcessingStatus, error) {
-	if _, err := s.authorize(ctx, fs, "filesystem", authz.ProcessingRead); err != nil {
+func (s *Store) GetProcessing(ctx context.Context, scopeID uuid.UUID, id uuid.UUID) (ProcessingStatus, error) {
+	if _, err := s.authorize(ctx, scopeID, "scope", authz.ScopeReadMetadata); err != nil {
 		return ProcessingStatus{}, err
 	}
-	session, err := s.openSession(ctx, fs, false)
+	session, err := s.openSession(ctx, scopeID, false)
 	if err != nil {
 		return ProcessingStatus{}, err
 	}
 	defer session.tx.Rollback(ctx)
-	if _, err = session.resolveOne(ctx, mounts, Locator{NodeID: &id}); err != nil {
+	if _, err = session.resolveOne(ctx, Locator{NodeID: &id}); err != nil {
 		return ProcessingStatus{}, err
 	}
 	var result ProcessingStatus
@@ -50,20 +50,20 @@ type Reprocessing struct {
 	WorkflowID string    `json:"workflow_id"`
 }
 
-func (s *Store) Reprocess(ctx context.Context, fs uuid.UUID, mounts []Mount, id, key uuid.UUID) (Reprocessing, error) {
-	actor, err := s.authorize(ctx, fs, "filesystem", authz.ProcessingRun)
+func (s *Store) Reprocess(ctx context.Context, scopeID uuid.UUID, id, key uuid.UUID) (Reprocessing, error) {
+	actor, err := s.authorize(ctx, scopeID, "scope", authz.ScopeWrite)
 	if err != nil {
 		return Reprocessing{}, err
 	}
 	if key == uuid.Nil {
 		return Reprocessing{}, enrichmentValidation("request key required")
 	}
-	session, err := s.openSession(ctx, fs, true)
+	session, err := s.openSession(ctx, scopeID, true)
 	if err != nil {
 		return Reprocessing{}, err
 	}
 	defer session.tx.Rollback(ctx)
-	node, err := session.resolveOne(ctx, mounts, Locator{NodeID: &id})
+	node, err := session.resolveOne(ctx, Locator{NodeID: &id})
 	if err != nil {
 		return Reprocessing{}, err
 	}
@@ -71,7 +71,7 @@ func (s *Store) Reprocess(ctx context.Context, fs uuid.UUID, mounts []Mount, id,
 		return Reprocessing{}, err
 	}
 	format, _ := processingFormat(node.Name)
-	if node.Kind != "file" || format == "" {
+	if node.Kind != "file" || format == "" && session.allowBlobFiles {
 		return Reprocessing{}, uploadState("PROCESSING_UNSUPPORTED")
 	}
 	var object *string
@@ -97,7 +97,7 @@ func (s *Store) Reprocess(ctx context.Context, fs uuid.UUID, mounts []Mount, id,
 	if err != nil {
 		return Reprocessing{}, err
 	}
-	scope := "filesystem/" + fs.String() + "/actor/" + actor.String()
+	scope := "scope/" + scopeID.String() + "/actor/" + actor.String()
 	var savedHash string
 	var saved []byte
 	err = session.tx.QueryRow(ctx, `SELECT request_hash,result FROM idempotency_keys WHERE scope=$1 AND operation='process-file' AND request_key=$2 AND (expires_at IS NULL OR expires_at>now())`, scope, key.String()).Scan(&savedHash, &saved)
@@ -138,24 +138,25 @@ func (s *Store) Reprocess(ctx context.Context, fs uuid.UUID, mounts []Mount, id,
 }
 
 type ProcessingDispatch struct {
-	Source      Generation
-	Publication string
-	UpdatedAt   time.Time
+	Source        Generation
+	Publication   string
+	UpdatedAt     time.Time
+	AllowIndexing bool
 }
 
 func scanDispatch(row pgx.Row) (ProcessingDispatch, error) {
 	var result ProcessingDispatch
-	err := row.Scan(&result.Source.FileID, &result.Source.Generation, &result.Publication, &result.UpdatedAt)
+	err := row.Scan(&result.Source.FileID, &result.Source.Generation, &result.Publication, &result.UpdatedAt, &result.AllowIndexing)
 	return result, databaseError(err)
 }
 
 func (s *Store) PendingProcessing(ctx context.Context, file uuid.UUID) (ProcessingDispatch, error) {
-	return scanDispatch(s.DB.QueryRow(ctx, `SELECT node_id,desired_generation,publication_status,processing_updated_at FROM files WHERE node_id=$1`, file))
+	return scanDispatch(s.DB.QueryRow(ctx, `SELECT f.node_id,f.desired_generation,f.publication_status,f.processing_updated_at,s.allow_indexing FROM files f JOIN nodes n ON n.id=f.node_id JOIN scopes s ON s.id=n.scope_id WHERE f.node_id=$1`, file))
 }
 
 func (s *Store) ProcessingCandidates(ctx context.Context) ([]ProcessingDispatch, error) {
-	rows, err := s.DB.Query(ctx, `SELECT f.node_id,f.desired_generation,f.publication_status,f.processing_updated_at FROM files f JOIN nodes n ON n.id=f.node_id JOIN filesystems fs ON fs.id=n.filesystem_id
- WHERE fs.state='active' AND f.publication_status IN ('pending','parsed','enriched') ORDER BY f.processing_updated_at,f.node_id LIMIT 16`)
+	rows, err := s.DB.Query(ctx, `SELECT f.node_id,f.desired_generation,f.publication_status,f.processing_updated_at,scopeID.allow_indexing FROM files f JOIN nodes n ON n.id=f.node_id JOIN scopes scopeID ON scopeID.id=n.scope_id
+ WHERE scopeID.state='active' AND (f.publication_status IN ('pending','parsed') OR f.publication_status='enriched' AND scopeID.allow_indexing) ORDER BY f.processing_updated_at,f.node_id LIMIT 16`)
 	if err != nil {
 		return nil, databaseError(err)
 	}
@@ -169,7 +170,7 @@ func (s *Store) ReconcileProcessing(ctx context.Context, candidate ProcessingDis
 		return false, err
 	}
 	defer session.tx.Rollback(ctx)
-	current, err := scanDispatch(session.tx.QueryRow(ctx, `SELECT node_id,desired_generation,publication_status,processing_updated_at FROM files WHERE node_id=$1 FOR UPDATE`, candidate.Source.FileID))
+	current, err := scanDispatch(session.tx.QueryRow(ctx, `SELECT node_id,desired_generation,publication_status,processing_updated_at,$2::boolean FROM files WHERE node_id=$1 FOR UPDATE`, candidate.Source.FileID, session.allowIndexing))
 	if err != nil {
 		return false, err
 	}

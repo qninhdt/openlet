@@ -6,7 +6,7 @@ import (
 )
 
 func (s *Server) trashNode(w http.ResponseWriter, r *http.Request) error {
-	fs, mounts, err := requestContext(r)
+	fs, err := s.requestContext(r)
 	if err != nil {
 		return err
 	}
@@ -18,7 +18,7 @@ func (s *Server) trashNode(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	entry, err := s.Service.TrashNode(r.Context(), fs, mounts, locator, rev)
+	entry, err := s.Service.TrashNode(r.Context(), fs, locator, rev)
 	if err != nil {
 		return err
 	}
@@ -27,7 +27,7 @@ func (s *Server) trashNode(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Server) listTrash(w http.ResponseWriter, r *http.Request) error {
-	fs, err := parseID(fsID(r))
+	fs, err := s.requestContext(r)
 	if err != nil {
 		return err
 	}
@@ -51,7 +51,7 @@ func (s *Server) listTrash(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Server) getTrash(w http.ResponseWriter, r *http.Request) error {
-	fs, err := parseID(fsID(r))
+	fs, err := s.requestContext(r)
 	if err != nil {
 		return err
 	}
@@ -72,7 +72,7 @@ func (s *Server) restoreTrash(w http.ResponseWriter, r *http.Request) error {
 	if !ok {
 		return invalid()
 	}
-	fs, err := parseID(fsID(r))
+	fs, err := s.requestContext(r)
 	if err != nil {
 		return err
 	}
@@ -89,7 +89,7 @@ func (s *Server) restoreTrash(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Server) purgeTrash(w http.ResponseWriter, r *http.Request) error {
-	fs, err := parseID(fsID(r))
+	fs, err := s.requestContext(r)
 	if err != nil {
 		return err
 	}

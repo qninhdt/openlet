@@ -23,5 +23,5 @@ func TestGeneratedOpenAPIHasOnlyImplementedHTTPMappings(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(data, &decoded))
 	require.Len(t, decoded.Paths, 1, "native gRPC/admin methods cannot become imaginary HTTP routes")
-	require.Contains(t, decoded.Paths, "/v1/filesystems/{filesystem_id}/nodes/{node_id}")
+	require.Contains(t, decoded.Paths, "/v1/filesystems/{filesystem_id}/scopes/{scope_id}/nodes/{node_id}")
 }

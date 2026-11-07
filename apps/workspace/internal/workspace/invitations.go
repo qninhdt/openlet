@@ -34,14 +34,14 @@ func NormalizeEmail(value string) (string, error) {
 }
 func (s *Store) Invite(ctx context.Context, ws, actor uuid.UUID, email, role string) (Invitation, string, error) {
 	var v Invitation
-	if role != "editor" && role != "viewer" {
+	if role != "admin" && role != "member" {
 		return v, "", Fault{"VALIDATION"}
 	}
 	email, e := NormalizeEmail(email)
 	if e != nil {
 		return v, "", e
 	}
-	observed, e := s.Authorize(ctx, ws, actor, authz.InvitationCreate)
+	observed, e := s.Authorize(ctx, ws, actor, authz.WorkspaceManageMembers)
 	if e != nil {
 		return v, "", e
 	}
@@ -100,7 +100,7 @@ func (s *Store) Invitations(ctx context.Context, ws, after uuid.UUID, limit int)
 	return out, rows.Err()
 }
 func (s *Store) RevokeInvite(ctx context.Context, ws, actor, id uuid.UUID) error {
-	observed, e := s.Authorize(ctx, ws, actor, authz.InvitationRevoke)
+	observed, e := s.Authorize(ctx, ws, actor, authz.WorkspaceManageMembers)
 	if e != nil {
 		return e
 	}
@@ -121,35 +121,22 @@ func (s *Store) RevokeInvite(ctx context.Context, ws, actor, id uuid.UUID) error
 	}
 	return tx.Commit(ctx)
 }
-func (s *Store) AcceptInvite(ctx context.Context, actor uuid.UUID, hash [32]byte, verifiedEmails []string, receipt MutationReceipt) (uuid.UUID, error) {
+
+// AdmitInvitation verifies the token and trusted email before workflow admission.
+func (s *Store) AdmitInvitation(ctx context.Context, actor uuid.UUID, hash [32]byte, emails []string) (uuid.UUID, string, error) {
 	var ws uuid.UUID
-	// Discover scope without locking; validity and email are rechecked under the workspace lock.
-	if e := s.DB.QueryRow(ctx, `SELECT workspace_id FROM workspace_invitations WHERE token_hash=$1`, hash[:]).Scan(&ws); errors.Is(e, pgx.ErrNoRows) {
-		return uuid.Nil, Fault{"INVITATION_INVALID"}
-	} else if e != nil {
-		return uuid.Nil, e
-	}
-	tx, e := s.DB.Begin(ctx)
-	if e != nil {
-		return uuid.Nil, e
-	}
-	defer tx.Rollback(ctx)
-	var status string
-	if e = tx.QueryRow(ctx, `SELECT status FROM workspaces WHERE id=$1 FOR UPDATE`, ws).Scan(&status); e != nil {
-		return uuid.Nil, e
-	}
-	if status != "active" {
-		return uuid.Nil, Fault{"WORKSPACE_DELETING"}
-	}
-	var email, role string
+	var email, role, status string
 	var expires time.Time
 	var accepted *uuid.UUID
-	e = tx.QueryRow(ctx, `SELECT email,role,status,expires_at,accepted_user_id FROM workspace_invitations WHERE token_hash=$1 AND workspace_id=$2 FOR UPDATE`, hash[:], ws).Scan(&email, &role, &status, &expires, &accepted)
-	if e != nil {
-		return uuid.Nil, e
+	err := s.DB.QueryRow(ctx, `SELECT workspace_id,email,role,status,expires_at,accepted_account_id FROM workspace_invitations WHERE token_hash=$1`, hash[:]).Scan(&ws, &email, &role, &status, &expires, &accepted)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ws, "", Fault{"INVITATION_INVALID"}
+	}
+	if err != nil {
+		return ws, "", err
 	}
 	matched := false
-	for _, candidate := range verifiedEmails {
+	for _, candidate := range emails {
 		normalized, err := NormalizeEmail(candidate)
 		if err == nil && normalized == email {
 			matched = true
@@ -157,61 +144,17 @@ func (s *Store) AcceptInvite(ctx context.Context, actor uuid.UUID, hash [32]byte
 		}
 	}
 	if !matched {
-		return uuid.Nil, Fault{"INVITATION_EMAIL_MISMATCH"}
+		return ws, "", Fault{"INVITATION_EMAIL_MISMATCH"}
 	}
 	if status == "accepted" {
-		if accepted == nil || *accepted != actor {
-			return uuid.Nil, Fault{"INVITATION_INVALID"}
+		member, err := s.Member(ctx, ws, actor)
+		if accepted == nil || *accepted != actor || err != nil || member.Status != "active" {
+			return ws, "", Fault{"INVITATION_ALREADY_USED"}
 		}
-		var exists bool
-		if e = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM workspace_members WHERE workspace_id=$1 AND user_id=$2)`, ws, actor).Scan(&exists); e != nil {
-			return uuid.Nil, e
-		}
-		if !exists {
-			return uuid.Nil, Fault{"INVITATION_ALREADY_USED"}
-		}
-		return ws, nil
+		return ws, member.Role, nil
 	}
 	if status != "pending" || !time.Now().Before(expires) {
-		return uuid.Nil, Fault{"INVITATION_INVALID"}
+		return ws, "", Fault{"INVITATION_INVALID"}
 	}
-	var exists bool
-	if e = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM workspace_members WHERE workspace_id=$1 AND user_id=$2)`, ws, actor).Scan(&exists); e != nil {
-		return uuid.Nil, e
-	}
-	if !exists {
-		var count int
-		if e = tx.QueryRow(ctx, `SELECT count(*) FROM workspace_members WHERE workspace_id=$1`, ws).Scan(&count); e != nil {
-			return uuid.Nil, e
-		}
-		if count >= s.MaxMembers {
-			return uuid.Nil, Fault{"RESOURCE_LIMIT"}
-		}
-		_, e = tx.Exec(ctx, `INSERT INTO workspace_members(workspace_id,user_id,role) VALUES($1,$2,$3)`, ws, actor, role)
-		if e != nil {
-			return uuid.Nil, e
-		}
-	}
-	if !exists {
-		if _, e = tx.Exec(ctx, `UPDATE workspaces SET revision=revision+1,updated_at=now() WHERE id=$1`, ws); e != nil {
-			return uuid.Nil, e
-		}
-	}
-	_, e = tx.Exec(ctx, `UPDATE workspace_invitations SET status='accepted',accepted_user_id=$2 WHERE token_hash=$1`, hash[:], actor)
-	if e != nil {
-		return uuid.Nil, e
-	}
-	if e = saveMutationReceipt(ctx, tx, receipt, actor, ws); e != nil {
-		return uuid.Nil, e
-	}
-	return ws, tx.Commit(ctx)
-}
-
-func (s *Store) InvitationWorkspace(ctx context.Context, hash [32]byte) (uuid.UUID, error) {
-	var id uuid.UUID
-	err := s.DB.QueryRow(ctx, `SELECT workspace_id FROM workspace_invitations WHERE token_hash=$1`, hash[:]).Scan(&id)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return id, Fault{"INVITATION_INVALID"}
-	}
-	return id, err
+	return ws, role, nil
 }

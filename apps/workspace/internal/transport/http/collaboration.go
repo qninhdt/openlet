@@ -2,6 +2,7 @@ package http
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"net/http"
 
 	"github.com/qninhdt/openlet/apps/workspace/internal/workspace"
@@ -38,7 +39,7 @@ func (s *Server) changeMember(c *gin.Context) {
 		failure(w, r, e)
 		return
 	}
-	target, e := resourceID(c, "user")
+	target, e := resourceID(c, "account")
 	if e != nil {
 		failure(w, r, e)
 		return
@@ -53,12 +54,7 @@ func (s *Server) changeMember(c *gin.Context) {
 			return
 		}
 	}
-	revision, e := precondition(r)
-	if e != nil {
-		failure(w, r, e)
-		return
-	}
-	if e = s.Service.ChangeMember(r.Context(), ws, actorID(r), target, revision, in.Role, remove); e != nil {
+	if e = s.Service.ChangeMember(r.Context(), ws, actorID(r), target, in.Role, remove); e != nil {
 		failure(w, r, e)
 		return
 	}
@@ -152,4 +148,56 @@ func (s *Server) acceptInvitation(c *gin.Context) {
 	}
 	w.Header().Set("Location", "/v1/workspaces/"+value.WorkspaceID.String()+"/members/"+actorID(r).String())
 	respond(w, 201, value)
+}
+
+func (s *Server) addMember(c *gin.Context) {
+	ws, err := resourceID(c, "ws")
+	if err != nil {
+		failure(c.Writer, c.Request, err)
+		return
+	}
+	var in struct {
+		AccountID uuid.UUID `json:"account_id"`
+		Role      string    `json:"role"`
+	}
+	if err = decode(c.Writer, c.Request, &in); err != nil {
+		failure(c.Writer, c.Request, err)
+		return
+	}
+	value, err := s.Service.AddAccount(c.Request.Context(), ws, actorID(c.Request), in.AccountID, in.Role)
+	if err != nil {
+		failure(c.Writer, c.Request, err)
+		return
+	}
+	respond(c.Writer, 201, value)
+}
+func (s *Server) scopeAccess(c *gin.Context) {
+	ws, err := resourceID(c, "ws")
+	if err != nil {
+		failure(c.Writer, c.Request, err)
+		return
+	}
+	scope, err := resourceID(c, "scope")
+	if err != nil {
+		failure(c.Writer, c.Request, err)
+		return
+	}
+	target, err := resourceID(c, "account")
+	if err != nil {
+		failure(c.Writer, c.Request, err)
+		return
+	}
+	var in struct {
+		Role string `json:"role"`
+	}
+	if err = decode(c.Writer, c.Request, &in); err != nil {
+		failure(c.Writer, c.Request, err)
+		return
+	}
+	_, err = s.Service.ChangeScopeAccess(c.Request.Context(), ws, actorID(c.Request), scope, target, in.Role, c.Request.Method == http.MethodDelete)
+	if err != nil {
+		failure(c.Writer, c.Request, err)
+		return
+	}
+	c.Status(204)
 }

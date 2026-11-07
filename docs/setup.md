@@ -22,13 +22,14 @@ External issuer/JWKS URLs require HTTPS. The generator renders native Envoy, Tem
 
 Only Envoy binds a host port, `127.0.0.1:8080`. Application, database, Temporal and admin-tool ports stay private. External access requires the deployment's trusted HTTPS termination. Temporal's no-authorizer setting is confined to the private backend network; do not publish its port.
 
-Account calls Workspace gRPC at `WORKSPACE_RPC_ADDRESS` with `ACCOUNT_SERVICE_TOKEN`. Workspace calls Account gRPC at `ACCOUNT_RPC_ADDRESS` and letfs storage administration at `LETFS_RPC_ADDRESS` with its distinct `WORKSPACE_SERVICE_TOKEN`; ingest uses `LETFS_RPC_ADDRESS` and `INGEST_SERVICE_TOKEN`. Each secret also accepts `_FILE`. Owner-local Temporal Activities make these calls. Native listeners use `RPC_LISTEN_ADDR` (default `:9090`). RPC requires TLS by default using `RPC_TLS_CERT_PATH` and `RPC_TLS_KEY_PATH`; Compose explicitly enables `ALLOW_PLAINTEXT_RPC=true` on its private backend network. Internal listeners are not published. Envoy exposes public HTTP only. All native gRPC, including filesystem operations, storage administration and ingest, stays on the backend network.
+Workspace calls Account gRPC at `ACCOUNT_RPC_ADDRESS` with `WORKSPACE_SERVICE_TOKEN`; ingest uses `LETFS_RPC_ADDRESS` and `INGEST_SERVICE_TOKEN`. Existing secrets accept `_FILE`. Account exposes its private RPC listener; Workspace has no RPC server. Cross-service provisioning/deletion runs on explicit owner Temporal queues. RPC uses TLS by default; Compose explicitly permits plaintext only on its private backend network. Envoy exposes HTTP only.
 
-All Go services start their owner Temporal workers and check required dependencies during readiness. LetFS configuration is owned by [config.go](../apps/letfs/internal/config/config.go). Clients discover filesystem/root/bucket references through Workspace, then call LetFS directly; no Workspace filesystem proxy remains.
+All Go services start their owner Temporal workers and check required dependencies during readiness. LetFS configuration is owned by [config.go](../apps/letfs/internal/config/config.go). Clients discover filesystem/shared scope/member personal scope references through Workspace, then call LetFS directly; no Workspace filesystem proxy remains.
 
-`make up` builds the app-owned Dockerfiles and initializes a fresh deployment using native Goose application-migration jobs and upstream Temporal schema/namespace tools. Each application owns one baseline migration. There is no upgrade chain for the old schema: retain a verified backup before an intentional reset, and never apply the new baseline over existing development data. Startup does not automatically back up existing databases.
+`make up` builds the app-owned Dockerfiles and initializes a fresh deployment using native Goose application-migration jobs and upstream Temporal schema/namespace tools. Each application owns a baseline followed by additive migrations. There is no upgrade chain for the schema predating the refactor: retain a verified backup before an intentional reset, and never apply the new baseline over that older development data. Startup does not automatically back up existing databases. LetFS’s fresh-install baseline includes scope-owned blob and indexing options, both default true; it has no compatibility migration from the former filesystem setting. Back up and stop writers first using the [operation procedure](operations.md#coordinated-backup-and-isolated-restore).
 
-The development Compose definition also starts pinned SpiceDB on the private backend network, with a dedicated `openlet_spicedb` database/user on the same PostgreSQL instance. Datastore migration must succeed before gRPC health becomes ready; the `authz-schema` job initializes a missing schema or verifies the existing expected schema. Unknown schema is rejected. The same deployment job loads built-in role capabilities from [roles.json](../packages/contracts/authz/roles.json) directly into SpiceDB; application PostgreSQL keeps membership role assignments and other business records, with no permission catalog. Run this initializer while application/graph writers are fenced. Its `--check` mode verifies both schema and role policy without repairing drift. No SpiceDB port is published, Watch is disabled and read/write pools are capped at eight connections each. Existing PostgreSQL volumes do not rerun init SQL or automatically acquire the new database. Account and Workspace require `SPICEDB_ADDRESS` and `SPICEDB_GRPC_PRESHARED_KEY` (or its `_FILE` secret). Their images include the expected schema and role policy under `/contracts`; startup and readiness verify both without repairing drift. Account profile access uses native self-resource checks. Final recovery acceptance is tracked in the [active migration plan](../plans/261102-1059-go-grpc-filesystem-authorization/plan.md).
+The development Compose definition also starts pinned SpiceDB on the private backend network, with a dedicated `openlet_spicedb` database/user on the same PostgreSQL instance. Datastore migration must succeed before gRPC health becomes ready; the `authz-schema` job initializes a missing schema or verifies the existing expected schema. Unknown schema is rejected. Fixed resource relations and permissions live entirely in the schema. Run initialization while writers are fenced; `--check` verifies without repairing drift. Application readiness verifies the expected schema in `/contracts`. Direct scope grants are canonical SpiceDB state and must survive recovery; SQL rebuild repairs only derived account/workspace/storage usersets. See the [active plan](../plans/261106-1517-account-scope-temporal-redesign/plan.md).
+
 
 Use `make down` to stop the stack while preserving its named volume. Do not remove volumes as routine rollback. To migrate an existing deployment, stop application/Temporal writers before applying a schema upgrade and retain the pre-change backups.
 
@@ -96,22 +97,21 @@ turn a business operation into a failure.
 ## Clerk onboarding
 
 Use a Clerk development instance. Set the Clerk session token custom claims to
-`{"openlet_user_id":"{{user.public_metadata.openlet_user_id}}"}` and configure its
+`{"openlet_account_id":"{{user.public_metadata.openlet_account_id}}"}` and configure its
 accepted audience to match `JWT_AUDIENCE`. The backend owns this public metadata
 field; clients cannot set it. On first login, call `PUT /v1/me/onboarding` with the
 session bearer JWT, then poll `GET /v1/me/onboarding`. No request key is needed:
-Clerk identity admits one user. `workspace_id` is null until the Workspace child
-workflow returns its resource ID. Once status is `active`, refresh the Clerk session token (Clerk SDK `getToken({skipCache:true})`)
+Clerk identity admits one account. Onboarding returns account_id; list workspaces after completion to discover storage. Once status is `active`, refresh the Clerk session token (Clerk SDK `getToken({skipCache:true})`)
 and verify the refreshed claim before calling normal routes. Do not reuse the old
 bootstrap JWT. The backend updates only its field via Clerk's metadata merge endpoint.
 
 For a live development smoke, verify the initial bootstrap denial, successful
-onboarding, stable user/workspace IDs on retry, preservation of unrelated metadata,
+onboarding, stable account identity and no duplicate workspace on retry, preservation of unrelated metadata,
 and access with a newly minted session. Live development evidence is recorded in
 the [external configuration report](../plans/reports/implementation-261029-1822-external-configuration.md). Deterministic CI uses
 an isolated controllable Clerk HTTP boundary, real Envoy verification and real workers.
 
-Workspace policy settings are `MAX_OWNED_WORKSPACES`, `MAX_MEMBERS`,
+Workspace policy settings are `MAX_MEMBERS`,
 `DEFAULT_QUOTA_BYTES` and `INVITE_TTL` (see service config defaults).
 Invitations return a token once; share it manually and submit it in JSON to
 `POST /v1/memberships`. Acceptance requires a matching verified Clerk email.
@@ -137,9 +137,9 @@ Do not rewrite signed hostnames. Plaintext storage/provider exceptions are
 confined to the isolated E2E configuration. The local storage volume is owned
 by the test run; external S3 remains the normal development route.
 
-Clients choose bounded inline node/content APIs or object upload sessions. Read `GET /v1/quota-buckets/{bucket}` for `{bucket,upload_limits}`. Defaults are 256 KiB inline, 100 MiB max file, 16 MiB multipart threshold and 8 MiB parts. Inline content accepts arbitrary bytes, including empty/binary data.
+Clients choose bounded inline node/content APIs or object upload sessions. Defaults are 256 KiB inline, 100 MiB max file, 16 MiB multipart threshold and 8 MiB parts. Inline content accepts arbitrary bytes, including empty/binary data.
 
-Prepare with `POST /v1/filesystems/{filesystem}/uploads`, a UUID `Idempotency-Key`, decimal `size_bytes`, `media_type`, and destination parent/name (or `node_id` plus `If-Match` for overwrite). Public upload sessions always use object storage. Single PUT additionally requires base64 `content_md5`. Repeating the same request key/parameters returns the same session; changed parameters conflict. Object bytes go directly to the returned signed URL with required headers. Browsers set Content-Length automatically. Upload URLs default to fifteen minutes, bounded by session expiry.
+Prepare with `POST /v1/filesystems/{filesystem}/scopes/{scope}/uploads`, a UUID `Idempotency-Key`, decimal `size_bytes`, `media_type`, and destination parent/name (or `node_id` plus `If-Match` for overwrite). Public upload sessions always use object storage. Single PUT additionally requires base64 `content_md5`. Repeating the same request key/parameters returns the same session; changed parameters conflict. Object bytes go directly to the returned signed URL with required headers. Browsers set Content-Length automatically. Upload URLs default to fifteen minutes, bounded by session expiry.
 
 For native multipart, prepare returns the part size/count. Sign batches of up to
 64 part numbers via `/uploads/{id}/parts`, PUT directly to each URL,

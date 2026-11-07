@@ -124,7 +124,7 @@ export default async function setup() {
     await chmod(join(state, 'secrets'), 0o700);
     for (const name of ['postgres_password', 'account_db_password', 'workspace_db_password', 'letfs_db_password',
       'temporal_db_password', 'temporal_visibility_db_password', 'spicedb_db_password', 'spicedb_key', 'gateway_token',
-      'workspace_service_token', 'account_service_token', 'ingest_service_token', 'clerk_secret_key', 'fixture_control_token',
+      'workspace_service_token', 'ingest_service_token', 'clerk_secret_key', 'fixture_control_token',
       'openrouter_api_key', 'qdrant_api_key', 's3_access_key_id', 's3_secret_access_key']) {
       secrets[name] = randomBytes(32).toString('base64url');
     }
@@ -162,7 +162,7 @@ export default async function setup() {
     await compose(['config', '--quiet']);
     console.log('API E2E: building current application sources');
     try {
-      await writeFile(join(state, 'build.log'), redact(await compose(['build'], 1_800_000)), { mode: 0o600 });
+      await writeFile(join(state, 'build.log'), redact(await compose(['--profile', 'setup', 'build'], 1_800_000)), { mode: 0o600 });
     } catch (error) {
       await writeFile(join(state, 'build.log'), String(error), { mode: 0o600 });
       throw error;
@@ -192,7 +192,7 @@ export default async function setup() {
     if (identityResponse.status !== 201) throw new Error('Gateway readiness identity could not be created');
     const identity = await identityResponse.json();
     const tokenResponse = await fetch(`${control}/control/token`, { method: 'POST', headers: controlHeaders,
-      body: JSON.stringify({ subject: identity.id, claims: { openlet_user_id: randomUUID() } }), signal: AbortSignal.timeout(3000) });
+      body: JSON.stringify({ subject: identity.id, claims: { openlet_account_id: randomUUID() } }), signal: AbortSignal.timeout(3000) });
     if (!tokenResponse.ok) throw new Error('Gateway readiness JWT could not be minted');
     const { token } = await tokenResponse.json();
     await waitFor('Gateway upstream routing', async () => {

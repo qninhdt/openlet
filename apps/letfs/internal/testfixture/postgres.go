@@ -21,11 +21,17 @@ func Postgres(t *testing.T, baseline string) *pgxpool.Pool {
 	defer cancel()
 	path, err := filepath.Abs(baseline)
 	require.NoError(t, err)
+	migrations, err := filepath.Glob(filepath.Join(filepath.Dir(path), "*.sql"))
+	require.NoError(t, err)
+	files := make([]testcontainers.ContainerFile, 0, len(migrations))
+	for _, migration := range migrations {
+		files = append(files, testcontainers.ContainerFile{HostFilePath: migration, ContainerFilePath: "/docker-entrypoint-initdb.d/" + filepath.Base(migration), FileMode: 0o444})
+	}
 	server, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{Started: true, ContainerRequest: testcontainers.ContainerRequest{
 		Image:        "postgres:18.6-trixie@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336",
 		Env:          map[string]string{"POSTGRES_USER": "owner", "POSTGRES_DB": "application", "POSTGRES_PASSWORD": "isolated-test-password"},
 		ExposedPorts: []string{"5432/tcp"},
-		Files:        []testcontainers.ContainerFile{{HostFilePath: path, ContainerFilePath: "/docker-entrypoint-initdb.d/10-baseline.sql", FileMode: 0o444}},
+		Files:        files,
 		WaitingFor:   wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(30 * time.Second),
 	}})
 	if server != nil {

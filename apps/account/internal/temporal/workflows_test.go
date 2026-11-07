@@ -7,7 +7,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/qninhdt/openlet/apps/account/internal/user"
+	"github.com/qninhdt/openlet/apps/account/internal/account"
+	shared "github.com/qninhdt/openlet/packages/go/temporal"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/sdk/temporal"
@@ -17,75 +18,56 @@ import (
 
 func TestStartErrorReturnsNativeAccountFaults(t *testing.T) {
 	err := startError(temporal.NewNonRetryableApplicationError("rejected", "ONBOARDING_FAILED", nil))
-	var fault user.Fault
+	var fault account.Fault
 	require.ErrorAs(t, err, &fault)
 	require.Equal(t, "ONBOARDING_FAILED", fault.Code)
 	require.ErrorIs(t, startError(temporal.NewCanceledError()), context.Canceled)
 }
 
-func TestOnboardUserWaitsForWorkspaceAndPublishesIdentityBeforeCompletion(t *testing.T) {
+func TestOnboardUserCreatesChildBeforePublishing(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
 	a := &Activities{}
-	admission := user.Onboarding{UserID: uuid.Must(uuid.NewV7()), Status: "provisioning"}
-	workspaceID := uuid.Must(uuid.NewV7())
-	env.OnActivity(a.EnsureUser, mock.Anything, "subject").Return(admission, nil).Once()
-	env.OnActivity(a.EnsureInitialWorkspace, mock.Anything, admission.UserID).Return(InitialWorkspace{ID: workspaceID, Completed: false}, nil).Once()
-	env.OnActivity(a.EnsureInitialWorkspace, mock.Anything, admission.UserID).Return(InitialWorkspace{ID: workspaceID, Completed: true}, nil).Once()
-	env.OnActivity(a.PublishClerkUserID, mock.Anything, "subject", admission.UserID).Return(nil).Once()
-	env.OnActivity(a.CompleteOnboarding, mock.Anything, "subject", workspaceID).Return(nil).Once()
+	admission := account.Onboarding{AccountID: uuid.Must(uuid.NewV7()), Status: "pending"}
+	env.RegisterWorkflowWithOptions(func(ctx workflow.Context, in shared.WorkspaceCreation) error {
+		return nil
+	}, workflow.RegisterOptions{Name: shared.CreateWorkspaceWorkflow})
+	env.OnActivity(a.EnsureAccount, mock.Anything, "subject").Return(admission, nil).Once()
+	env.OnWorkflow(shared.CreateWorkspaceWorkflow, mock.Anything, shared.WorkspaceCreation{ActorID: admission.AccountID, Key: admission.AccountID, Name: "My Workspace"}).Return(nil).Once()
+	env.OnActivity(a.PublishAccountIdentity, mock.Anything, "subject", admission.AccountID).Return(nil).Once()
 	env.ExecuteWorkflow(OnboardUser, "subject")
 	require.NoError(t, env.GetWorkflowError())
-	var result uuid.UUID
-	require.NoError(t, env.GetWorkflowResult(&result))
-	require.Equal(t, admission.UserID, result)
+	var id uuid.UUID
+	require.NoError(t, env.GetWorkflowResult(&id))
+	require.Equal(t, admission.AccountID, id)
 	env.AssertExpectations(t)
 }
-func TestOnboardUserCompletedNeverRecreatesWorkspace(t *testing.T) {
+func TestCompletedOnboardingSkipsChild(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
 	a := &Activities{}
-	admission := user.Onboarding{UserID: uuid.Must(uuid.NewV7()), Status: "active"}
-	env.OnActivity(a.EnsureUser, mock.Anything, "subject").Return(admission, nil).Once()
+	env.OnActivity(a.EnsureAccount, mock.Anything, "subject").Return(account.Onboarding{AccountID: uuid.New(), Status: "active"}, nil).Once()
 	env.ExecuteWorkflow(OnboardUser, "subject")
 	require.NoError(t, env.GetWorkflowError())
 	env.AssertExpectations(t)
 }
-func TestOnboardingFailureRetainsUser(t *testing.T) {
+func TestOnboardingRelationshipFailureDoesNotPublish(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
 	a := &Activities{}
-	admission := user.Onboarding{UserID: uuid.Must(uuid.NewV7()), Status: "provisioning"}
-	env.OnActivity(a.EnsureUser, mock.Anything, "subject").Return(admission, nil).Once()
-	env.OnActivity(a.EnsureInitialWorkspace, mock.Anything, admission.UserID).Return(InitialWorkspace{}, temporal.NewNonRetryableApplicationError("rejected", "WORKSPACE_REJECTED", nil)).Once()
-	env.OnActivity(a.FailOnboarding, mock.Anything, "subject").Return(nil).Once()
+	env.OnActivity(a.EnsureAccount, mock.Anything, "subject").Return(account.Onboarding{}, temporal.NewNonRetryableApplicationError("rejected", "INVALID_RELATIONSHIP", nil)).Once()
 	env.ExecuteWorkflow(OnboardUser, "subject")
 	require.Error(t, env.GetWorkflowError())
+	env.AssertNotCalled(t, "PublishAccountIdentity", mock.Anything, mock.Anything, mock.Anything)
 	env.AssertExpectations(t)
 }
-
-func TestOnboardingRelationshipFailureCannotPublishCompletedIdentity(t *testing.T) {
+func TestAccountChangesPublishesManagedCreation(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
 	a := &Activities{}
-	env.OnActivity(a.EnsureUser, mock.Anything, "subject").Return(user.Onboarding{}, temporal.NewNonRetryableApplicationError("rejected", "INVALID_RELATIONSHIP", nil)).Once()
-	env.OnActivity(a.FailOnboarding, mock.Anything, "subject").Return(nil).Once()
-	env.ExecuteWorkflow(OnboardUser, "subject")
-	require.Error(t, env.GetWorkflowError())
-	env.AssertNotCalled(t, "PublishClerkUserID", mock.Anything, mock.Anything, mock.Anything)
-	env.AssertNotCalled(t, "CompleteOnboarding", mock.Anything, mock.Anything, mock.Anything)
-	env.AssertExpectations(t)
-}
-
-func TestOnboardingBoundsPollingHistoryWithoutFailingAdmission(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	env := suite.NewTestWorkflowEnvironment()
-	a := &Activities{}
-	admission := user.Onboarding{UserID: uuid.New(), Status: "provisioning"}
-	env.OnActivity(a.EnsureUser, mock.Anything, "subject").Return(admission, nil).Once()
-	env.OnActivity(a.EnsureInitialWorkspace, mock.Anything, admission.UserID).Return(InitialWorkspace{ID: uuid.New()}, nil).Times(100)
-	env.ExecuteWorkflow(OnboardUser, "subject")
-	require.True(t, workflow.IsContinueAsNewError(env.GetWorkflowError()))
-	env.AssertNotCalled(t, "FailOnboarding", mock.Anything, mock.Anything)
+	input := account.ManagedCreation{ID: uuid.New(), OwnerID: uuid.New()}
+	env.OnActivity(a.ApplyAccountChange, mock.Anything, input).Return(account.Profile{ID: input.ID, Type: "agent", OwnerID: &input.OwnerID}, nil).Once()
+	env.ExecuteWorkflow(AccountChanges, input)
+	require.NoError(t, env.GetWorkflowError())
 	env.AssertExpectations(t)
 }

@@ -10,14 +10,14 @@ import (
 	"github.com/qninhdt/openlet/apps/letfs/internal/clients/storage"
 )
 
-func (s *Store) expireUpload(ctx context.Context, fs, id uuid.UUID) error {
-	session, err := s.lifecycleSession(ctx, fs)
+func (s *Store) expireUpload(ctx context.Context, scopeID, id uuid.UUID) error {
+	session, err := s.lifecycleSession(ctx, scopeID)
 	if err != nil {
 		return err
 	}
 	defer session.tx.Rollback(ctx)
 	changed, err := session.tx.Exec(ctx, `UPDATE uploads SET state='aborted',inline_bytes=NULL,updated_at=now()
- WHERE id=$1 AND filesystem_id=$2 AND state IN ('open','completing') AND expires_at<=now()`, id, fs)
+ WHERE id=$1 AND scope_id=$2 AND state IN ('open','completing') AND expires_at<=now()`, id, scopeID)
 	if err != nil {
 		return databaseError(err)
 	}
@@ -33,21 +33,21 @@ func (s *Store) expireUpload(ctx context.Context, fs, id uuid.UUID) error {
 }
 
 func (s *Store) ExpireUploads(ctx context.Context) (int, error) {
-	rows, err := s.DB.Query(ctx, `SELECT id,filesystem_id FROM uploads WHERE state IN ('open','completing') AND expires_at<=now() ORDER BY expires_at,id LIMIT 64`)
+	rows, err := s.DB.Query(ctx, `SELECT id,scope_id FROM uploads WHERE state IN ('open','completing') AND expires_at<=now() ORDER BY expires_at,id LIMIT 64`)
 	if err != nil {
 		return 0, databaseError(err)
 	}
-	type expired struct{ id, fs uuid.UUID }
+	type expired struct{ id, scopeID uuid.UUID }
 	items, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (expired, error) {
 		var item expired
-		err := row.Scan(&item.id, &item.fs)
+		err := row.Scan(&item.id, &item.scopeID)
 		return item, err
 	})
 	if err != nil {
 		return 0, databaseError(err)
 	}
 	for _, item := range items {
-		if err := s.expireUpload(ctx, item.fs, item.id); err != nil {
+		if err := s.expireUpload(ctx, item.scopeID, item.id); err != nil {
 			return 0, err
 		}
 	}
@@ -77,18 +77,18 @@ func (s *Store) ExpireUploads(ctx context.Context) (int, error) {
 
 // DeleteObjects commits the claim before S3 I/O and keeps ambiguous-write tombstones.
 func (s *Store) DeleteObjects(ctx context.Context) (int, error) {
-	rows, err := s.DB.Query(ctx, `SELECT object_key,bucket_id FROM object_deletions WHERE eligible_at<=now()
+	rows, err := s.DB.Query(ctx, `SELECT object_key,filesystem_id FROM object_deletions WHERE eligible_at<=now()
  AND (state!='deleted' OR ambiguous_write OR open_writes>0) ORDER BY eligible_at,object_key LIMIT 64`)
 	if err != nil {
 		return 0, databaseError(err)
 	}
 	type candidate struct {
-		key    string
-		bucket uuid.UUID
+		key          string
+		filesystemID uuid.UUID
 	}
 	items, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (candidate, error) {
 		var item candidate
-		err := row.Scan(&item.key, &item.bucket)
+		err := row.Scan(&item.key, &item.filesystemID)
 		return item, err
 	})
 	if err != nil {
@@ -100,7 +100,7 @@ func (s *Store) DeleteObjects(ctx context.Context) (int, error) {
 		if !time.Now().Before(deadline) {
 			break
 		}
-		claimed, err := s.claimObjectDeletion(ctx, item.key, item.bucket)
+		claimed, err := s.claimObjectDeletion(ctx, item.key, item.filesystemID)
 		if err != nil {
 			return count, err
 		}
@@ -134,14 +134,14 @@ func minTime(a, b time.Time) time.Time {
 	return b
 }
 
-func (s *Store) claimObjectDeletion(ctx context.Context, key string, bucket uuid.UUID) (bool, error) {
+func (s *Store) claimObjectDeletion(ctx context.Context, key string, filesystemID uuid.UUID) (bool, error) {
 	tx, err := s.DB.Begin(ctx)
 	if err != nil {
 		return false, databaseError(err)
 	}
 	defer tx.Rollback(ctx)
 	var id uuid.UUID
-	if err = tx.QueryRow(ctx, `SELECT id FROM quota_buckets WHERE id=$1 FOR UPDATE`, bucket).Scan(&id); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT id FROM filesystems WHERE id=$1 FOR UPDATE`, filesystemID).Scan(&id); err != nil {
 		return false, databaseError(err)
 	}
 	changed, err := tx.Exec(ctx, `UPDATE object_deletions d SET state='deleting',eligible_at=now()+interval '15 minutes',updated_at=now()

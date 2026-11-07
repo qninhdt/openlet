@@ -31,14 +31,14 @@ func (s *Store) DeleteObsoleteIndex(ctx context.Context, item IndexDeletion) (bo
 	if err := s.IndexSpace.Validate(); err != nil {
 		return false, err
 	}
-	var fs uuid.UUID
-	err := s.DB.QueryRow(ctx, `SELECT filesystem_id FROM nodes WHERE id=$1`, item.Source.FileID).Scan(&fs)
+	var scopeID uuid.UUID
+	err := s.DB.QueryRow(ctx, `SELECT scope_id FROM nodes WHERE id=$1`, item.Source.FileID).Scan(&scopeID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return false, databaseError(err)
 	}
 	var guard *session
 	if err == nil {
-		guard, err = s.lifecycleSession(ctx, fs)
+		guard, err = s.lifecycleSession(ctx, scopeID)
 		if err != nil {
 			return false, err
 		}

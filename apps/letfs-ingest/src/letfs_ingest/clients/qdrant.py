@@ -67,7 +67,7 @@ class Qdrant:
                 raise ValueError("Qdrant vector space differs from processing snapshot")
             indexes = response.json()["result"]["payload_schema"]
         schemas = dict.fromkeys(
-            ("filesystem_id", "source_id", "embedding_model"), "keyword"
+            ("filesystem_id", "scope_id", "source_id", "embedding_model"), "keyword"
         )
         schemas["text"] = {
             "type": "text",

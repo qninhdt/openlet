@@ -6,7 +6,7 @@ Backend: Clerk onboarding, workspaces, ID/path file operations, exact inline byt
 
 - [Backend documentation](docs/README.md)
 - [Setup and verification](docs/setup.md)
-- [Current refactor decision](plans/261103-1348-service-refactor/tmp-refactor-decision.md)
+- [Account/scope implementation plan](plans/261106-1517-account-scope-temporal-redesign/plan.md)
 - [Foundation validation history](plans/261102-1059-go-grpc-filesystem-authorization/plan.md)
 
 The backend uses Go/Gin for Account and Workspace, Go HTTP/gRPC for letfs, separate Python CPU/I/O workers, Envoy, Clerk, PostgreSQL, SpiceDB, Temporal and configurable S3-compatible storage. All applications support OpenTelemetry. Frontend, billing and agent execution are outside this round.

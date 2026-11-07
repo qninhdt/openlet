@@ -24,15 +24,14 @@ func TestIntegrationInitializerConfigurationAndFailures(t *testing.T) {
 	t.Setenv("ALLOW_PLAINTEXT_RPC_FILE", "")
 	t.Setenv("ALLOW_PLAINTEXT_RPC", "true")
 	schema := "../../../contracts/authz/schema.zed"
-	roles := "../../../contracts/authz/roles.json"
-	require.EqualError(t, run(t.Context(), schema, roles, true), "authorization schema operation failed (NotFound)")
-	require.NoError(t, run(t.Context(), schema, roles, false))
-	require.NoError(t, run(t.Context(), schema, roles, false))
-	require.NoError(t, run(t.Context(), schema, roles, true))
+	require.EqualError(t, run(t.Context(), schema, true), "authorization schema operation failed (NotFound)")
+	require.NoError(t, run(t.Context(), schema, false))
+	require.NoError(t, run(t.Context(), schema, false))
+	require.NoError(t, run(t.Context(), schema, true))
 	other := filepath.Join(t.TempDir(), "schema.zed")
 	require.NoError(t, os.WriteFile(other, []byte("definition unrelated {}"), 0600))
-	require.ErrorIs(t, run(t.Context(), other, roles, false), authz.ErrSchemaMismatch)
-	require.NoError(t, run(t.Context(), schema, roles, true), "mismatch cannot replace installed policy")
+	require.ErrorIs(t, run(t.Context(), other, false), authz.ErrSchemaMismatch)
+	require.NoError(t, run(t.Context(), schema, true), "mismatch cannot replace installed policy")
 	require.NoError(t, os.WriteFile(key, []byte(strings.Repeat("w", 32)), 0600))
-	require.EqualError(t, run(t.Context(), schema, roles, true), "authorization schema operation failed (PermissionDenied)")
+	require.EqualError(t, run(t.Context(), schema, true), "authorization schema operation failed (PermissionDenied)")
 }

@@ -19,7 +19,7 @@ func searchTime(value string) (*time.Time, error) {
 
 func (s *Server) searchFiles(w http.ResponseWriter, r *http.Request) error {
 	q := r.URL.Query()
-	allowed := map[string]bool{"q": true, "limit": true, "cursor": true, "sort": true, "direction": true, "type": true, "media_type": true, "created_after": true, "created_before": true, "updated_after": true, "updated_before": true, "node_id": true, "path": true, "cwd_id": true, "mount_path": true, "expected_node_id": true, "expected_parent_id": true}
+	allowed := map[string]bool{"q": true, "limit": true, "cursor": true, "sort": true, "direction": true, "type": true, "media_type": true, "created_after": true, "created_before": true, "updated_after": true, "updated_before": true, "node_id": true, "path": true, "cwd_id": true, "expected_node_id": true, "expected_parent_id": true}
 	for key, values := range q {
 		if !allowed[key] || len(values) != 1 {
 			return invalid()
@@ -65,11 +65,11 @@ func (s *Server) searchFiles(w http.ResponseWriter, r *http.Request) error {
 		}
 		input.Filters.Parent = &parent
 	}
-	fs, mounts, err := requestContext(r)
+	fs, err := s.requestContext(r)
 	if err != nil {
 		return err
 	}
-	page, err := s.Store.SearchFiles(r.Context(), fs, mounts, input)
+	page, err := s.Store.SearchFiles(r.Context(), fs, input)
 	if err != nil {
 		return err
 	}
@@ -84,11 +84,11 @@ func (s *Server) semanticSearch(w http.ResponseWriter, r *http.Request) error {
 	if input.Sort != nil || input.Direction != nil {
 		return invalid()
 	}
-	fs, mounts, err := requestContext(r)
+	fs, err := s.requestContext(r)
 	if err != nil {
 		return err
 	}
-	page, err := s.Store.SemanticSearch(r.Context(), fs, mounts, input)
+	page, err := s.Store.SemanticSearch(r.Context(), fs, input)
 	if err != nil {
 		return err
 	}
@@ -133,8 +133,8 @@ func writeSearch(w http.ResponseWriter, r *http.Request, page filesystem.SearchP
 			parent = &value
 		}
 		row := searchResult{NodeID: node.ID.String(), ParentID: parent, Name: node.Name, Kind: node.Kind, Revision: node.Revision, SizeBytes: node.SizeBytes, MediaType: node.MediaType, Title: node.Title, Description: node.Description, SemanticType: node.SemanticType, Context: node.Context, Path: item.Path}
-		if node.FilesystemID != uuid.Nil {
-			row.FilesystemID = node.FilesystemID.String()
+		if node.ScopeID != uuid.Nil {
+			row.FilesystemID = node.ScopeID.String()
 		}
 		if !node.CreatedAt.IsZero() {
 			row.CreatedAt = &timestamp{node.CreatedAt}

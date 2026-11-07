@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n$openlet_api/account/v1/account.proto\x12\x16openlet_api.account.v1\"_\n\x0bUserSummary\x12\x0e\n\x02id\x18\x01 \x01(\tR\x02id\x12!\n\x0c\x64isplay_name\x18\x02 \x01(\tR\x0b\x64isplayName\x12\x1d\n\navatar_url\x18\x03 \x01(\tR\tavatarUrl\"+\n\x17GetUserSummariesRequest\x12\x10\n\x03ids\x18\x01 \x03(\tR\x03ids\"U\n\x18GetUserSummariesResponse\x12\x39\n\x05users\x18\x01 \x03(\x0b\x32#.openlet_api.account.v1.UserSummaryR\x05users\"3\n\x18GetVerifiedEmailsRequest\x12\x17\n\x07user_id\x18\x01 \x01(\tR\x06userId\"3\n\x19GetVerifiedEmailsResponse\x12\x16\n\x06\x65mails\x18\x01 \x03(\tR\x06\x65mails2\x81\x02\n\x0e\x41\x63\x63ountService\x12u\n\x10GetUserSummaries\x12/.openlet_api.account.v1.GetUserSummariesRequest\x1a\x30.openlet_api.account.v1.GetUserSummariesResponse\x12x\n\x11GetVerifiedEmails\x12\x30.openlet_api.account.v1.GetVerifiedEmailsRequest\x1a\x31.openlet_api.account.v1.GetVerifiedEmailsResponseBMZKgithub.com/qninhdt/openlet/packages/go/gen/openlet_api/account/v1;accountv1b\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n$openlet_api/account/v1/account.proto\x12\x16openlet_api.account.v1\"b\n\x0e\x41\x63\x63ountSummary\x12\x0e\n\x02id\x18\x01 \x01(\tR\x02id\x12!\n\x0c\x64isplay_name\x18\x02 \x01(\tR\x0b\x64isplayName\x12\x1d\n\navatar_url\x18\x03 \x01(\tR\tavatarUrl\".\n\x1aGetAccountSummariesRequest\x12\x10\n\x03ids\x18\x01 \x03(\tR\x03ids\"a\n\x1bGetAccountSummariesResponse\x12\x42\n\x08\x61\x63\x63ounts\x18\x01 \x03(\x0b\x32&.openlet_api.account.v1.AccountSummaryR\x08\x61\x63\x63ounts\"9\n\x18GetVerifiedEmailsRequest\x12\x1d\n\naccount_id\x18\x01 \x01(\tR\taccountId\"3\n\x19GetVerifiedEmailsResponse\x12\x16\n\x06\x65mails\x18\x01 \x03(\tR\x06\x65mails2\x8a\x02\n\x0e\x41\x63\x63ountService\x12~\n\x13GetAccountSummaries\x12\x32.openlet_api.account.v1.GetAccountSummariesRequest\x1a\x33.openlet_api.account.v1.GetAccountSummariesResponse\x12x\n\x11GetVerifiedEmails\x12\x30.openlet_api.account.v1.GetVerifiedEmailsRequest\x1a\x31.openlet_api.account.v1.GetVerifiedEmailsResponseBMZKgithub.com/qninhdt/openlet/packages/go/gen/openlet_api/account/v1;accountv1b\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -32,16 +32,16 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'openlet_api.account.v1.acco
 if not _descriptor._USE_C_DESCRIPTORS:
   _globals['DESCRIPTOR']._loaded_options = None
   _globals['DESCRIPTOR']._serialized_options = b'ZKgithub.com/qninhdt/openlet/packages/go/gen/openlet_api/account/v1;accountv1'
-  _globals['_USERSUMMARY']._serialized_start=64
-  _globals['_USERSUMMARY']._serialized_end=159
-  _globals['_GETUSERSUMMARIESREQUEST']._serialized_start=161
-  _globals['_GETUSERSUMMARIESREQUEST']._serialized_end=204
-  _globals['_GETUSERSUMMARIESRESPONSE']._serialized_start=206
-  _globals['_GETUSERSUMMARIESRESPONSE']._serialized_end=291
-  _globals['_GETVERIFIEDEMAILSREQUEST']._serialized_start=293
-  _globals['_GETVERIFIEDEMAILSREQUEST']._serialized_end=344
-  _globals['_GETVERIFIEDEMAILSRESPONSE']._serialized_start=346
-  _globals['_GETVERIFIEDEMAILSRESPONSE']._serialized_end=397
-  _globals['_ACCOUNTSERVICE']._serialized_start=400
-  _globals['_ACCOUNTSERVICE']._serialized_end=657
+  _globals['_ACCOUNTSUMMARY']._serialized_start=64
+  _globals['_ACCOUNTSUMMARY']._serialized_end=162
+  _globals['_GETACCOUNTSUMMARIESREQUEST']._serialized_start=164
+  _globals['_GETACCOUNTSUMMARIESREQUEST']._serialized_end=210
+  _globals['_GETACCOUNTSUMMARIESRESPONSE']._serialized_start=212
+  _globals['_GETACCOUNTSUMMARIESRESPONSE']._serialized_end=309
+  _globals['_GETVERIFIEDEMAILSREQUEST']._serialized_start=311
+  _globals['_GETVERIFIEDEMAILSREQUEST']._serialized_end=368
+  _globals['_GETVERIFIEDEMAILSRESPONSE']._serialized_start=370
+  _globals['_GETVERIFIEDEMAILSRESPONSE']._serialized_end=421
+  _globals['_ACCOUNTSERVICE']._serialized_start=424
+  _globals['_ACCOUNTSERVICE']._serialized_end=690
 # @@protoc_insertion_point(module_scope)

@@ -15,7 +15,7 @@ import (
 
 type Node struct {
 	ID           uuid.UUID  `json:"id"`
-	FilesystemID uuid.UUID  `json:"filesystem_id"`
+	ScopeID      uuid.UUID  `json:"scope_id"`
 	ParentID     *uuid.UUID `json:"parent_id"`
 	Name         string     `json:"name"`
 	Kind         string     `json:"kind"`
@@ -31,11 +31,11 @@ type Node struct {
 	readonly     bool
 }
 
-const nodeColumns = `n.id,n.filesystem_id,n.parent_id,n.name,n.kind,n.revision,n.size_bytes,n.created_at,n.updated_at,
+const nodeColumns = `n.id,n.scope_id,n.parent_id,n.name,n.kind,n.revision,n.size_bytes,n.created_at,n.updated_at,
  f.media_type,f.title,f.description,f.semantic_type,f.context`
 
 func (n *Node) fields() []any {
-	return []any{&n.ID, &n.FilesystemID, &n.ParentID, &n.Name, &n.Kind, &n.Revision, &n.SizeBytes, &n.CreatedAt, &n.UpdatedAt,
+	return []any{&n.ID, &n.ScopeID, &n.ParentID, &n.Name, &n.Kind, &n.Revision, &n.SizeBytes, &n.CreatedAt, &n.UpdatedAt,
 		&n.MediaType, &n.Title, &n.Description, &n.SemanticType, &n.Context, &n.readonly}
 }
 
@@ -87,20 +87,21 @@ func databaseError(err error) error {
 }
 
 type session struct {
-	tx               pgx.Tx
-	maxNodes         int64
-	fs, bucket, root uuid.UUID
+	tx                            pgx.Tx
+	maxNodes                      int64
+	scopeID, filesystemID, root   uuid.UUID
+	allowBlobFiles, allowIndexing bool
 }
 
-func (s *Store) openSession(ctx context.Context, fs uuid.UUID, write bool) (_ *session, err error) {
-	return s.openSessionState(ctx, fs, write, false)
+func (s *Store) openSession(ctx context.Context, scopeID uuid.UUID, write bool) (_ *session, err error) {
+	return s.openSessionState(ctx, scopeID, write, false)
 }
 
-func (s *Store) lifecycleSession(ctx context.Context, fs uuid.UUID) (*session, error) {
-	return s.openSessionState(ctx, fs, true, true)
+func (s *Store) lifecycleSession(ctx context.Context, scopeID uuid.UUID) (*session, error) {
+	return s.openSessionState(ctx, scopeID, true, true)
 }
 
-func (s *Store) openSessionState(ctx context.Context, fs uuid.UUID, write, allowInactive bool) (_ *session, err error) {
+func (s *Store) openSessionState(ctx context.Context, scopeID uuid.UUID, write, allowInactive bool) (_ *session, err error) {
 	options := pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}
 	if write {
 		options = pgx.TxOptions{}
@@ -114,28 +115,25 @@ func (s *Store) openSessionState(ctx context.Context, fs uuid.UUID, write, allow
 			_ = tx.Rollback(ctx)
 		}
 	}()
-	result := &session{maxNodes: s.MaxNodes, tx: tx, fs: fs}
-	if err = tx.QueryRow(ctx, `SELECT bucket_id FROM filesystems WHERE id=$1`, fs).Scan(&result.bucket); err != nil {
+	result := &session{maxNodes: s.MaxNodes, tx: tx, scopeID: scopeID}
+	if err = tx.QueryRow(ctx, `SELECT filesystem_id FROM scopes WHERE id=$1`, scopeID).Scan(&result.filesystemID); err != nil {
 		return nil, databaseError(err)
 	}
-	bucketSQL := `SELECT state FROM quota_buckets WHERE id=$1`
-	fsSQL := `SELECT root_id,state FROM filesystems WHERE id=$1`
+	fsSQL := `SELECT state FROM filesystems WHERE id=$1`
+	scopeSQL := `SELECT root_id,state,allow_blob_files,allow_indexing FROM scopes WHERE id=$1 AND filesystem_id=$2`
 	if write {
-		bucketSQL += ` FOR UPDATE`
 		fsSQL += ` FOR UPDATE`
+		scopeSQL += ` FOR UPDATE`
 	}
-	var state string
-	if err = tx.QueryRow(ctx, bucketSQL, result.bucket).Scan(&state); err != nil {
+	var fsState, scopeState string
+	if err = tx.QueryRow(ctx, fsSQL, result.filesystemID).Scan(&fsState); err != nil {
 		return nil, databaseError(err)
-	}
-	if state != "active" && !allowInactive {
-		return nil, apperr.New(apperr.Conflict, "BUCKET_FROZEN", "bucket is frozen")
 	}
 	var root *uuid.UUID
-	if err = tx.QueryRow(ctx, fsSQL, fs).Scan(&root, &state); err != nil {
+	if err = tx.QueryRow(ctx, scopeSQL, scopeID, result.filesystemID).Scan(&root, &scopeState, &result.allowBlobFiles, &result.allowIndexing); err != nil {
 		return nil, databaseError(err)
 	}
-	if !allowInactive && (state != "active" || root == nil) {
+	if !allowInactive && (fsState != "active" || scopeState != "active" || root == nil) {
 		return nil, apperr.New(apperr.Missing, "NOT_FOUND", "resource not found")
 	}
 	if root != nil {
@@ -144,62 +142,67 @@ func (s *Store) openSessionState(ctx context.Context, fs uuid.UUID, write, allow
 	return result, nil
 }
 
-func (s *Store) GetFilesystem(ctx context.Context, fs uuid.UUID) (Filesystem, error) {
-	if _, err := s.authorize(ctx, fs, "filesystem", authz.NodeRead); err != nil {
+// ValidateScope binds externally supplied filesystem and scope identities before any operation.
+func (s *Store) ValidateScope(ctx context.Context, fs, scope uuid.UUID) error {
+	var found bool
+	err := s.DB.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM scopes WHERE id=$1 AND filesystem_id=$2 AND state<>'deleted')`, scope, fs).Scan(&found)
+	if err != nil {
+		return databaseError(err)
+	}
+	if !found {
+		return apperr.New(apperr.Missing, "NOT_FOUND", "resource not found")
+	}
+	return nil
+}
+
+func (s *Store) GetFilesystem(ctx context.Context, id uuid.UUID) (Filesystem, error) {
+	if _, err := s.authorize(ctx, id, "filesystem", authz.FilesystemRead); err != nil {
 		return Filesystem{}, err
 	}
-	session, err := s.openSession(ctx, fs, false)
-	if err != nil {
-		return Filesystem{}, err
-	}
-	defer session.tx.Rollback(ctx)
-	return Filesystem{ID: fs, BucketID: session.bucket, RootID: &session.root, State: "active"}, nil
+	var value Filesystem
+	err := s.DB.QueryRow(ctx, `SELECT id,limit_bytes,used_bytes,node_count,state FROM filesystems WHERE id=$1 AND state<>'deleted'`, id).Scan(&value.ID, &value.LimitBytes, &value.UsedBytes, &value.NodeCount, &value.State)
+	return value, databaseError(err)
 }
 
-func (s *Store) GetBucketUsage(ctx context.Context, id uuid.UUID) (Bucket, error) {
-	if _, err := s.authorize(ctx, id, "quota_bucket", authz.BucketRead); err != nil {
-		return Bucket{}, err
-	}
-	var result Bucket
-	err := s.DB.QueryRow(ctx, `SELECT id,limit_bytes,used_bytes,state FROM quota_buckets WHERE id=$1`, id).
-		Scan(&result.ID, &result.LimitBytes, &result.UsedBytes, &result.State)
-	return result, databaseError(err)
+func (s *Store) GetNode(ctx context.Context, scopeID uuid.UUID, locator Locator) (Node, error) {
+	return s.readNode(ctx, scopeID, locator, authz.ScopeReadMetadata)
 }
 
-func (s *Store) GetNode(ctx context.Context, fs uuid.UUID, mounts []Mount, locator Locator) (Node, error) {
-	return s.readNode(ctx, fs, mounts, locator, authz.NodeRead)
+func (s *Store) ResolveNode(ctx context.Context, scopeID uuid.UUID, locator Locator) (Node, error) {
+	return s.readNode(ctx, scopeID, locator, authz.ScopeReadMetadata)
 }
 
-func (s *Store) ResolveNode(ctx context.Context, fs uuid.UUID, mounts []Mount, locator Locator) (Node, error) {
-	return s.readNode(ctx, fs, mounts, locator, authz.NodeResolve)
-}
-
-func (s *Store) readNode(ctx context.Context, fs uuid.UUID, mounts []Mount, locator Locator, action authz.Action) (Node, error) {
-	if _, err := s.authorize(ctx, fs, "filesystem", action); err != nil {
+func (s *Store) readNode(ctx context.Context, scopeID uuid.UUID, locator Locator, action authz.Action) (Node, error) {
+	if _, err := s.authorize(ctx, scopeID, "scope", action); err != nil {
 		return Node{}, err
 	}
-	session, err := s.openSession(ctx, fs, false)
+	session, err := s.openSession(ctx, scopeID, false)
 	if err != nil {
 		return Node{}, err
 	}
 	defer session.tx.Rollback(ctx)
-	node, err := session.resolveOne(ctx, mounts, locator)
+	node, err := session.resolveOne(ctx, locator)
 	if err == nil && locator.ExpectedNodeID != nil && *locator.ExpectedNodeID != node.ID {
 		err = apperr.New(apperr.Conflict, "TARGET_MISMATCH", "target mismatch")
 	}
+	node.Context = nil
 	return node, err
 }
 
-func (s *Store) BatchStat(ctx context.Context, fs uuid.UUID, mounts []Mount, locators []Locator) ([]Node, error) {
-	if _, err := s.authorize(ctx, fs, "filesystem", authz.NodeRead); err != nil {
+func (s *Store) BatchStat(ctx context.Context, scopeID uuid.UUID, locators []Locator) ([]Node, error) {
+	if _, err := s.authorize(ctx, scopeID, "scope", authz.ScopeReadMetadata); err != nil {
 		return nil, err
 	}
-	session, err := s.openSession(ctx, fs, false)
+	session, err := s.openSession(ctx, scopeID, false)
 	if err != nil {
 		return nil, err
 	}
 	defer session.tx.Rollback(ctx)
-	return session.resolve(ctx, mounts, locators)
+	nodes, err := session.resolve(ctx, locators)
+	for i := range nodes {
+		nodes[i].Context = nil
+	}
+	return nodes, err
 }
 
 type NodePage struct {
@@ -228,29 +231,29 @@ func page(scope string, cursor *string, limit *int32) (uuid.UUID, int32, error) 
 	return after, count, nil
 }
 
-func (s *Store) ListNodes(ctx context.Context, fs uuid.UUID, mounts []Mount, parent Locator, cursor *string, limit *int32) (NodePage, error) {
-	if _, err := s.authorize(ctx, fs, "filesystem", authz.NodeList); err != nil {
+func (s *Store) ListNodes(ctx context.Context, scopeID uuid.UUID, parent Locator, cursor *string, limit *int32) (NodePage, error) {
+	if _, err := s.authorize(ctx, scopeID, "scope", authz.ScopeReadMetadata); err != nil {
 		return NodePage{}, err
 	}
-	session, err := s.openSession(ctx, fs, false)
+	session, err := s.openSession(ctx, scopeID, false)
 	if err != nil {
 		return NodePage{}, err
 	}
 	defer session.tx.Rollback(ctx)
-	node, err := session.resolveOne(ctx, mounts, parent)
+	node, err := session.resolveOne(ctx, parent)
 	if err != nil {
 		return NodePage{}, err
 	}
 	if parent.ExpectedNodeID != nil && *parent.ExpectedNodeID != node.ID {
 		return NodePage{}, apperr.New(apperr.Conflict, "TARGET_MISMATCH", "target mismatch")
 	}
-	scope := "list/" + fs.String() + "/" + node.ID.String()
+	scope := "list/" + scopeID.String() + "/" + node.ID.String()
 	after, count, err := page(scope, cursor, limit)
 	if err != nil {
 		return NodePage{}, err
 	}
 	rows, err := session.tx.Query(ctx, `SELECT `+strings.Replace(nodeColumns, "f.context", "NULL::text", 1)+`,false
- FROM nodes n LEFT JOIN files f ON f.node_id=n.id WHERE n.filesystem_id=$1 AND n.parent_id=$2 AND n.id>$3 ORDER BY n.id LIMIT $4`, fs, node.ID, after, count+1)
+ FROM nodes n LEFT JOIN files f ON f.node_id=n.id WHERE n.scope_id=$1 AND n.parent_id=$2 AND n.id>$3 ORDER BY n.id LIMIT $4`, scopeID, node.ID, after, count+1)
 	if err != nil {
 		return NodePage{}, databaseError(err)
 	}

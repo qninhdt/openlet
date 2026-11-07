@@ -32,20 +32,29 @@ CREATE TABLE public.files (
 );
 
 CREATE TABLE public.filesystems (
-    id uuid NOT NULL,
-    bucket_id uuid NOT NULL,
-    root_id uuid,
-    state text DEFAULT 'active'::text NOT NULL,
-    node_count bigint DEFAULT 1 NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT filesystem_live_root CHECK (((state <> 'active'::text) OR (root_id IS NOT NULL))),
-    CONSTRAINT filesystems_node_count_check CHECK ((node_count >= 0)),
-    CONSTRAINT filesystems_state_check CHECK ((state = ANY (ARRAY['active'::text, 'deleting'::text, 'deleted'::text])))
+    id uuid PRIMARY KEY,
+    limit_bytes bigint NOT NULL CHECK (limit_bytes >= 0),
+    used_bytes bigint DEFAULT 0 NOT NULL CHECK (used_bytes >= 0),
+    node_count bigint DEFAULT 0 NOT NULL CHECK (node_count >= 0),
+    state text DEFAULT 'active' NOT NULL CHECK (state IN ('active','deleting','deleted')),
+    created_at timestamptz DEFAULT now() NOT NULL
 );
+
+CREATE TABLE public.scopes (
+    id uuid PRIMARY KEY,
+    filesystem_id uuid NOT NULL REFERENCES public.filesystems(id),
+    root_id uuid,
+    allow_blob_files boolean NOT NULL DEFAULT true,
+    allow_indexing boolean NOT NULL DEFAULT true,
+    state text DEFAULT 'active' NOT NULL CHECK (state IN ('active','deleting','deleted')),
+    created_at timestamptz DEFAULT now() NOT NULL,
+    CHECK (state <> 'active' OR root_id IS NOT NULL)
+);
+CREATE INDEX scopes_by_filesystem ON public.scopes(filesystem_id,id);
 
 CREATE TABLE public.nodes (
     id uuid NOT NULL,
-    filesystem_id uuid NOT NULL,
+    scope_id uuid NOT NULL,
     parent_id uuid,
     name text NOT NULL COLLATE pg_catalog."C",
     kind text NOT NULL,
@@ -61,7 +70,7 @@ CREATE TABLE public.nodes (
 
 CREATE TABLE public.object_deletions (
     object_key text NOT NULL,
-    bucket_id uuid NOT NULL,
+    filesystem_id uuid NOT NULL,
     eligible_at timestamp with time zone DEFAULT (now() + '00:15:00'::interval) NOT NULL,
     state text DEFAULT 'pending'::text NOT NULL,
     ambiguous_write boolean DEFAULT false NOT NULL,
@@ -78,20 +87,9 @@ CREATE TABLE public.index_deletions (
 );
 CREATE INDEX index_deletions_due ON public.index_deletions (eligible_at);
 
-CREATE TABLE public.quota_buckets (
-    id uuid NOT NULL,
-    limit_bytes bigint NOT NULL,
-    used_bytes bigint DEFAULT 0 NOT NULL,
-    state text DEFAULT 'active'::text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT quota_buckets_limit_bytes_check CHECK ((limit_bytes >= 0)),
-    CONSTRAINT quota_buckets_state_check CHECK ((state = ANY (ARRAY['active'::text, 'frozen'::text, 'deleted'::text]))),
-    CONSTRAINT quota_buckets_used_bytes_check CHECK ((used_bytes >= 0))
-);
-
 CREATE TABLE public.trash_entries (
     id uuid NOT NULL,
-    filesystem_id uuid NOT NULL,
+    scope_id uuid NOT NULL,
     node_id uuid NOT NULL,
     original_parent_id uuid,
     original_name text NOT NULL,
@@ -103,8 +101,7 @@ CREATE TABLE public.trash_entries (
 
 CREATE TABLE public.uploads (
     id uuid NOT NULL,
-    filesystem_id uuid NOT NULL,
-    bucket_id uuid NOT NULL,
+    scope_id uuid NOT NULL,
     actor_id uuid,
     input jsonb NOT NULL,
     candidate_key text,
@@ -143,23 +140,17 @@ ALTER TABLE ONLY public.files
 ALTER TABLE ONLY public.files
     ADD CONSTRAINT files_pkey PRIMARY KEY (node_id);
 
-ALTER TABLE ONLY public.filesystems
-    ADD CONSTRAINT filesystems_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.nodes
+    ADD CONSTRAINT nodes_scope_id_id_key UNIQUE (scope_id, id);
 
 ALTER TABLE ONLY public.nodes
-    ADD CONSTRAINT nodes_filesystem_id_id_key UNIQUE (filesystem_id, id);
-
-ALTER TABLE ONLY public.nodes
-    ADD CONSTRAINT nodes_filesystem_id_parent_id_name_key UNIQUE (filesystem_id, parent_id, name);
+    ADD CONSTRAINT nodes_scope_id_parent_id_name_key UNIQUE (scope_id, parent_id, name);
 
 ALTER TABLE ONLY public.nodes
     ADD CONSTRAINT nodes_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.object_deletions
     ADD CONSTRAINT object_deletions_pkey PRIMARY KEY (object_key);
-
-ALTER TABLE ONLY public.quota_buckets
-    ADD CONSTRAINT quota_buckets_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.trash_entries
     ADD CONSTRAINT trash_entries_node_id_key UNIQUE (node_id);
@@ -173,11 +164,11 @@ ALTER TABLE ONLY public.uploads
 ALTER TABLE ONLY public.uploads
     ADD CONSTRAINT uploads_pkey PRIMARY KEY (id);
 
-CREATE INDEX nodes_detached_roots ON public.nodes USING btree (filesystem_id, id) WHERE parent_id IS NULL;
+CREATE INDEX nodes_detached_roots ON public.nodes USING btree (scope_id, id) WHERE parent_id IS NULL;
 
-CREATE INDEX filesystems_bucket ON public.filesystems USING btree (bucket_id, id);
 
-CREATE INDEX object_deletions_backlog ON public.object_deletions USING btree (bucket_id, eligible_at) WHERE (state <> 'deleted'::text OR ambiguous_write OR open_writes>0);
+
+CREATE INDEX object_deletions_backlog ON public.object_deletions USING btree (filesystem_id, eligible_at) WHERE (state <> 'deleted'::text OR ambiguous_write OR open_writes>0);
 
 CREATE INDEX object_deletions_due ON public.object_deletions USING btree (eligible_at, object_key);
 
@@ -185,45 +176,39 @@ CREATE INDEX object_deletions_due ON public.object_deletions USING btree (eligib
 CREATE INDEX processing_dispatch ON public.files (processing_updated_at,node_id) WHERE publication_status IN ('pending','parsed','enriched');
 
 
-CREATE INDEX trash_page ON public.trash_entries USING btree (filesystem_id, id);
+CREATE INDEX trash_page ON public.trash_entries USING btree (scope_id, id);
 
 CREATE INDEX uploads_multipart_cleanup ON public.uploads USING btree (updated_at, id) WHERE ((state = ANY (ARRAY['aborted'::text])) AND (multipart_id IS NOT NULL));
 
-CREATE INDEX uploads_outstanding ON public.uploads USING btree (bucket_id, state, expires_at) WHERE (state = ANY (ARRAY['open'::text, 'completing'::text]));
+CREATE INDEX uploads_outstanding ON public.uploads USING btree (scope_id, state, expires_at) WHERE (state = ANY (ARRAY['open'::text, 'completing'::text]));
 
 
 ALTER TABLE ONLY public.files
     ADD CONSTRAINT files_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.nodes(id) ON DELETE CASCADE;
 
-ALTER TABLE ONLY public.filesystems
-    ADD CONSTRAINT filesystem_root FOREIGN KEY (id, root_id) REFERENCES public.nodes(filesystem_id, id) DEFERRABLE INITIALLY DEFERRED;
-
-ALTER TABLE ONLY public.filesystems
-    ADD CONSTRAINT filesystems_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.quota_buckets(id);
+ALTER TABLE ONLY public.scopes
+    ADD CONSTRAINT scope_root FOREIGN KEY (id, root_id) REFERENCES public.nodes(scope_id, id) DEFERRABLE INITIALLY DEFERRED;
 
 ALTER TABLE ONLY public.nodes
-    ADD CONSTRAINT nodes_filesystem_id_fkey FOREIGN KEY (filesystem_id) REFERENCES public.filesystems(id);
+    ADD CONSTRAINT nodes_scope_id_fkey FOREIGN KEY (scope_id) REFERENCES public.scopes(id);
 
 ALTER TABLE ONLY public.nodes
-    ADD CONSTRAINT nodes_filesystem_id_parent_id_fkey FOREIGN KEY (filesystem_id, parent_id) REFERENCES public.nodes(filesystem_id, id);
+    ADD CONSTRAINT nodes_scope_id_parent_id_fkey FOREIGN KEY (scope_id, parent_id) REFERENCES public.nodes(scope_id, id);
 
 ALTER TABLE ONLY public.object_deletions
-    ADD CONSTRAINT object_deletions_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.quota_buckets(id);
+    ADD CONSTRAINT object_deletions_filesystem_id_fkey FOREIGN KEY (filesystem_id) REFERENCES public.filesystems(id);
 
 ALTER TABLE ONLY public.trash_entries
-    ADD CONSTRAINT trash_entries_filesystem_id_fkey FOREIGN KEY (filesystem_id) REFERENCES public.filesystems(id);
+    ADD CONSTRAINT trash_entries_scope_id_fkey FOREIGN KEY (scope_id) REFERENCES public.scopes(id);
 
 ALTER TABLE ONLY public.trash_entries
-    ADD CONSTRAINT trash_entries_filesystem_id_node_id_fkey FOREIGN KEY (filesystem_id, node_id) REFERENCES public.nodes(filesystem_id, id);
+    ADD CONSTRAINT trash_entries_scope_id_node_id_fkey FOREIGN KEY (scope_id, node_id) REFERENCES public.nodes(scope_id, id);
 
 ALTER TABLE ONLY public.trash_entries
     ADD CONSTRAINT trash_entries_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.nodes(id);
 
 ALTER TABLE ONLY public.uploads
-    ADD CONSTRAINT uploads_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.quota_buckets(id);
-
-ALTER TABLE ONLY public.uploads
-    ADD CONSTRAINT uploads_filesystem_id_fkey FOREIGN KEY (filesystem_id) REFERENCES public.filesystems(id);
+    ADD CONSTRAINT uploads_scope_id_fkey FOREIGN KEY (scope_id) REFERENCES public.scopes(id);
 
 
 -- +goose StatementEnd

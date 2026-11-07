@@ -6,35 +6,27 @@ import { restartService } from '../../fixtures/restart-service.ts';
 import { setTemporalRunning, temporalIsHealthy, triggerStorageMaintenance, recordCopyHistory, recordLifecycleHistories, recordWorkflowHistory, filesystemDeletionIsRunning, terminateWorkspaceDeletion } from '../../fixtures/temporal-control.ts';
 
 test('copy admission survives a Temporal outage and maintenance starts the committed receipt', async ({ session }) => {
-  const base = `/v1/filesystems/${session.filesystemId}`;
+  const base = `/v1/filesystems/${session.filesystemId}/scopes/${session.scopeId}`;
   const source = await inline(session, 'deferred-source.bin', Buffer.from('copy'));
   const options = { headers: { 'idempotency-key': randomUUID(), 'if-match': '"1"' }, data: { source_id: source.id, parent_id: session.rootId, name: 'deferred-copy.bin' } };
-  let id: string;
-  let monitor: string;
   await setTemporalRunning(false);
   try {
     const admitted = await session.api.post(`${base}/nodes`, options);
-    expect(admitted.status()).toBe(202);
-    const body = await admitted.json();
-    expect(body).toMatchObject({ status: 'accepted', committed_nodes: '0', committed_bytes: '0' });
-    id = body.id;
-    monitor = admitted.headers().location;
-    const repeated = await session.api.post(`${base}/nodes`, options);
-    expect(repeated.status()).toBe(202);
-    expect(await repeated.json()).toEqual(body);
+    expect(admitted.status()).toBe(503);
   } finally { await setTemporalRunning(true); }
   await expect.poll(temporalIsHealthy).toBe(true);
   await triggerStorageMaintenance();
-  await expect.poll(async () => {
-    const response = await session.api.get(monitor);
-    return response.status() === 200 ? (await response.json()).status : 'starting';
-  }).toBe('succeeded');
-  expect(await (await session.api.get(monitor)).json()).toMatchObject({ id, committed_nodes: '1', committed_bytes: '4' });
-  expect((await (await session.api.get(`/v1/quota-buckets/${session.bucketId}`)).json()).bucket.used_bytes).toBe('8');
+  await expect.poll(async () => (await session.api.get(`${base}/nodes:resolve`, { params: { path: '/deferred-copy.bin' } })).status()).toBe(200);
+  const repeated = await session.api.post(`${base}/nodes`, options);
+  expect(repeated.status()).toBe(202);
+  const copy = await repeated.json();
+  await recordCopyHistory('CopyTreeDeferred', session.filesystemId, copy.id);
+  expect(await (await session.api.get(`${base}/nodes/${copy.destination_root_id}/content`)).body()).toEqual(Buffer.from('copy'));
+  expect((await (await session.api.get(`/v1/filesystems/${session.filesystemId}`)).json()).used_bytes).toBe('8');
 });
 
 test('source changes and a real worker restart leave committed partial copy visible', async ({ session, controls, playwright }) => {
-  const base = `/v1/filesystems/${session.filesystemId}`;
+  const base = `/v1/filesystems/${session.filesystemId}/scopes/${session.scopeId}`;
   const folder = await directory(session, 'changing-source');
   const storage = await playwright.request.newContext();
   try {
@@ -45,7 +37,6 @@ test('source changes and a real worker restart leave committed partial copy visi
       data: { source_id: folder.id, parent_id: session.rootId, name: 'partial-result' } });
     expect(admitted.status()).toBe(202);
     const copy = await admitted.json();
-    const monitor = admitted.headers().location;
     await expect.poll(async () => (await (await controls.get('/control/storage')).json()).hits).toBe(1);
     const partial = await session.api.get(`${base}/nodes/${copy.destination_root_id}`);
     expect(partial.status()).toBe(200);
@@ -54,21 +45,15 @@ test('source changes and a real worker restart leave committed partial copy visi
     expect((await session.api.put(`${base}/nodes/${file.node_id}/content`, { headers: { 'if-match': current.headers().etag, 'content-type': 'application/octet-stream' }, data: Buffer.from('changed') })).status()).toBe(200);
     await restartService('letfs');
     await controls.delete('/control/storage');
-    await expect.poll(async () => {
-      const response = await session.api.get(monitor);
-      return response.status() === 200 ? (await response.json()).status : 'restarting';
-    }).toBe('failed');
-    const result = await (await session.api.get(monitor)).json();
-    expect(result).toMatchObject({ destination_root_id: copy.destination_root_id, committed_nodes: '1', committed_bytes: '0', error_code: 'SOURCE_REPLACED' });
-    await recordCopyHistory('CopyNodeRecovery', folder.filesystem_id, copy.id);
+    await recordCopyHistory('CopyTreeRecovery', session.filesystemId, copy.id, true);
     expect((await session.api.get(`${base}/nodes/${copy.destination_root_id}`)).status()).toBe(200);
     expect((await (await session.api.get(`${base}/nodes`, { params: { parent_id: copy.destination_root_id } })).json()).items).toEqual([]);
-    expect((await (await session.api.get(`/v1/quota-buckets/${session.bucketId}`)).json()).bucket.used_bytes).toBe('7');
+    expect((await (await session.api.get(`/v1/filesystems/${session.filesystemId}`)).json()).used_bytes).toBe('7');
   } finally { await controls.delete('/control/storage'); await storage.dispose(); }
 });
 
 test('a real CPU worker restart resumes object-source parsing without another artifact tree', async ({ session, controls, playwright }) => {
-  const base = `/v1/filesystems/${session.filesystemId}`;
+  const base = `/v1/filesystems/${session.filesystemId}/scopes/${session.scopeId}`;
   const bytes = recoveryGuide();
   const storage = await playwright.request.newContext();
   try {
@@ -97,37 +82,31 @@ test('a real CPU worker restart resumes object-source parsing without another ar
   } finally { await controls.delete('/control/storage'); await storage.dispose(); }
 });
 
-test('workspace deletion remains admitted after the client stops polling', async ({ session, identity }) => {
+test('workspace deletion finishes after its HTTP caller disconnects', async ({ session, identity }) => {
   const base = `/v1/workspaces/${session.workspaceId}`;
-  const selected = await session.api.get(base);
-  expect((await session.api.delete(base)).status()).toBe(428);
-  const response = await session.api.delete(base, { headers: { 'if-match': selected.headers().etag } });
-  expect(response.status()).toBe(202);
-  expect(response.headers().location).toBe(base);
-  expect(await response.json()).toMatchObject({ id: session.workspaceId, status: 'deleting' });
-  const repeated = await session.api.delete(base, { headers: { 'if-match': selected.headers().etag } });
-  expect([202, 204]).toContain(repeated.status());
-  await expect.poll(async () => {
-    const current = await session.api.get(base);
-    return current.status() === 404 ? 'deleted' : (await current.json()).status;
-  }).toBe('deleted');
-  expect((await session.api.delete(base, { headers: { 'if-match': selected.headers().etag } })).status()).toBe(204);
-  const workspaces = await session.api.get('/v1/workspaces');
-  expect((await workspaces.json()).items).not.toContainEqual(expect.objectContaining({ id: session.workspaceId }));
-  expect((await session.api.get(`/v1/filesystems/${session.filesystemId}/nodes/${session.rootId}`)).status()).toBe(403);
-  await recordLifecycleHistories(identity.id, session.workspaceId, session.userId, session.filesystemId);
+  const release = await lockFilesystemRoot(session.filesystemId);
+  let pending: Promise<unknown>;
+  try {
+    pending = session.api.delete(base, { timeout: 2000 }).catch(error => error);
+    await expect.poll(() => filesystemDeletionIsRunning(session.workspaceId)).toBe(true);
+    await pending;
+  } finally { await release(); }
+  await expect.poll(async () => (await session.api.get(base)).status()).toBe(403);
+  expect((await session.api.get(`/v1/filesystems/${session.filesystemId}/scopes/${session.scopeId}/nodes/${session.rootId}`)).status()).toBe(404);
+  await recordLifecycleHistories(identity.id, session.workspaceId);
 });
 
-test('a terminated Workspace deletion resumes cleanup while letfs-owned deletion remains active', async ({ session }) => {
+test('a terminated Workspace deletion can be retried while its filesystem child remains active', async ({ session }) => {
   const base = `/v1/workspaces/${session.workspaceId}`;
-  const selected = await session.api.get(base);
-  const headers = { 'if-match': selected.headers().etag };
-  const release = await lockFilesystemRoot((await selected.json()).filesystem_id);
+  const release = await lockFilesystemRoot(session.filesystemId);
+  const first = session.api.delete(base).catch(error => error);
+  let retry: ReturnType<typeof session.api.delete> | undefined;
   try {
-    expect((await session.api.delete(base, { headers })).status()).toBe(202);
-    await expect.poll(() => filesystemDeletionIsRunning(session.filesystemId)).toBe(true);
+    await expect.poll(() => filesystemDeletionIsRunning(session.workspaceId)).toBe(true);
     await terminateWorkspaceDeletion(session.workspaceId);
-    expect((await session.api.delete(base, { headers })).status()).toBe(202);
+    await first;
+    retry = session.api.delete(base);
   } finally { await release(); }
-  await expect.poll(async () => (await (await session.api.get(base)).json()).status).toBe('deleted');
+  expect((await retry!).status()).toBe(204);
+  expect((await session.api.get(base)).status()).toBe(403);
 });

@@ -94,7 +94,7 @@ func (f *transportFixture) GetNode(ctx context.Context, r *letfsv1.GetNodeReques
 	if r.NodeId != "node" {
 		return nil, Fault(codes.NotFound, "NOT_FOUND", "resource not found")
 	}
-	return &letfsv1.GetNodeResponse{Node: &letfsv1.Node{Id: "node", FilesystemId: "drive", Name: "report.bin", Revision: 9223372036854775807}}, nil
+	return &letfsv1.GetNodeResponse{Node: &letfsv1.Node{Id: "node", ScopeId: "drive", Name: "report.bin", Revision: 9223372036854775807}}, nil
 }
 
 func (f *transportFixture) admit(ctx context.Context, fs string) error {
@@ -160,7 +160,7 @@ func TestIntegrationNativeBytesAndCancellation(t *testing.T) {
 	client := letfsv1.NewFilesystemServiceClient(connection)
 	ctx, deadline := context.WithTimeout(t.Context(), 5*time.Second)
 	defer deadline()
-	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer "+fixtureGateway, "x-openlet-user-id", transportActor))
+	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer "+fixtureGateway, "x-openlet-account-id", transportActor))
 	response, err := client.GetDownload(ctx, &letfsv1.GetDownloadRequest{FilesystemId: "drive", NodeId: "node"})
 	require.NoError(t, err)
 	require.Equal(t, transportBytes, response.Download.GetInlineContent())
@@ -193,7 +193,7 @@ func TestIntegrationNativeArchiveFramesBackpressureAndAuthority(t *testing.T) {
 	client := letfsv1.NewFilesystemServiceClient(connection)
 	ctx, stop := context.WithTimeout(t.Context(), 5*time.Second)
 	defer stop()
-	verified := metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer "+fixtureGateway, "x-openlet-user-id", transportActor))
+	verified := metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer "+fixtureGateway, "x-openlet-account-id", transportActor))
 	stream, err := client.StreamArchive(verified, &letfsv1.StreamArchiveRequest{FilesystemId: "drive", NodeId: "node"})
 	require.NoError(t, err)
 	frame, err := stream.Recv()

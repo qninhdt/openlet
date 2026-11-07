@@ -5,7 +5,6 @@ package temporal
 import (
 	"context"
 	"fmt"
-	"github.com/qninhdt/openlet/packages/go/apperr"
 	"os"
 	"path/filepath"
 	"testing"
@@ -16,13 +15,12 @@ import (
 	"github.com/qninhdt/openlet/apps/letfs/internal/testfixture"
 	"github.com/qninhdt/openlet/packages/go/authz"
 	"github.com/qninhdt/openlet/packages/go/identity"
+	shared "github.com/qninhdt/openlet/packages/go/temporal"
 	sharedfixture "github.com/qninhdt/openlet/packages/go/testfixture"
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/api/enums/v1"
 	historypb "go.temporal.io/api/history/v1"
-	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
-	sdktemporal "go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 
@@ -32,7 +30,8 @@ import (
 func replayRuns(t *testing.T, tc client.Client, id, runID, name string) int {
 	t.Helper()
 	replayer := worker.NewWorkflowReplayer()
-	replayer.RegisterWorkflowWithOptions(CopyNode, workflow.RegisterOptions{Name: CopyNodeName})
+	replayer.RegisterWorkflowWithOptions(CopyTree, workflow.RegisterOptions{Name: CopyTreeName})
+	replayer.RegisterWorkflowWithOptions(DeleteScope, workflow.RegisterOptions{Name: DeleteScopeName})
 	replayer.RegisterWorkflowWithOptions(PurgeTrash, workflow.RegisterOptions{Name: PurgeTrashName})
 	replayer.RegisterWorkflowWithOptions(DeleteFilesystem, workflow.RegisterOptions{Name: DeleteFilesystemName})
 	replayer.RegisterWorkflowWithOptions(ProcessFile, workflow.RegisterOptions{Name: ProcessFileName})
@@ -65,134 +64,95 @@ func replayRuns(t *testing.T, tc client.Client, id, runID, name string) int {
 	return runs
 }
 
-func TestIntegrationCopyRecoveryContinuationAndDeletionReplay(t *testing.T) {
-	tc, _ := testfixture.Temporal(t)
+func TestIntegrationCopyFailureAndDeletionWorkerRestart(t *testing.T) {
+	tc, _ := sharedfixture.Temporal(t)
 	db := testfixture.Postgres(t, "../../migrations/0001_initial.sql")
 	graph, _, _ := sharedfixture.SpiceDB(t, "../../../../packages/contracts/authz/schema.zed")
-	s := &filesystem.Store{DB: db, Graph: graph, MaxNodes: 1000, MaxCopyNodes: 1000, InlineLimit: 64, MaxFileBytes: 64,
-		MaxOutstanding: 100, MaxCleanupBacklog: 100}
+	store := &filesystem.Store{DB: db, Graph: graph, MaxNodes: 1000, MaxCopyNodes: 100, InlineLimit: 64, MaxFileBytes: 64, MaxOutstanding: 100, MaxCleanupBacklog: 100}
 	owner := identity.WithPrincipal(t.Context(), identity.Principal{Service: "resource-owner"})
 	actor := uuid.New()
-	ctx := identity.WithPrincipal(t.Context(), identity.Principal{Service: "gateway", Gateway: true, ActorID: actor})
-	bucket, fs := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
-	_, err := s.CreateBucket(owner, uuid.New(), filesystem.CreateBucket{ID: bucket, LimitBytes: 1000})
+	ctx, cancel := context.WithTimeout(identity.WithPrincipal(t.Context(), identity.Principal{Service: "gateway", Gateway: true, ActorID: actor}), 2*time.Minute)
+	defer cancel()
+	fs, scope := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	_, err := store.CreateFilesystem(owner, uuid.New(), filesystem.CreateFilesystem{ID: fs, LimitBytes: 3})
 	require.NoError(t, err)
-	created, err := s.CreateFilesystem(owner, uuid.New(), filesystem.CreateFilesystem{ID: fs, BucketID: bucket, RootName: "root"})
+	created, err := createTestScope(owner, store, uuid.New(), fs, scope)
 	require.NoError(t, err)
-	root := *created.RootID
-	mounts := []filesystem.Mount{{Path: "/drive", FilesystemID: fs}}
-	testfixture.Grant(t, graph, "filesystem", fs, actor, authz.NodeCreate, authz.NodeRead, authz.NodeTrash,
-		authz.CopyCreate, authz.CopyRead, authz.TrashPurge)
-	source, err := s.CreateNode(ctx, fs, mounts, uuid.New(), filesystem.CreateNode{Parent: filesystem.Locator{NodeID: &root}, Name: "source"})
+	testfixture.Grant(t, graph, "scope", scope, actor, authz.ScopeManageAccess)
+	source, err := store.CreateNode(ctx, scope, uuid.New(), filesystem.CreateNode{Parent: filesystem.Locator{NodeID: created.RootID}, Name: "source"})
 	require.NoError(t, err)
-	for i := range 40 {
-		_, err = s.CreateNode(ctx, fs, mounts, uuid.New(), filesystem.CreateNode{Parent: filesystem.Locator{NodeID: &source.ID},
-			Name: fmt.Sprintf("%02d.bin", i), File: &filesystem.InlineFile{Content: []byte{byte(i)}, MediaType: "application/octet-stream"}})
+	for _, name := range []string{"a", "b"} {
+		_, err = store.CreateNode(ctx, scope, uuid.New(), filesystem.CreateNode{Parent: filesystem.Locator{NodeID: &source.ID}, Name: name, File: &filesystem.InlineFile{Content: []byte("x"), MediaType: "text/plain"}})
 		require.NoError(t, err)
 	}
-	source, err = s.GetNode(ctx, fs, mounts, filesystem.Locator{NodeID: &source.ID})
+	source, err = store.GetNode(ctx, scope, filesystem.Locator{NodeID: &source.ID})
 	require.NoError(t, err)
-	admission, err := s.AdmitCopy(ctx, fs, mounts, uuid.New(), filesystem.CreateCopy{SourceID: source.ID, ParentID: root, Name: "copy", Revision: &source.Revision})
+	admission, err := store.AdmitCopy(ctx, scope, uuid.New(), filesystem.CreateCopy{DestinationScopeID: scope, SourceID: source.ID, ParentID: *created.RootID, Name: "copy", Revision: &source.Revision})
 	require.NoError(t, err)
-	a := &Activities{Store: s}
+	activities := &Activities{Store: store}
 	first := worker.New(tc, Queue, worker.Options{WorkerStopTimeout: time.Second})
-	Register(first, a)
-	committed := make(chan struct{})
-	first.RegisterActivityWithOptions(func(ctx context.Context, step CopyStep) error {
-		if err := a.CopyItem(ctx, step); err != nil {
-			return err
-		}
-		if step.Item.Source == source.ID && activity.GetInfo(ctx).Attempt == 1 {
-			close(committed)
-			return sdktemporal.NewApplicationError("lost acknowledgment", "DEPENDENCY_UNAVAILABLE")
-		}
-		return nil
-	}, activity.RegisterOptions{Name: "copy_item", DisableAlreadyRegisteredCheck: true})
+	Register(first, activities)
 	require.NoError(t, first.Start())
-	firstStopped := false
+	stopped := false
 	t.Cleanup(func() {
-		if !firstStopped {
+		if !stopped {
 			first.Stop()
 		}
 	})
-	jobs := &Jobs{Client: tc}
-	require.NoError(t, jobs.StartCopy(ctx, admission))
-	initial, err := tc.DescribeWorkflowExecution(ctx, copyWorkflowID(fs, admission.ID), "")
+	copyRun, err := tc.ExecuteWorkflow(ctx, client.StartWorkflowOptions{TaskQueue: Queue}, CopyTreeName, admission)
 	require.NoError(t, err)
-	select {
-	case <-committed:
-	case <-time.After(20 * time.Second):
-		t.Fatal("copy did not reach committed-before-acknowledgment boundary")
+	require.Error(t, copyRun.Get(ctx, nil), "quota failure retains earlier copy writes")
+	var used, nodes int64
+	require.NoError(t, db.QueryRow(ctx, "SELECT used_bytes,node_count FROM filesystems WHERE id=$1", fs).Scan(&used, &nodes))
+	require.EqualValues(t, 3, used)
+	require.EqualValues(t, 6, nodes, "root + source tree + partial destination tree")
+	require.Equal(t, 1, replayRuns(t, tc, copyRun.GetID(), copyRun.GetRunID(), "CopyTreeFailed"))
+	entry, err := store.TrashNode(ctx, scope, filesystem.Locator{NodeID: &admission.Root.Destination}, func() *int64 { v := int64(2); return &v }())
+	require.NoError(t, err)
+	_, err = store.PrepareTrashPurge(ctx, scope, entry.ID)
+	require.NoError(t, err)
+	purge, err := tc.ExecuteWorkflow(ctx, client.StartWorkflowOptions{TaskQueue: Queue}, PurgeTrashName, filesystem.DeletionInput{ScopeID: scope, EntryID: &entry.ID})
+	require.NoError(t, err)
+	require.NoError(t, purge.Get(ctx, nil))
+	require.Equal(t, 1, replayRuns(t, tc, purge.GetID(), purge.GetRunID(), "PurgeTrash"))
+	_, err = db.Exec(ctx, "UPDATE filesystems SET limit_bytes=1000 WHERE id=$1", fs)
+	require.NoError(t, err)
+	for i := range 70 {
+		_, err = store.CreateNode(ctx, scope, uuid.New(), filesystem.CreateNode{Parent: filesystem.Locator{NodeID: created.RootID}, Name: fmt.Sprintf("batch-%02d", i), File: &filesystem.InlineFile{Content: []byte("x"), MediaType: "text/plain"}})
+		require.NoError(t, err)
 	}
+	// Pause the real bulk activity's second SQL batch after its first commit.
+	_, err = db.Exec(ctx, fmt.Sprintf(`CREATE FUNCTION pause_later_batches() RETURNS trigger LANGUAGE plpgsql AS $$
+ BEGIN IF (SELECT count(*) FROM nodes WHERE scope_id='%s')<=64 THEN PERFORM pg_advisory_xact_lock(7421); END IF; RETURN NULL; END $$;
+ CREATE TRIGGER pause_later_batches BEFORE DELETE ON nodes FOR EACH STATEMENT EXECUTE FUNCTION pause_later_batches()`, scope))
+	require.NoError(t, err)
+	lock, err := db.Begin(ctx)
+	require.NoError(t, err)
+	defer lock.Rollback(context.Background())
+	_, err = lock.Exec(ctx, "SELECT pg_advisory_xact_lock(7421)")
+	require.NoError(t, err)
+	deletion, err := tc.ExecuteWorkflow(ctx, client.StartWorkflowOptions{TaskQueue: Queue}, DeleteFilesystemName, shared.FilesystemDeletion{FilesystemID: fs})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		err := db.QueryRow(ctx, "SELECT used_bytes,node_count FROM filesystems WHERE id=$1", fs).Scan(&used, &nodes)
+		return err == nil && nodes == 10 && used == 8
+	}, 10*time.Second, 10*time.Millisecond)
 	first.Stop()
-	firstStopped = true
+	stopped = true
+	require.NoError(t, lock.Rollback(ctx))
+	duplicate, err := tc.ExecuteWorkflow(ctx, client.StartWorkflowOptions{TaskQueue: Queue}, DeleteScopeName, shared.ScopeDeletion{FilesystemID: fs, ScopeID: scope})
+	require.NoError(t, err)
 	second := worker.New(tc, Queue, worker.Options{WorkerStopTimeout: time.Second})
-	Register(second, a)
+	Register(second, activities)
 	require.NoError(t, second.Start())
-	secondStopped := false
-	t.Cleanup(func() {
-		if !secondStopped {
-			second.Stop()
-		}
-	})
-	deadline, cancel := context.WithTimeout(ctx, time.Minute)
-	defer cancel()
-	var result filesystem.CopyState
-	require.NoError(t, tc.GetWorkflow(deadline, copyWorkflowID(fs, admission.ID), "").Get(deadline, &result))
-	require.Equal(t, "succeeded", result.Status)
-	require.EqualValues(t, 41, result.CommittedNodes)
-	require.EqualValues(t, 40, result.CommittedBytes)
-	var bytes, nodes int64
-	require.NoError(t, db.QueryRow(ctx, `SELECT used_bytes FROM quota_buckets WHERE id=$1`, bucket).Scan(&bytes))
-	require.EqualValues(t, 80, bytes)
-	require.NoError(t, db.QueryRow(ctx, `SELECT node_count FROM filesystems WHERE id=$1`, fs).Scan(&nodes))
-	require.EqualValues(t, 83, nodes)
-	require.GreaterOrEqual(t, replayRuns(t, tc, copyWorkflowID(fs, admission.ID), initial.WorkflowExecutionInfo.Execution.RunId, "CopyNodeRecovery"), 2)
-	// A completed receipt must not start another execution or charge quota again.
-	require.NoError(t, jobs.StartCopy(ctx, admission))
-	second.Stop()
-	secondStopped = true
-	progress, err := jobs.Copy(ctx, fs, admission.ID, actor, false)
-	require.NoError(t, err, "completed progress does not need a running worker")
-	require.Equal(t, "succeeded", progress.Status)
-	_, err = jobs.Copy(ctx, fs, admission.ID, uuid.New(), false)
-	require.Equal(t, apperr.Missing, apperr.KindOf(err))
-	_, err = jobs.Copy(ctx, fs, admission.ID, uuid.New(), true)
-	require.NoError(t, err)
-	copy, err := s.GetNode(ctx, fs, mounts, filesystem.Locator{NodeID: &admission.Root.Destination})
-	require.NoError(t, err)
-	entry, err := s.TrashNode(ctx, fs, mounts, filesystem.Locator{NodeID: &copy.ID}, &copy.Revision)
-	require.NoError(t, err)
-	_, err = s.PrepareTrashPurge(ctx, fs, entry.ID)
-	require.NoError(t, err)
-	purge := filesystem.DeletionInput{FilesystemID: fs, EntryID: &entry.ID}
-	require.NoError(t, jobs.StartDeletion(ctx, purge))
-	require.NoError(t, tc.CancelWorkflow(ctx, purge.WorkflowID(), ""))
-	third := worker.New(tc, Queue, worker.Options{WorkerStopTimeout: time.Second})
-	Register(third, a)
-	require.NoError(t, third.Start())
-	t.Cleanup(third.Stop)
-	var purged uuid.UUID
-	require.NoError(t, tc.GetWorkflow(deadline, purge.WorkflowID(), "").Get(deadline, &purged))
-	require.Equal(t, entry.ID, purged)
-	info, err := tc.DescribeWorkflowExecution(ctx, purge.WorkflowID(), "")
-	require.NoError(t, err)
-	require.Equal(t, 1, replayRuns(t, tc, purge.WorkflowID(), info.WorkflowExecutionInfo.Execution.RunId, "PurgeTrashCanceled"))
-	require.NoError(t, db.QueryRow(ctx, `SELECT used_bytes FROM quota_buckets WHERE id=$1`, bucket).Scan(&bytes))
-	require.EqualValues(t, 40, bytes)
-	require.NoError(t, s.PrepareFilesystemDeletion(owner, fs))
-	deletion := filesystem.DeletionInput{FilesystemID: fs}
-	require.NoError(t, jobs.StartDeletion(ctx, deletion))
-	var deleted uuid.UUID
-	require.NoError(t, tc.GetWorkflow(deadline, deletion.WorkflowID(), "").Get(deadline, &deleted))
-	require.Equal(t, fs, deleted)
-	info, err = tc.DescribeWorkflowExecution(ctx, deletion.WorkflowID(), "")
-	require.NoError(t, err)
-	require.Equal(t, 1, replayRuns(t, tc, deletion.WorkflowID(), info.WorkflowExecutionInfo.Execution.RunId, "DeleteFilesystem"))
-	require.NoError(t, db.QueryRow(ctx, `SELECT used_bytes FROM quota_buckets WHERE id=$1`, bucket).Scan(&bytes))
-	require.Zero(t, bytes)
+	t.Cleanup(second.Stop)
+	require.NoError(t, deletion.Get(ctx, nil))
+	require.NoError(t, duplicate.Get(ctx, nil))
+	require.Equal(t, 1, replayRuns(t, tc, duplicate.GetID(), duplicate.GetRunID(), "DeleteScope"))
+	require.Equal(t, 1, replayRuns(t, tc, deletion.GetID(), deletion.GetRunID(), "DeleteFilesystem"))
 	var state string
-	require.NoError(t, db.QueryRow(ctx, `SELECT state,node_count FROM filesystems WHERE id=$1`, fs).Scan(&state, &nodes))
+	require.NoError(t, db.QueryRow(ctx, "SELECT state,used_bytes,node_count FROM filesystems WHERE id=$1", fs).Scan(&state, &used, &nodes))
 	require.Equal(t, "deleted", state)
+	require.Zero(t, used)
 	require.Zero(t, nodes)
 }

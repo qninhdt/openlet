@@ -62,28 +62,13 @@ func failure(w http.ResponseWriter, r *http.Request, e error) {
 	}
 	Error(w, r, 503, "DEPENDENCY_UNAVAILABLE", "dependency unavailable")
 }
-func actorID(r *http.Request) uuid.UUID { return uuid.MustParse(r.Header.Get("X-Openlet-User-ID")) }
+func actorID(r *http.Request) uuid.UUID { return uuid.MustParse(r.Header.Get("X-Openlet-Account-ID")) }
 func resourceID(c *gin.Context, name string) (uuid.UUID, error) {
 	v, e := uuid.Parse(c.Param(name))
 	if e != nil || v == uuid.Nil {
 		return uuid.Nil, workspace.Fault{Code: "VALIDATION"}
 	}
 	return v, nil
-}
-func precondition(r *http.Request) (string, error) {
-	v := r.Header.Get("If-Match")
-	if v == "" {
-		return "", workspace.Fault{Code: "PRECONDITION_REQUIRED"}
-	}
-	if len(r.Header.Values("If-Match")) != 1 || len(v) < 3 || v[0] != '"' || v[len(v)-1] != '"' {
-		return "", workspace.Fault{Code: "VALIDATION"}
-	}
-	value := v[1 : len(v)-1]
-	number, e := strconv.ParseInt(value, 10, 64)
-	if e != nil || number <= 0 || strconv.FormatInt(number, 10) != value {
-		return "", workspace.Fault{Code: "VALIDATION"}
-	}
-	return value, nil
 }
 func pageLimit(r *http.Request) (int, error) {
 	limit := 50
@@ -142,12 +127,7 @@ func (s *Server) startCreate(w http.ResponseWriter, r *http.Request, in workspac
 		return
 	}
 	w.Header().Set("Location", "/v1/workspaces/"+admission.ID.String())
-	w.Header().Set("ETag", "\""+admission.Revision+"\"")
-	status := 202
-	if admission.Status != "provisioning" {
-		status = 200
-	}
-	respond(w, status, admission)
+	respond(w, 200, admission)
 }
 func (s *Server) createWorkspace(c *gin.Context) {
 	w, r := c.Writer, c.Request
@@ -191,7 +171,6 @@ func (s *Server) getWorkspace(c *gin.Context) {
 		failure(w, r, e)
 		return
 	}
-	w.Header().Set("ETag", "\""+v.Revision+"\"")
 	respond(w, 200, v)
 }
 func (s *Server) updateWorkspace(c *gin.Context) {
@@ -201,21 +180,15 @@ func (s *Server) updateWorkspace(c *gin.Context) {
 		failure(w, r, e)
 		return
 	}
-	revision, e := precondition(r)
-	if e != nil {
-		failure(w, r, e)
-		return
-	}
 	var in workspace.UpdateInput
 	if e = decode(w, r, &in); e != nil {
 		failure(w, r, e)
 		return
 	}
-	v, e := s.Service.Update(r.Context(), id, actorID(r), revision, in)
+	v, e := s.Service.Update(r.Context(), id, actorID(r), in)
 	if e != nil {
 		failure(w, r, e)
 		return
 	}
-	w.Header().Set("ETag", "\""+v.Revision+"\"")
 	respond(w, 200, v)
 }

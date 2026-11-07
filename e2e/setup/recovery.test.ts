@@ -33,7 +33,7 @@ test('operations restore real database state and S3 bytes into an isolated fence
     send.child.stdin?.end(`user = "${credentials}"\n`);
     await send;
     const id = randomUUID();
-    await execute('docker', ['compose', '--file', compose, '--project-name', project, 'exec', '-T', 'postgres', 'psql', '-X', '--set', 'ON_ERROR_STOP=1', '-U', 'openlet_admin', '-d', 'openlet_letfs', '-c', `INSERT INTO quota_buckets(id,limit_bytes) VALUES('${id}',12345)`], { env });
+    await execute('docker', ['compose', '--file', compose, '--project-name', project, 'exec', '-T', 'postgres', 'psql', '-X', '--set', 'ON_ERROR_STOP=1', '-U', 'openlet_admin', '-d', 'openlet_letfs', '-c', `INSERT INTO filesystems(id,limit_bytes) VALUES('${id}',12345)`], { env });
     for (const app of ['account', 'workspace', 'letfs']) {
       await execute('docker', ['compose', '--file', compose, '--project-name', project, 'run', '--rm', `${app}-migrate`], { env });
     }
@@ -44,7 +44,7 @@ test('operations restore real database state and S3 bytes into an isolated fence
     await execute('python3', [command, 'restore', '--compose', compose, '--project', recoveredProject, '--state', restored, '--snapshot', snapshot], { env, timeout: 120_000 });
     const running = await execute('docker', ['compose', '--file', compose, '--project-name', recoveredProject, 'ps', '--status', 'running', '--services'], { env: restoredEnv });
     assert.deepEqual(running.stdout.trim().split('\n'), ['postgres']);
-    const query = await execute('docker', ['compose', '--file', compose, '--project-name', recoveredProject, 'exec', '-T', 'postgres', 'psql', '-XAt', '-U', 'openlet_letfs', '-d', 'openlet_letfs', '-c', `SELECT limit_bytes FROM quota_buckets WHERE id='${id}'`], { env: restoredEnv });
+    const query = await execute('docker', ['compose', '--file', compose, '--project-name', recoveredProject, 'exec', '-T', 'postgres', 'psql', '-XAt', '-U', 'openlet_letfs', '-d', 'openlet_letfs', '-c', `SELECT limit_bytes FROM filesystems WHERE id='${id}'`], { env: restoredEnv });
     assert.equal(query.stdout.trim(), '12345');
     const restoreMarker = join(restored, 'restore.json');
     const repaired = await readFile(restoreMarker, 'utf8');

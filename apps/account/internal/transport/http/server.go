@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/qninhdt/openlet/apps/account/internal/account"
 	"github.com/qninhdt/openlet/apps/account/internal/config"
-	"github.com/qninhdt/openlet/apps/account/internal/user"
 	"github.com/qninhdt/openlet/packages/go/httpapi"
 	"github.com/qninhdt/openlet/packages/go/identity"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
@@ -18,7 +18,7 @@ import (
 
 type Server struct {
 	Config  config.Config
-	Service *user.Service
+	Service *account.Service
 	Ready   func(context.Context) error
 }
 
@@ -51,6 +51,9 @@ func (s *Server) Router() *gin.Engine {
 	public.GET("/me/onboarding", s.onboardingGet)
 	public.GET("/me", s.me)
 	public.PATCH("/me", s.updateMe)
+	public.POST("/accounts", s.createAccount)
+	public.GET("/accounts/:id", s.getAccount)
+	public.PATCH("/accounts/:id", s.updateAccount)
 	r.NoRoute(func(c *gin.Context) {
 		Error(c.Writer, c.Request, 404, "NOT_FOUND", "resource not found")
 	})

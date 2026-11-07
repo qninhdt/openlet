@@ -16,11 +16,11 @@ func TestGinAuthenticationAndRecovery(t *testing.T) {
 	s.Config.GatewayToken = secret
 	router := s.Router()
 	router.GET("/v1/panic", func(*gin.Context) { panic("private payload") })
-	for _, duplicate := range []string{"X-Gateway-Token", "X-Clerk-Sub", "X-Openlet-User-ID"} {
+	for _, duplicate := range []string{"X-Gateway-Token", "X-Clerk-Sub", "X-Openlet-Account-ID"} {
 		request := httptest.NewRequest(http.MethodGet, "/v1/unknown", nil)
 		request.Header.Set("X-Gateway-Token", secret)
 		request.Header.Set("X-Clerk-Sub", "user_test")
-		request.Header.Set("X-Openlet-User-ID", uuid.NewString())
+		request.Header.Set("X-Openlet-Account-ID", uuid.NewString())
 		request.Header.Add(duplicate, request.Header.Get(duplicate))
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, request)
@@ -32,7 +32,7 @@ func TestGinAuthenticationAndRecovery(t *testing.T) {
 		request := httptest.NewRequest(http.MethodGet, path, nil)
 		request.Header.Set("X-Gateway-Token", secret)
 		request.Header.Set("X-Clerk-Sub", "user_test")
-		request.Header.Set("X-Openlet-User-ID", uuid.NewString())
+		request.Header.Set("X-Openlet-Account-ID", uuid.NewString())
 		request.Header.Set("X-Request-ID", "untrusted request ID")
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, request)

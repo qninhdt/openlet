@@ -5,85 +5,177 @@ package temporal
 import (
 	"context"
 	"errors"
+	"sync/atomic"
+	"testing"
+	"time"
+
 	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/google/uuid"
 	localfixture "github.com/qninhdt/openlet/apps/workspace/internal/testfixture"
 	"github.com/qninhdt/openlet/apps/workspace/internal/workspace"
-	"github.com/qninhdt/openlet/packages/go/authz"
+	shared "github.com/qninhdt/openlet/packages/go/temporal"
 	"github.com/qninhdt/openlet/packages/go/testfixture"
 	"github.com/stretchr/testify/require"
-	sdktemporal "go.temporal.io/sdk/temporal"
+	enums "go.temporal.io/api/enums/v1"
+	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/worker"
+	"go.temporal.io/sdk/workflow"
 	"google.golang.org/grpc"
-	"os"
-	"testing"
-	"time"
 )
 
-type lostGraphResponse struct{ v1.PermissionsServiceClient }
+type lostGraphResponse struct {
+	v1.PermissionsServiceClient
+	committed chan struct{}
+}
 
 func (g lostGraphResponse) WriteRelationships(ctx context.Context, in *v1.WriteRelationshipsRequest, opts ...grpc.CallOption) (*v1.WriteRelationshipsResponse, error) {
 	_, err := g.PermissionsServiceClient.WriteRelationships(ctx, in, opts...)
 	if err != nil {
 		return nil, err
 	}
+	select {
+	case g.committed <- struct{}{}:
+	default:
+	}
 	return nil, errors.New("graph acknowledgement lost")
 }
-func TestIntegrationMutationRecoversCommittedSQLAndLostGraphResponse(t *testing.T) {
+func TestIntegrationCreationAndMembershipRequireGraphAcknowledgement(t *testing.T) {
 	ctx := t.Context()
 	db := testfixture.Postgres(t, localfixture.Path("apps", "workspace", "migrations", "0001_initial.sql"))
 	graph, _, _ := testfixture.SpiceDB(t, localfixture.Path("packages", "contracts", "authz", "schema.zed"))
-	data, err := os.ReadFile(localfixture.Path("packages", "contracts", "authz", "roles.json"))
-	require.NoError(t, err)
-	policy, err := authz.ParseRolePolicy(data)
-	require.NoError(t, err)
-	require.NoError(t, authz.InitializeRolePolicy(ctx, graph, policy))
-	store := &workspace.Store{DB: db, Graph: graph, MaxWorkspaces: 10, MaxMembers: 10, QuotaLimit: 1024, InviteTTL: time.Hour}
-	owner, member := uuid.New(), uuid.New()
-	value, err := store.EnsureWorkspace(ctx, workspace.CreateInput{ActorID: owner, Key: uuid.New(), Name: "Retry"})
-	require.NoError(t, err)
-	storage := workspace.Storage{WorkspaceID: value.ID, BucketID: uuid.New(), FilesystemID: uuid.New(), RootID: uuid.New(), LimitBytes: "1024"}
-	require.NoError(t, store.Activate(ctx, storage))
-	_, err = db.Exec(ctx, `INSERT INTO workspace_members(workspace_id,user_id,role) VALUES($1,$2,'editor')`, value.ID, member)
-	require.NoError(t, err)
-	require.NoError(t, store.RebuildWorkspaceRelationships(ctx, graph, value.ID))
+	store := &workspace.Store{DB: db, Graph: lostGraphResponse{PermissionsServiceClient: graph}, MaxMembers: 10}
 	service := &workspace.Service{Store: store}
 	a := &Activities{Service: service}
-	_, missingErr := a.PrepareMutation(ctx, Mutation{Kind: "update", WorkspaceID: uuid.New(), ActorID: owner, Key: uuid.New(), Update: workspace.UpdateInput{OwnerID: &member}})
-	var rejected *sdktemporal.ApplicationError
-	require.ErrorAs(t, missingErr, &rejected)
-	require.True(t, rejected.NonRetryable())
-	require.Equal(t, "NOT_FOUND", rejected.Type())
-
-	current, err := store.Get(ctx, value.ID, owner)
+	owner, member := uuid.New(), uuid.New()
+	in := workspace.Creation{Input: workspace.CreateInput{ActorID: owner, Key: uuid.New(), Name: "Retry"}, ID: uuid.New(), FilesystemID: uuid.New(), SharedScopeID: uuid.New(), PersonalScopeID: uuid.New()}
+	_, err := a.SaveWorkspace(ctx, in)
+	require.Error(t, err)
+	_, found, err := store.FindCreation(ctx, in.Input)
 	require.NoError(t, err)
-	cmd := Mutation{Kind: "update", WorkspaceID: value.ID, ActorID: owner, Key: uuid.New(), Revision: current.Revision, Update: workspace.UpdateInput{OwnerID: &member}}
-	prepared, err := a.PrepareMutation(ctx, cmd)
-	require.NoError(t, err)
-	// Simulate SQL commit followed by a lost Activity result. Its original precondition is now stale.
-	receipt := workspace.MutationReceipt{Key: cmd.Key, Hash: workspace.Fingerprint(prepared)}
-	_, err = store.Update(ctx, value.ID, owner, current.Revision, cmd.Update, receipt)
-	require.NoError(t, err)
-	store.Graph = lostGraphResponse{graph}
-	_, err = a.ApplyMutation(ctx, prepared)
-	var activityFailure *sdktemporal.ApplicationError
-	require.ErrorAs(t, err, &activityFailure)
-	require.Equal(t, "INTERNAL", activityFailure.Type())
-	require.False(t, activityFailure.NonRetryable())
+	require.False(t, found, "SQL commit alone must not acknowledge creation")
 	store.Graph = graph
-	completed, err := a.ApplyMutation(ctx, prepared)
+	first, err := a.SaveWorkspace(ctx, in)
 	require.NoError(t, err)
-	require.NotEqual(t, current.Revision, completed.Revision)
-	require.Equal(t, "editor", completed.Role)
-	// A second delivery cannot repeat the owner transfer or increment the business revision.
-	repeated, err := a.ApplyMutation(ctx, prepared)
+	_, found, err = store.FindCreation(ctx, in.Input)
 	require.NoError(t, err)
-	require.Equal(t, completed.Revision, repeated.Revision)
-	for actor, want := range map[uuid.UUID]bool{owner: false, member: true} {
-		allowed, err := authz.Check(ctx, graph, actor.String(), authz.WorkspaceTransfer, authz.Resource{Type: "workspace", ID: value.ID.String()})
-		require.NoError(t, err)
-		require.Equal(t, want, allowed)
+	require.True(t, found)
+	store.Graph = lostGraphResponse{PermissionsServiceClient: graph}
+	cmd := Mutation{Kind: "add", Key: uuid.New(), WorkspaceID: first.ID, ActorID: owner, TargetID: member, Role: "member", PersonalScopeID: uuid.New()}
+	_, err = a.AddMember(ctx, cmd)
+	require.Error(t, err)
+	var completed bool
+	require.NoError(t, db.QueryRow(ctx, "SELECT expires_at IS NOT NULL FROM idempotency_keys WHERE actor_id=$1 AND request_key=$2", owner, cmd.Key).Scan(&completed))
+	require.False(t, completed)
+	store.Graph = graph
+	_, err = a.AddMember(ctx, cmd)
+	require.NoError(t, err)
+	_, err = a.AddMember(ctx, cmd)
+	require.NoError(t, err)
+	retained, err := store.Member(ctx, first.ID, member)
+	require.NoError(t, err)
+	require.Equal(t, cmd.PersonalScopeID, retained.PersonalScopeID)
+	var count int
+	require.NoError(t, db.QueryRow(ctx, "SELECT count(*) FROM workspace_members WHERE workspace_id=$1", first.ID).Scan(&count))
+	require.Equal(t, 2, count)
+}
+
+func TestIntegrationWorkspacePublicationSurvivesWorkerRestart(t *testing.T) {
+	tc, _ := testfixture.Temporal(t)
+	db := testfixture.Postgres(t, localfixture.Path("apps", "workspace", "migrations", "0001_initial.sql"))
+	graph, _, _ := testfixture.SpiceDB(t, localfixture.Path("packages", "contracts", "authz", "schema.zed"))
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	committed := make(chan struct{}, 1)
+	var filesystems, scopes, compensations atomic.Int32
+	storage := worker.New(tc, shared.LetFSQueue, worker.Options{WorkerStopTimeout: time.Second})
+	storage.RegisterActivityWithOptions(func(context.Context, shared.FilesystemCreation) error {
+		filesystems.Add(1)
+		return nil
+	}, activity.RegisterOptions{Name: shared.CreateFilesystemActivity})
+	storage.RegisterActivityWithOptions(func(context.Context, shared.ScopesCreation) error {
+		scopes.Add(1)
+		return nil
+	}, activity.RegisterOptions{Name: shared.CreateScopesActivity})
+	var current worker.Worker
+	t.Cleanup(func() {
+		if current != nil {
+			current.Stop()
+		}
+	})
+	start := func(lost bool) {
+		if current != nil {
+			current.Stop()
+		}
+		var permissions v1.PermissionsServiceClient = graph
+		if lost {
+			permissions = lostGraphResponse{graph, committed}
+		}
+		store := &workspace.Store{DB: db, Graph: permissions, MaxMembers: 10}
+		current = worker.New(tc, Queue, worker.Options{WorkerStopTimeout: time.Second})
+		current.RegisterWorkflow((&Workflows{QuotaLimit: 100}).CreateWorkspace)
+		current.RegisterWorkflow(WorkspaceChanges)
+		current.RegisterActivity(&Activities{Service: &workspace.Service{Store: store}})
+		require.NoError(t, current.Start())
 	}
-	var receipts int
-	require.NoError(t, db.QueryRow(ctx, `SELECT count(*) FROM idempotency_keys WHERE actor_id=$1 AND request_key=$2 AND expires_at IS NOT NULL`, owner, cmd.Key).Scan(&receipts))
-	require.Equal(t, 1, receipts)
+	// Storage effects are external to this test; any compensating child is a regression.
+	storage.RegisterWorkflowWithOptions(func(workflow.Context, shared.FilesystemDeletion) error {
+		compensations.Add(1)
+		return nil
+	}, workflow.RegisterOptions{Name: shared.DeleteFilesystemWorkflow})
+	storage.RegisterWorkflowWithOptions(func(workflow.Context, shared.ScopeDeletion) error {
+		compensations.Add(1)
+		return nil
+	}, workflow.RegisterOptions{Name: shared.DeleteScopeWorkflow})
+	require.NoError(t, storage.Start())
+	t.Cleanup(storage.Stop)
+	start(true)
+	owner, member := uuid.New(), uuid.New()
+	in := workspace.CreateInput{ActorID: owner, Key: uuid.New(), Name: "Retry"}
+	run, err := tc.ExecuteWorkflow(ctx, client.StartWorkflowOptions{TaskQueue: Queue}, shared.CreateWorkspaceWorkflow, in)
+	require.NoError(t, err)
+	select {
+	case <-committed:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	state, err := tc.DescribeWorkflowExecution(ctx, run.GetID(), run.GetRunID())
+	require.NoError(t, err)
+	require.Equal(t, enums.WORKFLOW_EXECUTION_STATUS_RUNNING, state.WorkflowExecutionInfo.Status)
+	var fs, sharedScope uuid.UUID
+	require.NoError(t, db.QueryRow(ctx, "SELECT filesystem_id,shared_scope_id FROM workspaces").Scan(&fs, &sharedScope))
+	start(false)
+	var result workspace.Workspace
+	require.NoError(t, run.Get(ctx, &result))
+	require.Equal(t, fs, result.FilesystemID)
+	require.Equal(t, sharedScope, result.SharedScopeID)
+	for len(committed) > 0 {
+		<-committed
+	}
+	start(true)
+	cmd := Mutation{Kind: "add", WorkspaceID: result.ID, FilesystemID: fs, ActorID: owner, TargetID: member, Role: "member", PersonalScopeID: uuid.Must(uuid.NewV7())}
+	finished := make(chan error, 1)
+	go func() { _, err := Mutate(ctx, tc, cmd); finished <- err }()
+	select {
+	case <-committed:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	select {
+	case err := <-finished:
+		t.Fatalf("membership acknowledged before graph publication: %v", err)
+	default:
+	}
+	start(false)
+	require.NoError(t, <-finished)
+	store := &workspace.Store{DB: db}
+	retained, err := store.Member(ctx, result.ID, member)
+	require.NoError(t, err)
+	require.Equal(t, cmd.PersonalScopeID, retained.PersonalScopeID)
+	var count int
+	require.NoError(t, db.QueryRow(ctx, "SELECT count(*) FROM workspace_members WHERE workspace_id=$1", result.ID).Scan(&count))
+	require.Equal(t, 2, count)
+	require.EqualValues(t, 1, filesystems.Load())
+	require.EqualValues(t, 2, scopes.Load())
+	require.Zero(t, compensations.Load())
 }

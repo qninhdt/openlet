@@ -9,12 +9,7 @@ func (s *Server) deleteWorkspace(c *gin.Context) {
 		failure(w, r, err)
 		return
 	}
-	revision, err := precondition(r)
-	if err != nil {
-		failure(w, r, err)
-		return
-	}
-	value, err := s.Service.Delete(r.Context(), id, actorID(r), revision)
+	value, err := s.Service.Delete(r.Context(), id, actorID(r))
 	if err != nil {
 		failure(w, r, err)
 		return
@@ -24,6 +19,5 @@ func (s *Server) deleteWorkspace(c *gin.Context) {
 		return
 	}
 	w.Header().Set("Location", "/v1/workspaces/"+id.String())
-	w.Header().Set("ETag", "\""+value.Revision+"\"")
 	respond(w, 202, value)
 }

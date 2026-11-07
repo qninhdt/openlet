@@ -59,7 +59,7 @@ def test_native_graph_startup_and_schema_admission(tmp_path: Path, graph):
     compose("build", "authz-schema", timeout=600)
     compose("up", "--detach", "--wait", "--wait-timeout", "120", "spicedb")
     for arguments in [(), ("--check",), ()]:
-        assert "Authorization schema and role policy verified." in compose(
+        assert "Authorization schema verified." in compose(
             "run",
             "--rm",
             "--no-deps",

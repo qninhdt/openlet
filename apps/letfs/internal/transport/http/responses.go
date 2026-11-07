@@ -28,29 +28,16 @@ func (value timestamp) MarshalJSON() ([]byte, error) {
 }
 
 type filesystemResponse struct {
-	ID       string `json:"id"`
-	BucketID string `json:"bucket_id"`
-	RootID   string `json:"root_id"`
-	State    string `json:"state"`
-}
-
-type bucketResponse struct {
 	ID         string `json:"id"`
 	LimitBytes int64  `json:"limit_bytes,string"`
 	UsedBytes  int64  `json:"used_bytes,string"`
+	NodeCount  int64  `json:"node_count,string"`
 	State      string `json:"state"`
-}
-
-type uploadLimitsResponse struct {
-	InlineLimitBytes        int64 `json:"inline_limit_bytes,string"`
-	MaxFileBytes            int64 `json:"max_file_bytes,string"`
-	MultipartThresholdBytes int64 `json:"multipart_threshold_bytes,string"`
-	MultipartPartBytes      int64 `json:"multipart_part_bytes,string"`
 }
 
 type nodeResponse struct {
 	ID           string    `json:"id"`
-	FilesystemID string    `json:"filesystem_id"`
+	ScopeID      string    `json:"scope_id"`
 	ParentID     *string   `json:"parent_id,omitempty"`
 	Name         string    `json:"name"`
 	Kind         string    `json:"kind"`
@@ -72,7 +59,7 @@ func nodeResponseFrom(value filesystem.Node) nodeResponse {
 		parent = &id
 	}
 	return nodeResponse{
-		ID: value.ID.String(), FilesystemID: value.FilesystemID.String(), ParentID: parent,
+		ID: value.ID.String(), ScopeID: value.ScopeID.String(), ParentID: parent,
 		Name: value.Name, Kind: value.Kind, Revision: value.Revision, SizeBytes: value.SizeBytes,
 		MediaType: value.MediaType, CreatedAt: timestamp{value.CreatedAt}, UpdatedAt: timestamp{value.UpdatedAt},
 		Title: value.Title, Description: value.Description, SemanticType: value.SemanticType, Context: value.Context,
@@ -80,16 +67,12 @@ func nodeResponseFrom(value filesystem.Node) nodeResponse {
 }
 
 type copyResponse struct {
-	ID                string  `json:"id"`
-	DestinationRootID string  `json:"destination_root_id"`
-	Status            string  `json:"status"`
-	CommittedNodes    int64   `json:"committed_nodes,string"`
-	CommittedBytes    int64   `json:"committed_bytes,string"`
-	ErrorCode         *string `json:"error_code,omitempty"`
+	ID                string `json:"id"`
+	DestinationRootID string `json:"destination_root_id"`
 }
 
-func copyResponseFrom(value filesystem.CopyState) copyResponse {
-	return copyResponse{value.Admission.ID.String(), value.Admission.Root.Destination.String(), value.Status, value.CommittedNodes, value.CommittedBytes, value.ErrorCode}
+func copyResponseFrom(value filesystem.CopyResult) copyResponse {
+	return copyResponse{value.ID.String(), value.DestinationRootID.String()}
 }
 
 type trashResponse struct {

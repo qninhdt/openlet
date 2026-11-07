@@ -11,6 +11,6 @@ import (
 func WithActor(ctx context.Context, actor uuid.UUID) context.Context {
 	outgoing, _ := metadata.FromOutgoingContext(ctx)
 	outgoing = outgoing.Copy()
-	outgoing.Set("x-openlet-user-id", actor.String())
+	outgoing.Set("x-openlet-account-id", actor.String())
 	return metadata.NewOutgoingContext(ctx, outgoing)
 }

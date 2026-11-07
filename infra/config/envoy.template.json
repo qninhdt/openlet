@@ -82,7 +82,7 @@
                           },
                           {
                             "match": {
-                              "path": "/v1/me"
+                              "safe_regex": { "regex": "/v1/(me|accounts(/.*)?)" }
                             },
                             "route": {
                               "cluster": "account",
@@ -152,7 +152,7 @@
                         "mutations": {
                           "request_mutations": [
                             {
-                              "remove": "x-openlet-user-id"
+                              "remove": "x-openlet-account-id"
                             },
                             {
                               "remove": "x-clerk-sub"
@@ -212,8 +212,8 @@
                                 "claim_name": "sub"
                               },
                               {
-                                "header_name": "x-openlet-user-id",
-                                "claim_name": "openlet_user_id"
+                                "header_name": "x-openlet-account-id",
+                                "claim_name": "openlet_account_id"
                               }
                             ]
                           }
@@ -246,7 +246,7 @@
                               "principals": [
                                 {
                                   "header": {
-                                    "name": "x-openlet-user-id",
+                                    "name": "x-openlet-account-id",
                                     "string_match": {
                                       "safe_regex": {
                                         "regex": "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"

@@ -97,7 +97,7 @@ func (input SearchInput) validate(semantic bool) (int32, error) {
 	return limit, nil
 }
 
-func (s *Store) searchBinding(fs, actor uuid.UUID, mounts []Mount, input SearchInput, semantic bool) (string, error) {
+func (s *Store) searchBinding(scopeID, actor uuid.UUID, input SearchInput, semantic bool) (string, error) {
 	input.Cursor, input.Query = nil, strings.TrimSpace(input.Query)
 	var space *VectorSpace
 	reranker := ""
@@ -108,14 +108,14 @@ func (s *Store) searchBinding(fs, actor uuid.UUID, mounts []Mount, input SearchI
 		}
 	}
 	return fingerprint(struct {
-		Filesystem uuid.UUID    `json:"filesystem"`
-		Actor      uuid.UUID    `json:"actor"`
-		Mounts     []Mount      `json:"mounts"`
-		Input      SearchInput  `json:"input"`
-		Semantic   bool         `json:"semantic"`
-		Space      *VectorSpace `json:"vector_space"`
-		Reranker   string       `json:"reranker"`
-	}{fs, actor, mounts, input, semantic, space, reranker})
+		Filesystem uuid.UUID `json:"filesystem"`
+		Actor      uuid.UUID `json:"actor"`
+
+		Input    SearchInput  `json:"input"`
+		Semantic bool         `json:"semantic"`
+		Space    *VectorSpace `json:"vector_space"`
+		Reranker string       `json:"reranker"`
+	}{scopeID, actor, input, semantic, space, reranker})
 }
 
 func decodeSearchCursor(raw *string, binding string) (searchCursor, error) {
@@ -157,19 +157,19 @@ func encodeSearchCursor(value searchCursor) (*string, error) {
 
 // Stop traversal at original files so generated descendants cannot become search roots.
 const searchLive = `WITH RECURSIVE live AS (
- SELECT n.id,n.kind,$3::text COLLATE "C" AS path,0 AS depth FROM nodes n WHERE n.id=$2 AND n.filesystem_id=$1
- UNION ALL SELECT n.id,n.kind,rtrim(l.path,'/')||'/'||n.name,l.depth+1 FROM nodes n JOIN live l ON n.parent_id=l.id WHERE n.filesystem_id=$1 AND l.kind='directory' AND l.depth<128) `
+ SELECT n.id,n.kind,$3::text COLLATE "C" AS path,0 AS depth FROM nodes n WHERE n.id=$2 AND n.scope_id=$1
+ UNION ALL SELECT n.id,n.kind,rtrim(l.path,'/')||'/'||n.name,l.depth+1 FROM nodes n JOIN live l ON n.parent_id=l.id WHERE n.scope_id=$1 AND l.kind='directory' AND l.depth<128) `
 
 const searchFiltersSQL = ` AND ($4::text IS NULL OR f.semantic_type=$4) AND ($5::text IS NULL OR f.media_type=$5)
  AND ($6::timestamptz IS NULL OR n.created_at>=$6) AND ($7::timestamptz IS NULL OR n.created_at<=$7)
  AND ($8::timestamptz IS NULL OR n.updated_at>=$8) AND ($9::timestamptz IS NULL OR n.updated_at<=$9) `
 
-func (s *session) searchRoot(ctx context.Context, mounts []Mount, filter SearchFilters) (uuid.UUID, string, error) {
+func (s *session) searchRoot(ctx context.Context, filter SearchFilters) (uuid.UUID, string, error) {
 	locator := Locator{NodeID: &s.root}
 	if filter.Parent != nil {
 		locator = *filter.Parent
 	}
-	node, err := s.resolveOne(ctx, mounts, locator)
+	node, err := s.resolveOne(ctx, locator)
 	if err != nil {
 		return uuid.Nil, "", err
 	}
@@ -181,26 +181,17 @@ func (s *session) searchRoot(ctx context.Context, mounts []Mount, filter SearchF
 	}
 	var parts []string
 	err = s.tx.QueryRow(ctx, `WITH RECURSIVE a AS (
- SELECT id,parent_id,name,0 AS depth FROM nodes WHERE id=$1 AND filesystem_id=$2
- UNION ALL SELECT n.id,n.parent_id,n.name,a.depth+1 FROM nodes n JOIN a ON n.id=a.parent_id WHERE n.filesystem_id=$2 AND a.id!=$3 AND a.depth<128)
- SELECT coalesce(array_agg(name ORDER BY depth DESC) FILTER(WHERE id!=$3),ARRAY[]::text[]) FROM a`, node.ID, s.fs, s.root).Scan(&parts)
+ SELECT id,parent_id,name,0 AS depth FROM nodes WHERE id=$1 AND scope_id=$2
+ UNION ALL SELECT n.id,n.parent_id,n.name,a.depth+1 FROM nodes n JOIN a ON n.id=a.parent_id WHERE n.scope_id=$2 AND a.id!=$3 AND a.depth<128)
+ SELECT coalesce(array_agg(name ORDER BY depth DESC) FILTER(WHERE id!=$3),ARRAY[]::text[]) FROM a`, node.ID, s.scopeID, s.root).Scan(&parts)
 	if err != nil {
 		return uuid.Nil, "", databaseError(err)
 	}
-	for _, mount := range mounts {
-		if mount.FilesystemID == s.fs {
-			path := mount.Path
-			if len(parts) > 0 {
-				path = strings.TrimRight(path, "/") + "/" + strings.Join(parts, "/")
-			}
-			return node.ID, path, nil
-		}
-	}
-	return uuid.Nil, "", uploadState("INVALID_SEARCH_SCOPE")
+	return node.ID, "/" + strings.Join(parts, "/"), nil
 }
 
-func (s *Store) SearchFiles(ctx context.Context, fs uuid.UUID, mounts []Mount, input SearchInput) (SearchPage, error) {
-	actor, err := s.authorize(ctx, fs, "filesystem", authz.Search)
+func (s *Store) SearchFiles(ctx context.Context, scopeID uuid.UUID, input SearchInput) (SearchPage, error) {
+	actor, err := s.authorize(ctx, scopeID, "scope", authz.ScopeReadContent)
 	if err != nil {
 		return SearchPage{}, err
 	}
@@ -208,7 +199,7 @@ func (s *Store) SearchFiles(ctx context.Context, fs uuid.UUID, mounts []Mount, i
 	if err != nil {
 		return SearchPage{}, err
 	}
-	binding, err := s.searchBinding(fs, actor, mounts, input, false)
+	binding, err := s.searchBinding(scopeID, actor, input, false)
 	if err != nil {
 		return SearchPage{}, err
 	}
@@ -216,12 +207,12 @@ func (s *Store) SearchFiles(ctx context.Context, fs uuid.UUID, mounts []Mount, i
 	if err != nil {
 		return SearchPage{}, err
 	}
-	session, err := s.openSession(ctx, fs, false)
+	session, err := s.openSession(ctx, scopeID, false)
 	if err != nil {
 		return SearchPage{}, err
 	}
 	defer session.tx.Rollback(ctx)
-	root, path, err := session.searchRoot(ctx, mounts, input.Filters)
+	root, path, err := session.searchRoot(ctx, input.Filters)
 	if err != nil {
 		return SearchPage{}, err
 	}
@@ -239,7 +230,7 @@ func (s *Store) SearchFiles(ctx context.Context, fs uuid.UUID, mounts []Mount, i
  AND ($11::uuid IS NULL OR (%s,n.id)%s($12::text,$11::uuid)) ORDER BY %s %s,n.id %s LIMIT $13`,
 		searchLive, strings.Replace(nodeColumns, "f.context", "NULL::text", 1), value, searchFiltersSQL, value, op, value, direction, direction)
 	f := input.Filters
-	rows, err := session.tx.Query(ctx, query, fs, root, path, f.SemanticType, f.MediaType, f.CreatedAfter, f.CreatedBefore, f.UpdatedAfter, f.UpdatedBefore, strings.TrimSpace(input.Query), cursor.ID, cursor.Value, limit+1)
+	rows, err := session.tx.Query(ctx, query, scopeID, root, path, f.SemanticType, f.MediaType, f.CreatedAfter, f.CreatedBefore, f.UpdatedAfter, f.UpdatedBefore, strings.TrimSpace(input.Query), cursor.ID, cursor.Value, limit+1)
 	if err != nil {
 		return SearchPage{}, databaseError(err)
 	}

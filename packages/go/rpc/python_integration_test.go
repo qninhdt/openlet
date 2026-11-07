@@ -54,7 +54,7 @@ func TestIntegrationPythonWheelRPC(t *testing.T) {
 	run(scratch, "uv", "pip", "install", "--python", python, wheels[0])
 	authentication, err := NewAuthenticator([]Credential{
 		{Service: "gateway", Token: fixtureGateway, Gateway: true, Methods: []string{letfsv1.FilesystemService_GetNode_FullMethodName}},
-		{Service: "workspace", Token: fixtureService, Methods: []string{letfsv1.StorageAdministrationService_CreateBucket_FullMethodName}},
+		{Service: "workspace", Token: fixtureService, Methods: []string{letfsv1.StorageAdministrationService_CreateFilesystem_FullMethodName}},
 	})
 	require.NoError(t, err)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -72,7 +72,7 @@ from openlet_api.letfs.v1 import letfs_pb2 as pb, letfs_pb2_grpc as rpc
 with grpc.insecure_channel(sys.argv[1]) as channel:
     client = rpc.FilesystemServiceStub(channel)
     actor = '019a3b66-0000-7000-8000-000000000001'
-    metadata = [('authorization', 'Bearer ' + sys.argv[2]), ('x-openlet-user-id', actor)]
+    metadata = [('authorization', 'Bearer ' + sys.argv[2]), ('x-openlet-account-id', actor)]
     request = pb.GetNodeRequest(filesystem_id='drive', node_id='node')
     response = client.GetNode(request, metadata=metadata, timeout=5)
     assert response.node.id == 'node'
@@ -80,7 +80,7 @@ with grpc.insecure_channel(sys.argv[1]) as channel:
     assert response.node.revision == 9223372036854775807
     assert not response.node.HasField('media_type')
     for supplied, expected in [([], grpc.StatusCode.UNAUTHENTICATED),
-            (metadata + [('x-openlet-user-id', actor)], grpc.StatusCode.UNAUTHENTICATED)]:
+            (metadata + [('x-openlet-account-id', actor)], grpc.StatusCode.UNAUTHENTICATED)]:
         try:
             client.GetNode(request, metadata=supplied, timeout=5)
             raise AssertionError('unauthorized call succeeded')
@@ -88,7 +88,7 @@ with grpc.insecure_channel(sys.argv[1]) as channel:
             assert error.code() == expected, error
     admin = rpc.StorageAdministrationServiceStub(channel)
     try:
-        admin.CreateBucket(pb.CreateBucketRequest(bucket_id='bucket'), metadata=metadata, timeout=5)
+        admin.CreateFilesystem(pb.CreateFilesystemRequest(filesystem_id='filesystem'), metadata=metadata, timeout=5)
         raise AssertionError('public caller reached administration')
     except grpc.RpcError as error:
         assert error.code() == grpc.StatusCode.PERMISSION_DENIED, error

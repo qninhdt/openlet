@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/qninhdt/openlet/apps/letfs/internal/filesystem"
 	"github.com/qninhdt/openlet/packages/go/apperr"
 )
 
@@ -50,7 +49,7 @@ func writeArchive(w http.ResponseWriter, deadline time.Time, name string, source
 }
 
 func (s *Server) getArchive(w http.ResponseWriter, r *http.Request) error {
-	fs, err := uuid.Parse(fsID(r))
+	fs, err := s.requestContext(r)
 	if err != nil {
 		return invalid()
 	}
@@ -58,7 +57,7 @@ func (s *Server) getArchive(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return invalid()
 	}
-	archive, err := s.Store.OpenArchive(r.Context(), fs, []filesystem.Mount{{Path: mountPath(r), FilesystemID: fs}}, node)
+	archive, err := s.Store.OpenArchive(r.Context(), fs, node)
 	if err != nil {
 		return err
 	}

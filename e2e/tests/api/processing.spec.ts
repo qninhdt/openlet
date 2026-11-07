@@ -4,7 +4,7 @@ import { recoveryGuide } from '../../fixtures/documents.ts';
 import { recordWorkflowHistory } from '../../fixtures/temporal-control.ts';
 
 test('real document parsing publishes README semantics and current searchable content', async ({ session }) => {
-  const base = `/v1/filesystems/${session.filesystemId}`;
+  const base = `/v1/filesystems/${session.filesystemId}/scopes/${session.scopeId}`;
   const bytes = recoveryGuide();
   const source = await inline(session, 'recovery-guide.docx', bytes, session.rootId,
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
@@ -38,7 +38,7 @@ test('real document parsing publishes README semantics and current searchable co
 });
 
 test('manual reprocessing retries admit one generation and preserve filename search during model failure', async ({ session, controls }) => {
-  const base = `/v1/filesystems/${session.filesystemId}`;
+  const base = `/v1/filesystems/${session.filesystemId}/scopes/${session.scopeId}`;
   const source = await inline(session, 'retry-notes.txt', Buffer.from('Recovery notes describe durable publication and storage retry.'), session.rootId, 'text/plain');
   await expect.poll(async () => (await (await session.api.get(`${base}/nodes/${source.id}/processing`)).json()).publication_status).toBe('ready');
   const before = await (await session.api.get(`${base}/nodes/${source.id}/processing`)).json();

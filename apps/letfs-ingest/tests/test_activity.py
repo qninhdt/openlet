@@ -221,6 +221,7 @@ async def test_semantic_stage_reports_failure_only_when_retries_end(
         async def prepare_index(self, source):
             return IndexInput(
                 "filesystem",
+                "scope",
                 source.file_id,
                 source.generation,
                 (),

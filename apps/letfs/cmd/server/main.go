@@ -75,7 +75,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	contract, err := authz.LoadContract("/contracts/schema.zed", "/contracts/roles.json")
+	contract, err := authz.LoadContract("/contracts/schema.zed")
 	if err != nil {
 		return err
 	}
@@ -163,10 +163,10 @@ func serve(ctx context.Context, cfg config.Config, contract *authz.Contract, lis
 		if err := db.Ping(ctx); err != nil {
 			return err
 		}
-		return contract.Verify(ctx, v1.NewSchemaServiceClient(connection), graph)
+		return contract.Verify(ctx, v1.NewSchemaServiceClient(connection))
 	}
 	if err = graphReady(startup); err != nil {
-		return errors.New("authorization schema or role policy unavailable")
+		return errors.New("authorization schema unavailable")
 	}
 	objects, err := storage.New(cfg.Storage)
 	if err != nil {

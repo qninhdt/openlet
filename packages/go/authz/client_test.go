@@ -18,11 +18,11 @@ func TestCheckRejectsUnsupportedOrWrongScopeBeforeRPC(t *testing.T) {
 		action   Action
 		resource Resource
 	}{
-		{"", NodeRead, Resource{"filesystem", "file-system"}},
-		{"actor", NodeRead, Resource{"filesystem", ""}},
-		{"actor", Action("owner"), Resource{"filesystem", "file-system"}},
-		{"actor", BucketAdmin, Resource{"filesystem", "file-system"}},
-		{"actor", NodeRead, Resource{"workspace", "team"}},
+		{"", ScopeReadMetadata, Resource{"scope", "file-system"}},
+		{"actor", ScopeReadMetadata, Resource{"scope", ""}},
+		{"actor", Action("owner"), Resource{"scope", "file-system"}},
+		{"actor", ScopeManageAccess, Resource{"filesystem", "file-system"}},
+		{"actor", ScopeReadMetadata, Resource{"workspace", "team"}},
 	} {
 		allowed, err := Check(context.Background(), nil, test.actor, test.action, test.resource)
 		if allowed || !errors.Is(err, ErrInvalidCheck) {
@@ -33,14 +33,14 @@ func TestCheckRejectsUnsupportedOrWrongScopeBeforeRPC(t *testing.T) {
 
 func TestBulkCheckRejectsInvalidCandidatesBeforeRPC(t *testing.T) {
 	for _, resources := range [][]Resource{
-		nil, make([]Resource, 101), {{Type: "filesystem"}},
+		nil, make([]Resource, 101), {{Type: "scope"}},
 		{{Type: "workspace", ID: "team"}},
-		{{Type: "filesystem", ID: "same"}, {Type: "filesystem", ID: "same"}},
+		{{Type: "scope", ID: "same"}, {Type: "scope", ID: "same"}},
 	} {
-		_, err := BulkCheck(t.Context(), nil, "actor", NodeRead, resources)
+		_, err := BulkCheck(t.Context(), nil, "actor", ScopeReadMetadata, resources)
 		require.ErrorIs(t, err, ErrInvalidCheck)
 	}
-	_, err := BulkCheck(t.Context(), nil, "", NodeRead, []Resource{{Type: "filesystem", ID: "fs"}})
+	_, err := BulkCheck(t.Context(), nil, "", ScopeReadMetadata, []Resource{{Type: "scope", ID: "fs"}})
 	require.ErrorIs(t, err, ErrInvalidCheck)
 }
 
@@ -54,7 +54,7 @@ func (c bulkClient) CheckBulkPermissions(_ context.Context, request *v1.CheckBul
 }
 
 func TestBulkCheckMatchesEveryResultToItsRequestedScope(t *testing.T) {
-	resources := []Resource{{Type: "filesystem", ID: "allowed"}, {Type: "filesystem", ID: "denied"}}
+	resources := []Resource{{Type: "scope", ID: "allowed"}, {Type: "scope", ID: "denied"}}
 	for _, mode := range []string{"reordered", "missing", "duplicate", "foreign", "wrong_actor", "wrong_action", "no_result", "item_error", "invalid_error", "outage", "nil"} {
 		t.Run(mode, func(t *testing.T) {
 			client := bulkClient{call: func(request *v1.CheckBulkPermissionsRequest) (*v1.CheckBulkPermissionsResponse, error) {
@@ -69,13 +69,13 @@ func TestBulkCheckMatchesEveryResultToItsRequestedScope(t *testing.T) {
 				case "duplicate":
 					response.Pairs[0] = allow
 				case "foreign", "wrong_actor", "wrong_action":
-					allow.Request = &v1.CheckBulkPermissionsRequestItem{Resource: &v1.ObjectReference{ObjectType: "filesystem", ObjectId: "allowed"}, Permission: "node_read", Subject: &v1.SubjectReference{Object: &v1.ObjectReference{ObjectType: "user", ObjectId: "actor"}}}
+					allow.Request = &v1.CheckBulkPermissionsRequestItem{Resource: &v1.ObjectReference{ObjectType: "scope", ObjectId: "allowed"}, Permission: "read_metadata", Subject: &v1.SubjectReference{Object: &v1.ObjectReference{ObjectType: "account", ObjectId: "actor"}}}
 					if mode == "foreign" {
 						allow.Request.Resource.ObjectId = "foreign"
 					} else if mode == "wrong_actor" {
 						allow.Request.Subject.Object.ObjectId = "other"
 					} else {
-						allow.Request.Permission = "content_write"
+						allow.Request.Permission = "write"
 					}
 				case "no_result":
 					allow.Response = nil
@@ -92,7 +92,7 @@ func TestBulkCheckMatchesEveryResultToItsRequestedScope(t *testing.T) {
 				}
 				return response, nil
 			}}
-			allowed, err := BulkCheck(t.Context(), client, "actor", NodeRead, resources)
+			allowed, err := BulkCheck(t.Context(), client, "actor", ScopeReadMetadata, resources)
 			if mode == "reordered" {
 				require.NoError(t, err)
 				require.Equal(t, []bool{true, false}, allowed)

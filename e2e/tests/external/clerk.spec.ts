@@ -16,7 +16,7 @@ test('sandbox Clerk publishes only owned metadata and a newly minted JWT reaches
   try {
     const selected = await clerk.get(`/v1/sessions/${encodeURIComponent(session)}`);
     expect(selected.status()).toBe(200);
-    const userId = (await selected.json()).user_id;
+    const userId = (await selected.json()).account_id;
     expect(typeof userId).toBe('string');
     const before = await clerk.get(`/v1/users/${encodeURIComponent(userId)}`);
     expect(before.status()).toBe(200);
@@ -38,14 +38,14 @@ test('sandbox Clerk publishes only owned metadata and a newly minted JWT reaches
     const after = await clerk.get(`/v1/users/${encodeURIComponent(userId)}`);
     expect(after.status()).toBe(200);
     const published = (await after.json()).public_metadata;
-    expect(published.openlet_user_id).toBe(receipt.user_id);
-    const unowned = (metadata: Record<string, unknown>) => Object.fromEntries(Object.entries(metadata).filter(([name]) => name !== 'openlet_user_id').sort(([a], [b]) => a.localeCompare(b)));
+    expect(published.openlet_account_id).toBe(receipt.account_id);
+    const unowned = (metadata: Record<string, unknown>) => Object.fromEntries(Object.entries(metadata).filter(([name]) => name !== 'openlet_account_id').sort(([a], [b]) => a.localeCompare(b)));
     expect(isDeepStrictEqual(unowned(published), unowned(previous))).toBe(true);
     const refreshed = await clerk.post(`/v1/sessions/${encodeURIComponent(session)}/tokens`, { data: {} });
     expect(refreshed.status()).toBe(200);
     const freshToken = (await refreshed.json()).jwt;
     const claims = JSON.parse(Buffer.from(freshToken.split('.')[1], 'base64url').toString('utf8'));
-    expect(claims.openlet_user_id).toBe(receipt.user_id);
+    expect(claims.openlet_account_id).toBe(receipt.account_id);
     expect((await api.get('/v1/me', { headers: { authorization: `Bearer ${freshToken}` } })).status()).toBe(200);
     expect((await api.get(`/v1/workspaces/${ready.workspace_id}`, { headers: { authorization: `Bearer ${freshToken}` } })).status()).toBe(200);
   } finally { await clerk.dispose(); await api.dispose(); }

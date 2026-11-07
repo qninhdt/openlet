@@ -18,45 +18,20 @@ func reason(err error) string {
 	return ""
 }
 
-func TestPathMountBoundariesAndLimits(t *testing.T) {
-	fs, other := uuid.New(), uuid.New()
-	mounts := []Mount{{Path: "/drive", FilesystemID: fs}, {Path: "/drive/chat", FilesystemID: other}}
-	for _, test := range []struct {
-		path string
-		want []string
-		code string
-	}{
-		{"/drive/a/../Việt", []string{"a", "..", "Việt"}, ""},
-		{"/drive//./", []string{}, ""},
-		{"/drive/" + strings.Repeat("a", 255), []string{strings.Repeat("a", 255)}, ""},
-		{"/driver/a", nil, "NOT_FOUND"},
-		{"/drive/chat/a", nil, "CROSS_FILESYSTEM_UNSUPPORTED"},
-		{"/drive/\x00", nil, "VALIDATION"},
-		{"/drive/" + strings.Repeat("a", 256), nil, "VALIDATION"},
-		{"/drive/" + strings.Repeat("x/", 129), nil, "VALIDATION"},
-		{"/drive/" + strings.Repeat("x", 4096), nil, "VALIDATION"},
-		{"", nil, "VALIDATION"},
-	} {
-		t.Run(test.path, func(t *testing.T) {
-			parts, err := pathParts(fs, mounts, Locator{Path: &test.path})
-			require.Equal(t, test.code, reason(err))
-			if test.code == "" {
-				require.NoError(t, err)
-				require.Equal(t, test.want, parts)
-			}
-		})
+func TestScopePathLimits(t *testing.T) {
+	for _, path := range []string{"/", "/a/../Việt", "/a//./", "/" + strings.Repeat("a", 255)} {
+		_, err := pathParts(Locator{Path: &path})
+		require.NoError(t, err)
 	}
-	for _, locator := range []Locator{{}, {NodeID: ptr(uuid.Nil)}, {NodeID: &fs, Path: ptr("a")}, {NodeID: &fs, CwdID: &fs}, {Path: ptr("/drive/a"), CwdID: &fs}, {Path: ptr("a"), CwdID: ptr(uuid.Nil)}} {
-		_, err := pathParts(fs, mounts, locator)
+	for _, path := range []string{"", "/\x00", "/" + strings.Repeat("a", 256), "/" + strings.Repeat("x/", 129), "/" + strings.Repeat("x", 4096)} {
+		_, err := pathParts(Locator{Path: &path})
 		require.Equal(t, "VALIDATION", reason(err))
 	}
-	for _, mounts := range [][]Mount{nil, make([]Mount, 33), {{Path: "drive", FilesystemID: fs}}, {{Path: "/drive/", FilesystemID: fs}}, {{Path: "/drive/..", FilesystemID: fs}}, {{Path: "/drive", FilesystemID: fs}, {Path: "/drive", FilesystemID: other}}} {
-		_, err := pathParts(fs, mounts, Locator{NodeID: &fs})
+	id := uuid.New()
+	for _, locator := range []Locator{{}, {NodeID: ptr(uuid.Nil)}, {NodeID: &id, Path: ptr("a")}, {NodeID: &id, CwdID: &id}, {Path: ptr("/a"), CwdID: &id}, {Path: ptr("a"), CwdID: ptr(uuid.Nil)}} {
+		_, err := pathParts(locator)
 		require.Equal(t, "VALIDATION", reason(err))
 	}
-	parts, err := pathParts(fs, []Mount{{Path: "/", FilesystemID: fs}}, Locator{Path: ptr("/one")})
-	require.NoError(t, err)
-	require.Equal(t, []string{"one"}, parts)
 }
 
 func TestAliasGuardsAndScopedPages(t *testing.T) {
@@ -89,6 +64,6 @@ func TestAliasGuardsAndScopedPages(t *testing.T) {
 
 func TestUserOperationsRequireVerifiedActorBeforeStorage(t *testing.T) {
 	s := &Store{}
-	_, err := s.GetNode(t.Context(), uuid.New(), nil, Locator{})
+	_, err := s.GetNode(t.Context(), uuid.New(), Locator{})
 	require.Equal(t, apperr.Unauthenticated, apperr.KindOf(err))
 }

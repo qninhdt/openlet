@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/qninhdt/openlet/apps/letfs/internal/filesystem"
-	"github.com/qninhdt/openlet/apps/letfs/internal/testfixture"
+	sharedfixture "github.com/qninhdt/openlet/packages/go/testfixture"
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/activity"
@@ -19,7 +19,7 @@ import (
 )
 
 func TestIntegrationProcessingQueuesRetriesFailuresAndReplay(t *testing.T) {
-	tc, _ := testfixture.Temporal(t)
+	tc, _ := sharedfixture.Temporal(t)
 	owner := worker.New(tc, Queue, worker.Options{WorkerStopTimeout: time.Second})
 	Register(owner, &Activities{})
 	cpu := worker.New(tc, CPUQueue, worker.Options{WorkerStopTimeout: time.Second})

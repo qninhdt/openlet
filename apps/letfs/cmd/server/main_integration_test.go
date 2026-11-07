@@ -5,7 +5,6 @@ package main
 import (
 	"context"
 	"net"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -13,7 +12,6 @@ import (
 	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/google/uuid"
 	"github.com/qninhdt/openlet/apps/letfs/internal/config"
-	"github.com/qninhdt/openlet/apps/letfs/internal/filesystem"
 	"github.com/qninhdt/openlet/apps/letfs/internal/testfixture"
 	"github.com/qninhdt/openlet/packages/go/authz"
 	letfsv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/letfs/v1"
@@ -28,9 +26,9 @@ import (
 
 func TestIntegrationCompositionChecksPolicyServesRealRPCAndDrains(t *testing.T) {
 	db := testfixture.Postgres(t, "../../migrations/0001_initial.sql")
-	graph, address, _ := sharedfixture.SpiceDB(t, "../../../../packages/contracts/authz/schema.zed")
-	tc, temporalAddress := testfixture.Temporal(t)
-	contract, err := authz.LoadContract("../../../../packages/contracts/authz/schema.zed", "../../../../packages/contracts/authz/roles.json")
+	graph, address, graphServer := sharedfixture.SpiceDB(t, "../../../../packages/contracts/authz/schema.zed")
+	tc, temporalAddress := sharedfixture.Temporal(t)
+	contract, err := authz.LoadContract("../../../../packages/contracts/authz/schema.zed")
 	require.NoError(t, err)
 	input := map[string]string{
 		"TEMPORAL_ADDRESS": temporalAddress, "TEMPORAL_NAMESPACE": "openlet",
@@ -43,16 +41,6 @@ func TestIntegrationCompositionChecksPolicyServesRealRPCAndDrains(t *testing.T) 
 	cfg, err := config.Parse(func(key string) string { return input[key] })
 	require.NoError(t, err)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	err = serve(t.Context(), cfg, contract, listener, nil)
-	require.ErrorContains(t, err, "authorization schema or role policy unavailable")
-	require.NoError(t, listener.Close())
-	policy, err := os.ReadFile("../../../../packages/contracts/authz/roles.json")
-	require.NoError(t, err)
-	expected, err := authz.ParseRolePolicy(policy)
-	require.NoError(t, err)
-	require.NoError(t, authz.InitializeRolePolicy(t.Context(), graph, expected))
-	listener, err = net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
@@ -90,20 +78,20 @@ func TestIntegrationCompositionChecksPolicyServesRealRPCAndDrains(t *testing.T) 
 	_, err = letfsv1.NewIngestServiceClient(connection).PrepareParse(t.Context(), &letfsv1.PrepareParseRequest{})
 	require.Equal(t, codes.PermissionDenied, status.Code(err), "owner credential cannot call private ingest")
 	admin := letfsv1.NewStorageAdministrationServiceClient(connection)
-	bucketID, fsID := uuid.Must(uuid.NewV7()).String(), uuid.Must(uuid.NewV7()).String()
-	bucket, err := admin.CreateBucket(t.Context(), &letfsv1.CreateBucketRequest{BucketId: bucketID, IdempotencyKey: uuid.NewString(), LimitBytes: 1000})
+	fsID, scopeID := uuid.Must(uuid.NewV7()).String(), uuid.Must(uuid.NewV7()).String()
+	fs, err := admin.CreateFilesystem(t.Context(), &letfsv1.CreateFilesystemRequest{FilesystemId: fsID, IdempotencyKey: uuid.NewString(), LimitBytes: 1000})
 	require.NoError(t, err)
-	require.Equal(t, bucketID, bucket.Bucket.Id)
-	fs, err := admin.CreateFilesystem(t.Context(), &letfsv1.CreateFilesystemRequest{FilesystemId: fsID, BucketId: bucketID, IdempotencyKey: uuid.NewString(), RootName: "files"})
+	scopes, err := admin.CreateScopes(t.Context(), &letfsv1.CreateScopesRequest{FilesystemId: fsID, IdempotencyKey: uuid.NewString(), ScopeIds: []string{scopeID}})
 	require.NoError(t, err)
+	rootID := scopes.Scopes[0].RootId
 	_, err = letfsv1.NewFilesystemServiceClient(connection).GetFilesystem(t.Context(), &letfsv1.GetFilesystemRequest{FilesystemId: fsID})
 	require.Equal(t, codes.PermissionDenied, status.Code(err), "owner service has no user operation allowlist")
 	browser, err := rpc.Dial(listener.Addr().String(), cfg.GatewayToken, rpc.Transport{AllowPlaintext: true})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, browser.Close()) })
 	actor := uuid.NewString()
-	caller := metadata.AppendToOutgoingContext(t.Context(), "x-openlet-user-id", actor)
-	_, err = letfsv1.NewStorageAdministrationServiceClient(browser).CreateBucket(caller, &letfsv1.CreateBucketRequest{BucketId: uuid.Must(uuid.NewV7()).String(), IdempotencyKey: uuid.NewString()})
+	caller := metadata.AppendToOutgoingContext(t.Context(), "x-openlet-account-id", actor)
+	_, err = letfsv1.NewStorageAdministrationServiceClient(browser).CreateFilesystem(caller, &letfsv1.CreateFilesystemRequest{FilesystemId: uuid.Must(uuid.NewV7()).String(), IdempotencyKey: uuid.NewString()})
 	require.Equal(t, codes.PermissionDenied, status.Code(err))
 	_, err = letfsv1.NewFilesystemServiceClient(browser).GetFilesystem(caller, &letfsv1.GetFilesystemRequest{FilesystemId: fsID})
 	require.Equal(t, codes.PermissionDenied, status.Code(err))
@@ -111,40 +99,28 @@ func TestIntegrationCompositionChecksPolicyServesRealRPCAndDrains(t *testing.T) 
 	touch := func(kind, id, relation, subjectKind, subject string) {
 		updates = append(updates, &v1.RelationshipUpdate{Operation: v1.RelationshipUpdate_OPERATION_TOUCH, Relationship: &v1.Relationship{Resource: &v1.ObjectReference{ObjectType: kind, ObjectId: id}, Relation: relation, Subject: &v1.SubjectReference{Object: &v1.ObjectReference{ObjectType: subjectKind, ObjectId: subject}}}})
 	}
-	workspace, grant := uuid.NewString(), uuid.NewString()
-	touch("filesystem", fsID, "workspace", "workspace", workspace)
-	touch("workspace", workspace, "enabled", "user", "*")
-	touch("workspace", workspace, "grant", "role_grant", grant)
-	touch("role_grant", grant, "member", "user", actor)
-	touch("role_grant", grant, "role", "role", "owner")
+	touch("filesystem", fsID, "reader", "account", actor)
+	touch("scope", scopeID, "editor", "account", actor)
 	_, err = graph.WriteRelationships(t.Context(), &v1.WriteRelationshipsRequest{Updates: updates})
 	require.NoError(t, err)
 	result, err := letfsv1.NewFilesystemServiceClient(browser).GetFilesystem(caller, &letfsv1.GetFilesystemRequest{FilesystemId: fsID})
 	require.NoError(t, err)
-	require.Equal(t, fs.Filesystem.RootId, result.Filesystem.RootId)
+	require.Equal(t, fs.Filesystem.Id, result.Filesystem.Id)
 	_, err = letfsv1.NewFilesystemServiceClient(browser).CreateCopy(caller, &letfsv1.CreateCopyRequest{})
 	require.Equal(t, codes.InvalidArgument, status.Code(err), "copy validates its contract before durable admission")
 	files := letfsv1.NewFilesystemServiceClient(browser)
-	paths := &letfsv1.PathContext{Mounts: []*letfsv1.Mount{{Path: "/drive", FilesystemId: fsID}}}
-	source, err := files.CreateNode(caller, &letfsv1.CreateNodeRequest{FilesystemId: fsID, IdempotencyKey: uuid.NewString(), PathContext: paths,
-		Input: &letfsv1.CreateNodeRequest_File{File: &letfsv1.InlineFileCreation{Parent: &letfsv1.Locator{Target: &letfsv1.Locator_NodeId{NodeId: fs.Filesystem.RootId}},
+	source, err := files.CreateNode(caller, &letfsv1.CreateNodeRequest{FilesystemId: fsID, IdempotencyKey: uuid.NewString(), ScopeId: scopeID,
+		Input: &letfsv1.CreateNodeRequest_File{File: &letfsv1.InlineFileCreation{Parent: &letfsv1.Locator{Target: &letfsv1.Locator_NodeId{NodeId: rootID}},
 			Name: "source.bin", Content: []byte{0, 255, 1}, MediaType: "application/octet-stream"}}})
 	require.NoError(t, err)
-	copy, err := files.CreateCopy(caller, &letfsv1.CreateCopyRequest{FilesystemId: fsID, SourceId: source.Node.Id, ParentId: fs.Filesystem.RootId,
-		Name: "copy.bin", Revision: &source.Node.Revision, IdempotencyKey: uuid.NewString(), PathContext: paths})
+	copy, err := files.CreateCopy(caller, &letfsv1.CreateCopyRequest{FilesystemId: fsID, SourceId: source.Node.Id, ParentId: rootID,
+		DestinationScopeId: scopeID, Name: "copy.bin", Revision: &source.Node.Revision, IdempotencyKey: uuid.NewString(), ScopeId: scopeID})
 	require.NoError(t, err)
 	job, stopJob := context.WithTimeout(t.Context(), 10*time.Second)
 	defer stopJob()
-	var copied filesystem.CopyState
-	require.NoError(t, tc.GetWorkflow(job, "copy/"+fsID+"/"+copy.Copy.Id, "").Get(job, &copied))
-	require.Equal(t, "succeeded", copied.Status)
-	progress, err := files.GetCopy(caller, &letfsv1.GetCopyRequest{FilesystemId: fsID, CopyId: copy.Copy.Id})
-	require.NoError(t, err)
-	require.EqualValues(t, 3, progress.Copy.CommittedBytes)
-	_, err = graph.WriteRelationships(t.Context(), &v1.WriteRelationshipsRequest{Updates: []*v1.RelationshipUpdate{{Operation: v1.RelationshipUpdate_OPERATION_DELETE, Relationship: expected[0]}}})
-	require.NoError(t, err)
+	require.NoError(t, tc.GetWorkflow(job, "copy/"+fsID+"/"+copy.Copy.Id, "").Get(job, nil))
+	require.NoError(t, graphServer.Stop(t.Context(), nil))
 	state, err := health.Check(t.Context(), &healthv1.HealthCheckRequest{})
 	require.NoError(t, err)
 	require.Equal(t, healthv1.HealthCheckResponse_NOT_SERVING, state.Status)
-	require.ErrorIs(t, authz.VerifyRolePolicy(t.Context(), graph, expected), authz.ErrPolicyMismatch, "readiness does not repair policy")
 }

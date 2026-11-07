@@ -33,8 +33,7 @@ type UploadCreation struct {
 }
 
 type savedUpload struct {
-	Mounts []Mount        `json:"mounts"`
-	Input  UploadCreation `json:"input"`
+	Input UploadCreation `json:"input"`
 }
 
 type UploadPublication struct {
@@ -101,7 +100,7 @@ func (s *session) loadUpload(ctx context.Context, id uuid.UUID, access uploadAcc
 	var actor *uuid.UUID
 	err := s.tx.QueryRow(ctx, `SELECT id,state,transport,expires_at,expected_size,part_size,input,candidate_key,content_md5,multipart_id,completion_parts,result,
  inline_bytes,actor_id,processing_file_id,processing_generation,processing_stage
- FROM uploads WHERE id=$1 AND filesystem_id=$2 FOR UPDATE`, id, s.fs).
+ FROM uploads WHERE id=$1 AND scope_id=$2 FOR UPDATE`, id, s.scopeID).
 		Scan(&result.ID, &result.State, &result.Transport, &result.ExpiresAt, &result.SizeBytes, &result.PartSize, &result.input, &result.key, &result.md5, &result.multipartID, &result.parts, &publication,
 			&result.content, &actor, &fileID, &generation, &stage)
 	if err != nil {
@@ -133,7 +132,7 @@ func (s *session) uploadTarget(ctx context.Context, saved savedUpload) (*Node, u
 	}
 	if input.Replacement != nil {
 		r := input.Replacement
-		node, err := s.resolveOne(ctx, saved.Mounts, r.Locator)
+		node, err := s.resolveOne(ctx, r.Locator)
 		if err != nil {
 			return nil, uuid.Nil, "", err
 		}
@@ -155,7 +154,7 @@ func (s *session) uploadTarget(ctx context.Context, saved savedUpload) (*Node, u
 		return &node, *node.ParentID, node.Name, nil
 	}
 	d := input.Destination
-	parent, err := s.resolveOne(ctx, saved.Mounts, d.Parent)
+	parent, err := s.resolveOne(ctx, d.Parent)
 	if err != nil {
 		return nil, uuid.Nil, "", err
 	}
@@ -172,7 +171,7 @@ func (s *session) uploadTarget(ctx context.Context, saved savedUpload) (*Node, u
 		return nil, uuid.Nil, "", err
 	}
 	var exists bool
-	if err = s.tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM nodes WHERE filesystem_id=$1 AND parent_id=$2 AND name=$3)`, s.fs, parent.ID, d.Name).Scan(&exists); err != nil {
+	if err = s.tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM nodes WHERE scope_id=$1 AND parent_id=$2 AND name=$3)`, s.scopeID, parent.ID, d.Name).Scan(&exists); err != nil {
 		return nil, uuid.Nil, "", databaseError(err)
 	}
 	if exists {
@@ -191,9 +190,9 @@ func (s *session) uploadTarget(ctx context.Context, saved savedUpload) (*Node, u
 func (s *session) uploadCapacity(ctx context.Context, maxOutstanding, maxBacklog int64) error {
 	var outstanding, backlog int64
 	err := s.tx.QueryRow(ctx, `SELECT
- (SELECT count(*) FROM uploads WHERE bucket_id=$1 AND processing_file_id IS NULL AND state IN ('open','completing'))+
- (SELECT count(*) FROM idempotency_keys r JOIN filesystems f ON f.id=(r.result->>'filesystem_id')::uuid WHERE f.bucket_id=$1 AND r.operation='copy-node' AND r.expires_at IS NULL),
- (SELECT count(*) FROM object_deletions WHERE bucket_id=$1 AND (state!='deleted' OR ambiguous_write OR open_writes>0))`, s.bucket).Scan(&outstanding, &backlog)
+ (SELECT count(*) FROM uploads u JOIN scopes sc ON sc.id=u.scope_id WHERE sc.filesystem_id=$1 AND u.processing_file_id IS NULL AND u.state IN ('open','completing'))+
+ (SELECT count(*) FROM idempotency_keys r JOIN scopes f ON f.id=(r.result->>'scope_id')::uuid WHERE f.filesystem_id=$1 AND r.operation='copy-node' AND r.expires_at IS NULL),
+ (SELECT count(*) FROM object_deletions WHERE filesystem_id=$1 AND (state!='deleted' OR ambiguous_write OR open_writes>0))`, s.filesystemID).Scan(&outstanding, &backlog)
 	if err != nil {
 		return databaseError(err)
 	}
@@ -213,8 +212,8 @@ func storageError(ctx context.Context, err error) error {
 	return apperr.New(apperr.Unavailable, "DEPENDENCY_UNAVAILABLE", "object storage unavailable")
 }
 
-func (s *Store) CreateUpload(ctx context.Context, fs uuid.UUID, mounts []Mount, key uuid.UUID, input UploadCreation) (Upload, error) {
-	actor, err := s.authorize(ctx, fs, "filesystem", authz.UploadCreate)
+func (s *Store) CreateUpload(ctx context.Context, scopeID uuid.UUID, key uuid.UUID, input UploadCreation) (Upload, error) {
+	actor, err := s.authorize(ctx, scopeID, "scope", authz.ScopeWrite)
 	if err != nil {
 		return Upload{}, err
 	}
@@ -224,17 +223,20 @@ func (s *Store) CreateUpload(ctx context.Context, fs uuid.UUID, mounts []Mount, 
 	if err = mediaType(input.MediaType); err != nil {
 		return Upload{}, err
 	}
-	saved := savedUpload{Mounts: mounts, Input: input}
+	saved := savedUpload{Input: input}
 	hash, err := fingerprint(saved)
 	if err != nil {
 		return Upload{}, err
 	}
-	session, err := s.openSession(ctx, fs, true)
+	session, err := s.openSession(ctx, scopeID, true)
 	if err != nil {
 		return Upload{}, err
 	}
 	defer session.tx.Rollback(ctx)
-	scope := "filesystem/" + fs.String() + "/actor/" + actor.String()
+	scope := "scope/" + scopeID.String() + "/actor/" + actor.String()
+	if !session.allowBlobFiles {
+		return Upload{}, apperr.New(apperr.Invalid, "BLOB_FILES_DISABLED", "scope does not allow blob files")
+	}
 	var oldHash string
 	var receipt struct {
 		ID uuid.UUID `json:"id"`
@@ -251,7 +253,7 @@ func (s *Store) CreateUpload(ctx context.Context, fs uuid.UUID, mounts []Mount, 
 		if err = session.tx.Commit(ctx); err != nil {
 			return Upload{}, databaseError(err)
 		}
-		return s.prepareUpload(ctx, fs, receipt.ID, uploadAccess{actor: actor})
+		return s.prepareUpload(ctx, scopeID, receipt.ID, uploadAccess{actor: actor})
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return Upload{}, databaseError(err)
@@ -286,12 +288,12 @@ func (s *Store) CreateUpload(ctx context.Context, fs uuid.UUID, mounts []Mount, 
 		return Upload{}, err
 	}
 	id := uuid.Must(uuid.NewV7())
-	candidate := "objects/" + session.bucket.String() + "/" + id.String()
+	candidate := "objects/" + session.filesystemID.String() + "/" + id.String()
 	encoded, err := json.Marshal(saved)
 	if err != nil {
 		return Upload{}, err
 	}
-	_, err = session.tx.Exec(ctx, `INSERT INTO uploads(id,filesystem_id,bucket_id,actor_id,input,candidate_key,transport,expected_size,content_md5,part_size) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, id, fs, session.bucket, actor, encoded, candidate, transport, *input.SizeBytes, input.ContentMD5, partSize)
+	_, err = session.tx.Exec(ctx, `INSERT INTO uploads(id,scope_id,actor_id,input,candidate_key,transport,expected_size,content_md5,part_size) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, id, scopeID, actor, encoded, candidate, transport, *input.SizeBytes, input.ContentMD5, partSize)
 	if err != nil {
 		return Upload{}, databaseError(err)
 	}
@@ -308,15 +310,15 @@ func (s *Store) CreateUpload(ctx context.Context, fs uuid.UUID, mounts []Mount, 
 	if err = session.tx.Commit(ctx); err != nil {
 		return Upload{}, databaseError(err)
 	}
-	return s.prepareUpload(ctx, fs, id, uploadAccess{actor: actor})
+	return s.prepareUpload(ctx, scopeID, id, uploadAccess{actor: actor})
 }
 
-func (s *Store) GetUpload(ctx context.Context, fs, id uuid.UUID) (Upload, error) {
-	actor, err := s.authorize(ctx, fs, "filesystem", authz.UploadRead)
+func (s *Store) GetUpload(ctx context.Context, scopeID, id uuid.UUID) (Upload, error) {
+	actor, err := s.authorize(ctx, scopeID, "scope", authz.ScopeWrite)
 	if err != nil {
 		return Upload{}, err
 	}
-	session, err := s.openSession(ctx, fs, true)
+	session, err := s.openSession(ctx, scopeID, true)
 	if err != nil {
 		return Upload{}, err
 	}
@@ -366,8 +368,8 @@ func (s *session) recordCapability(ctx context.Context, id uuid.UUID, expires ti
 	return databaseError(err)
 }
 
-func (s *Store) prepareUpload(ctx context.Context, fs, id uuid.UUID, access uploadAccess) (Upload, error) {
-	session, err := s.openSession(ctx, fs, true)
+func (s *Store) prepareUpload(ctx context.Context, scopeID, id uuid.UUID, access uploadAccess) (Upload, error) {
+	session, err := s.openSession(ctx, scopeID, true)
 	if err != nil {
 		return Upload{}, err
 	}
@@ -397,7 +399,7 @@ func (s *Store) prepareUpload(ctx context.Context, fs, id uuid.UUID, access uplo
 		if err != nil {
 			return Upload{}, storageError(ctx, err)
 		}
-		winner, err := s.saveMultipart(ctx, fs, id, access, remote)
+		winner, err := s.saveMultipart(ctx, scopeID, id, access, remote)
 		// An unknown commit may have persisted this remote as the winner.
 		if err != nil {
 			return Upload{}, err
@@ -411,8 +413,8 @@ func (s *Store) prepareUpload(ctx context.Context, fs, id uuid.UUID, access uplo
 	return upload, nil
 }
 
-func (s *Store) saveMultipart(ctx context.Context, fs, id uuid.UUID, access uploadAccess, remote string) (string, error) {
-	session, err := s.openSession(ctx, fs, true)
+func (s *Store) saveMultipart(ctx context.Context, scopeID, id uuid.UUID, access uploadAccess, remote string) (string, error) {
+	session, err := s.openSession(ctx, scopeID, true)
 	if err != nil {
 		return "", err
 	}
@@ -441,19 +443,19 @@ type UploadPart struct {
 	Transfer storage.SignedUpload
 }
 
-func (s *Store) GetUploadParts(ctx context.Context, fs, id uuid.UUID, numbers []int32) ([]UploadPart, error) {
-	actor, err := s.authorize(ctx, fs, "filesystem", authz.UploadSign)
+func (s *Store) GetUploadParts(ctx context.Context, scopeID, id uuid.UUID, numbers []int32) ([]UploadPart, error) {
+	actor, err := s.authorize(ctx, scopeID, "scope", authz.ScopeWrite)
 	if err != nil {
 		return nil, err
 	}
-	return s.getUploadParts(ctx, fs, id, uploadAccess{actor: actor}, numbers)
+	return s.getUploadParts(ctx, scopeID, id, uploadAccess{actor: actor}, numbers)
 }
 
-func (s *Store) getUploadParts(ctx context.Context, fs, id uuid.UUID, access uploadAccess, numbers []int32) ([]UploadPart, error) {
+func (s *Store) getUploadParts(ctx context.Context, scopeID, id uuid.UUID, access uploadAccess, numbers []int32) ([]UploadPart, error) {
 	if len(numbers) < 1 || len(numbers) > 64 {
 		return nil, apperr.New(apperr.Invalid, "VALIDATION", "1..64 parts required")
 	}
-	session, err := s.openSession(ctx, fs, true)
+	session, err := s.openSession(ctx, scopeID, true)
 	if err != nil {
 		return nil, err
 	}

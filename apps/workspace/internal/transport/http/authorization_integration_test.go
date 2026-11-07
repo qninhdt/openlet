@@ -7,16 +7,15 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
+	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/google/uuid"
 	"github.com/qninhdt/openlet/apps/workspace/internal/config"
 	localfixture "github.com/qninhdt/openlet/apps/workspace/internal/testfixture"
 	"github.com/qninhdt/openlet/apps/workspace/internal/workspace"
-	"github.com/qninhdt/openlet/packages/go/authz"
 	"github.com/qninhdt/openlet/packages/go/testfixture"
 	"github.com/stretchr/testify/require"
 )
@@ -25,24 +24,18 @@ func TestIntegrationWorkspaceListScansDeniedCandidates(t *testing.T) {
 	ctx := t.Context()
 	db := testfixture.Postgres(t, localfixture.Path("apps", "workspace", "migrations", "0001_initial.sql"))
 	graph, _, server := testfixture.SpiceDB(t, localfixture.Path("packages", "contracts", "authz", "schema.zed"))
-	data, err := os.ReadFile(localfixture.Path("packages", "contracts", "authz", "roles.json"))
-	require.NoError(t, err)
-	policy, err := authz.ParseRolePolicy(data)
-	require.NoError(t, err)
-	require.NoError(t, authz.InitializeRolePolicy(ctx, graph, policy))
-	store := &workspace.Store{DB: db, Graph: graph, MaxWorkspaces: 10, MaxMembers: 10, QuotaLimit: 1024, InviteTTL: time.Hour}
+	store := &workspace.Store{DB: db, Graph: graph, MaxMembers: 10, InviteTTL: time.Hour}
+	service := &workspace.Service{Store: store}
 	actor := uuid.New()
 	var ids []uuid.UUID
 	for range 3 {
-		admitted, err := store.EnsureWorkspace(ctx, workspace.CreateInput{ActorID: actor, Key: uuid.New(), Name: "Page"})
+		id := uuid.Must(uuid.NewV7())
+		_, err := service.SaveWorkspace(ctx, workspace.Creation{Input: workspace.CreateInput{ActorID: actor, Key: uuid.New(), Name: "Page"}, ID: id, FilesystemID: uuid.New(), SharedScopeID: uuid.New(), PersonalScopeID: uuid.New()})
 		require.NoError(t, err)
-		id := admitted.ID
-		require.NoError(t, store.Activate(ctx, workspace.Storage{WorkspaceID: id, BucketID: uuid.New(), FilesystemID: uuid.New(), RootID: uuid.New(), LimitBytes: "1024"}))
 		ids = append(ids, id)
 	}
-	for _, id := range []uuid.UUID{ids[0], ids[2]} {
-		require.NoError(t, store.RebuildWorkspaceRelationships(ctx, graph, id))
-	}
+	_, err := graph.DeleteRelationships(ctx, &v1.DeleteRelationshipsRequest{RelationshipFilter: &v1.RelationshipFilter{ResourceType: "workspace", OptionalResourceId: ids[1].String()}})
+	require.NoError(t, err)
 	secret := strings.Repeat("g", 32)
 	app := &Server{Service: &workspace.Service{Store: store}, Ready: func(context.Context) error { return nil }, Config: config.Config{GatewayToken: secret, WorkspaceToken: strings.Repeat("w", 32)}}
 	router := app.Router()
@@ -51,7 +44,7 @@ func TestIntegrationWorkspaceListScansDeniedCandidates(t *testing.T) {
 		request := httptest.NewRequest(http.MethodGet, path, nil)
 		request.Header.Set("X-Gateway-Token", secret)
 		request.Header.Set("X-Clerk-Sub", "list-test")
-		request.Header.Set("X-Openlet-User-ID", actor.String())
+		request.Header.Set("X-Openlet-Account-ID", actor.String())
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, request)
 		return response
@@ -88,25 +81,23 @@ func TestIntegrationWorkspaceListScansDeniedCandidates(t *testing.T) {
 		path := "/v1/workspaces/" + ids[0].String()
 		before := get(path)
 		require.Equal(t, http.StatusOK, before.Code)
-		update := func(revision string) *httptest.ResponseRecorder {
+		update := func() *httptest.ResponseRecorder {
 			request := httptest.NewRequest(http.MethodPatch, path, strings.NewReader(`{"name":"Renamed"}`))
 			request.Header.Set("X-Gateway-Token", secret)
 			request.Header.Set("X-Clerk-Sub", "list-test")
-			request.Header.Set("X-Openlet-User-ID", actor.String())
-			request.Header.Set("If-Match", revision)
+			request.Header.Set("X-Openlet-Account-ID", actor.String())
 			response := httptest.NewRecorder()
 			router.ServeHTTP(response, request)
 			return response
 		}
-		renamed := update(before.Header().Get("ETag"))
+		renamed := update()
 		require.Equal(t, http.StatusOK, renamed.Code, renamed.Body.String())
-		require.NotEqual(t, before.Header().Get("ETag"), renamed.Header().Get("ETag"))
+		require.Empty(t, renamed.Header().Get("ETag"))
 		var value workspace.Workspace
 		require.NoError(t, json.Unmarshal(renamed.Body.Bytes(), &value))
 		require.Equal(t, "Renamed", value.Name)
-		require.Equal(t, http.StatusPreconditionFailed, update(before.Header().Get("ETag")).Code)
 		require.Equal(t, http.StatusOK, get(path).Code)
-		require.Equal(t, http.StatusOK, update(renamed.Header().Get("ETag")).Code)
+		require.Equal(t, http.StatusOK, update().Code)
 	})
 	require.NoError(t, server.Stop(ctx, nil))
 	require.Equal(t, http.StatusServiceUnavailable, get("/v1/workspaces").Code)

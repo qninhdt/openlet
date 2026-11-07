@@ -40,6 +40,9 @@ func (j *Jobs) WorkflowStatus(ctx context.Context, id string, since *time.Time) 
 }
 
 func (j *Jobs) StartProcessing(ctx context.Context, dispatch filesystem.ProcessingDispatch) error {
+	if dispatch.Publication == "enriched" && !dispatch.AllowIndexing {
+		return nil
+	}
 	if dispatch.Publication != "pending" && dispatch.Publication != "parsed" && dispatch.Publication != "enriched" {
 		return nil
 	}
@@ -53,7 +56,7 @@ func (j *Jobs) StartProcessing(ctx context.Context, dispatch filesystem.Processi
 	_, err := j.Client.ExecuteWorkflow(ctx, client.StartWorkflowOptions{ID: id, TaskQueue: Queue,
 		WorkflowIDConflictPolicy: enums.WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING, WorkflowIDReusePolicy: reuse,
 		WorkflowExecutionTimeout: 22500 * time.Second,
-	}, ProcessFileName, ProcessFileInput{Source: dispatch.Source, ParseRequired: dispatch.Publication == "pending", EnrichmentRequired: dispatch.Publication != "enriched"})
+	}, ProcessFileName, ProcessFileInput{SkipIndex: !dispatch.AllowIndexing, Source: dispatch.Source, ParseRequired: dispatch.Publication == "pending", EnrichmentRequired: dispatch.Publication != "enriched"})
 	var duplicate *serviceerror.WorkflowExecutionAlreadyStarted
 	if errors.As(err, &duplicate) {
 		return nil

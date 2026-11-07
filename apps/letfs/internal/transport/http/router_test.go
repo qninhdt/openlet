@@ -18,14 +18,14 @@ func TestHTTPAuthenticatesBeforeDispatchAndHidesPrivateRoutes(t *testing.T) {
 		path, token string
 		status      int
 	}{
-		{"/v1/filesystems/not-a-uuid/nodes/not-a-uuid", "", 401},
-		{"/v1/filesystems/not-a-uuid/nodes/not-a-uuid", strings.Repeat("g", 32), 400},
+		{"/v1/filesystems/not-a-uuid/scopes/not-a-uuid/nodes/not-a-uuid", "", 401},
+		{"/v1/filesystems/not-a-uuid/scopes/not-a-uuid/nodes/not-a-uuid", strings.Repeat("g", 32), 400},
 		{"/openlet_api.letfs.v1.IngestService/PrepareParse", strings.Repeat("g", 32), 404},
-		{"/internal/v1/filesystems/not-a-uuid/nodes", strings.Repeat("g", 32), 404},
+		{"/internal/v1/filesystems/not-a-uuid/scopes/not-a-uuid/nodes", strings.Repeat("g", 32), 404},
 	} {
 		request := httptest.NewRequest("GET", test.path, nil)
 		request.Header.Set("X-Gateway-Token", test.token)
-		request.Header.Set("X-Openlet-User-ID", actor.String())
+		request.Header.Set("X-Openlet-Account-ID", actor.String())
 		request.Header.Set("X-Clerk-Sub", "user_test")
 		response := httptest.NewRecorder()
 		app.ServeHTTP(response, request)
@@ -40,8 +40,6 @@ func TestEmptyListAndZeroCountersRetainHTTPShapes(t *testing.T) {
 		Items []nodeResponse `json:"items"`
 	}{Items: []nodeResponse{}})
 	require.JSONEq(t, `{"items":[]}`, response.Body.String())
-	writeJSON(response, request, 200, "", "", copyResponse{Status: "accepted"})
-	require.Contains(t, response.Body.String(), `"committed_nodes":"0"`)
 }
 
 func TestQueryLocatorPreservesExpectedIdentity(t *testing.T) {
@@ -55,11 +53,6 @@ func TestQueryLocatorPreservesExpectedIdentity(t *testing.T) {
 	}
 	_, err := queryLocator(httptest.NewRequest("GET", "/?path=x&expected_node_id="+expected.String()+"&expected_node_id="+expected.String(), nil))
 	require.Error(t, err)
-}
-
-func TestMountPathDefaultsAndOverrides(t *testing.T) {
-	require.Equal(t, "/", mountPath(httptest.NewRequest("GET", "/", nil)))
-	require.Equal(t, "/documents", mountPath(httptest.NewRequest("GET", "/?mount_path=%2Fdocuments", nil)))
 }
 
 func TestSearchKeepsFlatNodeIdentity(t *testing.T) {
@@ -76,7 +69,7 @@ func TestSearchPreservesFullMetadataJSON(t *testing.T) {
 	created := time.Date(2026, 1, 2, 3, 4, 5, 120000000, time.UTC)
 	updated := time.Date(2026, 1, 2, 3, 4, 6, 123456789, time.UTC)
 	response := httptest.NewRecorder()
-	err := writeSearch(response, httptest.NewRequest("GET", "/", nil), filesystem.SearchPage{Items: []filesystem.SearchResult{{Node: filesystem.Node{ID: file, FilesystemID: fs, ParentID: &parent, Name: "report.txt", Kind: "file", Revision: 9223372036854775807, SizeBytes: 9007199254740993, MediaType: &empty, Title: &empty, Description: &empty, SemanticType: &empty, Context: &empty, CreatedAt: created, UpdatedAt: updated}, Path: "/report.txt", Matched: &filesystem.SearchMatch{FileID: evidence, Snippet: "exact text", Breadcrumb: []filesystem.Breadcrumb{{NodeID: source, Filename: "source.pdf"}}}}}, NextCursor: &cursor, Degraded: true, DegradedReason: &reason})
+	err := writeSearch(response, httptest.NewRequest("GET", "/", nil), filesystem.SearchPage{Items: []filesystem.SearchResult{{Node: filesystem.Node{ID: file, ScopeID: fs, ParentID: &parent, Name: "report.txt", Kind: "file", Revision: 9223372036854775807, SizeBytes: 9007199254740993, MediaType: &empty, Title: &empty, Description: &empty, SemanticType: &empty, Context: &empty, CreatedAt: created, UpdatedAt: updated}, Path: "/report.txt", Matched: &filesystem.SearchMatch{FileID: evidence, Snippet: "exact text", Breadcrumb: []filesystem.Breadcrumb{{NodeID: source, Filename: "source.pdf"}}}}}, NextCursor: &cursor, Degraded: true, DegradedReason: &reason})
 	require.NoError(t, err)
 	require.Contains(t, response.Body.String(), `"revision":"9223372036854775807"`)
 	require.Contains(t, response.Body.String(), `"created_at":"2026-01-02T03:04:05.120Z"`)

@@ -55,11 +55,7 @@ func searchResultMessages(items []filesystem.SearchResult) []*letfsv1.SearchResu
 }
 
 func (s *Filesystem) SearchFiles(ctx context.Context, input *letfsv1.SearchFilesRequest) (*letfsv1.SearchFilesResponse, error) {
-	fs, err := parseID(input.GetFilesystemId())
-	if err != nil {
-		return nil, err
-	}
-	mounts, err := pathInput(input.GetPathContext())
+	fs, err := s.scopeInput(ctx, input.GetFilesystemId(), input.GetScopeId())
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +63,7 @@ func (s *Filesystem) SearchFiles(ctx context.Context, input *letfsv1.SearchFiles
 	if err != nil {
 		return nil, err
 	}
-	page, err := s.Store.SearchFiles(ctx, fs, mounts, filesystem.SearchInput{Query: input.GetQuery(), Filters: filters, Limit: input.Limit, Cursor: input.Cursor, Sort: input.Sort, Direction: input.Direction})
+	page, err := s.Store.SearchFiles(ctx, fs, filesystem.SearchInput{Query: input.GetQuery(), Filters: filters, Limit: input.Limit, Cursor: input.Cursor, Sort: input.Sort, Direction: input.Direction})
 	if err != nil {
 		return nil, err
 	}
@@ -75,11 +71,7 @@ func (s *Filesystem) SearchFiles(ctx context.Context, input *letfsv1.SearchFiles
 }
 
 func (s *Filesystem) SemanticSearch(ctx context.Context, input *letfsv1.SemanticSearchRequest) (*letfsv1.SemanticSearchResponse, error) {
-	fs, err := parseID(input.GetFilesystemId())
-	if err != nil {
-		return nil, err
-	}
-	mounts, err := pathInput(input.GetPathContext())
+	fs, err := s.scopeInput(ctx, input.GetFilesystemId(), input.GetScopeId())
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +79,7 @@ func (s *Filesystem) SemanticSearch(ctx context.Context, input *letfsv1.Semantic
 	if err != nil {
 		return nil, err
 	}
-	page, err := s.Store.SemanticSearch(ctx, fs, mounts, filesystem.SearchInput{Query: input.GetQuery(), Filters: filters, Limit: input.Limit, Cursor: input.Cursor})
+	page, err := s.Store.SemanticSearch(ctx, fs, filesystem.SearchInput{Query: input.GetQuery(), Filters: filters, Limit: input.Limit, Cursor: input.Cursor})
 	if err != nil {
 		return nil, err
 	}

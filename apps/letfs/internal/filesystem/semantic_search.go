@@ -27,13 +27,13 @@ func excerpt(text, query string, limit int) string {
 	return string(runes[start:min(start+limit, len(runes))])
 }
 
-func (s *Store) hydrateSearch(ctx context.Context, fs uuid.UUID, mounts []Mount, input SearchInput, points []search.Point) (map[int]SearchResult, error) {
-	session, err := s.openSession(ctx, fs, false)
+func (s *Store) hydrateSearch(ctx context.Context, scopeID uuid.UUID, input SearchInput, points []search.Point) (map[int]SearchResult, error) {
+	session, err := s.openSession(ctx, scopeID, false)
 	if err != nil {
 		return nil, err
 	}
 	defer session.tx.Rollback(ctx)
-	root, path, err := session.searchRoot(ctx, mounts, input.Filters)
+	root, path, err := session.searchRoot(ctx, input.Filters)
 	if err != nil {
 		return nil, err
 	}
@@ -46,7 +46,7 @@ func (s *Store) hydrateSearch(ctx context.Context, fs uuid.UUID, mounts []Mount,
 	requests := make([]request, 0, len(points))
 	for i, point := range points {
 		p := point.Payload
-		if p.FilesystemID == fs && p.EmbeddingModel == s.IndexSpace.Model && p.VectorDimension == s.IndexSpace.Dimension {
+		if p.ScopeID == scopeID && p.EmbeddingModel == s.IndexSpace.Model && p.VectorDimension == s.IndexSpace.Dimension {
 			requests = append(requests, request{i, p.SourceID, p.FileID, p.Generation})
 		}
 	}
@@ -55,15 +55,15 @@ func (s *Store) hydrateSearch(ctx context.Context, fs uuid.UUID, mounts []Mount,
 		return nil, err
 	}
 	query := fmt.Sprintf(`%s,req AS (SELECT * FROM jsonb_to_recordset($10) AS p(idx int,source_id uuid,file_id uuid,generation bigint)),
- ancestors AS (SELECT p.idx,p.source_id,p.generation,n.id,n.parent_id,0 AS depth,jsonb_build_array(jsonb_build_object('node_id',n.id,'filename',n.name)) AS breadcrumb FROM req p JOIN nodes n ON n.id=p.file_id AND n.filesystem_id=$1
+ ancestors AS (SELECT p.idx,p.source_id,p.generation,n.id,n.parent_id,0 AS depth,jsonb_build_array(jsonb_build_object('node_id',n.id,'filename',n.name)) AS breadcrumb FROM req p JOIN nodes n ON n.id=p.file_id AND n.scope_id=$1
  UNION ALL SELECT a.idx,a.source_id,a.generation,n.id,n.parent_id,a.depth+1,jsonb_build_array(jsonb_build_object('node_id',n.id,'filename',n.name))||a.breadcrumb
- FROM ancestors a JOIN nodes n ON n.id=a.parent_id WHERE n.filesystem_id=$1 AND a.id!=a.source_id AND a.depth<128)
+ FROM ancestors a JOIN nodes n ON n.id=a.parent_id WHERE n.scope_id=$1 AND a.id!=a.source_id AND a.depth<128)
  SELECT a.idx,%s,false,l.path,a.breadcrumb FROM ancestors a JOIN live l ON l.id=a.source_id JOIN nodes n ON n.id=l.id JOIN files f ON f.node_id=n.id
  WHERE a.id=a.source_id AND n.kind='file' AND f.desired_generation=a.generation
  AND f.publication_status='ready' %s`,
 		searchLive, strings.Replace(nodeColumns, "f.context", "NULL::text", 1), searchFiltersSQL)
 	f := input.Filters
-	rows, err := session.tx.Query(ctx, query, fs, root, path, f.SemanticType, f.MediaType, f.CreatedAfter, f.CreatedBefore, f.UpdatedAfter, f.UpdatedBefore, data)
+	rows, err := session.tx.Query(ctx, query, scopeID, root, path, f.SemanticType, f.MediaType, f.CreatedAfter, f.CreatedBefore, f.UpdatedAfter, f.UpdatedBefore, data)
 	if err != nil {
 		return nil, databaseError(err)
 	}
@@ -87,8 +87,8 @@ func (s *Store) hydrateSearch(ctx context.Context, fs uuid.UUID, mounts []Mount,
 	return result, databaseError(rows.Err())
 }
 
-func (s *Store) SemanticSearch(ctx context.Context, fs uuid.UUID, mounts []Mount, input SearchInput) (SearchPage, error) {
-	actor, err := s.authorize(ctx, fs, "filesystem", authz.Search)
+func (s *Store) SemanticSearch(ctx context.Context, scopeID uuid.UUID, input SearchInput) (SearchPage, error) {
+	actor, err := s.authorize(ctx, scopeID, "scope", authz.ScopeReadContent)
 	if err != nil {
 		return SearchPage{}, err
 	}
@@ -96,7 +96,7 @@ func (s *Store) SemanticSearch(ctx context.Context, fs uuid.UUID, mounts []Mount
 	if err != nil {
 		return SearchPage{}, err
 	}
-	binding, err := s.searchBinding(fs, actor, mounts, input, true)
+	binding, err := s.searchBinding(scopeID, actor, input, true)
 	if err != nil {
 		return SearchPage{}, err
 	}
@@ -104,9 +104,17 @@ func (s *Store) SemanticSearch(ctx context.Context, fs uuid.UUID, mounts []Mount
 	if err != nil {
 		return SearchPage{}, err
 	}
-	// Validate the parent and current filesystem before sending caller text to providers.
-	if _, err = s.hydrateSearch(ctx, fs, mounts, input, nil); err != nil {
+	var filesystemID uuid.UUID
+	var allowIndexing bool
+	if err = s.DB.QueryRow(ctx, `SELECT filesystem_id,allow_indexing FROM scopes WHERE id=$1`, scopeID).Scan(&filesystemID, &allowIndexing); err != nil {
+		return SearchPage{}, databaseError(err)
+	}
+	// Validate scope before sending caller text to providers.
+	if _, err = s.hydrateSearch(ctx, scopeID, input, nil); err != nil {
 		return SearchPage{}, err
+	}
+	if !allowIndexing {
+		return SearchPage{Items: []SearchResult{}}, nil
 	}
 	if s.AI == nil || s.Search == nil || s.IndexSpace.Validate() != nil {
 		return SearchPage{}, search.Dependency()
@@ -127,7 +135,7 @@ func (s *Store) SemanticSearch(ctx context.Context, fs uuid.UUID, mounts []Mount
 			exhausted = true
 			break
 		}
-		points, err := s.Search.Query(ctx, s.IndexSpace.Collection, fs, strings.TrimSpace(input.Query), vector, cursor.Offset)
+		points, err := s.Search.Query(ctx, s.IndexSpace.Collection, filesystemID, scopeID, strings.TrimSpace(input.Query), vector, cursor.Offset)
 		if err != nil {
 			return SearchPage{}, err
 		}
@@ -135,7 +143,7 @@ func (s *Store) SemanticSearch(ctx context.Context, fs uuid.UUID, mounts []Mount
 			exhausted = true
 			break
 		}
-		valid, err := s.hydrateSearch(ctx, fs, mounts, input, points)
+		valid, err := s.hydrateSearch(ctx, scopeID, input, points)
 		if err != nil {
 			return SearchPage{}, err
 		}
@@ -193,10 +201,10 @@ func (s *Store) SemanticSearch(ctx context.Context, fs uuid.UUID, mounts []Mount
 		}
 	}
 	// Provider latency may overlap trash, replacement or revocation; return current facts only.
-	if _, err = s.authorize(ctx, fs, "filesystem", authz.Search); err != nil {
+	if _, err = s.authorize(ctx, scopeID, "scope", authz.ScopeReadContent); err != nil {
 		return SearchPage{}, err
 	}
-	current, err := s.hydrateSearch(ctx, fs, mounts, input, selected)
+	current, err := s.hydrateSearch(ctx, scopeID, input, selected)
 	if err != nil {
 		return SearchPage{}, err
 	}

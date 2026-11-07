@@ -1,42 +1,60 @@
 package temporal
 
 import (
-	"time"
-
 	"github.com/google/uuid"
 	"github.com/qninhdt/openlet/apps/letfs/internal/filesystem"
+	shared "github.com/qninhdt/openlet/packages/go/temporal"
+	enums "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/workflow"
+	"time"
 )
 
 const (
 	PurgeTrashName       = "PurgeTrash"
-	DeleteFilesystemName = "DeleteFilesystem"
+	DeleteFilesystemName = shared.DeleteFilesystemWorkflow
+	DeleteScopeName      = shared.DeleteScopeWorkflow
 )
 
-func deleteNodes(ctx workflow.Context, input filesystem.DeletionInput, name string) (uuid.UUID, error) {
-	// Once admitted, cancellation must not strand destructive cleanup.
+func bulkContext(ctx workflow.Context) workflow.Context {
+	return workflow.WithActivityOptions(ctx, workflow.ActivityOptions{StartToCloseTimeout: 24 * time.Hour, HeartbeatTimeout: 30 * time.Second})
+}
+func DeleteScope(ctx workflow.Context, in shared.ScopeDeletion) error {
+	ctx, cancel := workflow.NewDisconnectedContext(ctx)
+	defer cancel()
+	ctx = bulkContext(ctx)
+	return workflow.ExecuteActivity(ctx, "DeleteScopeData", in).Get(ctx, nil)
+}
+func PurgeTrash(ctx workflow.Context, in filesystem.DeletionInput) error {
+	ctx, cancel := workflow.NewDisconnectedContext(ctx)
+	defer cancel()
+	ctx = bulkContext(ctx)
+	return workflow.ExecuteActivity(ctx, "PurgeTrashData", in).Get(ctx, nil)
+}
+func DeleteFilesystem(ctx workflow.Context, in shared.FilesystemDeletion) error {
 	ctx, cancel := workflow.NewDisconnectedContext(ctx)
 	defer cancel()
 	ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{StartToCloseTimeout: 30 * time.Second})
-	for range 200 {
-		var done bool
-		if err := workflow.ExecuteActivity(ctx, "delete_nodes_batch", input).Get(ctx, &done); err != nil {
-			return uuid.Nil, err
+	for page := 0; page < 100; page++ {
+		var scopes []uuid.UUID
+		if err := workflow.ExecuteActivity(ctx, "ListScopesForDeletion", in).Get(ctx, &scopes); err != nil {
+			return err
 		}
-		if done {
-			if input.EntryID != nil {
-				return *input.EntryID, nil
+		if len(scopes) == 0 {
+			return workflow.ExecuteActivity(ctx, "RemoveFilesystem", in.FilesystemID).Get(ctx, nil)
+		}
+		child := workflow.WithChildOptions(ctx, workflow.ChildWorkflowOptions{TaskQueue: shared.LetFSQueue, ParentClosePolicy: enums.PARENT_CLOSE_POLICY_ABANDON})
+		for first := 0; first < len(scopes); first += 4 {
+			futures := make([]workflow.ChildWorkflowFuture, 0, 4)
+			for _, scope := range scopes[first:min(first+4, len(scopes))] {
+				futures = append(futures, workflow.ExecuteChildWorkflow(child, DeleteScopeName, shared.ScopeDeletion{FilesystemID: in.FilesystemID, ScopeID: scope}))
 			}
-			return input.FilesystemID, nil
+			for _, future := range futures {
+				if err := future.Get(ctx, nil); err != nil {
+					return err
+				}
+			}
 		}
+		in.After = scopes[len(scopes)-1]
 	}
-	return uuid.Nil, workflow.NewContinueAsNewError(ctx, name, input)
-}
-
-func PurgeTrash(ctx workflow.Context, input filesystem.DeletionInput) (uuid.UUID, error) {
-	return deleteNodes(ctx, input, PurgeTrashName)
-}
-
-func DeleteFilesystem(ctx workflow.Context, input filesystem.DeletionInput) (uuid.UUID, error) {
-	return deleteNodes(ctx, input, DeleteFilesystemName)
+	return workflow.NewContinueAsNewError(ctx, DeleteFilesystem, in)
 }

@@ -28,16 +28,16 @@ func TestIntegrationPythonNativeClientPublishesParseViaGoRPC(t *testing.T) {
 	db := testfixture.Postgres(t, "../../../migrations/0001_initial.sql")
 	store := &filesystem.Store{DB: db, MaxNodes: 100, InlineLimit: 64, MaxFileBytes: 100, ProcessingMaxOutputs: 10, ProcessingMaxOutputBytes: 100, MultipartThreshold: 5242880}
 	owner := identity.WithPrincipal(t.Context(), identity.Principal{Service: "resource-owner"})
-	bucket, fs, file := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
-	_, err := store.CreateBucket(owner, uuid.New(), filesystem.CreateBucket{ID: bucket, LimitBytes: 1000})
+	filesystemID, fs, file := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	_, err := store.CreateFilesystem(owner, uuid.New(), filesystem.CreateFilesystem{ID: filesystemID, LimitBytes: 1000})
 	require.NoError(t, err)
-	created, err := store.CreateFilesystem(owner, uuid.New(), filesystem.CreateFilesystem{ID: fs, BucketID: bucket, RootName: "root"})
+	created, err := createTestScope(owner, store, uuid.New(), filesystemID, fs)
 	require.NoError(t, err)
-	_, err = db.Exec(t.Context(), `INSERT INTO nodes(id,filesystem_id,parent_id,name,kind) VALUES($1,$2,$3,'report.pdf','file')`, file, fs, created.RootID)
+	_, err = db.Exec(t.Context(), `INSERT INTO nodes(id,scope_id,parent_id,name,kind) VALUES($1,$2,$3,'report.pdf','file')`, file, fs, created.RootID)
 	require.NoError(t, err)
 	_, err = db.Exec(t.Context(), `INSERT INTO files(node_id,storage_kind,inline_bytes,desired_generation,processing_format,publication_status) VALUES($1,'inline','',1,'pdf','pending')`, file)
 	require.NoError(t, err)
-	_, err = db.Exec(t.Context(), `UPDATE filesystems SET node_count=2 WHERE id=$1`, fs)
+	_, err = db.Exec(t.Context(), `UPDATE filesystems SET node_count=2 WHERE id=$1`, filesystemID)
 	require.NoError(t, err)
 	const token = "isolated-python-ingest-token-1234567890"
 	methods := []string{}

@@ -82,6 +82,7 @@ class EnrichmentInput:
 @dataclass(frozen=True)
 class IndexInput:
     filesystem_id: str
+    scope_id: str
     source_id: str
     generation: int
     nodes: tuple[InventoryNode, ...]
@@ -157,7 +158,7 @@ class Node:
     revision: int
     size_bytes: int
     media_type: str | None
-    filesystem_id: str = ""
+    scope_id: str = ""
     created_at: datetime | None = None
     updated_at: datetime | None = None
     title: str | None = None
@@ -169,9 +170,20 @@ class Node:
 @dataclass(frozen=True)
 class Filesystem:
     id: str
-    bucket_id: str
+    limit_bytes: int
+    used_bytes: int
+    node_count: int
+    state: str
+
+
+@dataclass(frozen=True)
+class Scope:
+    id: str
+    filesystem_id: str
     root_id: str
     state: str
+    allow_blob_files: bool
+    allow_indexing: bool
 
 
 @dataclass(frozen=True)
@@ -184,50 +196,9 @@ class Locator:
 
 
 @dataclass(frozen=True)
-class Mount:
-    path: str
-    filesystem_id: str
-
-
-@dataclass(frozen=True)
-class PathContext:
-    mounts: tuple[Mount, ...]
-
-    @classmethod
-    def root(cls, filesystem_id: str):
-        return cls((Mount("/", filesystem_id),))
-
-
-@dataclass(frozen=True)
-class Bucket:
-    id: str
-    limit_bytes: int
-    used_bytes: int
-    state: str
-
-
-@dataclass(frozen=True)
-class UploadLimits:
-    inline_limit_bytes: int
-    max_file_bytes: int
-    multipart_threshold_bytes: int
-    multipart_part_bytes: int
-
-
-@dataclass(frozen=True)
-class BucketUsage:
-    bucket: Bucket
-    upload_limits: UploadLimits
-
-
-@dataclass(frozen=True)
 class Copy:
     id: str
     destination_root_id: str
-    status: str
-    committed_nodes: int
-    committed_bytes: int
-    error_code: str | None = None
 
 
 @dataclass(frozen=True)
@@ -345,14 +316,6 @@ class ArchiveFrame:
     data: bytes | None = None
 
 
-@dataclass(frozen=True)
-class Storage:
-    limit_bytes: int
-    bucket_id: str
-    filesystem_id: str
-    root_id: str = ""
-
-
 def _generation(value: Generation):
     return pb.ProcessingGeneration(file_id=value.file_id, generation=value.generation)
 
@@ -419,18 +382,6 @@ def _locator(value: Locator):
     return result
 
 
-def _path_context(filesystem_id: str, value: PathContext | None):
-    context = value or PathContext.root(filesystem_id)
-    if not 1 <= len(context.mounts) <= 32:
-        raise ValueError("path context requires 1 to 32 mounts")
-    return pb.PathContext(
-        mounts=[
-            pb.Mount(path=mount.path, filesystem_id=mount.filesystem_id)
-            for mount in context.mounts
-        ]
-    )
-
-
 def _datetime(value):
     return value.ToDatetime(tzinfo=UTC)
 
@@ -440,8 +391,8 @@ def _set_timestamp(target, name: str, value: datetime | None):
         getattr(target, name).FromDatetime(value)
 
 
-def _node(value, filesystem_id: str | None = None):
-    if filesystem_id is not None and value.filesystem_id != filesystem_id:
+def _node(value, scope_id: str | None = None):
+    if scope_id is not None and value.scope_id != scope_id:
         raise AppError(
             "invalid filesystem result",
             reason="FILESYSTEM_SCOPE_CONFLICT",
@@ -456,7 +407,7 @@ def _node(value, filesystem_id: str | None = None):
         value.revision,
         value.size_bytes,
         value.media_type if value.HasField("media_type") else None,
-        value.filesystem_id,
+        value.scope_id,
         _datetime(value.created_at),
         _datetime(value.updated_at),
         value.title if value.HasField("title") else None,
@@ -466,19 +417,8 @@ def _node(value, filesystem_id: str | None = None):
     )
 
 
-def _bucket(value):
-    return Bucket(value.id, value.limit_bytes, value.used_bytes, value.state)
-
-
 def _copy(value):
-    return Copy(
-        value.id,
-        value.destination_root_id,
-        value.status,
-        value.committed_nodes,
-        value.committed_bytes,
-        value.error_code if value.HasField("error_code") else None,
-    )
+    return Copy(value.id, value.destination_root_id)
 
 
 def _trash(value):
@@ -631,6 +571,7 @@ class ProcessingClient:
         space = value.vector_space
         return IndexInput(
             value.filesystem_id,
+            value.scope_id,
             value.source_id,
             value.generation,
             _nodes(value.nodes),
@@ -808,77 +749,59 @@ class FilesystemClient:
                 kind="conflict",
                 retryable=False,
             )
-        return Filesystem(value.id, value.bucket_id, value.root_id, value.state)
-
-    async def get_bucket_usage(self, bucket_id: str, *, actor_id=None) -> BucketUsage:
-        response = await self._rpc.invoke(
-            self._stub.GetBucketUsage,
-            pb.GetBucketUsageRequest(bucket_id=bucket_id),
-            actor_id=actor_id,
-        )
-        limits = response.upload_limits
-        if response.bucket.id != bucket_id:
-            raise AppError(
-                "invalid bucket result",
-                reason="STORAGE_SCOPE_CONFLICT",
-                kind="conflict",
-                retryable=False,
-            )
-        return BucketUsage(
-            _bucket(response.bucket),
-            UploadLimits(
-                limits.inline_limit_bytes,
-                limits.max_file_bytes,
-                limits.multipart_threshold_bytes,
-                limits.multipart_part_bytes,
-            ),
+        return Filesystem(
+            value.id,
+            value.limit_bytes,
+            value.used_bytes,
+            value.node_count,
+            value.state,
         )
 
     async def get_node(
         self,
         filesystem_id: str,
+        scope_id: str,
         node_id: str,
         *,
         actor_id=None,
-        path_context: PathContext | None = None,
     ) -> Node:
         response = await self._rpc.invoke(
             self._stub.GetNode,
             pb.GetNodeRequest(
                 filesystem_id=filesystem_id,
+                scope_id=scope_id,
                 node_id=node_id,
-                path_context=_path_context(filesystem_id, path_context),
             ),
             actor_id=actor_id,
         )
-        return _node(response.node, filesystem_id)
+        return _node(response.node, scope_id)
 
     async def resolve_node(
         self,
         filesystem_id: str,
+        scope_id: str,
         locator: Locator,
         *,
         actor_id=None,
-        path_context: PathContext | None = None,
     ) -> Node:
         response = await self._rpc.invoke(
             self._stub.ResolveNode,
             pb.ResolveNodeRequest(
                 filesystem_id=filesystem_id,
+                scope_id=scope_id,
                 locator=_locator(locator),
-                path_context=_path_context(filesystem_id, path_context),
             ),
             actor_id=actor_id,
         )
-        return _node(response.node, filesystem_id)
+        return _node(response.node, scope_id)
 
     async def batch_stat(
         self,
         filesystem_id: str,
+        scope_id: str,
         locators: Sequence[Locator],
         *,
         actor_id=None,
-        path_context: PathContext | None = None,
     ) -> tuple[Node, ...]:
         if not locators or len(locators) > 100:
             raise ValueError("batch stat requires 1 to 100 locators")
@@ -886,38 +809,39 @@ class FilesystemClient:
             self._stub.BatchStat,
             pb.BatchStatRequest(
                 filesystem_id=filesystem_id,
+                scope_id=scope_id,
                 locators=[_locator(item) for item in locators],
-                path_context=_path_context(filesystem_id, path_context),
             ),
             actor_id=actor_id,
         )
-        return tuple(_node(item, filesystem_id) for item in response.items)
+        return tuple(_node(item, scope_id) for item in response.items)
 
     async def create_directory(
         self,
         filesystem_id: str,
+        scope_id: str,
         parent: Locator,
         name: str,
         idempotency_key: str,
         *,
         actor_id=None,
-        path_context: PathContext | None = None,
     ) -> Node:
         response = await self._rpc.invoke(
             self._stub.CreateNode,
             pb.CreateNodeRequest(
                 filesystem_id=filesystem_id,
+                scope_id=scope_id,
                 idempotency_key=idempotency_key,
-                path_context=_path_context(filesystem_id, path_context),
                 directory=pb.DirectoryCreation(parent=_locator(parent), name=name),
             ),
             actor_id=actor_id,
         )
-        return _node(response.node, filesystem_id)
+        return _node(response.node, scope_id)
 
     async def create_inline_file(
         self,
         filesystem_id: str,
+        scope_id: str,
         parent: Locator,
         name: str,
         content: bytes,
@@ -925,14 +849,13 @@ class FilesystemClient:
         idempotency_key: str,
         *,
         actor_id=None,
-        path_context: PathContext | None = None,
     ) -> Node:
         response = await self._rpc.invoke(
             self._stub.CreateNode,
             pb.CreateNodeRequest(
                 filesystem_id=filesystem_id,
+                scope_id=scope_id,
                 idempotency_key=idempotency_key,
-                path_context=_path_context(filesystem_id, path_context),
                 file=pb.InlineFileCreation(
                     parent=_locator(parent),
                     name=name,
@@ -942,22 +865,22 @@ class FilesystemClient:
             ),
             actor_id=actor_id,
         )
-        return _node(response.node, filesystem_id)
+        return _node(response.node, scope_id)
 
     async def list_nodes(
         self,
         filesystem_id: str,
+        scope_id: str,
         parent_id: str,
         *,
         actor_id=None,
-        path_context: PathContext | None = None,
         limit: int | None = None,
         cursor: str | None = None,
     ) -> tuple[tuple[Node, ...], str | None]:
         request = pb.ListNodesRequest(
             filesystem_id=filesystem_id,
+            scope_id=scope_id,
             parent=pb.Locator(node_id=parent_id),
-            path_context=_path_context(filesystem_id, path_context),
         )
         if limit is not None:
             request.limit = limit
@@ -967,24 +890,24 @@ class FilesystemClient:
             self._stub.ListNodes, request, actor_id=actor_id
         )
         return tuple(
-            _node(item, filesystem_id) for item in response.items
+            _node(item, scope_id) for item in response.items
         ), response.next_cursor if response.HasField("next_cursor") else None
 
     async def update_node(
         self,
         filesystem_id: str,
+        scope_id: str,
         locator: Locator,
         *,
         actor_id=None,
         revision: int | None = None,
         name: str | None = None,
         parent: Locator | None = None,
-        path_context: PathContext | None = None,
     ) -> Node:
         request = pb.UpdateNodeRequest(
             filesystem_id=filesystem_id,
+            scope_id=scope_id,
             locator=_locator(locator),
-            path_context=_path_context(filesystem_id, path_context),
         )
         if revision is not None:
             request.revision = revision
@@ -995,23 +918,23 @@ class FilesystemClient:
         response = await self._rpc.invoke(
             self._stub.UpdateNode, request, actor_id=actor_id
         )
-        return _node(response.node, filesystem_id)
+        return _node(response.node, scope_id)
 
     async def replace_content(
         self,
         filesystem_id: str,
+        scope_id: str,
         node_id: str,
         content: bytes,
         media_type: str,
         *,
         actor_id=None,
         revision: int | None = None,
-        path_context: PathContext | None = None,
     ) -> Node:
         request = pb.ReplaceContentRequest(
             filesystem_id=filesystem_id,
+            scope_id=scope_id,
             locator=pb.Locator(node_id=node_id),
-            path_context=_path_context(filesystem_id, path_context),
             content=content,
             media_type=media_type,
         )
@@ -1020,27 +943,29 @@ class FilesystemClient:
         response = await self._rpc.invoke(
             self._stub.ReplaceContent, request, actor_id=actor_id
         )
-        return _node(response.node, filesystem_id)
+        return _node(response.node, scope_id)
 
     async def create_copy(
         self,
         filesystem_id: str,
+        scope_id: str,
         source_id: str,
+        destination_scope_id: str,
         parent_id: str,
         name: str,
         idempotency_key: str,
         *,
         actor_id=None,
         revision: int | None = None,
-        path_context: PathContext | None = None,
     ) -> Copy:
         request = pb.CreateCopyRequest(
             filesystem_id=filesystem_id,
+            scope_id=scope_id,
             source_id=source_id,
+            destination_scope_id=destination_scope_id,
             parent_id=parent_id,
             name=name,
             idempotency_key=idempotency_key,
-            path_context=_path_context(filesystem_id, path_context),
         )
         if revision is not None:
             request.revision = revision
@@ -1049,38 +974,20 @@ class FilesystemClient:
         )
         return _copy(response.copy)
 
-    async def get_copy(
-        self, filesystem_id: str, copy_id: str, *, actor_id=None
-    ) -> Copy:
-        response = await self._rpc.invoke(
-            self._stub.GetCopy,
-            pb.GetCopyRequest(filesystem_id=filesystem_id, copy_id=copy_id),
-            actor_id=actor_id,
-        )
-        result = _copy(response.copy)
-        if result.id != copy_id:
-            raise AppError(
-                "invalid filesystem result",
-                reason="FILESYSTEM_SCOPE_CONFLICT",
-                kind="conflict",
-                retryable=False,
-            )
-        return result
-
     async def get_processing(
         self,
         filesystem_id: str,
+        scope_id: str,
         node_id: str,
         *,
         actor_id=None,
-        path_context: PathContext | None = None,
     ) -> ProcessingStatus:
         response = await self._rpc.invoke(
             self._stub.GetProcessing,
             pb.GetProcessingRequest(
                 filesystem_id=filesystem_id,
+                scope_id=scope_id,
                 node_id=node_id,
-                path_context=_path_context(filesystem_id, path_context),
             ),
             actor_id=actor_id,
         )
@@ -1095,19 +1002,19 @@ class FilesystemClient:
     async def reprocess_node(
         self,
         filesystem_id: str,
+        scope_id: str,
         node_id: str,
         idempotency_key: str,
         *,
         actor_id=None,
-        path_context: PathContext | None = None,
     ) -> Reprocessing:
         response = await self._rpc.invoke(
             self._stub.ReprocessNode,
             pb.ReprocessNodeRequest(
                 filesystem_id=filesystem_id,
+                scope_id=scope_id,
                 node_id=node_id,
                 idempotency_key=idempotency_key,
-                path_context=_path_context(filesystem_id, path_context),
             ),
             actor_id=actor_id,
         )
@@ -1116,16 +1023,16 @@ class FilesystemClient:
     async def trash_node(
         self,
         filesystem_id: str,
+        scope_id: str,
         locator: Locator,
         *,
         actor_id=None,
         revision: int | None = None,
-        path_context: PathContext | None = None,
     ) -> TrashEntry:
         request = pb.TrashNodeRequest(
             filesystem_id=filesystem_id,
+            scope_id=scope_id,
             locator=_locator(locator),
-            path_context=_path_context(filesystem_id, path_context),
         )
         if revision is not None:
             request.revision = revision
@@ -1137,12 +1044,13 @@ class FilesystemClient:
     async def list_trash(
         self,
         filesystem_id: str,
+        scope_id: str,
         *,
         actor_id=None,
         limit: int | None = None,
         cursor: str | None = None,
     ) -> tuple[tuple[TrashEntry, ...], str | None]:
-        request = pb.ListTrashRequest(filesystem_id=filesystem_id)
+        request = pb.ListTrashRequest(filesystem_id=filesystem_id, scope_id=scope_id)
         if limit is not None:
             request.limit = limit
         if cursor is not None:
@@ -1155,11 +1063,13 @@ class FilesystemClient:
         )
 
     async def get_trash(
-        self, filesystem_id: str, entry_id: str, *, actor_id=None
+        self, filesystem_id: str, scope_id: str, entry_id: str, *, actor_id=None
     ) -> TrashEntry:
         response = await self._rpc.invoke(
             self._stub.GetTrash,
-            pb.GetTrashRequest(filesystem_id=filesystem_id, entry_id=entry_id),
+            pb.GetTrashRequest(
+                filesystem_id=filesystem_id, scope_id=scope_id, entry_id=entry_id
+            ),
             actor_id=actor_id,
         )
         result = _trash(response.entry)
@@ -1173,21 +1083,25 @@ class FilesystemClient:
         return result
 
     async def restore_trash(
-        self, filesystem_id: str, entry_id: str, *, actor_id=None
+        self, filesystem_id: str, scope_id: str, entry_id: str, *, actor_id=None
     ) -> Node:
         response = await self._rpc.invoke(
             self._stub.RestoreTrash,
-            pb.RestoreTrashRequest(filesystem_id=filesystem_id, entry_id=entry_id),
+            pb.RestoreTrashRequest(
+                filesystem_id=filesystem_id, scope_id=scope_id, entry_id=entry_id
+            ),
             actor_id=actor_id,
         )
-        return _node(response.node, filesystem_id)
+        return _node(response.node, scope_id)
 
     async def purge_trash(
-        self, filesystem_id: str, entry_id: str, *, actor_id=None
+        self, filesystem_id: str, scope_id: str, entry_id: str, *, actor_id=None
     ) -> TrashEntry | None:
         response = await self._rpc.invoke(
             self._stub.PurgeTrash,
-            pb.PurgeTrashRequest(filesystem_id=filesystem_id, entry_id=entry_id),
+            pb.PurgeTrashRequest(
+                filesystem_id=filesystem_id, scope_id=scope_id, entry_id=entry_id
+            ),
             actor_id=actor_id,
         )
         return _trash(response.entry) if response.HasField("entry") else None
@@ -1195,6 +1109,7 @@ class FilesystemClient:
     async def create_upload(
         self,
         filesystem_id: str,
+        scope_id: str,
         idempotency_key: str,
         media_type: str,
         *,
@@ -1203,15 +1118,14 @@ class FilesystemClient:
         size_bytes: int | None = None,
         content_md5: str | None = None,
         actor_id=None,
-        path_context: PathContext | None = None,
     ) -> FileUpload:
         if (destination is None) == (replacement is None):
             raise ValueError("upload requires exactly one target")
         request = pb.CreateUploadRequest(
             filesystem_id=filesystem_id,
+            scope_id=scope_id,
             idempotency_key=idempotency_key,
             media_type=media_type,
-            path_context=_path_context(filesystem_id, path_context),
         )
         if size_bytes is not None:
             request.size_bytes = size_bytes
@@ -1233,11 +1147,13 @@ class FilesystemClient:
         return _file_upload(response.upload)
 
     async def get_upload(
-        self, filesystem_id: str, upload_id: str, *, actor_id=None
+        self, filesystem_id: str, scope_id: str, upload_id: str, *, actor_id=None
     ) -> FileUpload:
         response = await self._rpc.invoke(
             self._stub.GetUpload,
-            pb.GetUploadRequest(filesystem_id=filesystem_id, upload_id=upload_id),
+            pb.GetUploadRequest(
+                filesystem_id=filesystem_id, scope_id=scope_id, upload_id=upload_id
+            ),
             actor_id=actor_id,
         )
         result = _file_upload(response.upload)
@@ -1253,6 +1169,7 @@ class FilesystemClient:
     async def get_upload_parts(
         self,
         filesystem_id: str,
+        scope_id: str,
         upload_id: str,
         numbers: Sequence[int],
         *,
@@ -1262,6 +1179,7 @@ class FilesystemClient:
             self._stub.GetUploadParts,
             pb.GetUploadPartsRequest(
                 filesystem_id=filesystem_id,
+                scope_id=scope_id,
                 upload_id=upload_id,
                 numbers=numbers,
             ),
@@ -1275,6 +1193,7 @@ class FilesystemClient:
     async def complete_upload(
         self,
         filesystem_id: str,
+        scope_id: str,
         upload_id: str,
         parts: Sequence[PartReceipt] = (),
         *,
@@ -1284,6 +1203,7 @@ class FilesystemClient:
             self._stub.CompleteUpload,
             pb.CompleteUploadRequest(
                 filesystem_id=filesystem_id,
+                scope_id=scope_id,
                 upload_id=upload_id,
                 parts=[
                     pb.PartReceipt(part_number=item.part_number, etag=item.etag)
@@ -1295,11 +1215,13 @@ class FilesystemClient:
         return _publication(response.publication)
 
     async def abort_upload(
-        self, filesystem_id: str, upload_id: str, *, actor_id=None
+        self, filesystem_id: str, scope_id: str, upload_id: str, *, actor_id=None
     ) -> None:
         await self._rpc.invoke(
             self._stub.AbortUpload,
-            pb.AbortUploadRequest(filesystem_id=filesystem_id, upload_id=upload_id),
+            pb.AbortUploadRequest(
+                filesystem_id=filesystem_id, scope_id=scope_id, upload_id=upload_id
+            ),
             actor_id=actor_id,
         )
 
@@ -1308,6 +1230,7 @@ class FilesystemClient:
         method,
         request_type,
         filesystem_id: str,
+        scope_id: str,
         query: str,
         *,
         actor_id=None,
@@ -1316,13 +1239,12 @@ class FilesystemClient:
         cursor: str | None = None,
         sort: str | None = None,
         direction: str | None = None,
-        path_context: PathContext | None = None,
     ) -> SearchPage:
         request = request_type(
             filesystem_id=filesystem_id,
+            scope_id=scope_id,
             query=query,
             filters=_search_filters(filters),
-            path_context=_path_context(filesystem_id, path_context),
         )
         for name, value in (
             ("limit", limit),
@@ -1339,6 +1261,7 @@ class FilesystemClient:
     async def search_files(
         self,
         filesystem_id: str,
+        scope_id: str,
         query: str,
         *,
         actor_id=None,
@@ -1347,7 +1270,6 @@ class FilesystemClient:
         cursor: str | None = None,
         sort: str | None = None,
         direction: str | None = None,
-        path_context: PathContext | None = None,
     ) -> SearchPage:
         return await self._search(
             self._stub.SearchFiles,
@@ -1360,19 +1282,18 @@ class FilesystemClient:
             cursor=cursor,
             sort=sort,
             direction=direction,
-            path_context=path_context,
         )
 
     async def semantic_search(
         self,
         filesystem_id: str,
+        scope_id: str,
         query: str,
         *,
         actor_id=None,
         filters: SearchFilters | None = None,
         limit: int | None = None,
         cursor: str | None = None,
-        path_context: PathContext | None = None,
     ) -> SearchPage:
         return await self._search(
             self._stub.SemanticSearch,
@@ -1383,22 +1304,21 @@ class FilesystemClient:
             filters=filters,
             limit=limit,
             cursor=cursor,
-            path_context=path_context,
         )
 
     async def get_download(
         self,
         filesystem_id: str,
+        scope_id: str,
         node_id: str,
         *,
         actor_id=None,
         revision: int | None = None,
-        path_context: PathContext | None = None,
     ) -> Download:
         request = pb.GetDownloadRequest(
             filesystem_id=filesystem_id,
+            scope_id=scope_id,
             node_id=node_id,
-            path_context=_path_context(filesystem_id, path_context),
         )
         if revision is not None:
             request.revision = revision
@@ -1419,15 +1339,15 @@ class FilesystemClient:
     async def stream_archive(
         self,
         filesystem_id: str,
+        scope_id: str,
         node_id: str,
         *,
         actor_id=None,
-        path_context: PathContext | None = None,
     ) -> AsyncIterator[ArchiveFrame]:
         request = pb.StreamArchiveRequest(
             filesystem_id=filesystem_id,
+            scope_id=scope_id,
             node_id=node_id,
-            path_context=_path_context(filesystem_id, path_context),
         )
         async with aclosing(
             self._rpc.invoke_stream(
@@ -1448,149 +1368,88 @@ class StorageAdministrationClient:
         self._rpc = rpc
         self._stub = StorageAdministrationServiceStub(rpc.channel)
 
-    async def create_storage(self, value: Storage) -> Storage:
-        response = await self._rpc.invoke(
-            self._stub.CreateStorage,
-            pb.CreateStorageRequest(
-                bucket=pb.CreateBucketRequest(
-                    bucket_id=value.bucket_id,
-                    idempotency_key=value.bucket_id,
-                    limit_bytes=value.limit_bytes,
-                ),
-                filesystem=pb.CreateFilesystemRequest(
-                    filesystem_id=value.filesystem_id,
-                    bucket_id=value.bucket_id,
-                    idempotency_key=value.filesystem_id,
-                    root_name="drive",
-                ),
-            ),
-            timeout=10,
-        )
-        bucket, filesystem = response.bucket, response.filesystem
-        if (
-            bucket.id != value.bucket_id
-            or bucket.limit_bytes != value.limit_bytes
-            or bucket.state != "active"
-            or filesystem.id != value.filesystem_id
-            or filesystem.bucket_id != value.bucket_id
-            or filesystem.state != "active"
-            or not filesystem.root_id
-        ):
-            raise AppError(
-                "invalid storage result",
-                reason="STORAGE_SCOPE_CONFLICT",
-                kind="conflict",
-                retryable=False,
-            )
-        return Storage(
-            value.limit_bytes, value.bucket_id, value.filesystem_id, filesystem.root_id
-        )
-
-    async def create_bucket(
-        self, bucket_id: str, limit_bytes: int, idempotency_key: str
-    ) -> Bucket:
-        response = await self._rpc.invoke(
-            self._stub.CreateBucket,
-            pb.CreateBucketRequest(
-                bucket_id=bucket_id,
-                limit_bytes=limit_bytes,
-                idempotency_key=idempotency_key,
-            ),
-            timeout=10,
-        )
-        result = _bucket(response.bucket)
-        if result.id != bucket_id or result.limit_bytes != limit_bytes:
-            raise AppError(
-                "invalid storage result",
-                reason="STORAGE_SCOPE_CONFLICT",
-                kind="conflict",
-                retryable=False,
-            )
-        return result
-
     async def create_filesystem(
         self,
         filesystem_id: str,
-        bucket_id: str,
+        limit_bytes: int,
         idempotency_key: str,
-        root_name: str,
     ) -> Filesystem:
         value = (
             await self._rpc.invoke(
                 self._stub.CreateFilesystem,
                 pb.CreateFilesystemRequest(
                     filesystem_id=filesystem_id,
-                    bucket_id=bucket_id,
+                    limit_bytes=limit_bytes,
                     idempotency_key=idempotency_key,
-                    root_name=root_name,
                 ),
                 timeout=10,
             )
         ).filesystem
-        if value.id != filesystem_id or value.bucket_id != bucket_id:
+        if value.id != filesystem_id or value.limit_bytes != limit_bytes:
             raise AppError(
-                "invalid storage result",
+                "invalid filesystem result",
                 reason="STORAGE_SCOPE_CONFLICT",
                 kind="conflict",
                 retryable=False,
             )
-        return Filesystem(value.id, value.bucket_id, value.root_id, value.state)
+        return Filesystem(
+            value.id,
+            value.limit_bytes,
+            value.used_bytes,
+            value.node_count,
+            value.state,
+        )
 
-    async def release_provisioning(self, value: Storage) -> None:
-        await self._rpc.invoke(
-            self._stub.ReleaseProvisioning,
-            pb.ReleaseProvisioningRequest(
-                bucket_id=value.bucket_id,
-                filesystem_id=value.filesystem_id,
-                root_id=value.root_id,
+    async def create_scopes(
+        self,
+        filesystem_id: str,
+        scope_ids: Sequence[str],
+        idempotency_key: str,
+        *,
+        allow_blob_files: bool = True,
+        allow_indexing: bool = True,
+    ) -> tuple[Scope, ...]:
+        if not 1 <= len(scope_ids) <= 100 or len(set(scope_ids)) != len(scope_ids):
+            raise ValueError("scope IDs must contain 1 to 100 distinct IDs")
+        response = await self._rpc.invoke(
+            self._stub.CreateScopes,
+            pb.CreateScopesRequest(
+                filesystem_id=filesystem_id,
+                scope_ids=scope_ids,
+                allow_blob_files=allow_blob_files,
+                allow_indexing=allow_indexing,
+                idempotency_key=idempotency_key,
             ),
             timeout=10,
         )
-
-    async def freeze_bucket(self, bucket_id: str, idempotency_key: str) -> Bucket:
-        result = _bucket(
-            (
-                await self._rpc.invoke(
-                    self._stub.FreezeBucket,
-                    pb.FreezeBucketRequest(
-                        bucket_id=bucket_id, idempotency_key=idempotency_key
-                    ),
-                    timeout=10,
-                )
-            ).bucket
-        )
-        if result.id != bucket_id or result.state not in {"frozen", "deleted"}:
-            raise AppError(
-                "invalid storage result",
-                reason="STORAGE_SCOPE_CONFLICT",
-                kind="conflict",
-                retryable=False,
-            )
-        return result
-
-    async def list_filesystems(
-        self, bucket_id: str, after_id: str | None = None
-    ) -> tuple[str, ...]:
-        request = pb.ListBucketFilesystemsRequest(bucket_id=bucket_id)
-        if after_id is not None:
-            request.after_id = after_id
-        response = await self._rpc.invoke(
-            self._stub.ListBucketFilesystems, request, timeout=10
-        )
-        result = tuple(response.filesystem_ids)
         if (
-            len(result) > 100
-            or list(result) != sorted(result)
-            or len(set(result)) != len(result)
-            or (after_id is not None and any(item <= after_id for item in result))
+            len(response.scopes) != len(scope_ids)
+            or {v.id for v in response.scopes} != set(scope_ids)
+            or any(
+                v.filesystem_id != filesystem_id
+                or not v.root_id
+                or v.allow_blob_files != allow_blob_files
+                or v.allow_indexing != allow_indexing
+                for v in response.scopes
+            )
         ):
             raise AppError(
-                "invalid storage result",
+                "invalid scope result",
                 reason="STORAGE_SCOPE_CONFLICT",
                 kind="conflict",
                 retryable=False,
             )
-        return result
+        return tuple(
+            Scope(
+                v.id,
+                v.filesystem_id,
+                v.root_id,
+                v.state,
+                v.allow_blob_files,
+                v.allow_indexing,
+            )
+            for v in response.scopes
+        )
 
     async def delete_filesystem(self, filesystem_id: str) -> bool:
         response = await self._rpc.invoke(
@@ -1599,26 +1458,3 @@ class StorageAdministrationClient:
             timeout=10,
         )
         return response.completed
-
-    async def complete_bucket_deletion(
-        self, bucket_id: str, idempotency_key: str
-    ) -> Bucket:
-        result = _bucket(
-            (
-                await self._rpc.invoke(
-                    self._stub.CompleteBucketDeletion,
-                    pb.CompleteBucketDeletionRequest(
-                        bucket_id=bucket_id, idempotency_key=idempotency_key
-                    ),
-                    timeout=10,
-                )
-            ).bucket
-        )
-        if result.id != bucket_id or result.state != "deleted":
-            raise AppError(
-                "invalid storage result",
-                reason="STORAGE_SCOPE_CONFLICT",
-                kind="conflict",
-                retryable=False,
-            )
-        return result

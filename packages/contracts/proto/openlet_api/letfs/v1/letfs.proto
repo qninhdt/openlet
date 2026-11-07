@@ -8,12 +8,11 @@ option go_package = "github.com/qninhdt/openlet/packages/go/gen/openlet_api/letf
 
 service FilesystemService {
   rpc GetFilesystem(GetFilesystemRequest) returns (GetFilesystemResponse);
-  rpc GetBucketUsage(GetBucketUsageRequest) returns (GetBucketUsageResponse);
   rpc CreateNode(CreateNodeRequest) returns (CreateNodeResponse);
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
   rpc GetNode(GetNodeRequest) returns (GetNodeResponse) {
     option (google.api.http) = {
-      get: "/v1/filesystems/{filesystem_id}/nodes/{node_id}"
+      get: "/v1/filesystems/{filesystem_id}/scopes/{scope_id}/nodes/{node_id}"
       response_body: "node"
     };
   }
@@ -22,7 +21,6 @@ service FilesystemService {
   rpc UpdateNode(UpdateNodeRequest) returns (UpdateNodeResponse);
   rpc ReplaceContent(ReplaceContentRequest) returns (ReplaceContentResponse);
   rpc CreateCopy(CreateCopyRequest) returns (CreateCopyResponse);
-  rpc GetCopy(GetCopyRequest) returns (GetCopyResponse);
   rpc GetProcessing(GetProcessingRequest) returns (GetProcessingResponse);
   rpc ReprocessNode(ReprocessNodeRequest) returns (ReprocessNodeResponse);
   rpc TrashNode(TrashNodeRequest) returns (TrashNodeResponse);
@@ -63,14 +61,9 @@ service IngestService {
 
 // These methods require explicit service authority, never a public user JWT.
 service StorageAdministrationService {
-  rpc CreateStorage(CreateStorageRequest) returns (CreateStorageResponse);
   rpc DeleteFilesystem(DeleteFilesystemRequest) returns (DeleteFilesystemResponse);
-  rpc CreateBucket(CreateBucketRequest) returns (CreateBucketResponse);
   rpc CreateFilesystem(CreateFilesystemRequest) returns (CreateFilesystemResponse);
-  rpc FreezeBucket(FreezeBucketRequest) returns (FreezeBucketResponse);
-  rpc ListBucketFilesystems(ListBucketFilesystemsRequest) returns (ListBucketFilesystemsResponse);
-  rpc CompleteBucketDeletion(CompleteBucketDeletionRequest) returns (CompleteBucketDeletionResponse);
-  rpc ReleaseProvisioning(ReleaseProvisioningRequest) returns (ReleaseProvisioningResponse);
+  rpc CreateScopes(CreateScopesRequest) returns (CreateScopesResponse);
 }
 
 message DeleteFilesystemRequest {
@@ -80,18 +73,8 @@ message DeleteFilesystemResponse {
   bool completed = 1;
 }
 
-// Composite provisioning retains a receipt for each stable resource identity.
-message CreateStorageRequest {
-  CreateBucketRequest bucket = 1;
-  CreateFilesystemRequest filesystem = 2;
-}
-message CreateStorageResponse {
-  Bucket bucket = 1;
-  Filesystem filesystem = 2;
-}
 message Node {
   string id = 1;
-  string filesystem_id = 2;
   optional string parent_id = 3;
   string name = 4;
   string kind = 5;
@@ -105,11 +88,12 @@ message Node {
   optional string semantic_type = 13;
   // Omitted from list/search metadata; only explicitly requested detail can include context.
   optional string context = 14;
+  string scope_id = 15;
 }
 message GetNodeRequest {
   string filesystem_id = 1;
   string node_id = 2;
-  PathContext path_context = 3;
+  string scope_id = 3;
 }
 message GetNodeResponse {
   Node node = 1;
@@ -118,7 +102,7 @@ message GetDownloadRequest {
   string filesystem_id = 1;
   string node_id = 2;
   optional int64 revision = 3;
-  PathContext path_context = 4;
+  string scope_id = 4;
 }
 message Download {
   string mime = 1;
@@ -136,7 +120,7 @@ message GetDownloadResponse {
 message StreamArchiveRequest {
   string filesystem_id = 1;
   string node_id = 2;
-  PathContext path_context = 3;
+  string scope_id = 3;
 }
 message ArchiveMetadata {
   string filename = 1;
@@ -175,71 +159,22 @@ message PrepareParseResponse {
     ParseComplete complete = 2;
   }
 }
-message CreateBucketRequest {
-  string bucket_id = 1;
+message CreateFilesystemRequest {
+  string filesystem_id = 1;
   string idempotency_key = 2;
   int64 limit_bytes = 3;
 }
-message Bucket {
+message Filesystem {
   string id = 1;
   int64 limit_bytes = 2;
   int64 used_bytes = 3;
-  string state = 4;
-}
-message CreateBucketResponse {
-  Bucket bucket = 1;
-}
-message CreateFilesystemRequest {
-  string filesystem_id = 1;
-  string bucket_id = 2;
-  string idempotency_key = 3;
-  string root_name = 4;
-}
-message Filesystem {
-  string id = 1;
-  string bucket_id = 2;
-  string root_id = 3;
-  string state = 4;
+  int64 node_count = 4;
+  string state = 5;
 }
 message CreateFilesystemResponse {
   Filesystem filesystem = 1;
 }
-message FreezeBucketRequest {
-  string bucket_id = 1;
-  string idempotency_key = 2;
-}
-message FreezeBucketResponse {
-  Bucket bucket = 1;
-}
-message ListBucketFilesystemsRequest {
-  string bucket_id = 1;
-  optional string after_id = 2;
-}
-message ListBucketFilesystemsResponse {
-  repeated string filesystem_ids = 1;
-}
-message CompleteBucketDeletionRequest {
-  string bucket_id = 1;
-  string idempotency_key = 2;
-}
-message CompleteBucketDeletionResponse {
-  Bucket bucket = 1;
-}
-message ReleaseProvisioningRequest {
-  string bucket_id = 1;
-  string filesystem_id = 2;
-  string root_id = 3;
-}
-message ReleaseProvisioningResponse {}
 
-// A mount is path context for the requested filesystem, never an authorization grant.
-message Mount {
-  string path = 1;
-  string filesystem_id = 2;
-}
-message PathContext {
-  repeated Mount mounts = 1;
-}
 message PathLocator {
   string path = 1;
   optional string cwd_id = 2;
@@ -258,19 +193,6 @@ message GetFilesystemRequest {
 message GetFilesystemResponse {
   Filesystem filesystem = 1;
 }
-message GetBucketUsageRequest {
-  string bucket_id = 1;
-}
-message UploadLimits {
-  int64 inline_limit_bytes = 1;
-  int64 max_file_bytes = 2;
-  int64 multipart_threshold_bytes = 3;
-  int64 multipart_part_bytes = 4;
-}
-message GetBucketUsageResponse {
-  Bucket bucket = 1;
-  UploadLimits upload_limits = 2;
-}
 message DirectoryCreation {
   Locator parent = 1;
   string name = 2;
@@ -284,11 +206,11 @@ message InlineFileCreation {
 message CreateNodeRequest {
   string filesystem_id = 1;
   string idempotency_key = 2;
-  PathContext path_context = 3;
   oneof input {
     DirectoryCreation directory = 4;
     InlineFileCreation file = 5;
   }
+  string scope_id = 6;
 }
 message CreateNodeResponse {
   Node node = 1;
@@ -296,9 +218,9 @@ message CreateNodeResponse {
 message ListNodesRequest {
   string filesystem_id = 1;
   Locator parent = 2;
-  PathContext path_context = 3;
   optional int32 limit = 4;
   optional string cursor = 5;
+  string scope_id = 6;
 }
 message ListNodesResponse {
   repeated Node items = 1;
@@ -307,7 +229,7 @@ message ListNodesResponse {
 message ResolveNodeRequest {
   string filesystem_id = 1;
   Locator locator = 2;
-  PathContext path_context = 3;
+  string scope_id = 3;
 }
 message ResolveNodeResponse {
   Node node = 1;
@@ -317,7 +239,7 @@ message ResolveNodeResponse {
 message BatchStatRequest {
   string filesystem_id = 1;
   repeated Locator locators = 2;
-  PathContext path_context = 3;
+  string scope_id = 3;
 }
 message BatchStatResponse {
   repeated Node items = 1;
@@ -325,10 +247,10 @@ message BatchStatResponse {
 message UpdateNodeRequest {
   string filesystem_id = 1;
   Locator locator = 2;
-  PathContext path_context = 3;
   optional int64 revision = 4;
   optional string name = 5;
   Locator parent = 6;
+  string scope_id = 7;
 }
 message UpdateNodeResponse {
   Node node = 1;
@@ -336,10 +258,10 @@ message UpdateNodeResponse {
 message ReplaceContentRequest {
   string filesystem_id = 1;
   Locator locator = 2;
-  PathContext path_context = 3;
   optional int64 revision = 4;
   bytes content = 5;
   string media_type = 6;
+  string scope_id = 7;
 }
 message ReplaceContentResponse {
   Node node = 1;
@@ -347,28 +269,18 @@ message ReplaceContentResponse {
 message Copy {
   string id = 1;
   string destination_root_id = 2;
-  string status = 3;
-  int64 committed_nodes = 4;
-  int64 committed_bytes = 5;
-  optional string error_code = 6;
 }
 message CreateCopyRequest {
+  string destination_scope_id = 8;
   string filesystem_id = 1;
   string source_id = 2;
   string parent_id = 3;
   string name = 4;
   optional int64 revision = 5;
   string idempotency_key = 6;
-  PathContext path_context = 7;
+  string scope_id = 7;
 }
 message CreateCopyResponse {
-  Copy copy = 1;
-}
-message GetCopyRequest {
-  string filesystem_id = 1;
-  string copy_id = 2;
-}
-message GetCopyResponse {
   Copy copy = 1;
 }
 message Processing {
@@ -382,7 +294,7 @@ message Processing {
 message GetProcessingRequest {
   string filesystem_id = 1;
   string node_id = 2;
-  PathContext path_context = 3;
+  string scope_id = 3;
 }
 message GetProcessingResponse {
   Processing processing = 1;
@@ -391,7 +303,7 @@ message ReprocessNodeRequest {
   string filesystem_id = 1;
   string node_id = 2;
   string idempotency_key = 3;
-  PathContext path_context = 4;
+  string scope_id = 4;
 }
 message ReprocessNodeResponse {
   string file_id = 1;
@@ -410,8 +322,8 @@ message TrashEntry {
 message TrashNodeRequest {
   string filesystem_id = 1;
   Locator locator = 2;
-  PathContext path_context = 3;
   optional int64 revision = 4;
+  string scope_id = 5;
 }
 message TrashNodeResponse {
   TrashEntry entry = 1;
@@ -420,6 +332,7 @@ message ListTrashRequest {
   string filesystem_id = 1;
   optional int32 limit = 2;
   optional string cursor = 3;
+  string scope_id = 4;
 }
 message ListTrashResponse {
   repeated TrashEntry items = 1;
@@ -428,6 +341,7 @@ message ListTrashResponse {
 message GetTrashRequest {
   string filesystem_id = 1;
   string entry_id = 2;
+  string scope_id = 3;
 }
 message GetTrashResponse {
   TrashEntry entry = 1;
@@ -435,6 +349,7 @@ message GetTrashResponse {
 message RestoreTrashRequest {
   string filesystem_id = 1;
   string entry_id = 2;
+  string scope_id = 3;
 }
 message RestoreTrashResponse {
   Node node = 1;
@@ -442,6 +357,7 @@ message RestoreTrashResponse {
 message PurgeTrashRequest {
   string filesystem_id = 1;
   string entry_id = 2;
+  string scope_id = 3;
 }
 message PurgeTrashResponse {
   // Absent after removal (HTTP 204); otherwise the durable purge admission (HTTP 202).
@@ -489,7 +405,6 @@ message Upload {
 message CreateUploadRequest {
   string filesystem_id = 1;
   string idempotency_key = 2;
-  PathContext path_context = 3;
   optional int64 size_bytes = 4;
   string media_type = 5;
   optional string content_md5 = 6;
@@ -498,6 +413,7 @@ message CreateUploadRequest {
     UploadDestination destination = 7;
     UploadReplacement replacement = 8;
   }
+  string scope_id = 9;
 }
 message CreateUploadResponse {
   Upload upload = 1;
@@ -505,6 +421,7 @@ message CreateUploadResponse {
 message GetUploadRequest {
   string filesystem_id = 1;
   string upload_id = 2;
+  string scope_id = 3;
 }
 message GetUploadResponse {
   Upload upload = 1;
@@ -515,6 +432,7 @@ message GetUploadPartsRequest {
   string filesystem_id = 1;
   string upload_id = 2;
   repeated int32 numbers = 3;
+  string scope_id = 4;
 }
 message UploadPart {
   int32 part_number = 1;
@@ -531,6 +449,7 @@ message CompleteUploadRequest {
   string filesystem_id = 1;
   string upload_id = 2;
   repeated PartReceipt parts = 3;
+  string scope_id = 4;
 }
 message CompleteUploadResponse {
   UploadPublication publication = 1;
@@ -538,6 +457,7 @@ message CompleteUploadResponse {
 message AbortUploadRequest {
   string filesystem_id = 1;
   string upload_id = 2;
+  string scope_id = 3;
 }
 message AbortUploadResponse {}
 
@@ -558,7 +478,7 @@ message SearchFilesRequest {
   optional string cursor = 5;
   optional string sort = 6;
   optional string direction = 7;
-  PathContext path_context = 8;
+  string scope_id = 8;
 }
 message Breadcrumb {
   string node_id = 1;
@@ -586,7 +506,7 @@ message SemanticSearchRequest {
   SearchFilters filters = 3;
   optional int32 limit = 4;
   optional string cursor = 5;
-  PathContext path_context = 6;
+  string scope_id = 6;
 }
 message SemanticSearchResponse {
   repeated SearchResult items = 1;
@@ -707,6 +627,7 @@ message IndexInput {
   repeated InventoryNode nodes = 4;
   VectorSpace vector_space = 5;
   int64 max_output_bytes = 6;
+  string scope_id = 7;
 }
 message IndexComplete {
   string source_id = 1;
@@ -761,4 +682,23 @@ message WriteOutputBytesRequest {
 message WriteOutputBytesResponse {
   // Bytes are received but publication is separate; completion saves the immutable receipt.
   UploadReceipt receipt = 1;
+}
+
+message Scope {
+  string id = 1;
+  string filesystem_id = 2;
+  string root_id = 3;
+  string state = 4;
+  bool allow_blob_files = 5;
+  bool allow_indexing = 6;
+}
+message CreateScopesRequest {
+  string filesystem_id = 1;
+  repeated string scope_ids = 2;
+  string idempotency_key = 3;
+  optional bool allow_blob_files = 4;
+  optional bool allow_indexing = 5;
+}
+message CreateScopesResponse {
+  repeated Scope scopes = 1;
 }

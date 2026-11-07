@@ -63,8 +63,8 @@ func TestIntegrationEnvoyPublicHTTPAndPrivateRPCIsolation(t *testing.T) {
 			request.Header.Set("Authorization", "Bearer "+token)
 		}
 		if spoof {
-			request.Header.Add("X-Openlet-User-ID", "invalid")
-			request.Header.Add("X-Openlet-User-ID", "019a3b66-0000-7000-8000-000000000099")
+			request.Header.Add("X-Openlet-Account-ID", "invalid")
+			request.Header.Add("X-Openlet-Account-ID", "019a3b66-0000-7000-8000-000000000099")
 			request.Header.Set("X-Gateway-Token", "spoofed")
 			request.Header.Set("X-Openlet-Service", "workspace")
 		}
@@ -88,7 +88,7 @@ func TestIntegrationEnvoyPublicHTTPAndPrivateRPCIsolation(t *testing.T) {
 	verified := metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer "+jwt))
 	_, err = letfsv1.NewFilesystemServiceClient(connection).GetNode(verified, &letfsv1.GetNodeRequest{})
 	require.Equal(t, codes.Unimplemented, status.Code(err), "file gRPC has no public ingress")
-	_, err = letfsv1.NewStorageAdministrationServiceClient(connection).CreateBucket(verified, &letfsv1.CreateBucketRequest{})
+	_, err = letfsv1.NewStorageAdministrationServiceClient(connection).CreateFilesystem(verified, &letfsv1.CreateFilesystemRequest{})
 	require.Equal(t, codes.Unimplemented, status.Code(err))
 	_, err = letfsv1.NewIngestServiceClient(connection).PrepareParse(verified, &letfsv1.PrepareParseRequest{})
 	require.Equal(t, codes.Unimplemented, status.Code(err))
@@ -128,7 +128,7 @@ func fixtureJWT(t *testing.T, key *rsa.PrivateKey, actor string) string {
 	}
 	claims := map[string]any{"iss": "https://issuer.example.test", "aud": "openlet-proof", "sub": "fixture-user", "exp": time.Now().Add(time.Minute).Unix()}
 	if actor != "" {
-		claims["openlet_user_id"] = actor
+		claims["openlet_account_id"] = actor
 	}
 	unsigned := encode(map[string]string{"alg": "RS256", "typ": "JWT", "kid": "proof"}) + "." + encode(claims)
 	hash := sha256.Sum256([]byte(unsigned))

@@ -32,7 +32,9 @@ def test_chunks_cover_full_text_not_only_overview_and_have_minimal_payload():
             "opening " * 100 + "RARE_INTERIOR_EVIDENCE " + "closing " * 100
         ).encode()
     }
-    points = list(evidence_points(nodes, contents, "fs", "source", 1, SPACE, 64, 8))
+    points = list(
+        evidence_points(nodes, contents, "fs", "scope", "source", 1, SPACE, 64, 8)
+    )
     assert len(points) > 2
     assert "RARE_INTERIOR_EVIDENCE" not in points[0]["payload"]["text"]
     assert any(
@@ -40,12 +42,13 @@ def test_chunks_cover_full_text_not_only_overview_and_have_minimal_payload():
     )
     assert len({p["id"] for p in points}) == len(points)
     assert points == list(
-        evidence_points(nodes, contents, "fs", "source", 1, SPACE, 64, 8)
+        evidence_points(nodes, contents, "fs", "scope", "source", 1, SPACE, 64, 8)
     )
     assert all(
         set(p["payload"])
         == {
             "filesystem_id",
+            "scope_id",
             "source_id",
             "file_id",
             "generation",
@@ -62,14 +65,14 @@ def test_chunks_cover_full_text_not_only_overview_and_have_minimal_payload():
         VectorSpace("model", "files", 3),
     ):
         changed = list(
-            evidence_points(nodes, contents, "fs", "source", 1, space, 64, 8)
+            evidence_points(nodes, contents, "fs", "scope", "source", 1, space, 64, 8)
         )
         assert {p["id"] for p in points}.isdisjoint(p["id"] for p in changed)
     assert (
         points[0]["id"]
-        != list(evidence_points(nodes, contents, "fs", "source", 2, SPACE, 64, 8))[0][
-            "id"
-        ]
+        != list(
+            evidence_points(nodes, contents, "fs", "scope", "source", 2, SPACE, 64, 8)
+        )[0]["id"]
     )
 
 
@@ -88,7 +91,9 @@ def test_readme_aliases_ancestors_and_csv_image_overviews():
         "table": b"SECRET_ROW_VALUE " * 1000,
         "image": b"binary",
     }
-    points = list(evidence_points(nodes, contents, "fs", "source", 1, SPACE, 64, 8))
+    points = list(
+        evidence_points(nodes, contents, "fs", "scope", "source", 1, SPACE, 64, 8)
+    )
     assert {p["payload"]["file_id"] for p in points} == {
         "readme",
         "part-readme",
@@ -110,6 +115,7 @@ def test_short_text_keeps_exact_evidence_in_its_single_file_point():
             [node("source")],
             {"source": b"Incident reference EXACT_ID_3917."},
             "fs",
+            "scope",
             "source",
             1,
             SPACE,
@@ -176,6 +182,7 @@ async def test_batch_failure_propagates_and_retry_reuses_point_ids():
         Store(),
         VectorSpace("model", "files", 2),
         "fs",
+        "scope",
         "source",
         1,
     )
@@ -227,7 +234,7 @@ async def test_native_bm25_collection_and_confirmation_contract():
 async def test_existing_collection_only_repairs_changed_indexes(change):
     indexes = {
         field: {"data_type": "keyword", "points": 0}
-        for field in ("filesystem_id", "source_id", "embedding_model")
+        for field in ("filesystem_id", "scope_id", "source_id", "embedding_model")
     }
     indexes["text"] = {
         "data_type": "text",

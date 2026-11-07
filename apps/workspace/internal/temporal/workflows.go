@@ -5,100 +5,80 @@ import (
 	"errors"
 	"github.com/google/uuid"
 	"github.com/qninhdt/openlet/apps/workspace/internal/workspace"
-	sharedtemporal "github.com/qninhdt/openlet/packages/go/temporal"
-	"go.temporal.io/api/enums/v1"
+	shared "github.com/qninhdt/openlet/packages/go/temporal"
+	enums "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 	"time"
 )
 
-const Queue = "openlet-workspace"
+const Queue = shared.WorkspaceQueue
 
 type Activities struct{ Service *workspace.Service }
+type Workflows struct{ QuotaLimit int64 }
 
-func (a *Activities) PrepareWorkspace(ctx context.Context, in workspace.CreateInput) (workspace.Provisioning, error) {
-	value, err := a.Service.Prepare(ctx, in)
-	return value, sharedtemporal.Error(err)
+func (a *Activities) SaveWorkspace(ctx context.Context, in workspace.Creation) (workspace.Workspace, error) {
+	value, err := a.Service.SaveWorkspace(ctx, in)
+	return value, shared.Error(err)
 }
-func (a *Activities) CreateStorage(ctx context.Context, in workspace.Storage) (workspace.Storage, error) {
-	request, err := workspace.ToClientStorage(in)
+func (w *Workflows) CreateWorkspace(ctx workflow.Context, in shared.WorkspaceCreation) (value workspace.Workspace, err error) {
+	if in.ActorID == uuid.Nil || in.Key == uuid.Nil {
+		return value, temporal.NewNonRetryableApplicationError("invalid creation", "VALIDATION", nil)
+	}
+	if err = workspace.ValidateName(in.Name); err != nil {
+		return value, shared.Error(err)
+	}
+	var allocated struct {
+		Creation   workspace.Creation
+		LimitBytes int64
+	}
+	err = workflow.SideEffect(ctx, func(workflow.Context) any {
+		return struct {
+			Creation   workspace.Creation
+			LimitBytes int64
+		}{workspace.Creation{Input: in, ID: uuid.Must(uuid.NewV7()), FilesystemID: uuid.Must(uuid.NewV7()), SharedScopeID: uuid.Must(uuid.NewV7()), PersonalScopeID: uuid.Must(uuid.NewV7())}, w.QuotaLimit}
+	}).Get(&allocated)
 	if err != nil {
-		return workspace.Storage{}, sharedtemporal.Error(err)
+		return value, err
 	}
-	value, err := a.Service.Storage.CreateStorage(ctx, request)
-	result := workspace.FromClientStorage(value)
-	result.WorkspaceID = in.WorkspaceID
-	return result, sharedtemporal.Error(err)
-}
-func (a *Activities) CompleteWorkspace(ctx context.Context, storage workspace.Storage, in workspace.CreateInput) error {
-	return sharedtemporal.Error(a.Service.Complete(ctx, storage, in))
-}
-func (a *Activities) FailWorkspace(ctx context.Context, in workspace.CreateInput) error {
-	return sharedtemporal.Error(a.Service.Fail(ctx, in))
-}
-
-func CreateWorkspace(ctx workflow.Context, in workspace.CreateInput) (result uuid.UUID, err error) {
-	ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{StartToCloseTimeout: 30 * time.Second, RetryPolicy: &temporal.RetryPolicy{InitialInterval: time.Second, MaximumInterval: 30 * time.Second}})
-	var prepared workspace.Provisioning
-	var admissionErr error
-	ready := false
-	if err = workflow.SetUpdateHandler(ctx, "admission", func(ctx workflow.Context, requested workspace.CreateInput) (workspace.Workspace, error) {
-		if requested != in {
-			return workspace.Workspace{}, temporal.NewNonRetryableApplicationError("idempotency conflict", "IDEMPOTENCY_CONFLICT", nil)
-		}
-		if err := workflow.Await(ctx, func() bool { return ready }); err != nil {
-			return workspace.Workspace{}, err
-		}
-		return prepared.Workspace, admissionErr
-	}); err != nil {
-		return uuid.Nil, err
-	}
-	defer func() { _ = workflow.Await(ctx, func() bool { return workflow.AllHandlersFinished(ctx) }) }()
-	var a *Activities
+	mapping := allocated.Creation
+	remote := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{TaskQueue: shared.LetFSQueue, StartToCloseTimeout: 30 * time.Second})
+	local := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{StartToCloseTimeout: 30 * time.Second})
+	storageCreated := false
 	defer func() {
-		if err != nil {
-			cleanup, cancel := workflow.NewDisconnectedContext(ctx)
-			defer cancel()
-			_ = workflow.ExecuteActivity(cleanup, a.FailWorkspace, in).Get(cleanup, nil)
+		var application *temporal.ApplicationError
+		// Only an acknowledged permanent refusal can compensate. SQL/graph uncertainty retries.
+		if !storageCreated || err == nil || !errors.As(err, &application) || !application.NonRetryable() {
+			return
+		}
+		cleanup, cancel := workflow.NewDisconnectedContext(ctx)
+		defer cancel()
+		child := workflow.WithChildOptions(cleanup, workflow.ChildWorkflowOptions{TaskQueue: shared.LetFSQueue, ParentClosePolicy: enums.PARENT_CLOSE_POLICY_ABANDON})
+		if cleanupErr := workflow.ExecuteChildWorkflow(child, shared.DeleteFilesystemWorkflow, shared.FilesystemDeletion{FilesystemID: mapping.FilesystemID}).Get(cleanup, nil); cleanupErr != nil {
+			err = cleanupErr
 		}
 	}()
-	admissionErr = workflow.ExecuteActivity(ctx, a.PrepareWorkspace, in).Get(ctx, &prepared)
-	ready = true
-	if admissionErr != nil {
-		return uuid.Nil, admissionErr
+	if err = workflow.ExecuteActivity(remote, shared.CreateFilesystemActivity, shared.FilesystemCreation{ID: mapping.FilesystemID, Key: in.Key, LimitBytes: allocated.LimitBytes}).Get(remote, nil); err != nil {
+		return value, err
 	}
-	result = prepared.Workspace.ID
-	mapping := prepared.Storage
-	if err = workflow.ExecuteActivity(ctx, a.CreateStorage, mapping).Get(ctx, &mapping); err != nil {
-		return result, err
+	storageCreated = true
+	if err = workflow.ExecuteActivity(remote, shared.CreateScopesActivity, shared.ScopesCreation{AllowBlobFiles: true, AllowIndexing: true, FilesystemID: mapping.FilesystemID, Key: in.Key, IDs: []uuid.UUID{mapping.SharedScopeID, mapping.PersonalScopeID}}).Get(remote, nil); err != nil {
+		return value, err
 	}
-	err = workflow.ExecuteActivity(ctx, a.CompleteWorkspace, mapping, in).Get(ctx, nil)
-	return result, err
+	var a *Activities
+	err = workflow.ExecuteActivity(local, a.SaveWorkspace, mapping).Get(local, &value)
+	return value, err
 }
-
 func StartCreate(ctx context.Context, tc client.Client, in workspace.CreateInput) (workspace.Workspace, error) {
-	operation := tc.NewWithStartWorkflowOperation(client.StartWorkflowOptions{ID: "create-workspace/" + in.ActorID.String() + "/" + in.Key.String(), TaskQueue: Queue, WorkflowIDConflictPolicy: enums.WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING, WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE, WorkflowExecutionTimeout: 7 * 24 * time.Hour}, CreateWorkspace, in)
-	handle, err := tc.UpdateWithStartWorkflow(ctx, client.UpdateWithStartWorkflowOptions{StartWorkflowOperation: operation, UpdateOptions: client.UpdateWorkflowOptions{UpdateName: "admission", Args: []any{in}, WaitForStage: client.WorkflowUpdateStageAccepted}})
+	run, err := tc.ExecuteWorkflow(ctx, client.StartWorkflowOptions{ID: "create-workspace/" + in.ActorID.String() + "/" + in.Key.String(), TaskQueue: Queue, WorkflowIDConflictPolicy: enums.WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING, WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE, WorkflowExecutionTimeout: 7 * 24 * time.Hour}, shared.CreateWorkspaceWorkflow, in)
 	if err != nil {
 		return workspace.Workspace{}, err
 	}
 	var value workspace.Workspace
-	err = handle.Get(ctx, &value)
+	err = run.Get(ctx, &value)
 	return value, startError(err)
 }
-
-func StartInitial(ctx context.Context, tc client.Client, in workspace.CreateInput) (workspace.Workspace, error) {
-	operation := tc.NewWithStartWorkflowOperation(client.StartWorkflowOptions{ID: "create-workspace/" + in.ActorID.String() + "/" + in.Key.String(), TaskQueue: Queue, WorkflowIDConflictPolicy: enums.WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING, WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE, WorkflowExecutionTimeout: 7 * 24 * time.Hour}, CreateWorkspace, in)
-	handle, err := tc.UpdateWithStartWorkflow(ctx, client.UpdateWithStartWorkflowOptions{StartWorkflowOperation: operation, UpdateOptions: client.UpdateWorkflowOptions{UpdateName: "admission", Args: []any{in}, WaitForStage: client.WorkflowUpdateStageAccepted}})
-	if err != nil {
-		return workspace.Workspace{}, err
-	}
-	var value workspace.Workspace
-	err = handle.Get(ctx, &value)
-	return value, startError(err)
-}
-
 func startError(err error) error {
 	if err == nil {
 		return nil

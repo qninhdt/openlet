@@ -19,6 +19,7 @@ type ProcessFileInput struct {
 	Source             filesystem.Generation `json:"source"`
 	ParseRequired      bool                  `json:"parse_required"`
 	EnrichmentRequired bool                  `json:"enrichment_required"`
+	SkipIndex          bool                  `json:"skip_index"`
 }
 
 func ProcessFile(ctx workflow.Context, input ProcessFileInput) (filesystem.Generation, error) {
@@ -36,6 +37,9 @@ func ProcessFile(ctx workflow.Context, input ProcessFileInput) (filesystem.Gener
 		if err := workflow.ExecuteActivity(io, "enrich_file", input.Source).Get(io, nil); err != nil {
 			return filesystem.Generation{}, err
 		}
+	}
+	if input.SkipIndex {
+		return input.Source, nil
 	}
 	var result filesystem.Generation
 	err := workflow.ExecuteActivity(io, "index_file", input.Source).Get(io, &result)

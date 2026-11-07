@@ -93,7 +93,7 @@ func (s *Store) prepareProcessingOutput(ctx context.Context, a Generation, stage
 	if err = session.tx.Commit(ctx); err != nil {
 		return Upload{}, databaseError(err)
 	}
-	return s.prepareUpload(ctx, session.fs, id, uploadAccess{source: &a, stage: stage})
+	return s.prepareUpload(ctx, session.scopeID, id, uploadAccess{source: &a, stage: stage})
 }
 
 func (s *session) insertProcessingOutput(ctx context.Context, store *Store, a Generation, stage string, output ProcessingOutput) (uuid.UUID, error) {
@@ -126,6 +126,9 @@ func (s *session) insertProcessingOutput(ctx context.Context, store *Store, a Ge
 			return uuid.Nil, apperr.New(apperr.Invalid, "VALIDATION", "inline output has no Content-MD5")
 		}
 	case "object":
+		if !s.allowBlobFiles {
+			return uuid.Nil, apperr.New(apperr.Invalid, "BLOB_FILES_DISABLED", "scope requires inline processing outputs")
+		}
 		if store.Storage == nil || store.MultipartThreshold <= 0 || store.MultipartPartBytes < 5242880 {
 			return uuid.Nil, storageError(ctx, storage.ErrUnavailable)
 		}
@@ -150,12 +153,12 @@ func (s *session) insertProcessingOutput(ctx context.Context, store *Store, a Ge
 	}
 	id := uuid.Must(uuid.NewV7())
 	if transport != "inline" {
-		key := "objects/" + s.bucket.String() + "/" + id.String()
+		key := "objects/" + s.filesystemID.String() + "/" + id.String()
 		candidate = &key
 	}
-	_, err = s.tx.Exec(ctx, `INSERT INTO uploads(id,filesystem_id,bucket_id,input,candidate_key,transport,expected_size,content_md5,part_size,
+	_, err = s.tx.Exec(ctx, `INSERT INTO uploads(id,scope_id,input,candidate_key,transport,expected_size,content_md5,part_size,
  processing_file_id,processing_generation,relative_path,processing_stage)
- VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, id, s.fs, s.bucket, encoded, candidate, transport, size, output.ContentMD5, partSize, a.FileID, a.Generation, output.Path, stage)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, id, s.scopeID, encoded, candidate, transport, size, output.ContentMD5, partSize, a.FileID, a.Generation, output.Path, stage)
 	return id, databaseError(err)
 }
 
@@ -181,11 +184,11 @@ func (s *Store) GetOutputUploadParts(ctx context.Context, scope OutputScope, num
 	if err != nil {
 		return nil, err
 	}
-	fs := session.fs
+	scopeID := session.scopeID
 	if err = session.tx.Rollback(ctx); err != nil {
 		return nil, databaseError(err)
 	}
-	return s.getUploadParts(ctx, fs, scope.UploadID, access, numbers)
+	return s.getUploadParts(ctx, scopeID, scope.UploadID, access, numbers)
 }
 
 func (s *Store) CompleteOutputUpload(ctx context.Context, scope OutputScope, parts []storage.PartReceipt) (Upload, error) {
@@ -197,11 +200,11 @@ func (s *Store) CompleteOutputUpload(ctx context.Context, scope OutputScope, par
 	if err != nil {
 		return Upload{}, err
 	}
-	fs := session.fs
+	scopeID := session.scopeID
 	if err = session.tx.Rollback(ctx); err != nil {
 		return Upload{}, databaseError(err)
 	}
-	if _, err = s.completeUpload(ctx, fs, scope.UploadID, access, parts); err != nil {
+	if _, err = s.completeUpload(ctx, scopeID, scope.UploadID, access, parts); err != nil {
 		return Upload{}, err
 	}
 	return s.GetOutputUpload(ctx, scope)
@@ -229,6 +232,9 @@ func (s *Store) WriteOutputBytes(ctx context.Context, scope OutputScope, content
 	}
 	if int64(len(content)) != upload.SizeBytes {
 		return Upload{}, apperr.New(apperr.Invalid, "VALIDATION", "inline size differs from prepared size")
+	}
+	if err = session.validateInlineText(content); err != nil {
+		return Upload{}, err
 	}
 	if upload.State == "finalized" {
 		return upload, nil

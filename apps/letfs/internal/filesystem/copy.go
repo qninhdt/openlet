@@ -15,10 +15,11 @@ import (
 )
 
 type CreateCopy struct {
-	SourceID uuid.UUID `json:"source_id"`
-	ParentID uuid.UUID `json:"parent_id"`
-	Name     string    `json:"name"`
-	Revision *int64    `json:"revision"`
+	DestinationScopeID uuid.UUID `json:"destination_scope_id"`
+	SourceID           uuid.UUID `json:"source_id"`
+	ParentID           uuid.UUID `json:"parent_id"`
+	Name               string    `json:"name"`
+	Revision           *int64    `json:"revision"`
 }
 
 // CopyItem captures identity and payload fingerprints without carrying file bytes.
@@ -41,45 +42,20 @@ type CopyItem struct {
 }
 
 type CopyAdmission struct {
-	ID           uuid.UUID `json:"id"`
-	FilesystemID uuid.UUID `json:"filesystem_id"`
-	ActorID      uuid.UUID `json:"actor_id"`
-	Root         CopyItem  `json:"root"`
-	MaxNodes     int64     `json:"max_nodes"`
-	MaxBytes     int64     `json:"max_bytes"`
-	Deadline     time.Time `json:"deadline"`
+	FilesystemID       uuid.UUID `json:"filesystem_id"`
+	DestinationScopeID uuid.UUID `json:"destination_scope_id"`
+	ID                 uuid.UUID `json:"id"`
+	ScopeID            uuid.UUID `json:"scope_id"`
+	ActorID            uuid.UUID `json:"actor_id"`
+	Root               CopyItem  `json:"root"`
+	MaxNodes           int64     `json:"max_nodes"`
+	MaxBytes           int64     `json:"max_bytes"`
+	Deadline           time.Time `json:"deadline"`
 }
 
-type CopyState struct {
-	Admission      CopyAdmission `json:"admission"`
-	Frames         []CopyFrame   `json:"frames"`
-	Pending        *CopyItem     `json:"pending"`
-	CommittedNodes int64         `json:"committed_nodes"`
-	CommittedBytes int64         `json:"committed_bytes"`
-	Status         string        `json:"status"`
-	ErrorCode      *string       `json:"error_code"`
-}
-
-func NewCopyState(admission CopyAdmission) CopyState {
-	root := admission.Root
-	return CopyState{Admission: admission, Frames: []CopyFrame{}, Pending: &root, Status: "running"}
-}
-
-func (s *Store) CopyReader(ctx context.Context, fs uuid.UUID) (uuid.UUID, bool, error) {
-	actor, err := s.authorize(ctx, fs, "filesystem", authz.CopyRead)
-	if err != nil {
-		return uuid.Nil, false, err
-	}
-	session, err := s.openSession(ctx, fs, false)
-	if err != nil {
-		return uuid.Nil, false, err
-	}
-	_ = session.tx.Rollback(ctx)
-	_, err = s.authorize(ctx, fs, "filesystem", authz.CopyInspectAny)
-	if apperr.KindOf(err) == apperr.Forbidden {
-		return actor, false, nil
-	}
-	return actor, err == nil, err
+type CopyResult struct {
+	ID                uuid.UUID `json:"id"`
+	DestinationRootID uuid.UUID `json:"destination_root_id"`
 }
 
 func copyDestination(copyID, source uuid.UUID) uuid.UUID {
@@ -108,7 +84,7 @@ func (s *session) selectCopy(ctx context.Context, copyID uuid.UUID, node, parent
 		encoded := hex.EncodeToString(digest[:])
 		item.InlineSHA256 = &encoded
 	}
-	err = s.tx.QueryRow(ctx, `SELECT id FROM nodes WHERE filesystem_id=$1 AND parent_id=$2 ORDER BY id DESC LIMIT 1`, s.fs, node.ID).Scan(&item.Upper)
+	err = s.tx.QueryRow(ctx, `SELECT id FROM nodes WHERE scope_id=$1 AND parent_id=$2 ORDER BY id DESC LIMIT 1`, s.scopeID, node.ID).Scan(&item.Upper)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return CopyItem{}, databaseError(err)
 	}
@@ -116,12 +92,12 @@ func (s *session) selectCopy(ctx context.Context, copyID uuid.UUID, node, parent
 }
 
 // AdmitCopy persists admission; callers must dispatch its workflow before acknowledging a job.
-func (s *Store) AdmitCopy(ctx context.Context, fs uuid.UUID, mounts []Mount, key uuid.UUID, input CreateCopy) (CopyAdmission, error) {
-	actor, err := s.authorize(ctx, fs, "filesystem", authz.CopyCreate)
+func (s *Store) AdmitCopy(ctx context.Context, scopeID uuid.UUID, key uuid.UUID, input CreateCopy) (CopyAdmission, error) {
+	actor, err := s.authorize(ctx, input.DestinationScopeID, "scope", authz.ScopeWrite)
 	if err != nil {
 		return CopyAdmission{}, err
 	}
-	if _, err = s.authorize(ctx, fs, "filesystem", authz.NodeRead); err != nil {
+	if _, err = s.authorize(ctx, scopeID, "scope", authz.ScopeReadContent); err != nil {
 		return CopyAdmission{}, err
 	}
 	if key == uuid.Nil || input.SourceID == uuid.Nil || input.ParentID == uuid.Nil {
@@ -130,19 +106,24 @@ func (s *Store) AdmitCopy(ctx context.Context, fs uuid.UUID, mounts []Mount, key
 	if err = ValidateName(input.Name); err != nil {
 		return CopyAdmission{}, err
 	}
-	if _, err = pathParts(fs, mounts, Locator{NodeID: &input.SourceID}); err != nil {
+	if _, err = pathParts(Locator{NodeID: &input.SourceID}); err != nil {
 		return CopyAdmission{}, err
 	}
 	hash, err := fingerprint(input)
 	if err != nil {
 		return CopyAdmission{}, err
 	}
-	session, err := s.openSession(ctx, fs, true)
+	session, err := s.openSession(ctx, input.DestinationScopeID, true)
 	if err != nil {
 		return CopyAdmission{}, err
 	}
 	defer session.tx.Rollback(ctx)
-	scope := "filesystem/" + fs.String() + "/actor/" + actor.String()
+	sourceSession, err := session.inScope(ctx, scopeID)
+	if err != nil {
+		return CopyAdmission{}, err
+	}
+
+	scope := "scope/" + scopeID.String() + "/actor/" + actor.String()
 	var savedHash string
 	var saved []byte
 	err = session.tx.QueryRow(ctx, `SELECT request_hash,result FROM idempotency_keys
@@ -163,14 +144,14 @@ func (s *Store) AdmitCopy(ctx context.Context, fs uuid.UUID, mounts []Mount, key
 	if err = session.uploadCapacity(ctx, s.MaxOutstanding, s.MaxCleanupBacklog); err != nil {
 		return CopyAdmission{}, err
 	}
-	source, err := session.resolveOne(ctx, mounts, Locator{NodeID: &input.SourceID})
+	source, err := sourceSession.resolveOne(ctx, Locator{NodeID: &input.SourceID})
 	if err != nil {
 		return CopyAdmission{}, err
 	}
 	if err = source.revision(input.Revision); err != nil {
 		return CopyAdmission{}, err
 	}
-	parent, err := session.resolveOne(ctx, mounts, Locator{NodeID: &input.ParentID})
+	parent, err := session.resolveOne(ctx, Locator{NodeID: &input.ParentID})
 	if err != nil {
 		return CopyAdmission{}, err
 	}
@@ -183,11 +164,13 @@ func (s *Store) AdmitCopy(ctx context.Context, fs uuid.UUID, mounts []Mount, key
 	if err = session.name(parent.ID, input.Name); err != nil {
 		return CopyAdmission{}, err
 	}
-	if err = session.cycle(ctx, source.ID, parent.ID); err != nil {
-		return CopyAdmission{}, err
+	if scopeID == input.DestinationScopeID {
+		if err = session.cycle(ctx, source.ID, parent.ID); err != nil {
+			return CopyAdmission{}, err
+		}
 	}
 	var occupied bool
-	err = session.tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM nodes WHERE filesystem_id=$1 AND parent_id=$2 AND name=$3)`, fs, parent.ID, input.Name).Scan(&occupied)
+	err = session.tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM nodes WHERE scope_id=$1 AND parent_id=$2 AND name=$3)`, input.DestinationScopeID, parent.ID, input.Name).Scan(&occupied)
 	if err != nil {
 		return CopyAdmission{}, databaseError(err)
 	}
@@ -202,18 +185,21 @@ func (s *Store) AdmitCopy(ctx context.Context, fs uuid.UUID, mounts []Mount, key
 		return CopyAdmission{}, apperr.New(apperr.Conflict, "RESOURCE_LIMIT", "tree depth limit exceeded")
 	}
 	id := uuid.Must(uuid.NewV7())
-	root, err := session.selectCopy(ctx, id, source, parent, input.Name, false, depth+1)
+	root, err := sourceSession.selectCopy(ctx, id, source, parent, input.Name, false, depth+1)
 	if err != nil {
 		return CopyAdmission{}, err
 	}
+	if root.ObjectKey != nil && !session.allowBlobFiles {
+		return CopyAdmission{}, apperr.New(apperr.Invalid, "BLOB_FILES_DISABLED", "destination scope does not allow blob files")
+	}
 	var maxBytes int64
-	if err = session.tx.QueryRow(ctx, `SELECT limit_bytes FROM quota_buckets WHERE id=$1`, session.bucket).Scan(&maxBytes); err != nil {
+	if err = session.tx.QueryRow(ctx, `SELECT limit_bytes FROM filesystems WHERE id=$1`, session.filesystemID).Scan(&maxBytes); err != nil {
 		return CopyAdmission{}, databaseError(err)
 	}
 	if s.MaxCopyNodes <= 0 {
 		return CopyAdmission{}, apperr.New(apperr.Conflict, "RESOURCE_LIMIT", "invalid copy node limit")
 	}
-	admission := CopyAdmission{ID: id, FilesystemID: fs, ActorID: actor, Root: root, MaxNodes: s.MaxCopyNodes, MaxBytes: maxBytes, Deadline: time.Now().UTC().Add(time.Hour)}
+	admission := CopyAdmission{ID: id, FilesystemID: session.filesystemID, ScopeID: scopeID, DestinationScopeID: input.DestinationScopeID, ActorID: actor, Root: root, MaxNodes: s.MaxCopyNodes, MaxBytes: maxBytes, Deadline: time.Now().UTC().Add(time.Hour)}
 	saved, err = json.Marshal(admission)
 	if err != nil {
 		return CopyAdmission{}, err

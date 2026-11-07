@@ -38,7 +38,7 @@ func TestTrustedIdentityBoundary(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			r := httptest.NewRequest("GET", c.path, nil)
 			r.Header.Set("X-Gateway-Token", c.token)
-			r.Header.Set("X-Openlet-User-ID", c.id)
+			r.Header.Set("X-Openlet-Account-ID", c.id)
 			r.Header.Set("X-Clerk-Sub", c.sub)
 			w := httptest.NewRecorder()
 			h.ServeHTTP(w, r)
@@ -101,7 +101,7 @@ func TestFileFacadeRoutesAreRemoved(t *testing.T) {
 		request := httptest.NewRequest("GET", "/v1/workspaces/"+uuid.NewString()+path, nil)
 		request.Header.Set("X-Gateway-Token", s.Config.GatewayToken)
 		request.Header.Set("X-Clerk-Sub", "user_test")
-		request.Header.Set("X-Openlet-User-ID", uuid.NewString())
+		request.Header.Set("X-Openlet-Account-ID", uuid.NewString())
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, request)
 		if response.Code != 404 {

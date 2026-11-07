@@ -38,7 +38,7 @@ export async function lockFilesystemRoot(filesystemId: string): Promise<() => Pr
       });
       exited.finally(() => clearTimeout(timer)).catch(() => {});
       // Block child deletion after the owner has durably admitted filesystem cleanup.
-      process.stdin.write(`BEGIN;\nSELECT n.id FROM nodes n JOIN filesystems f ON f.root_id=n.id WHERE f.id='${filesystemId}' FOR UPDATE OF n;\n\\echo filesystem-lock-ready\n`);
+      process.stdin.write(`BEGIN;\nSELECT n.id FROM nodes n JOIN scopes s ON s.root_id=n.id WHERE s.filesystem_id='${filesystemId}' FOR UPDATE OF n;\n\\echo filesystem-lock-ready\n`);
     }), exited.then(() => { throw new Error('Filesystem lock closed before readiness'); })]);
     return release;
   } catch (error) { await release().catch(() => {}); throw error; }

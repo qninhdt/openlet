@@ -36,7 +36,7 @@ func (s *Store) Authorize(ctx context.Context, ws, actor uuid.UUID, action authz
 	return value, nil
 }
 
-// Recheck local identity/version after graph admission, without holding a SQL lock across RPC.
+// Recheck local identity/role after graph admission, without holding a SQL lock across RPC.
 func (s *Store) lockAdmission(ctx context.Context, tx pgx.Tx, observed Workspace, actor uuid.UUID) (Workspace, error) {
 	if _, err := tx.Exec(ctx, `SELECT id FROM workspaces WHERE id=$1 FOR UPDATE`, observed.ID); err != nil {
 		return Workspace{}, err
@@ -45,8 +45,8 @@ func (s *Store) lockAdmission(ctx context.Context, tx pgx.Tx, observed Workspace
 	if err != nil {
 		return value, err
 	}
-	if value.Revision != observed.Revision || value.Status != observed.Status {
-		return value, Fault{"REVISION_MISMATCH"}
+	if value.Role != observed.Role || value.Status != observed.Status {
+		return value, Fault{"STATE_CONFLICT"}
 	}
 	return value, nil
 }

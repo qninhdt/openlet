@@ -39,29 +39,26 @@ type Store struct {
 	ArchiveSlots                                   *semaphore.Weighted
 }
 
-type Bucket struct {
+type Filesystem struct {
 	ID         uuid.UUID `json:"id"`
 	LimitBytes int64     `json:"limit_bytes,string"`
 	UsedBytes  int64     `json:"used_bytes,string"`
+	NodeCount  int64     `json:"node_count,string"`
 	State      string    `json:"state"`
 }
 
-type Filesystem struct {
-	ID       uuid.UUID  `json:"id"`
-	BucketID uuid.UUID  `json:"bucket_id"`
-	RootID   *uuid.UUID `json:"root_id"`
-	State    string     `json:"state"`
-}
-
-type CreateBucket struct {
+type CreateFilesystem struct {
 	ID         uuid.UUID `json:"id"`
 	LimitBytes int64     `json:"limit_bytes"`
 }
 
-type CreateFilesystem struct {
-	ID       uuid.UUID `json:"id"`
-	BucketID uuid.UUID `json:"bucket_id"`
-	RootName string    `json:"root_name"`
+type Scope struct {
+	ID             uuid.UUID  `json:"id"`
+	FilesystemID   uuid.UUID  `json:"filesystem_id"`
+	RootID         *uuid.UUID `json:"root_id"`
+	State          string     `json:"state"`
+	AllowBlobFiles bool       `json:"allow_blob_files"`
+	AllowIndexing  bool       `json:"allow_indexing"`
 }
 
 func service(ctx context.Context) (string, error) {
@@ -115,265 +112,166 @@ func receipt(ctx context.Context, tx pgx.Tx, caller, operation string, key uuid.
 	return json.Unmarshal(saved, result)
 }
 
-func (s *Store) CreateBucket(ctx context.Context, key uuid.UUID, input CreateBucket) (Bucket, error) {
-	var result Bucket
-	caller, err := service(ctx)
-	if err != nil {
-		return result, err
-	}
-	if err = requestIdentity(input.ID, key); err != nil {
-		return result, err
-	}
-	if input.LimitBytes < 0 {
-		return result, apperr.New(apperr.Invalid, "VALIDATION", "invalid byte limit")
-	}
-	hash, err := fingerprint(input)
-	if err != nil {
-		return result, err
-	}
-	tx, err := s.DB.Begin(ctx)
-	if err != nil {
-		return result, err
-	}
-	defer tx.Rollback(ctx)
-	_, err = tx.Exec(ctx, `INSERT INTO quota_buckets(id,limit_bytes)
-		VALUES($1,$2) ON CONFLICT(id) DO NOTHING`, input.ID, input.LimitBytes)
-	if err != nil {
-		return result, err
-	}
-	err = tx.QueryRow(ctx, `SELECT id,limit_bytes,used_bytes,state FROM quota_buckets WHERE id=$1 FOR UPDATE`, input.ID).
-		Scan(&result.ID, &result.LimitBytes, &result.UsedBytes, &result.State)
-	if err != nil {
-		return result, err
-	}
-	if result.State != "active" {
-		return Bucket{}, apperr.New(apperr.Precondition, "SCOPE_CONFLICT", "resource scope or state conflicts")
-	}
-	if err = receipt(ctx, tx, caller, "create-bucket", key, hash, &result); err != nil {
-		return Bucket{}, err
-	}
-	return result, tx.Commit(ctx)
-}
-
-func bucketForUpdate(ctx context.Context, tx pgx.Tx, id uuid.UUID) (Bucket, error) {
-	var result Bucket
-	err := tx.QueryRow(ctx, `SELECT id,limit_bytes,used_bytes,state FROM quota_buckets WHERE id=$1 FOR UPDATE`, id).
-		Scan(&result.ID, &result.LimitBytes, &result.UsedBytes, &result.State)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Bucket{}, apperr.New(apperr.Missing, "NOT_FOUND", "resource not found")
-	}
-	if err != nil {
-		return Bucket{}, err
-	}
-	return result, nil
+func filesystemForUpdate(ctx context.Context, tx pgx.Tx, id uuid.UUID) (Filesystem, error) {
+	var value Filesystem
+	err := tx.QueryRow(ctx, `SELECT id,limit_bytes,used_bytes,node_count,state FROM filesystems WHERE id=$1 FOR UPDATE`, id).Scan(&value.ID, &value.LimitBytes, &value.UsedBytes, &value.NodeCount, &value.State)
+	return value, databaseError(err)
 }
 
 func (s *Store) CreateFilesystem(ctx context.Context, key uuid.UUID, input CreateFilesystem) (Filesystem, error) {
-	var result Filesystem
 	caller, err := service(ctx)
 	if err != nil {
-		return result, err
+		return Filesystem{}, err
 	}
 	if err = requestIdentity(input.ID, key); err != nil {
-		return result, err
+		return Filesystem{}, err
 	}
-	if input.BucketID == uuid.Nil || input.BucketID.Version() != 7 || s.MaxNodes <= 0 {
-		return result, apperr.New(apperr.Invalid, "VALIDATION", "invalid filesystem limits or bucket")
-	}
-	if err = ValidateName(input.RootName); err != nil {
-		return result, err
+	if input.LimitBytes < 0 {
+		return Filesystem{}, apperr.New(apperr.Invalid, "VALIDATION", "invalid byte limit")
 	}
 	hash, err := fingerprint(input)
 	if err != nil {
-		return result, err
-	}
-	tx, err := s.DB.Begin(ctx)
-	if err != nil {
-		return result, err
-	}
-	defer tx.Rollback(ctx)
-	bucket, err := bucketForUpdate(ctx, tx, input.BucketID)
-	if err != nil {
-		return result, err
-	}
-	if bucket.State != "active" {
-		return result, apperr.New(apperr.Precondition, "SCOPE_CONFLICT", "bucket is not active")
-	}
-	root, err := uuid.NewV7()
-	if err != nil {
-		return result, err
-	}
-	inserted, err := tx.Exec(ctx, `INSERT INTO filesystems(id,bucket_id,root_id) VALUES($1,$2,$3) ON CONFLICT(id) DO NOTHING`, input.ID, input.BucketID, root)
-	if err != nil {
-		return result, err
-	}
-	if inserted.RowsAffected() == 1 {
-		_, err = tx.Exec(ctx, `INSERT INTO nodes(id,filesystem_id,name,kind) VALUES($1,$2,$3,'directory')`, root, input.ID, input.RootName)
-		if err != nil {
-			return result, err
-		}
-	}
-	err = tx.QueryRow(ctx, `SELECT id,bucket_id,root_id,state FROM filesystems WHERE id=$1 FOR UPDATE`, input.ID).
-		Scan(&result.ID, &result.BucketID, &result.RootID, &result.State)
-	if err != nil {
-		return result, err
-	}
-	if result.BucketID != input.BucketID || result.State != "active" {
-		return Filesystem{}, apperr.New(apperr.Precondition, "SCOPE_CONFLICT", "resource scope or state conflicts")
-	}
-	if err = receipt(ctx, tx, caller, "create-filesystem", key, hash, &result); err != nil {
 		return Filesystem{}, err
 	}
-	return result, tx.Commit(ctx)
-}
-
-func (s *Store) FreezeBucket(ctx context.Context, key, id uuid.UUID) (Bucket, error) {
-	var result Bucket
-	caller, err := service(ctx)
-	if err != nil {
-		return result, err
-	}
-	if err = requestIdentity(id, key); err != nil {
-		return result, err
-	}
-	hash, err := fingerprint(id)
-	if err != nil {
-		return result, err
-	}
 	tx, err := s.DB.Begin(ctx)
 	if err != nil {
-		return result, err
+		return Filesystem{}, databaseError(err)
 	}
 	defer tx.Rollback(ctx)
-	_, err = tx.Exec(ctx, `INSERT INTO quota_buckets(id,limit_bytes,state) VALUES($1,0,'frozen') ON CONFLICT(id) DO NOTHING`, id)
-	if err != nil {
-		return result, err
+	if _, err = tx.Exec(ctx, `INSERT INTO filesystems(id,limit_bytes) VALUES($1,$2) ON CONFLICT(id) DO NOTHING`, input.ID, input.LimitBytes); err != nil {
+		return Filesystem{}, databaseError(err)
 	}
-	result, err = bucketForUpdate(ctx, tx, id)
+	value, err := filesystemForUpdate(ctx, tx, input.ID)
 	if err != nil {
-		return result, err
+		return Filesystem{}, err
 	}
-	if result.State == "active" {
-		_, err = tx.Exec(ctx, `UPDATE quota_buckets SET state='frozen' WHERE id=$1`, id)
-		if err != nil {
-			return result, err
+	if value.State != "active" || value.LimitBytes != input.LimitBytes {
+		return Filesystem{}, apperr.New(apperr.Precondition, "SCOPE_CONFLICT", "filesystem input conflicts")
+	}
+	if err = receipt(ctx, tx, caller, "create-filesystem", key, hash, &value); err != nil {
+		return Filesystem{}, err
+	}
+	return value, databaseError(tx.Commit(ctx))
+}
+
+func (s *Store) CreateScopes(ctx context.Context, key, fs uuid.UUID, ids []uuid.UUID, allowBlobFiles, allowIndexing bool) ([]Scope, error) {
+	caller, err := service(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if fs == uuid.Nil || key == uuid.Nil || len(ids) == 0 || len(ids) > 100 {
+		return nil, apperr.New(apperr.Invalid, "VALIDATION", "invalid scope creation")
+	}
+	seen := map[uuid.UUID]bool{}
+	for _, id := range ids {
+		if err = requestIdentity(id, key); err != nil {
+			return nil, err
 		}
-		result.State = "frozen"
+		if seen[id] {
+			return nil, apperr.New(apperr.Invalid, "VALIDATION", "duplicate scope")
+		}
+		seen[id] = true
 	}
-	if err = receipt(ctx, tx, caller, "freeze-bucket", key, hash, &result); err != nil {
-		return Bucket{}, err
-	}
-	return result, tx.Commit(ctx)
-}
-
-func (s *Store) ListBucketFilesystems(ctx context.Context, id, after uuid.UUID) ([]uuid.UUID, error) {
-	_, err := service(ctx)
+	hash, err := fingerprint(struct {
+		FilesystemID   uuid.UUID
+		IDs            []uuid.UUID
+		AllowBlobFiles bool
+		AllowIndexing  bool
+	}{fs, ids, allowBlobFiles, allowIndexing})
 	if err != nil {
 		return nil, err
-	}
-	if id == uuid.Nil || id.Version() != 7 {
-		return nil, apperr.New(apperr.Invalid, "VALIDATION", "invalid bucket")
 	}
 	tx, err := s.DB.Begin(ctx)
 	if err != nil {
-		return nil, err
+		return nil, databaseError(err)
 	}
 	defer tx.Rollback(ctx)
-	bucket, err := bucketForUpdate(ctx, tx, id)
+	value, err := filesystemForUpdate(ctx, tx, fs)
 	if err != nil {
 		return nil, err
 	}
-	if bucket.State != "frozen" && bucket.State != "deleted" {
-		return nil, apperr.New(apperr.Precondition, "BUCKET_NOT_FROZEN", "bucket must be frozen")
+	if value.State != "active" {
+		return nil, apperr.New(apperr.Conflict, "FILESYSTEM_DELETING", "filesystem is not active")
 	}
-	rows, err := tx.Query(ctx, `SELECT id FROM filesystems WHERE bucket_id=$1 AND state!='deleted' AND id>$2 ORDER BY id LIMIT 64`, id, after)
-	if err != nil {
+	result := make([]Scope, 0, len(ids))
+	for _, id := range ids {
+		root := uuid.Must(uuid.NewV7())
+		changed, err := tx.Exec(ctx, `INSERT INTO scopes(id,filesystem_id,root_id,allow_blob_files,allow_indexing) VALUES($1,$2,$3,$4,$5) ON CONFLICT(id) DO NOTHING`, id, fs, root, allowBlobFiles, allowIndexing)
+		if err != nil {
+			return nil, databaseError(err)
+		}
+		if changed.RowsAffected() == 1 {
+			if _, err = tx.Exec(ctx, `INSERT INTO nodes(id,scope_id,name,kind) VALUES($1,$2,'root','directory')`, root, id); err != nil {
+				return nil, databaseError(err)
+			}
+			session := session{tx: tx, filesystemID: fs, maxNodes: s.MaxNodes}
+			if err = session.addNodes(ctx, 1); err != nil {
+				return nil, err
+			}
+		}
+		var scope Scope
+		if err = tx.QueryRow(ctx, `SELECT id,filesystem_id,root_id,state,allow_blob_files,allow_indexing FROM scopes WHERE id=$1`, id).Scan(&scope.ID, &scope.FilesystemID, &scope.RootID, &scope.State, &scope.AllowBlobFiles, &scope.AllowIndexing); err != nil {
+			return nil, databaseError(err)
+		}
+		if scope.FilesystemID != fs || scope.State != "active" || scope.AllowBlobFiles != allowBlobFiles || scope.AllowIndexing != allowIndexing {
+			return nil, apperr.New(apperr.Precondition, "SCOPE_CONFLICT", "scope input conflicts")
+		}
+		result = append(result, scope)
+	}
+	if err = receipt(ctx, tx, caller, "create-scopes", key, hash, &result); err != nil {
 		return nil, err
 	}
-	result, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
-	if err != nil {
-		return nil, err
-	}
-	return result, tx.Commit(ctx)
-}
-
-func (s *Store) CompleteBucketDeletion(ctx context.Context, key, id uuid.UUID) (Bucket, error) {
-	var result Bucket
-	caller, err := service(ctx)
-	if err != nil {
-		return result, err
-	}
-	if err = requestIdentity(id, key); err != nil {
-		return result, err
-	}
-	tx, err := s.DB.Begin(ctx)
-	if err != nil {
-		return result, err
-	}
-	defer tx.Rollback(ctx)
-	result, err = bucketForUpdate(ctx, tx, id)
-	if err != nil {
-		return result, err
-	}
-	changed, err := tx.Exec(ctx, `UPDATE quota_buckets b SET state='deleted' WHERE id=$1 AND state IN ('frozen','deleted') AND used_bytes=0
-		AND NOT EXISTS(SELECT 1 FROM filesystems WHERE bucket_id=b.id AND state!='deleted')
-		AND NOT EXISTS(SELECT 1 FROM uploads WHERE bucket_id=b.id AND state IN ('open','completing'))`, id)
-	if err != nil {
-		return result, err
-	}
-	if changed.RowsAffected() != 1 {
-		return Bucket{}, apperr.New(apperr.Precondition, "DELETION_INCOMPLETE", "bucket deletion incomplete")
-	}
-	result.State = "deleted"
-	hash, err := fingerprint(id)
-	if err != nil {
-		return Bucket{}, err
-	}
-	if err = receipt(ctx, tx, caller, "delete-bucket", key, hash, &result); err != nil {
-		return Bucket{}, err
-	}
-	_, err = tx.Exec(ctx, `UPDATE idempotency_keys SET expires_at=COALESCE(expires_at,now()+interval '24 hours')
-		WHERE scope=$1 AND result->>'id'=$2 AND operation IN ('create-bucket','freeze-bucket','delete-bucket')`, "service:"+caller, id.String())
-	if err != nil {
-		return Bucket{}, err
-	}
-	return result, tx.Commit(ctx)
+	return result, databaseError(tx.Commit(ctx))
 }
 
 func (s *Store) PruneReceipts(ctx context.Context) error {
 	_, err := s.DB.Exec(ctx, `DELETE FROM idempotency_keys WHERE (scope,operation,request_key) IN
 		(SELECT scope,operation,request_key FROM idempotency_keys WHERE expires_at<=now() ORDER BY expires_at LIMIT 100)`)
-	return err
+	if err != nil {
+		return databaseError(err)
+	}
+	return s.pruneDeletedStorage(ctx)
 }
 
-func (s *Store) ReleaseProvisioning(ctx context.Context, bucketID, filesystemID, rootID uuid.UUID) error {
-	caller, err := service(ctx)
+// Retain storage identity while transfers or object cleanup still reference it.
+func (s *Store) pruneDeletedStorage(ctx context.Context) error {
+	rows, err := s.DB.Query(ctx, `SELECT id FROM scopes WHERE state='deleted' ORDER BY id LIMIT 64`)
 	if err != nil {
-		return err
+		return databaseError(err)
 	}
-	if bucketID == uuid.Nil || bucketID.Version() != 7 || filesystemID == uuid.Nil || rootID == uuid.Nil {
-		return apperr.New(apperr.Invalid, "VALIDATION", "bucket, filesystem and root identity required")
-	}
-	tx, err := s.DB.Begin(ctx)
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
 	if err != nil {
-		return err
+		return databaseError(err)
 	}
-	defer tx.Rollback(ctx)
-	if _, err = bucketForUpdate(ctx, tx, bucketID); err != nil {
-		return err
+	for _, id := range ids {
+		if err = s.removeGraphResource(ctx, "scope", id); err != nil {
+			return err
+		}
+		if _, err = s.DB.Exec(ctx, `DELETE FROM uploads WHERE scope_id=$1 AND (state='finalized' OR state='aborted' AND multipart_id IS NULL) AND (transfer_deadline IS NULL OR transfer_deadline<now()-interval '15 minutes')`, id); err != nil {
+			return databaseError(err)
+		}
+		if _, err = s.DB.Exec(ctx, `DELETE FROM scopes WHERE id=$1 AND state='deleted' AND NOT EXISTS(SELECT 1 FROM uploads WHERE scope_id=$1)`, id); err != nil {
+			return databaseError(err)
+		}
 	}
-	var valid bool
-	err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM filesystems WHERE id=$1 AND bucket_id=$2 AND (root_id=$3 OR state='deleted'))`, filesystemID, bucketID, rootID).Scan(&valid)
+	rows, err = s.DB.Query(ctx, `SELECT id FROM filesystems WHERE state='deleted' ORDER BY id LIMIT 64`)
 	if err != nil {
-		return err
+		return databaseError(err)
 	}
-	if !valid {
-		return apperr.New(apperr.Precondition, "SCOPE_CONFLICT", "resource scope or state conflicts")
-	}
-	_, err = tx.Exec(ctx, `UPDATE idempotency_keys SET expires_at=COALESCE(expires_at,now()+interval '24 hours')
-		WHERE scope=$1 AND ((operation='create-bucket' AND result->>'id'=$2) OR (operation='create-filesystem' AND result->>'id'=$3))`, "service:"+caller, bucketID.String(), filesystemID.String())
+	ids, err = pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
 	if err != nil {
-		return err
+		return databaseError(err)
 	}
-	return tx.Commit(ctx)
+	for _, id := range ids {
+		if err = s.removeGraphResource(ctx, "filesystem", id); err != nil {
+			return err
+		}
+		if _, err = s.DB.Exec(ctx, `DELETE FROM object_deletions WHERE filesystem_id=$1 AND state='deleted' AND NOT ambiguous_write AND open_writes=0`, id); err != nil {
+			return databaseError(err)
+		}
+		if _, err = s.DB.Exec(ctx, `DELETE FROM filesystems WHERE id=$1 AND state='deleted' AND NOT EXISTS(SELECT 1 FROM scopes WHERE filesystem_id=$1) AND NOT EXISTS(SELECT 1 FROM object_deletions WHERE filesystem_id=$1)`, id); err != nil {
+			return databaseError(err)
+		}
+	}
+	return nil
 }

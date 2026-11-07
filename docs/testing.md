@@ -23,13 +23,13 @@ it. Script lint and tests run once separately, followed by native history replay
 |---|---|
 | Gateway | Real Envoy/test JWKS: bad issuer/signature/expiry, missing claim, bootstrap restrictions, spoofed/duplicate trusted headers, internal route isolation |
 | Account | Real PG uniqueness, repeat onboarding, lost provisioning response, Clerk failure then success |
-| Workspace | Real PG role/Owner transactions, concurrent transfer/removal, invite expiry/revoke/email mismatch, Owner-role rejection and replay after removal; member summaries exclude self-only fields |
-| Tree | Real PG sibling uniqueness, same-FS parent, cycle prevention, path traversal, mount/cwd escape and ID ancestry |
+| Workspace | Real PG role/Owner transactions, owner removal refusal and concurrent membership changes, invite expiry/revoke/email mismatch, Owner-role rejection and replay after removal; member summaries exclude self-only fields |
+| Tree | Real PG sibling uniqueness, same-scope parent, cycle prevention, path traversal, scope/cwd escape and ID ancestry |
 | Data | Exact bytes/line endings, caller-selected arbitrary inline bytes, direct object transfer, stale overwrite preserves old data, path replacement with equal revision rejects old expected target/parent ID |
 | Artifacts | Hybrid paths/cwd/root aliases, raw-ID readonly enforcement, copy traversal, source/ancestor lifecycle, detached forest cleanup and exact quota |
 | Quota | Competing writes cannot overcommit; finalize/copy/purge retry cannot double-account; trash remains charged; repeated deletion batches never debit twice |
 | Trash | Restore/purge race, hidden descendants by ID, missing parent/name conflict, Viewer denied, commit then response loss, delayed old trash after restore and delayed old restore after re-trash |
-| Copy | Coherent item revision, source ID copied once, documented concurrent-source outcomes, committed partial progress and atomic per-item quota/publication, self/descendant rejection, finite traversal under continuous additions and configured job ceilings |
+| Copy | Coherent item revision, source ID copied once, documented concurrent-source outcomes, retained partial output and atomic per-item quota/publication, self/descendant rejection, finite traversal under continuous additions and configured job ceilings |
 | Objects | Real test S3 put/copy/range/delete, per-key errors, ambiguous/late writes, bounded outstanding/backlog admission and read/GC grace |
 | Recovery | Crash after commit/between batches, all filesystem roots deleted, tombstones block recreation |
 | Efficiency | SQL/RPC counts bounded independently of list page size; batch enrichment/stat; one path round trip without O(1) claim; node-count boundary and count reconciliation |
@@ -47,7 +47,7 @@ Check public HTTP OpenAPI and generated protobuf contracts against handlers and 
 
 ## Workflow and system coverage
 
-SDK tests cover branches, retry classifications, timers and replay. Real Temporal tests cover worker/server restart, commit followed by response loss, checkpoint continuation and retained partial-copy results. SDK activity mocks do not prove storage recovery. File bytes stay out of history. API journeys capture fresh `WorkspacePermissions` (running Update history) and `WorkspaceMaintenance` histories alongside onboarding and storage workflows for native replay.
+SDK tests cover branches, retry classifications, timers and replay. Real Temporal tests cover worker/server restart, commit followed by response loss, bounded deletion continuation and retained partial-copy output without automatic retry. SDK activity mocks do not prove storage recovery. File bytes stay out of history. API journeys capture fresh `WorkspaceChanges` (running Update history) and `WorkspaceMaintenance` histories alongside onboarding and storage workflows for native replay.
 
 The new Playwright API suite under `e2e/` was authored from scratch before
 business refactoring. It covers gateway boundaries and target onboarding,
@@ -55,7 +55,7 @@ collaboration, byte/revision/quota contracts, uploads, partial copy, trash, ZIP,
 processing/search and worker recovery. Coordinated recovery calls the permanent
 operations CLI. The recovery project runs before the API project so adversarial
 upload cases cannot leave open capabilities that invalidate its backup precondition.
-Current refactor checks and external-provider limits live in the [service refactor verification record](../plans/261103-1348-service-refactor/verification.md); the [foundation migration acceptance record](../plans/261102-1059-go-grpc-filesystem-authorization/reports/acceptance.md) preserves earlier delivery evidence. No old Go E2E source/history is retained as coverage.
+Current refactor checks and external-provider limits live in the [active implementation record](../plans/261106-1517-account-scope-temporal-redesign/plan.md); the [foundation migration acceptance record](../plans/261102-1059-go-grpc-filesystem-authorization/reports/acceptance.md) preserves earlier delivery evidence. No old Go E2E source/history is retained as coverage.
 
 ```sh
 pnpm check:e2e
@@ -84,7 +84,7 @@ schema initialization/check/repeated initialization, rejection of an incorrect s
 credential, a failed migration keeping the graph server stopped, and cleanup after canceling graph readiness. It removes its
 own containers/volumes in `finally`; diagnostics
 redact generated fixture credentials. CI runs this check separately from API E2E.
-API E2E starts the real graph, includes it in coordinated recovery and rebuilds relationships through canonical owners before reopening API admission. The recovery test waits for Account and filesystem routes before handing the source stack to the next project. It erases the isolated graph, interrupts rebuilding between canonical owners, and repeats the rebuild before checking retained owner access, revoked membership, deleted resources, exact inline/object bytes and current semantic search.
+API E2E starts the real graph, includes it in coordinated recovery and rebuilds relationships through canonical owners before reopening API admission. The recovery test waits for Account and filesystem routes before handing the source stack to the next project. It erases only SQL-derived tuples in the isolated graph, preserves direct scope grants, interrupts rebuilding between canonical owners, and repeats the rebuild before checking retained owner access, revoked membership, deleted resources, exact inline/object bytes and current semantic search.
 
 `node --test --test-concurrency=1 e2e/setup/environment.test.ts e2e/setup/recovery.test.ts`
 checks owner-safe lifecycle and the permanent operations CLI with real infrastructure.
@@ -127,10 +127,8 @@ pnpm --filter @openlet/letfs test:integration
 
 The integration command enables the race detector and tests actual authenticated
 gRPC composition, PostgreSQL, SpiceDB, MinIO, Qdrant and disposable Temporal servers.
-Copy recovery deliberately loses an activity acknowledgment after the database
-commit, replaces the worker, crosses Continue-As-New, checks exact accounting,
-and replays each Go-created run. Purge/delete checks include cancellation after
-admission. Generic provisioning uses shared protobuf payloads and checks creator
+Copy failure retains committed output with a single activity attempt. Deletion recovery loses an acknowledgement after commit, replaces the worker and checks exact accounting before replay. Purge/delete checks include cancellation after
+admission. Generic provisioning uses shared typed workflow payloads and checks creator
 scope; processing workflow checks verify CPU/I/O queues, timeouts, retries and
 stage ordering. The cross-language fixture runs the actual Python activities
 and Docling Word parser against Go gRPC, signed MinIO transfers and Qdrant,
@@ -145,9 +143,9 @@ OPENLET_HISTORY_DIR="$PWD/.local/go-histories" pnpm --filter @openlet/letfs test
 OPENLET_HISTORY_DIR="$PWD/.local/go-histories" pnpm --filter @openlet/letfs test:replay
 ```
 
-Replay requires the copy continuation/recovery, purge, deletion, maintenance,
+Replay requires the copy failure, purge, deletion, maintenance,
 processing success/failure/retry/index-only and Python activity histories; missing
-coverage fails the command. CI runs native integration before replay; the [migration plan](../plans/261102-1059-go-grpc-filesystem-authorization/plan.md) records whole-system acceptance.
+coverage fails the command. CI runs native integration before replay; the [current implementation record](../plans/261106-1517-account-scope-temporal-redesign/plan.md) records whole-system acceptance.
 
 Workflow tests stay with their owning application. The new suite exports current
 lifecycle, copy, purge and processing histories; deleted E2E histories are not
@@ -177,7 +175,7 @@ PRs run unit tests, compilation, lint and relevant integration/workflow checks. 
 `go -C apps/letfs test -race -tags integration ./internal/filesystem ./internal/transport/grpc` uses PostgreSQL and Qdrant v1.20.0 with controlled provider responses. It checks original-file grouping, current/readiness gating, foreign evidence rejection before rerank, filters/cursor binding, dependency failures, rerank degradation, trash/restore, replacement, rebuild cleanup/retry, purge and filesystem deletion. The new API suite must cover create/upload through the real Temporal/Python chain, filename search during failed/pending processing, current semantic results, and membership revocation before final acceptance. Paid model quality is evaluated separately with supplied credentials; test responses exercise API contracts and orchestration.
 
 The API journeys export fresh Account/Workspace lifecycle, Go filesystem/purge,
-copy continuation/partial failure and processing success/failure/restart histories
+copy success/partial failure and processing success/failure/restart histories
 to `.local/api-e2e/histories/`. Run the complete suite first. Each Go owner replays the fresh histories with its native SDK:
 
 ```sh

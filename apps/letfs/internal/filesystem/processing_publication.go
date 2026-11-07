@@ -175,7 +175,7 @@ func (s *Store) CompleteParse(ctx context.Context, a Generation, manifest ParseM
 		}
 	}
 	var children bool
-	if err = session.tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM nodes WHERE filesystem_id=$1 AND parent_id=$2)`, session.fs, a.FileID).Scan(&children); err != nil {
+	if err = session.tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM nodes WHERE scope_id=$1 AND parent_id=$2)`, session.scopeID, a.FileID).Scan(&children); err != nil {
 		return databaseError(err)
 	}
 	if children {
@@ -211,7 +211,7 @@ func (s *Store) CompleteParse(ctx context.Context, a Generation, manifest ParseM
 		return err
 	}
 	_, err = session.tx.Exec(ctx, `WITH entries AS (SELECT * FROM jsonb_to_recordset($2) AS x(id uuid,parent uuid,name text,upload uuid))
- INSERT INTO nodes(id,filesystem_id,parent_id,name,kind,size_bytes) SELECT e.id,$1,e.parent,e.name,CASE WHEN e.upload IS NULL THEN 'directory' ELSE 'file' END,coalesce(u.expected_size,0) FROM entries e LEFT JOIN uploads u ON u.id=e.upload`, session.fs, encoded)
+ INSERT INTO nodes(id,scope_id,parent_id,name,kind,size_bytes) SELECT e.id,$1,e.parent,e.name,CASE WHEN e.upload IS NULL THEN 'directory' ELSE 'file' END,coalesce(u.expected_size,0) FROM entries e LEFT JOIN uploads u ON u.id=e.upload`, session.scopeID, encoded)
 	if err != nil {
 		return databaseError(err)
 	}

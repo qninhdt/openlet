@@ -27,17 +27,17 @@ func TestIntegrationIngestParseOverAuthenticatedRPC(t *testing.T) {
 	store := &filesystem.Store{DB: db, MaxNodes: 100, InlineLimit: 64, MaxFileBytes: 100, ProcessingMaxOutputs: 10, ProcessingMaxOutputBytes: 100, MultipartThreshold: 5242880}
 	store.IndexSpace = filesystem.VectorSpace{Model: "test-embedding", Collection: "files", Dimension: 8}
 	owner := identity.WithPrincipal(t.Context(), identity.Principal{Service: "resource-owner"})
-	bucket, fs, file := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
-	_, err := store.CreateBucket(owner, uuid.New(), filesystem.CreateBucket{ID: bucket, LimitBytes: 1000})
+	filesystemID, fs, file := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	_, err := store.CreateFilesystem(owner, uuid.New(), filesystem.CreateFilesystem{ID: filesystemID, LimitBytes: 1000})
 	require.NoError(t, err)
-	created, err := store.CreateFilesystem(owner, uuid.New(), filesystem.CreateFilesystem{ID: fs, BucketID: bucket, RootName: "root"})
+	created, err := createTestScope(owner, store, uuid.New(), filesystemID, fs)
 	require.NoError(t, err)
-	_, err = db.Exec(t.Context(), `INSERT INTO nodes(id,filesystem_id,parent_id,name,kind,size_bytes) VALUES($1,$2,$3,'report.pdf','file',0)`, file, fs, created.RootID)
+	_, err = db.Exec(t.Context(), `INSERT INTO nodes(id,scope_id,parent_id,name,kind,size_bytes) VALUES($1,$2,$3,'report.pdf','file',0)`, file, fs, created.RootID)
 	require.NoError(t, err)
 	_, err = db.Exec(t.Context(), `INSERT INTO files(node_id,storage_kind,inline_bytes,desired_generation,processing_format,publication_status)
  VALUES($1,'inline','',1,'pdf','pending')`, file)
 	require.NoError(t, err)
-	_, err = db.Exec(t.Context(), `UPDATE filesystems SET node_count=2 WHERE id=$1`, fs)
+	_, err = db.Exec(t.Context(), `UPDATE filesystems SET node_count=2 WHERE id=$1`, filesystemID)
 	require.NoError(t, err)
 	methods := []string{}
 	for _, method := range letfsv1.IngestService_ServiceDesc.Methods {
@@ -63,7 +63,7 @@ func TestIntegrationIngestParseOverAuthenticatedRPC(t *testing.T) {
 	request := &letfsv1.PrepareParseRequest{FileId: file.String(), Generation: 1}
 	_, err = client.PrepareParse(t.Context(), request)
 	require.Equal(t, codes.Unauthenticated, status.Code(err))
-	gateway := metadata.NewOutgoingContext(t.Context(), metadata.Pairs("authorization", "Bearer "+gatewayToken, "x-openlet-user-id", uuid.NewString()))
+	gateway := metadata.NewOutgoingContext(t.Context(), metadata.Pairs("authorization", "Bearer "+gatewayToken, "x-openlet-account-id", uuid.NewString()))
 	_, err = client.PrepareParse(gateway, request)
 	require.Equal(t, codes.PermissionDenied, status.Code(err))
 	prepared, err := client.PrepareParse(ctx, request)
@@ -169,7 +169,8 @@ func TestIntegrationIngestParseOverAuthenticatedRPC(t *testing.T) {
 	require.Equal(t, codes.PermissionDenied, status.Code(err))
 	index, err := client.PrepareIndex(ctx, &letfsv1.PrepareIndexRequest{Source: source})
 	require.NoError(t, err)
-	require.Equal(t, fs.String(), index.GetInput().FilesystemId)
+	require.Equal(t, filesystemID.String(), index.GetInput().FilesystemId)
+	require.Equal(t, fs.String(), index.GetInput().ScopeId)
 	require.Equal(t, "test-embedding", index.GetInput().VectorSpace.Model)
 	require.Len(t, index.GetInput().Nodes, 5)
 	require.Nil(t, index.GetInput().Nodes[0].Content)

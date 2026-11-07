@@ -13,7 +13,7 @@ from authzed.api.v1 import (
     SubjectReference,
 )
 
-from openlet._authz_actions import ACTION_RESOURCES
+from openlet._authz_actions import RESOURCE_ACTIONS
 from openlet.errors import AppError
 
 
@@ -48,13 +48,17 @@ def client(
 
 
 def _request(actor: str, action: str, resource: Resource):
-    if not actor or not resource.id or ACTION_RESOURCES.get(action) != resource.type:
+    if (
+        not actor
+        or not resource.id
+        or action not in RESOURCE_ACTIONS.get(resource.type, ())
+    ):
         raise ValueError("invalid authorization check")
     return CheckBulkPermissionsRequestItem(
         resource=ObjectReference(object_type=resource.type, object_id=resource.id),
         permission=action,
         subject=SubjectReference(
-            object=ObjectReference(object_type="user", object_id=actor)
+            object=ObjectReference(object_type="account", object_id=actor)
         ),
     )
 

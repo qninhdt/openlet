@@ -30,7 +30,7 @@ func TestMultipartReceiptAndPartBounds(t *testing.T) {
 
 func TestUploadAdmissionPrecedesDependencies(t *testing.T) {
 	s := &Store{}
-	_, err := s.CreateUpload(t.Context(), uuid.New(), nil, uuid.New(), UploadCreation{})
+	_, err := s.CreateUpload(t.Context(), uuid.New(), uuid.New(), UploadCreation{})
 	require.Equal(t, apperr.Unauthenticated, apperr.KindOf(err))
 	_, err = s.GetUpload(t.Context(), uuid.New(), uuid.New())
 	require.Equal(t, apperr.Unauthenticated, apperr.KindOf(err))

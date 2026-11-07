@@ -3,169 +3,71 @@
 package workspace
 
 import (
-	"context"
 	"crypto/sha256"
-	"sync"
 	"testing"
 	"time"
 
-	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/google/uuid"
 	"github.com/qninhdt/openlet/packages/go/authz"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc"
 )
 
-type admissionClient struct {
-	v1.PermissionsServiceClient
-	check func(context.Context, *v1.CheckPermissionRequest) (*v1.CheckPermissionResponse, error)
-}
-
-func (c admissionClient) CheckPermission(ctx context.Context, request *v1.CheckPermissionRequest, _ ...grpc.CallOption) (*v1.CheckPermissionResponse, error) {
-	return c.check(ctx, request)
-}
-
-func TestIntegrationActionAdmissionUsesGraphAndRechecksCanonicalRevision(t *testing.T) {
-	ctx := t.Context()
-	store := Store{DB: postgres(t), MaxWorkspaces: 10, MaxMembers: 10, QuotaLimit: 1024, InviteTTL: time.Hour}
-	server := setupGraph(t, &store)
-	graph := store.Graph
-	owner, viewer := uuid.New(), uuid.New()
-	created, err := store.EnsureWorkspace(ctx, CreateInput{ActorID: owner, Key: uuid.New(), Name: "Actions"})
-	require.NoError(t, err)
-	id := created.ID
-	require.NoError(t, store.Activate(ctx, mapping(id)))
-	syncGraph(t, &store, id)
-	_, token, err := store.Invite(ctx, id, owner, "viewer@example.test", "viewer")
-	require.NoError(t, err)
-	_, err = store.AcceptInvite(ctx, viewer, sha256.Sum256([]byte(token)), []string{"viewer@example.test"}, MutationReceipt{})
-	require.NoError(t, err)
-	syncGraph(t, &store, id)
-	current, err := store.Get(ctx, id, owner)
-	require.NoError(t, err)
-	name := "Graph owns actions"
-	_, err = store.Update(ctx, id, viewer, current.Revision, UpdateInput{Name: &name}, MutationReceipt{})
-	require.EqualError(t, err, "FORBIDDEN")
-
-	// Changing only native action tuples changes admission; the SQL roles stay unchanged.
-	_, err = graph.WriteRelationships(ctx, &v1.WriteRelationshipsRequest{Updates: []*v1.RelationshipUpdate{
-		graphUpdate(v1.RelationshipUpdate_OPERATION_DELETE, "role", "owner", "workspace_update", "user", "*"),
-		graphUpdate(v1.RelationshipUpdate_OPERATION_TOUCH, "role", "viewer", "workspace_update", "user", "*"),
-	}})
-	require.NoError(t, err)
-	_, err = store.Update(ctx, id, owner, current.Revision, UpdateInput{Name: &name}, MutationReceipt{})
-	require.EqualError(t, err, "FORBIDDEN", "canonical Owner is not a permission fallback")
-	updated, err := store.Update(ctx, id, viewer, current.Revision, UpdateInput{Name: &name}, MutationReceipt{})
-	require.NoError(t, err, "a graph-granted action does not require a local Owner role")
-	require.Equal(t, "viewer", updated.Role)
-	syncGraph(t, &store, id)
-	_, err = store.Update(ctx, id, viewer, updated.Revision, UpdateInput{Name: &name, OwnerID: &owner}, MutationReceipt{})
-	require.EqualError(t, err, "FORBIDDEN", "combined name/ownership update requires both actions")
-	require.EqualError(t, store.ChangeMember(ctx, id, viewer, owner, "editor", false, updated.Revision, MutationReceipt{}), "FORBIDDEN")
-	require.EqualError(t, store.ChangeMember(ctx, id, owner, owner, "", true, updated.Revision, MutationReceipt{}), "OWNER_TRANSFER_REQUIRED")
-	_, err = store.Authorize(ctx, id, viewer, authz.MemberRead)
-	require.NoError(t, err)
-	_, err = store.Authorize(ctx, id, viewer, authz.MemberManage)
-	require.EqualError(t, err, "FORBIDDEN")
-
-	_, err = store.Authorize(ctx, id, viewer, authz.ContentRead)
-	require.ErrorIs(t, err, authz.ErrInvalidCheck, "filesystem actions belong to letfs")
-
-	store.Graph = admissionClient{PermissionsServiceClient: graph, check: func(ctx context.Context, request *v1.CheckPermissionRequest) (*v1.CheckPermissionResponse, error) {
-		response, err := graph.CheckPermission(ctx, request)
-		if err != nil {
-			return nil, err
-		}
-		// A separate connection can commit while CheckPermission is in flight: no owner lock is held.
-		_, err = store.DB.Exec(ctx, `UPDATE workspaces SET revision=revision+1 WHERE id=$1`, id)
-		return response, err
-	}}
-	name = "Must not commit"
-	_, err = store.Update(ctx, id, viewer, updated.Revision, UpdateInput{Name: &name}, MutationReceipt{})
-	require.EqualError(t, err, "REVISION_MISMATCH")
-	actual, err := store.Get(ctx, id, viewer)
-	require.NoError(t, err)
-	require.Equal(t, updated.Name, actual.Name)
-	store.Graph = graph
-
-	// A canceled native check also cannot change the canonical profile or member role.
-	canceled, cancel := context.WithCancel(ctx)
-	cancel()
-	_, err = store.Update(canceled, id, viewer, actual.Revision, UpdateInput{Name: &name}, MutationReceipt{})
-	require.Error(t, err)
-	actual, err = store.Get(ctx, id, viewer)
-	require.NoError(t, err)
-	require.Equal(t, updated.Name, actual.Name)
-
-	require.NoError(t, server.Stop(ctx, nil))
-	_, err = store.Update(ctx, id, viewer, actual.Revision, UpdateInput{Name: &name}, MutationReceipt{})
-	require.Error(t, err, "graph outage cannot fall back to SQL membership")
-	actual, err = store.Get(ctx, id, viewer)
-	require.NoError(t, err)
-	require.Equal(t, updated.Name, actual.Name)
-}
-
-func TestIntegrationConcurrentOwnershipAndMemberChangesPreserveOneOwner(t *testing.T) {
-	ctx := t.Context()
-	store := Store{DB: postgres(t), MaxWorkspaces: 10, MaxMembers: 10, QuotaLimit: 1024}
+func TestIntegrationMembershipIsolationAndInvitationReplay(t *testing.T) {
+	store := Store{DB: postgres(t), MaxMembers: 10, InviteTTL: time.Hour}
 	setupGraph(t, &store)
-	for _, competing := range []string{"transfer", "leave", "remove"} {
-		t.Run(competing, func(t *testing.T) {
-			owner, first, second := uuid.New(), uuid.New(), uuid.New()
-			admitted, err := store.EnsureWorkspace(ctx, CreateInput{ActorID: owner, Key: uuid.New(), Name: competing})
-			require.NoError(t, err)
-			id := admitted.ID
-			storage := mapping(id)
-			require.NoError(t, store.Activate(ctx, storage))
-			_, err = store.DB.Exec(ctx, `INSERT INTO workspace_members(workspace_id,user_id,role) VALUES($1,$2,'editor'),($1,$3,'editor')`, id, first, second)
-			require.NoError(t, err)
-			syncGraph(t, &store, id)
-			current, err := store.Get(ctx, id, owner)
-			require.NoError(t, err)
-			start := make(chan struct{})
-			results := make(chan error, 2)
-			var workers sync.WaitGroup
-			workers.Go(func() {
-				<-start
-				_, err := store.Update(ctx, id, owner, current.Revision, UpdateInput{OwnerID: &first}, MutationReceipt{})
-				results <- err
-			})
-			workers.Go(func() {
-				<-start
-				var err error
-				switch competing {
-				case "transfer":
-					_, err = store.Update(ctx, id, owner, current.Revision, UpdateInput{OwnerID: &second}, MutationReceipt{})
-				case "leave":
-					err = store.ChangeMember(ctx, id, first, first, "", true, current.Revision, MutationReceipt{})
-				case "remove":
-					err = store.ChangeMember(ctx, id, owner, first, "", true, current.Revision, MutationReceipt{})
-				}
-				results <- err
-			})
-			close(start)
-			workers.Wait()
-			close(results)
-			committed := 0
-			for err := range results {
-				if err == nil {
-					committed++
-				} else {
-					require.EqualError(t, err, "REVISION_MISMATCH")
-				}
-			}
-			require.Equal(t, 1, committed)
-			var count int
-			require.NoError(t, store.DB.QueryRow(ctx, `SELECT count(*) FROM workspace_members WHERE workspace_id=$1 AND role='owner'`, id).Scan(&count))
-			require.Equal(t, 1, count)
-			syncGraph(t, &store, id)
-			members, err := store.Members(ctx, id, uuid.Nil, 10)
-			require.NoError(t, err)
-			for _, member := range members {
-				allowed, err := authz.Check(ctx, store.Graph, member.UserID.String(), authz.WorkspaceTransfer, authz.Resource{Type: "workspace", ID: id.String()})
-				require.NoError(t, err)
-				require.Equal(t, member.Role == "owner", allowed)
-			}
-		})
+	service := Service{Store: &store}
+	ctx := t.Context()
+	owner, admin, member := uuid.New(), uuid.New(), uuid.New()
+	in := creation(owner)
+	_, err := service.SaveWorkspace(ctx, in)
+	require.NoError(t, err)
+	scopes := map[uuid.UUID]uuid.UUID{}
+	for actor, role := range map[uuid.UUID]string{admin: "admin", member: "member"} {
+		scopes[actor] = uuid.New()
+		_, err = service.ApplyMembership(ctx, Mutation{Kind: "add", Key: uuid.New(), WorkspaceID: in.ID, ActorID: owner, TargetID: actor, Role: role, PersonalScopeID: scopes[actor]})
+		require.NoError(t, err)
 	}
+	check := func(actor uuid.UUID, action authz.Action, kind string, id uuid.UUID, want bool) {
+		t.Helper()
+		got, err := authz.Check(ctx, store.Graph, actor.String(), action, authz.Resource{Type: kind, ID: id.String()})
+		require.NoError(t, err)
+		require.Equal(t, want, got)
+	}
+	check(admin, authz.WorkspaceManageMembers, "workspace", in.ID, true)
+	check(admin, authz.WorkspaceDelete, "workspace", in.ID, false)
+	check(admin, authz.ScopeManageAccess, "scope", in.SharedScopeID, true)
+	check(member, authz.ScopeWrite, "scope", in.SharedScopeID, true)
+	check(admin, authz.ScopeReadContent, "scope", scopes[member], false)
+	check(owner, authz.ScopeReadContent, "scope", scopes[member], false)
+	check(member, authz.ScopeManageAccess, "scope", scopes[member], true)
+	check(member, authz.WorkspaceManageMembers, "workspace", in.ID, false)
+	require.EqualError(t, service.ChangeMember(ctx, in.ID, admin, owner, "member", false), "FORBIDDEN")
+	require.EqualError(t, service.ChangeMember(ctx, in.ID, owner, owner, "", true), "FORBIDDEN")
+	invitation, token, err := store.Invite(ctx, in.ID, owner, "invite@example.com", "member")
+	require.NoError(t, err)
+	require.NotEmpty(t, invitation.ID)
+	hash := sha256.Sum256([]byte(token))
+	joined := uuid.New()
+	_, _, err = store.AdmitInvitation(ctx, joined, hash, []string{"wrong@example.com"})
+	require.EqualError(t, err, "INVITATION_EMAIL_MISMATCH")
+	ws, role, err := store.AdmitInvitation(ctx, joined, hash, []string{"INVITE@example.com"})
+	require.NoError(t, err)
+	require.Equal(t, in.ID, ws)
+	personal := uuid.New()
+	_, err = service.ApplyMembership(ctx, Mutation{Kind: "join", Key: uuid.New(), WorkspaceID: ws, ActorID: joined, TargetID: joined, Role: role, PersonalScopeID: personal, InvitationHash: hash})
+	require.NoError(t, err)
+	removal := Mutation{Kind: "member", Key: uuid.New(), WorkspaceID: ws, ActorID: joined, TargetID: joined, Remove: true}
+	_, err = service.ApplyMembership(ctx, removal)
+	require.NoError(t, err)
+	check(joined, authz.ScopeReadContent, "scope", in.SharedScopeID, false)
+	check(joined, authz.ScopeManageAccess, "scope", personal, false)
+	retained, err := store.Member(ctx, ws, joined)
+	require.NoError(t, err)
+	require.Equal(t, personal, retained.PersonalScopeID)
+	require.Equal(t, "inactive", retained.Status)
+	_, _, err = store.AdmitInvitation(ctx, joined, hash, []string{"invite@example.com"})
+	require.EqualError(t, err, "INVITATION_ALREADY_USED")
+	_, err = service.ApplyMembership(ctx, Mutation{Kind: "add", Key: uuid.New(), WorkspaceID: ws, ActorID: owner, TargetID: joined, Role: "member", PersonalScopeID: personal, ExistingScope: true})
+	require.NoError(t, err)
+	check(joined, authz.ScopeManageAccess, "scope", personal, true)
 }

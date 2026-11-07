@@ -1,25 +1,20 @@
 package authz
 
 import (
+	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/stretchr/testify/require"
 )
 
-func TestLoadContractRejectsUnavailableOrInvalidPolicy(t *testing.T) {
+func TestLoadContractRequiresNonemptySchema(t *testing.T) {
 	schema := filepath.Join(t.TempDir(), "schema.zed")
-	roles := filepath.Join(t.TempDir(), "roles.json")
-	_, err := LoadContract(schema, roles)
+	_, err := LoadContract(schema)
 	require.Error(t, err)
-	require.NoError(t, os.WriteFile(schema, []byte(" \n"), 0600))
-	_, err = LoadContract(schema, roles)
+	require.NoError(t, os.WriteFile(schema, []byte(" "), 0600))
+	_, err = LoadContract(schema)
 	require.Error(t, err)
-	require.NoError(t, os.WriteFile(schema, []byte("definition user {}"), 0600))
-	_, err = LoadContract(schema, roles)
-	require.Error(t, err)
-	require.NoError(t, os.WriteFile(roles, []byte(`{"owner":["made_up"]}`), 0600))
-	_, err = LoadContract(schema, roles)
-	require.ErrorIs(t, err, ErrInvalidPolicy)
+	require.NoError(t, os.WriteFile(schema, []byte("definition account {}"), 0600))
+	_, err = LoadContract(schema)
+	require.NoError(t, err)
 }

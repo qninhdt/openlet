@@ -29,7 +29,7 @@ func (s *Server) createUpload(w http.ResponseWriter, r *http.Request) error {
 	if err != nil || size < 0 || strconv.FormatInt(size, 10) != input.SizeBytes {
 		return invalid()
 	}
-	fs, mounts, err := requestContext(r)
+	fs, err := s.requestContext(r)
 	if err != nil {
 		return err
 	}
@@ -58,7 +58,7 @@ func (s *Server) createUpload(w http.ResponseWriter, r *http.Request) error {
 		}
 		creation.Destination = &filesystem.UploadDestination{Parent: parent, Name: *input.Name}
 	}
-	upload, err := s.Service.CreateUpload(r.Context(), fs, mounts, key, creation)
+	upload, err := s.Service.CreateUpload(r.Context(), fs, key, creation)
 	if err != nil {
 		return err
 	}
@@ -67,7 +67,7 @@ func (s *Server) createUpload(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Server) getUpload(w http.ResponseWriter, r *http.Request) error {
-	fs, err := parseID(fsID(r))
+	fs, err := s.requestContext(r)
 	if err != nil {
 		return err
 	}
@@ -96,7 +96,7 @@ func (s *Server) getUploadParts(w http.ResponseWriter, r *http.Request) error {
 		}
 		numbers = append(numbers, int32(number))
 	}
-	fs, err := parseID(fsID(r))
+	fs, err := s.requestContext(r)
 	if err != nil {
 		return err
 	}
@@ -128,7 +128,7 @@ func (s *Server) completeUpload(w http.ResponseWriter, r *http.Request) error {
 	if len(input.Parts) > 10000 {
 		return apperr.New(apperr.Invalid, "VALIDATION", "at most 10000 part receipts allowed")
 	}
-	fs, err := parseID(fsID(r))
+	fs, err := s.requestContext(r)
 	if err != nil {
 		return err
 	}
@@ -145,7 +145,7 @@ func (s *Server) completeUpload(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Server) abortUpload(w http.ResponseWriter, r *http.Request) error {
-	fs, err := parseID(fsID(r))
+	fs, err := s.requestContext(r)
 	if err != nil {
 		return err
 	}
