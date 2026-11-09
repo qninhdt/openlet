@@ -13,6 +13,9 @@ import (
 	"github.com/google/uuid"
 	localfixture "github.com/qninhdt/openlet/apps/workspace/internal/testfixture"
 	"github.com/qninhdt/openlet/apps/workspace/internal/workspace"
+	"github.com/qninhdt/openlet/packages/go/authz"
+	letaclient "github.com/qninhdt/openlet/packages/go/clients/leta"
+	"github.com/qninhdt/openlet/packages/go/identity"
 	shared "github.com/qninhdt/openlet/packages/go/temporal"
 	"github.com/qninhdt/openlet/packages/go/testfixture"
 	"github.com/stretchr/testify/require"
@@ -178,4 +181,121 @@ func TestIntegrationWorkspacePublicationSurvivesWorkerRestart(t *testing.T) {
 	require.EqualValues(t, 1, filesystems.Load())
 	require.EqualValues(t, 2, scopes.Load())
 	require.Zero(t, compensations.Load())
+}
+
+func TestIntegrationMutatePreservesSuppliedKeyAcrossCallerTimeout(t *testing.T) {
+	tc, _ := testfixture.Temporal(t)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	ws, key := uuid.New(), uuid.New()
+	in := Mutation{Kind: "scope", WorkspaceID: ws, ActorID: uuid.New(), TargetID: uuid.New(), ScopeID: uuid.New(), Key: key}
+	var executions atomic.Int32
+	otherActor := uuid.New()
+	started, release := make(chan struct{}, 1), make(chan struct{})
+	owner := worker.New(tc, Queue, worker.Options{WorkerStopTimeout: time.Second})
+	owner.RegisterWorkflow(WorkspaceChanges)
+	owner.RegisterActivityWithOptions(func(ctx context.Context, value Mutation) (workspace.Workspace, error) {
+		expected := in
+		expected.ActorID = value.ActorID
+		require.Equal(t, expected, value)
+		require.Contains(t, []uuid.UUID{in.ActorID, otherActor}, value.ActorID)
+		executions.Add(1)
+		started <- struct{}{}
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return workspace.Workspace{}, ctx.Err()
+		}
+		return workspace.Workspace{ID: ws}, nil
+	}, activity.RegisterOptions{Name: "UpdateScopeAccess"})
+	require.NoError(t, owner.Start())
+	defer owner.Stop()
+	wait, stop := context.WithTimeout(ctx, 2*time.Second)
+	_, err := Mutate(wait, tc, in)
+	stop()
+	require.Error(t, err)
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal("Update activity did not start")
+	}
+	close(release)
+	value, err := Mutate(ctx, tc, in)
+	require.NoError(t, err)
+	require.Equal(t, ws, value.ID)
+	value, err = Mutate(ctx, tc, in)
+	require.NoError(t, err)
+	require.Equal(t, ws, value.ID)
+	require.EqualValues(t, 1, executions.Load(), "caller retry must recover the accepted Update")
+	another := in
+	another.ActorID = otherActor
+	_, err = Mutate(ctx, tc, another)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, executions.Load(), "different actors have independent request-key namespaces")
+	require.NoError(t, tc.TerminateWorkflow(ctx, "workspace-changes/"+ws.String(), "", "test complete"))
+}
+
+type queuedLetaBinding struct{ value letaclient.Binding }
+
+func (b queuedLetaBinding) GetBinding(context.Context, uuid.UUID) (letaclient.Binding, error) {
+	return b.value, nil
+}
+
+func TestIntegrationQueuedLetaGrantRejectsDeletionWithoutBlockingStatusRead(t *testing.T) {
+	tc, _ := testfixture.Temporal(t)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	db := testfixture.Postgres(t, localfixture.Path("apps", "workspace", "migrations", "0001_initial.sql"))
+	graph, _, _ := testfixture.SpiceDB(t, localfixture.Path("packages", "contracts", "authz", "schema.zed"))
+	store := &workspace.Store{DB: db, Graph: graph, MaxMembers: 10}
+	service := &workspace.Service{Store: store}
+	actor, root := uuid.New(), uuid.New()
+	mapping := workspace.Creation{Input: workspace.CreateInput{ActorID: actor, Key: uuid.New(), Name: "Deleting"}, ID: uuid.New(), FilesystemID: uuid.New(), SharedScopeID: uuid.New(), PersonalScopeID: uuid.New()}
+	_, err := service.SaveWorkspace(ctx, mapping)
+	require.NoError(t, err)
+	service.Letas = queuedLetaBinding{letaclient.Binding{LetaID: root, WorkspaceID: mapping.ID, CreatedByUserID: actor, HomeScopeID: uuid.New(), Status: "deleting"}}
+	deleting, release := make(chan struct{}), make(chan struct{})
+	owner := worker.New(tc, Queue, worker.Options{WorkerStopTimeout: time.Second})
+	owner.RegisterWorkflow(WorkspaceChanges)
+	owner.RegisterActivity((&Activities{Service: service}).UpdateScopeAccess)
+	owner.RegisterActivityWithOptions(func(activityCtx context.Context, in Mutation) (workspace.Workspace, error) {
+		if _, err := db.Exec(activityCtx, `UPDATE workspaces SET status='deleting' WHERE id=$1`, in.WorkspaceID); err != nil {
+			return workspace.Workspace{}, err
+		}
+		close(deleting)
+		select {
+		case <-release:
+		case <-activityCtx.Done():
+			return workspace.Workspace{}, activityCtx.Err()
+		}
+		return workspace.Workspace{ID: in.WorkspaceID}, nil
+	}, activity.RegisterOptions{Name: "UpdateMembership"})
+	require.NoError(t, owner.Start())
+	defer owner.Stop()
+	workflowID := "workspace-changes/" + mapping.ID.String()
+	_, err = tc.ExecuteWorkflow(ctx, client.StartWorkflowOptions{ID: workflowID, TaskQueue: Queue}, WorkspaceChanges, mapping.ID)
+	require.NoError(t, err)
+	blocker := Mutation{Kind: "member", WorkspaceID: mapping.ID, ActorID: actor, Key: uuid.New()}
+	_, err = tc.UpdateWorkflow(ctx, client.UpdateWorkflowOptions{WorkflowID: workflowID, UpdateID: blocker.Key.String(), UpdateName: "mutate", Args: []any{blocker}, WaitForStage: client.WorkflowUpdateStageAccepted})
+	require.NoError(t, err)
+	select {
+	case <-deleting:
+	case <-ctx.Done():
+		t.Fatal("deletion did not start")
+	}
+	grant := Mutation{Kind: "scope", WorkspaceID: mapping.ID, ActorID: actor, TargetID: root, TargetKind: identity.Leta, ScopeID: mapping.PersonalScopeID, ScopeRole: "viewer", PersonalOwnerID: actor, Key: uuid.New()}
+	queued, err := tc.UpdateWorkflow(ctx, client.UpdateWorkflowOptions{WorkflowID: workflowID, UpdateID: grant.Key.String(), UpdateName: "mutate", Args: []any{grant}, WaitForStage: client.WorkflowUpdateStageAccepted})
+	require.NoError(t, err)
+	read, stop := context.WithTimeout(ctx, 2*time.Second)
+	state, err := service.CleanupWorkspace(read, mapping.ID, root)
+	stop()
+	require.NoError(t, err)
+	require.Equal(t, "deleting", state.Status)
+	close(release)
+	var result workspace.Workspace
+	require.ErrorContains(t, queued.Get(ctx, &result), "WORKSPACE_DELETING")
+	allowed, err := authz.Check(ctx, graph, identity.Actor{Kind: identity.Leta, ID: root}, authz.ScopeReadContent, authz.Resource{Type: "scope", ID: mapping.PersonalScopeID.String()})
+	require.NoError(t, err)
+	require.False(t, allowed)
+	require.NoError(t, tc.TerminateWorkflow(ctx, workflowID, "", "test complete"))
 }

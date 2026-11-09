@@ -27,6 +27,10 @@ func (a *Activities) UpdateScopeAccess(ctx context.Context, in Mutation) (worksp
 	value, err := a.Service.UpdateScopeAccess(ctx, in)
 	return value, shared.Error(err)
 }
+func (a *Activities) EnsureLetaHomeAccess(ctx context.Context, in Mutation) (workspace.Workspace, error) {
+	value, err := a.Service.ProvisionLetaHome(ctx, in)
+	return value, shared.Error(err)
+}
 func WorkspaceChanges(ctx workflow.Context, id uuid.UUID) error {
 	mutex := workflow.NewMutex(ctx)
 	completed := 0
@@ -65,6 +69,8 @@ func WorkspaceChanges(ctx workflow.Context, id uuid.UUID) error {
 			}
 		case "member":
 			err = workflow.ExecuteActivity(ctx, a.UpdateMembership, in).Get(ctx, &value)
+		case "leta-home":
+			err = workflow.ExecuteActivity(ctx, a.EnsureLetaHomeAccess, in).Get(ctx, &value)
 		case "scope":
 			err = workflow.ExecuteActivity(ctx, a.UpdateScopeAccess, in).Get(ctx, &value)
 		default:
@@ -80,9 +86,11 @@ func WorkspaceChanges(ctx workflow.Context, id uuid.UUID) error {
 	return workflow.NewContinueAsNewError(ctx, WorkspaceChanges, id)
 }
 func Mutate(ctx context.Context, tc client.Client, in Mutation) (workspace.Workspace, error) {
-	in.Key = uuid.Must(uuid.NewV7())
+	if in.Key == uuid.Nil {
+		in.Key = uuid.Must(uuid.NewV7())
+	}
 	operation := tc.NewWithStartWorkflowOperation(client.StartWorkflowOptions{ID: "workspace-changes/" + in.WorkspaceID.String(), TaskQueue: Queue, WorkflowIDConflictPolicy: enums.WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING, WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE}, WorkspaceChanges, in.WorkspaceID)
-	handle, err := tc.UpdateWithStartWorkflow(ctx, client.UpdateWithStartWorkflowOptions{StartWorkflowOperation: operation, UpdateOptions: client.UpdateWorkflowOptions{UpdateID: in.Key.String(), UpdateName: "mutate", Args: []any{in}, WaitForStage: client.WorkflowUpdateStageAccepted}})
+	handle, err := tc.UpdateWithStartWorkflow(ctx, client.UpdateWithStartWorkflowOptions{StartWorkflowOperation: operation, UpdateOptions: client.UpdateWorkflowOptions{UpdateID: in.ActorID.String() + "/" + in.Key.String(), UpdateName: "mutate", Args: []any{in}, WaitForStage: client.WorkflowUpdateStageAccepted}})
 	if err != nil {
 		return workspace.Workspace{}, err
 	}

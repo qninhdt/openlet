@@ -63,3 +63,31 @@ func TestWorkspaceChangesContinuesAfterDrainingUpdates(t *testing.T) {
 	require.ErrorContains(t, env.GetWorkflowError(), "continue as new")
 	env.AssertExpectations(t)
 }
+
+func TestWorkspaceChangesSerializesHomeProvisioningWithScopeChanges(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	var a *Activities
+	id := uuid.New()
+	home := Mutation{Kind: "leta-home", WorkspaceID: id, ActorID: uuid.New(), TargetID: uuid.New(), ScopeID: uuid.New(), Key: uuid.New()}
+	grant := Mutation{Kind: "scope", WorkspaceID: id, ActorID: uuid.New(), TargetID: uuid.New(), ScopeID: uuid.New(), Key: uuid.New()}
+	env.OnActivity(a.EnsureLetaHomeAccess, mock.Anything, home).Return(workspace.Workspace{}, errors.New("storage unavailable")).Once()
+	homeFinished := false
+	env.OnActivity(a.EnsureLetaHomeAccess, mock.Anything, home).Run(func(mock.Arguments) { homeFinished = true }).Return(workspace.Workspace{ID: id}, nil).Once()
+	env.OnActivity(a.UpdateScopeAccess, mock.Anything, grant).Run(func(mock.Arguments) { require.True(t, homeFinished) }).Return(workspace.Workspace{ID: id}, nil).Once()
+	completed := 0
+	env.RegisterDelayedCallback(func() {
+		for _, in := range []Mutation{home, grant} {
+			env.UpdateWorkflow("mutate", in.Key.String(), &testsuite.TestUpdateCallback{OnReject: func(err error) { require.NoError(t, err) }, OnComplete: func(_ any, err error) {
+				require.NoError(t, err)
+				completed++
+				if completed == 2 {
+					env.CancelWorkflow()
+				}
+			}}, in)
+		}
+	}, 0)
+	env.ExecuteWorkflow(WorkspaceChanges, id)
+	require.Equal(t, 2, completed)
+	env.AssertExpectations(t)
+}
