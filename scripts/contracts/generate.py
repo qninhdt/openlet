@@ -25,6 +25,20 @@ def generate(destination: Path) -> None:
         )
         plugin["out"] = str(destination / kind)
     run("pnpm", "exec", "buf", "generate", "--template", json.dumps(template))
+    # Openlet's HTTP adapters use Problem JSON, not the generator's gRPC status body.
+    public = json.loads((CONTRACTS / "public/openapi.yaml").read_text())
+    openapi = destination / "openapi/letfs.openapi.json"
+    document = json.loads(openapi.read_text())
+    document["components"]["schemas"]["Problem"] = public["components"]["schemas"][
+        "Problem"
+    ]
+    for path in document["paths"].values():
+        for operation in path.values():
+            if "responses" in operation:
+                operation["responses"]["default"] = public["components"]["responses"][
+                    "Problem"
+                ]
+    openapi.write_text(json.dumps(document, indent=2) + "\n")
     descriptor = destination / "contracts.binpb"
     run(
         "pnpm",
@@ -74,7 +88,7 @@ def action_bindings() -> dict[Path, str]:
     resources = {
         name: re.findall(r"permission (\w+) =", body)
         for name, body in re.findall(r"definition (\w+) \{([^}]+)\}", schema)
-        if name in {"account", "workspace", "filesystem", "scope"}
+        if name in {"leta", "workspace", "filesystem", "scope"}
     }
     actions = [
         (resource, action) for resource, names in resources.items() for action in names

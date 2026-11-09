@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/qninhdt/openlet/apps/workspace/internal/workspace"
+	"github.com/qninhdt/openlet/packages/go/identity"
 )
 
 func (s *Server) members(c *gin.Context) {
@@ -39,7 +40,7 @@ func (s *Server) changeMember(c *gin.Context) {
 		failure(w, r, e)
 		return
 	}
-	target, e := resourceID(c, "account")
+	target, e := resourceID(c, "user")
 	if e != nil {
 		failure(w, r, e)
 		return
@@ -157,14 +158,14 @@ func (s *Server) addMember(c *gin.Context) {
 		return
 	}
 	var in struct {
-		AccountID uuid.UUID `json:"account_id"`
-		Role      string    `json:"role"`
+		UserID uuid.UUID `json:"user_id"`
+		Role   string    `json:"role"`
 	}
 	if err = decode(c.Writer, c.Request, &in); err != nil {
 		failure(c.Writer, c.Request, err)
 		return
 	}
-	value, err := s.Service.AddAccount(c.Request.Context(), ws, actorID(c.Request), in.AccountID, in.Role)
+	value, err := s.Service.AddUser(c.Request.Context(), ws, actorID(c.Request), in.UserID, in.Role)
 	if err != nil {
 		failure(c.Writer, c.Request, err)
 		return
@@ -182,19 +183,30 @@ func (s *Server) scopeAccess(c *gin.Context) {
 		failure(c.Writer, c.Request, err)
 		return
 	}
-	target, err := resourceID(c, "account")
+	target, err := resourceID(c, "user")
 	if err != nil {
 		failure(c.Writer, c.Request, err)
 		return
 	}
 	var in struct {
-		Role string `json:"role"`
+		Role        string             `json:"role"`
+		GranteeKind identity.ActorKind `json:"grantee_kind"`
 	}
 	if err = decode(c.Writer, c.Request, &in); err != nil {
 		failure(c.Writer, c.Request, err)
 		return
 	}
-	_, err = s.Service.ChangeScopeAccess(c.Request.Context(), ws, actorID(c.Request), scope, target, in.Role, c.Request.Method == http.MethodDelete)
+	if in.GranteeKind == "" {
+		in.GranteeKind = identity.User
+	}
+	if in.GranteeKind != identity.User && in.GranteeKind != identity.Leta {
+		failure(c.Writer, c.Request, workspace.Fault{Code: "VALIDATION"})
+		return
+	}
+	_, err = s.Service.ChangeTypedScopeAccess(c.Request.Context(), workspace.Mutation{
+		Kind: "scope", WorkspaceID: ws, ActorID: actorID(c.Request), ScopeID: scope,
+		TargetID: target, TargetKind: in.GranteeKind, ScopeRole: in.Role, Revoke: c.Request.Method == http.MethodDelete,
+	})
 	if err != nil {
 		failure(c.Writer, c.Request, err)
 		return
