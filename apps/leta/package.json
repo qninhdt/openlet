@@ -1,0 +1,14 @@
+{
+  "name": "@openlet/leta",
+  "private": true,
+  "scripts": {
+    "build": "uv build --package leta",
+    "check": "uv run --locked --package leta ruff check . && uv run --locked --package leta ruff format --check .",
+    "test": "uv run --locked --package leta pytest tests -m 'not integration and not replay'",
+    "test:integration": "uv run --locked --package leta pytest tests -m integration",
+    "test:replay": "uv run --locked --package leta pytest tests -m replay"
+  },
+  "devDependencies": {
+    "@openlet/python": "workspace:*"
+  }
+}

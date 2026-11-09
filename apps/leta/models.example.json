@@ -1,0 +1,27 @@
+{
+  "models": [
+    {
+      "model_id": "openai/gpt-4.1-mini",
+      "reasoning_efforts": [
+        null
+      ],
+      "context_window_tokens": 1047576,
+      "max_output_tokens": 8192
+    },
+    {
+      "model_id": "openai/gpt-5.1",
+      "reasoning_efforts": [
+        null,
+        "low",
+        "medium",
+        "high"
+      ],
+      "context_window_tokens": 400000,
+      "max_output_tokens": 8192
+    }
+  ],
+  "default": {
+    "model_id": "openai/gpt-4.1-mini",
+    "reasoning_effort": null
+  }
+}

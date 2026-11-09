@@ -147,5 +147,5 @@ class Activities:
         try:
             async with asyncio.timeout(5):
                 await self.api.abort_parse(source, code)
-        except (Exception, asyncio.CancelledError):
+        except Exception, asyncio.CancelledError:
             LOG.warning("generation cleanup deferred to letfs maintenance")

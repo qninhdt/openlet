@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-const spiceImage = "authzed/spicedb:v1.57.0@sha256:2e0cd20aa923ccfd96eb285756ec10a5d7bbe387e4b29c26bd6447435d2328de"
+const spiceImage = "authzed/spicedb:v1.57.0@sha256:a170d372c9f6b921bb6849064df6ca3566dd5b174882c1a2c4300c2ae1d60efd"
 const SpiceDBKey = "isolated-graph-key-for-integration-fixtures"
 
 func SpiceDB(t *testing.T, schemaPath string) (*authzed.Client, string, testcontainers.Container) {
@@ -40,7 +40,7 @@ func SpiceDB(t *testing.T, schemaPath string) (*authzed.Client, string, testcont
 		return container
 	}
 	start(testcontainers.ContainerRequest{
-		Image:          "postgres:18.6-trixie@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336",
+		Image:          "postgres:18.6-trixie@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42",
 		Env:            map[string]string{"POSTGRES_USER": "graph", "POSTGRES_PASSWORD": "isolated-graph-password", "POSTGRES_DB": "graph"},
 		NetworkAliases: map[string][]string{nw.Name: {"postgres"}},
 		WaitingFor:     wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(time.Minute),

@@ -1,9 +1,11 @@
-FROM python:3.13.18-slim-bookworm@sha256:281d39ff02e3b389401586134ff9e6572954687822a58055ec07a60ded4e0b7f AS dependencies
-RUN pip install --no-cache-dir uv==0.10.7
+FROM python:3.14.10-slim-trixie@sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916788d80f04802f AS dependencies
+RUN pip install --no-cache-dir uv==0.13.7
 WORKDIR /app
 ENV UV_LINK_MODE=copy
 COPY pyproject.toml uv.lock ./
+COPY .python-version ./
 COPY apps/letfs-ingest/pyproject.toml ./apps/letfs-ingest/pyproject.toml
+COPY apps/leta/pyproject.toml ./apps/leta/pyproject.toml
 COPY packages/python/ ./packages/python/
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked --no-dev --package letfs-ingest --no-install-package letfs-ingest --no-install-package openlet-python
 
@@ -16,7 +18,7 @@ FROM dependencies AS package
 COPY apps/letfs-ingest/src/ ./apps/letfs-ingest/src/
 RUN --mount=type=cache,target=/root/.cache/uv uv build --package openlet-python --wheel --out-dir /dist && uv build --package letfs-ingest --wheel --out-dir /dist
 
-FROM python:3.13.18-slim-bookworm@sha256:281d39ff02e3b389401586134ff9e6572954687822a58055ec07a60ded4e0b7f
+FROM python:3.14.10-slim-trixie@sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916788d80f04802f
 RUN apt-get update && apt-get install -y --no-install-recommends libglib2.0-0 libgomp1 && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=dependencies /app/.venv /app/.venv

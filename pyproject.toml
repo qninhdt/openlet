@@ -1,5 +1,5 @@
 [tool.uv.workspace]
-members = ["apps/letfs-ingest", "packages/python"]
+members = ["apps/leta", "apps/letfs-ingest", "packages/python"]
 
 [[tool.uv.index]]
 name = "pytorch-cpu"

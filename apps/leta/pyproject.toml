@@ -1,0 +1,50 @@
+[project]
+name = "leta"
+version = "0.1.0"
+requires-python = ">=3.14,<3.15"
+dependencies = [
+  "openlet-python",
+  "pydantic==2.14.3",
+  "langchain==1.4.9",
+  "langgraph==1.2.20",
+  "langgraph-checkpoint-postgres==3.2.0",
+  "mirage-ai[monty,redis]==0.0.8",
+  "ag-ui-langgraph==0.0.47",
+  "langchain-openrouter==0.2.9",
+  "fastapi==0.162.2",
+  "uvicorn==0.54.0",
+  "psycopg[binary,pool]==3.3.8",
+  "redis==8.1.0",
+  "opentelemetry-instrumentation-fastapi==0.66b2",
+  "grpcio-health-checking==1.85.1",
+]
+
+[dependency-groups]
+dev = ["pytest==9.2.0", "pytest-asyncio==1.4.1.post1", "ruff==0.17.4", "httpx==0.28.1"]
+
+[build-system]
+requires = ["hatchling==1.33.0"]
+build-backend = "hatchling.build"
+
+[tool.uv.sources]
+openlet-python = { workspace = true }
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+  "integration: uses owned disposable dependencies",
+  "replay: replays captured Temporal histories",
+]
+
+[tool.ruff]
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/leta"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"migrations" = "leta/migrations"

@@ -91,14 +91,18 @@ def test_reasoning_effort_is_validated_and_loaded_from_environment(
         AISettings.from_env()
 
 
-async def test_instructor_sends_json_and_actual_vision_evidence():
+@pytest.mark.parametrize("invalid_first", [False, True])
+async def test_metadata_sends_native_schema_and_actual_vision_evidence(invalid_first):
     calls = []
 
     def handler(request):
         body = json.loads(request.content)
         calls.append(body)
         assert request.url.path == "/api/v1/chat/completions"
-        assert body["response_format"] == {"type": "json_object"}
+        assert body["response_format"]["type"] == "json_schema"
+        schema = body["response_format"]["json_schema"]["schema"]
+        assert schema["properties"]["type"]["enum"]
+        assert set(schema["required"]) == {"title", "description", "type", "context"}
         assert body["reasoning"] == {"effort": "none"}
         return httpx.Response(
             200,
@@ -112,8 +116,12 @@ async def test_instructor_sends_json_and_actual_vision_evidence():
                         "index": 0,
                         "message": {
                             "role": "assistant",
-                            "content": meta(kind="image:chart").model_dump_json(
-                                by_alias=True
+                            "content": (
+                                '{"title":"incomplete"}'
+                                if invalid_first and len(calls) == 1
+                                else meta(kind="image:chart").model_dump_json(
+                                    by_alias=True
+                                )
                             ),
                         },
                         "finish_reason": "stop",
@@ -137,6 +145,7 @@ async def test_instructor_sends_json_and_actual_vision_evidence():
     result = await ai.describe("chart evidence", image.getvalue())
     await ai.close()
     assert result.semantic_type == "image:chart"
+    assert len(calls) == (2 if invalid_first else 1)
     assert calls[0]["messages"][-1]["content"][1]["image_url"]["url"].startswith(
         "data:image/jpeg;base64,"
     )

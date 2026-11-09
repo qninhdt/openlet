@@ -1,7 +1,7 @@
 {
   "name": "openlet",
   "private": true,
-  "packageManager": "pnpm@12.9.1",
+  "packageManager": "pnpm@12.18.0",
   "scripts": {
     "e2e:api": "pnpm --dir e2e exec playwright test --project=api",
     "check:e2e": "pnpm --dir e2e exec tsc",
