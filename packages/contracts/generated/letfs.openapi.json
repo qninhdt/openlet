@@ -43,6 +43,16 @@
           }
         ],
         "responses": {
+          "default": {
+            "description": "Application problem; code is stable, detail is diagnostic. Gateway authentication/rate limiting may return native Envoy bodies.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
           "200": {
             "description": "Success",
             "content": {
@@ -60,6 +70,17 @@
   },
   "components": {
     "schemas": {
+      "google.protobuf.Any": {
+        "type": "object",
+        "properties": {
+          "@type": {
+            "type": "string",
+            "description": "A URL/resource name that uniquely identifies the type of the serialized message."
+          }
+        },
+        "additionalProperties": true,
+        "description": "Contains an arbitrary serialized message along with a @type that describes the type of the serialized message."
+      },
       "google.protobuf.Timestamp": {
         "type": "string",
         "examples": [
@@ -67,7 +88,29 @@
           "2024-12-25T12:00:00Z"
         ],
         "format": "date-time",
-        "description": "A Timestamp represents a point in time independent of any time zone or local\n calendar, encoded as a count of seconds and fractions of seconds at\n nanosecond resolution. The count is relative to an epoch at UTC midnight on\n January 1, 1970, in the proleptic Gregorian calendar which extends the\n Gregorian calendar backwards to year one.\n\n All minutes are 60 seconds long. Leap seconds are \"smeared\" so that no leap\n second table is needed for interpretation, using a [24-hour linear\n smear](https://developers.google.com/time/smear).\n\n The range is from 0001-01-01T00:00:00Z to 9999-12-31T23:59:59.999999999Z. By\n restricting to that range, we ensure that we can convert to and from [RFC\n 3339](https://www.ietf.org/rfc/rfc3339.txt) date strings.\n\n # Examples\n\n Example 1: Compute Timestamp from POSIX `time()`.\n\n     Timestamp timestamp;\n     timestamp.set_seconds(time(NULL));\n     timestamp.set_nanos(0);\n\n Example 2: Compute Timestamp from POSIX `gettimeofday()`.\n\n     struct timeval tv;\n     gettimeofday(\u0026tv, NULL);\n\n     Timestamp timestamp;\n     timestamp.set_seconds(tv.tv_sec);\n     timestamp.set_nanos(tv.tv_usec * 1000);\n\n Example 3: Compute Timestamp from Win32 `GetSystemTimeAsFileTime()`.\n\n     FILETIME ft;\n     GetSystemTimeAsFileTime(\u0026ft);\n     UINT64 ticks = (((UINT64)ft.dwHighDateTime) \u003c\u003c 32) | ft.dwLowDateTime;\n\n     // A Windows tick is 100 nanoseconds. Windows epoch 1601-01-01T00:00:00Z\n     // is 11644473600 seconds before Unix epoch 1970-01-01T00:00:00Z.\n     Timestamp timestamp;\n     timestamp.set_seconds((INT64) ((ticks / 10000000) - 11644473600LL));\n     timestamp.set_nanos((INT32) ((ticks % 10000000) * 100));\n\n Example 4: Compute Timestamp from Java `System.currentTimeMillis()`.\n\n     long millis = System.currentTimeMillis();\n\n     Timestamp timestamp = Timestamp.newBuilder().setSeconds(millis / 1000)\n         .setNanos((int) ((millis % 1000) * 1000000)).build();\n\n Example 5: Compute Timestamp from Java `Instant.now()`.\n\n     Instant now = Instant.now();\n\n     Timestamp timestamp =\n         Timestamp.newBuilder().setSeconds(now.getEpochSecond())\n             .setNanos(now.getNano()).build();\n\n Example 6: Compute Timestamp from current time in Python.\n\n     timestamp = Timestamp()\n     timestamp.GetCurrentTime()\n\n # JSON Mapping\n\n In JSON format, the Timestamp type is encoded as a string in the\n [RFC 3339](https://www.ietf.org/rfc/rfc3339.txt) format. That is, the\n format is \"{year}-{month}-{day}T{hour}:{min}:{sec}[.{frac_sec}]Z\"\n where {year} is always expressed using four digits while {month}, {day},\n {hour}, {min}, and {sec} are zero-padded to two digits each. The fractional\n seconds, which can go up to 9 digits (i.e. up to 1 nanosecond resolution),\n are optional. The \"Z\" suffix indicates the timezone (\"UTC\"); the timezone\n is required. A proto3 JSON serializer should always use UTC (as indicated by\n \"Z\") when printing the Timestamp type and a proto3 JSON parser should be\n able to accept both UTC and other timezones (as indicated by an offset).\n\n For example, \"2017-01-15T01:30:15.01Z\" encodes 15.01 seconds past\n 01:30 UTC on January 15, 2017.\n\n In JavaScript, one can convert a Date object to this format using the\n standard\n [toISOString()](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Date/toISOString)\n method. In Python, a standard `datetime.datetime` object can be converted\n to this format using\n [`strftime`](https://docs.python.org/2/library/time.html#time.strftime) with\n the time format spec '%Y-%m-%dT%H:%M:%S.%fZ'. Likewise, in Java, one can use\n the Joda Time's [`ISODateTimeFormat.dateTime()`](\n http://joda-time.sourceforge.net/apidocs/org/joda/time/format/ISODateTimeFormat.html#dateTime()\n ) to obtain a formatter capable of generating timestamps in this format."
+        "description": "A point in time in RFC 3339 format, with up to nanosecond precision. Output uses UTC (`Z`); input may use an offset from UTC."
+      },
+      "google.rpc.Status": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The status code, which should be an enum value of google.rpc.Code."
+          },
+          "message": {
+            "type": "string",
+            "description": "A developer-facing error message."
+          },
+          "details": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/google.protobuf.Any"
+            },
+            "description": "A list of messages that carry the error details."
+          }
+        },
+        "description": "The Status type defines a logical error model suitable for gRPC and REST APIs."
       },
       "openlet_api.letfs.v1.AbortUploadRequest": {
         "type": "object",
@@ -91,6 +134,41 @@
       "openlet_api.letfs.v1.AbortUploadResponse": {
         "type": "object",
         "title": "AbortUploadResponse",
+        "additionalProperties": false
+      },
+      "openlet_api.letfs.v1.AppendTextRequest": {
+        "type": "object",
+        "properties": {
+          "filesystem_id": {
+            "type": "string",
+            "title": "filesystem_id"
+          },
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
+          },
+          "target": {
+            "title": "target",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.TextTarget"
+          },
+          "content": {
+            "type": "string",
+            "title": "content",
+            "format": "byte"
+          }
+        },
+        "title": "AppendTextRequest",
+        "additionalProperties": false
+      },
+      "openlet_api.letfs.v1.AppendTextResponse": {
+        "type": "object",
+        "properties": {
+          "result": {
+            "title": "result",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.TextMutation"
+          }
+        },
+        "title": "AppendTextResponse",
         "additionalProperties": false
       },
       "openlet_api.letfs.v1.ArchiveMetadata": {
@@ -156,6 +234,43 @@
         "title": "Breadcrumb",
         "additionalProperties": false
       },
+      "openlet_api.letfs.v1.ByteOverwrite": {
+        "type": "object",
+        "properties": {
+          "offset": {
+            "type": "string",
+            "title": "offset",
+            "format": "int64"
+          },
+          "content": {
+            "type": "string",
+            "title": "content",
+            "format": "byte"
+          }
+        },
+        "title": "ByteOverwrite",
+        "additionalProperties": false
+      },
+      "openlet_api.letfs.v1.ByteRange": {
+        "type": "object",
+        "properties": {
+          "offset": {
+            "type": "string",
+            "title": "offset",
+            "format": "int64"
+          },
+          "length": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "length",
+            "format": "int64"
+          }
+        },
+        "title": "ByteRange",
+        "additionalProperties": false
+      },
       "openlet_api.letfs.v1.CompleteUploadRequest": {
         "type": "object",
         "properties": {
@@ -203,6 +318,20 @@
             ],
             "title": "destination_scope_id"
           },
+          "source_root_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "source_root_id"
+          },
+          "destination_root_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "destination_root_id"
+          },
           "filesystem_id": {
             "type": "string",
             "title": "filesystem_id"
@@ -221,7 +350,6 @@
           },
           "revision": {
             "type": [
-              "integer",
               "string",
               "null"
             ],
@@ -251,56 +379,87 @@
         "title": "CreateCopyResponse",
         "additionalProperties": false
       },
+      "openlet_api.letfs.v1.CreateDirectoriesRequest": {
+        "type": "object",
+        "properties": {
+          "filesystem_id": {
+            "type": "string",
+            "title": "filesystem_id"
+          },
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
+          },
+          "parent": {
+            "title": "parent",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.Locator"
+          },
+          "components": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "title": "components"
+          },
+          "parents": {
+            "type": "boolean",
+            "title": "parents"
+          }
+        },
+        "title": "CreateDirectoriesRequest",
+        "additionalProperties": false
+      },
+      "openlet_api.letfs.v1.CreateDirectoriesResponse": {
+        "type": "object",
+        "properties": {
+          "node": {
+            "title": "node",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.Node"
+          }
+        },
+        "title": "CreateDirectoriesResponse",
+        "additionalProperties": false
+      },
       "openlet_api.letfs.v1.CreateNodeRequest": {
         "type": "object",
-        "allOf": [
-          {
-            "properties": {
-              "filesystem_id": {
-                "type": "string",
-                "title": "filesystem_id"
-              },
-              "idempotency_key": {
-                "type": "string",
-                "title": "idempotency_key"
-              },
-              "scope_id": {
-                "type": "string",
-                "title": "scope_id"
-              }
-            }
+        "not": {
+          "required": [
+            "directory",
+            "file"
+          ]
+        },
+        "properties": {
+          "filesystem_id": {
+            "type": "string",
+            "title": "filesystem_id"
           },
-          {
-            "oneOf": [
-              {
-                "properties": {
-                  "directory": {
-                    "title": "directory",
-                    "$ref": "#/components/schemas/openlet_api.letfs.v1.DirectoryCreation"
-                  }
-                },
-                "title": "directory",
-                "required": [
-                  "directory"
-                ]
-              },
-              {
-                "properties": {
-                  "file": {
-                    "title": "file",
-                    "$ref": "#/components/schemas/openlet_api.letfs.v1.InlineFileCreation"
-                  }
-                },
-                "title": "file",
-                "required": [
-                  "file"
-                ]
-              }
-            ]
+          "idempotency_key": {
+            "type": "string",
+            "title": "idempotency_key"
+          },
+          "directory": {
+            "title": "directory",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.DirectoryCreation"
+          },
+          "file": {
+            "title": "file",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.InlineFileCreation"
+          },
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
+          },
+          "node_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "node_id"
           }
-        ],
+        },
         "title": "CreateNodeRequest",
-        "additionalProperties": false
+        "additionalProperties": false,
+        "description": "At most one of `directory`, `file` may be set."
       },
       "openlet_api.letfs.v1.CreateNodeResponse": {
         "type": "object",
@@ -315,74 +474,56 @@
       },
       "openlet_api.letfs.v1.CreateUploadRequest": {
         "type": "object",
-        "allOf": [
-          {
-            "properties": {
-              "filesystem_id": {
-                "type": "string",
-                "title": "filesystem_id"
-              },
-              "idempotency_key": {
-                "type": "string",
-                "title": "idempotency_key"
-              },
-              "size_bytes": {
-                "type": [
-                  "integer",
-                  "string",
-                  "null"
-                ],
-                "title": "size_bytes",
-                "format": "int64"
-              },
-              "media_type": {
-                "type": "string",
-                "title": "media_type"
-              },
-              "content_md5": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "title": "content_md5"
-              },
-              "scope_id": {
-                "type": "string",
-                "title": "scope_id"
-              }
-            }
+        "not": {
+          "required": [
+            "destination",
+            "replacement"
+          ]
+        },
+        "properties": {
+          "filesystem_id": {
+            "type": "string",
+            "title": "filesystem_id"
           },
-          {
-            "oneOf": [
-              {
-                "properties": {
-                  "destination": {
-                    "title": "destination",
-                    "$ref": "#/components/schemas/openlet_api.letfs.v1.UploadDestination"
-                  }
-                },
-                "title": "destination",
-                "required": [
-                  "destination"
-                ]
-              },
-              {
-                "properties": {
-                  "replacement": {
-                    "title": "replacement",
-                    "$ref": "#/components/schemas/openlet_api.letfs.v1.UploadReplacement"
-                  }
-                },
-                "title": "replacement",
-                "required": [
-                  "replacement"
-                ]
-              }
-            ]
+          "idempotency_key": {
+            "type": "string",
+            "title": "idempotency_key"
+          },
+          "size_bytes": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "size_bytes",
+            "format": "int64"
+          },
+          "media_type": {
+            "type": "string",
+            "title": "media_type"
+          },
+          "content_md5": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "content_md5"
+          },
+          "destination": {
+            "title": "destination",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.UploadDestination"
+          },
+          "replacement": {
+            "title": "replacement",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.UploadReplacement"
+          },
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
           }
-        ],
+        },
         "title": "CreateUploadRequest",
-        "additionalProperties": false
+        "additionalProperties": false,
+        "description": "At most one of `destination`, `replacement` may be set."
       },
       "openlet_api.letfs.v1.CreateUploadResponse": {
         "type": "object",
@@ -412,63 +553,111 @@
       },
       "openlet_api.letfs.v1.Download": {
         "type": "object",
-        "allOf": [
-          {
-            "properties": {
-              "mime": {
-                "type": "string",
-                "title": "mime"
-              },
-              "filename": {
-                "type": "string",
-                "title": "filename"
-              },
-              "etag": {
-                "type": "string",
-                "title": "etag"
-              },
-              "size_bytes": {
-                "type": [
-                  "integer",
-                  "string"
-                ],
-                "title": "size_bytes",
-                "format": "int64"
-              }
-            }
+        "not": {
+          "required": [
+            "inline_content",
+            "signed_url"
+          ]
+        },
+        "properties": {
+          "mime": {
+            "type": "string",
+            "title": "mime"
           },
-          {
-            "oneOf": [
-              {
-                "properties": {
-                  "inline_content": {
-                    "type": "string",
-                    "title": "inline_content",
-                    "format": "byte"
-                  }
-                },
-                "title": "inline_content",
-                "required": [
-                  "inline_content"
-                ]
-              },
-              {
-                "properties": {
-                  "signed_url": {
-                    "type": "string",
-                    "title": "signed_url"
-                  }
-                },
-                "title": "signed_url",
-                "required": [
-                  "signed_url"
-                ]
-              }
-            ]
+          "filename": {
+            "type": "string",
+            "title": "filename"
+          },
+          "etag": {
+            "type": "string",
+            "title": "etag"
+          },
+          "size_bytes": {
+            "type": "string",
+            "title": "size_bytes",
+            "format": "int64"
+          },
+          "inline_content": {
+            "type": "string",
+            "title": "inline_content",
+            "format": "byte"
+          },
+          "signed_url": {
+            "type": "string",
+            "title": "signed_url"
           }
-        ],
+        },
         "title": "Download",
-        "additionalProperties": false
+        "additionalProperties": false,
+        "description": "At most one of `inline_content`, `signed_url` may be set."
+      },
+      "openlet_api.letfs.v1.ExistingText": {
+        "type": "object",
+        "properties": {
+          "locator": {
+            "title": "locator",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.Locator"
+          },
+          "revision": {
+            "type": "string",
+            "title": "revision",
+            "format": "int64"
+          },
+          "expected_fingerprint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "expected_fingerprint"
+          }
+        },
+        "title": "ExistingText",
+        "additionalProperties": false,
+        "description": "Existing writes bind the observed identity and revision. Creation binds parent/name absence."
+      },
+      "openlet_api.letfs.v1.FileStat": {
+        "type": "object",
+        "properties": {
+          "node": {
+            "title": "node",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.Node"
+          },
+          "storage_kind": {
+            "type": "string",
+            "title": "storage_kind"
+          },
+          "representation_kind": {
+            "type": "string",
+            "title": "representation_kind"
+          },
+          "readable_size": {
+            "type": "string",
+            "title": "readable_size",
+            "format": "int64"
+          },
+          "fingerprint": {
+            "type": "string",
+            "title": "fingerprint"
+          },
+          "newline_count": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "newline_count",
+            "format": "int64"
+          },
+          "sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "sha256"
+          }
+        },
+        "title": "FileStat",
+        "additionalProperties": false,
+        "description": "These representations contain bounded text or blob metadata, never original blob bytes/URLs."
       },
       "openlet_api.letfs.v1.Filesystem": {
         "type": "object",
@@ -478,26 +667,17 @@
             "title": "id"
           },
           "limit_bytes": {
-            "type": [
-              "integer",
-              "string"
-            ],
+            "type": "string",
             "title": "limit_bytes",
             "format": "int64"
           },
           "used_bytes": {
-            "type": [
-              "integer",
-              "string"
-            ],
+            "type": "string",
             "title": "used_bytes",
             "format": "int64"
           },
           "node_count": {
-            "type": [
-              "integer",
-              "string"
-            ],
+            "type": "string",
             "title": "node_count",
             "format": "int64"
           },
@@ -522,7 +702,6 @@
           },
           "revision": {
             "type": [
-              "integer",
               "string",
               "null"
             ],
@@ -756,6 +935,35 @@
         "title": "InlineFileCreation",
         "additionalProperties": false
       },
+      "openlet_api.letfs.v1.LineCount": {
+        "type": "object",
+        "properties": {
+          "line_count": {
+            "type": "string",
+            "title": "line_count",
+            "format": "int64"
+          }
+        },
+        "title": "LineCount",
+        "additionalProperties": false
+      },
+      "openlet_api.letfs.v1.LineRange": {
+        "type": "object",
+        "properties": {
+          "start_line": {
+            "type": "string",
+            "title": "start_line",
+            "format": "int64"
+          },
+          "line_count": {
+            "type": "string",
+            "title": "line_count",
+            "format": "int64"
+          }
+        },
+        "title": "LineRange",
+        "additionalProperties": false
+      },
       "openlet_api.letfs.v1.ListNodesRequest": {
         "type": "object",
         "properties": {
@@ -862,58 +1070,68 @@
         "title": "ListTrashResponse",
         "additionalProperties": false
       },
+      "openlet_api.letfs.v1.LiteralReplacement": {
+        "type": "object",
+        "properties": {
+          "old_text": {
+            "type": "string",
+            "title": "old_text"
+          },
+          "new_text": {
+            "type": "string",
+            "title": "new_text"
+          },
+          "replace_all": {
+            "type": "boolean",
+            "title": "replace_all"
+          }
+        },
+        "title": "LiteralReplacement",
+        "additionalProperties": false
+      },
       "openlet_api.letfs.v1.Locator": {
         "type": "object",
-        "allOf": [
-          {
-            "properties": {
-              "expected_node_id": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "title": "expected_node_id"
-              },
-              "expected_parent_id": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "title": "expected_parent_id"
-              }
-            }
+        "not": {
+          "required": [
+            "node_id",
+            "path"
+          ]
+        },
+        "properties": {
+          "node_id": {
+            "type": "string",
+            "title": "node_id"
           },
-          {
-            "oneOf": [
-              {
-                "properties": {
-                  "node_id": {
-                    "type": "string",
-                    "title": "node_id"
-                  }
-                },
-                "title": "node_id",
-                "required": [
-                  "node_id"
-                ]
-              },
-              {
-                "properties": {
-                  "path": {
-                    "title": "path",
-                    "$ref": "#/components/schemas/openlet_api.letfs.v1.PathLocator"
-                  }
-                },
-                "title": "path",
-                "required": [
-                  "path"
-                ]
-              }
-            ]
+          "path": {
+            "title": "path",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.PathLocator"
+          },
+          "expected_node_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "expected_node_id"
+          },
+          "expected_parent_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "expected_parent_id"
+          },
+          "root_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "root_id",
+            "description": "Traversal boundary inside the scope; omitted uses the ordinary scope root."
           }
-        ],
+        },
         "title": "Locator",
-        "additionalProperties": false
+        "additionalProperties": false,
+        "description": "At most one of `node_id`, `path` may be set."
       },
       "openlet_api.letfs.v1.Node": {
         "type": "object",
@@ -938,18 +1156,12 @@
             "title": "kind"
           },
           "revision": {
-            "type": [
-              "integer",
-              "string"
-            ],
+            "type": "string",
             "title": "revision",
             "format": "int64"
           },
           "size_bytes": {
-            "type": [
-              "integer",
-              "string"
-            ],
+            "type": "string",
             "title": "size_bytes",
             "format": "int64"
           },
@@ -1000,6 +1212,10 @@
           "scope_id": {
             "type": "string",
             "title": "scope_id"
+          },
+          "readonly": {
+            "type": "boolean",
+            "title": "readonly"
           }
         },
         "title": "Node",
@@ -1019,6 +1235,51 @@
           }
         },
         "title": "PartReceipt",
+        "additionalProperties": false
+      },
+      "openlet_api.letfs.v1.PatchTextRequest": {
+        "type": "object",
+        "not": {
+          "required": [
+            "bytes",
+            "literal"
+          ]
+        },
+        "properties": {
+          "filesystem_id": {
+            "type": "string",
+            "title": "filesystem_id"
+          },
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
+          },
+          "target": {
+            "title": "target",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.TextTarget"
+          },
+          "bytes": {
+            "title": "bytes",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.ByteOverwrite"
+          },
+          "literal": {
+            "title": "literal",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.LiteralReplacement"
+          }
+        },
+        "title": "PatchTextRequest",
+        "additionalProperties": false,
+        "description": "At most one of `bytes`, `literal` may be set."
+      },
+      "openlet_api.letfs.v1.PatchTextResponse": {
+        "type": "object",
+        "properties": {
+          "result": {
+            "title": "result",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.TextMutation"
+          }
+        },
+        "title": "PatchTextResponse",
         "additionalProperties": false
       },
       "openlet_api.letfs.v1.PathLocator": {
@@ -1043,10 +1304,7 @@
         "type": "object",
         "properties": {
           "desired_generation": {
-            "type": [
-              "integer",
-              "string"
-            ],
+            "type": "string",
             "title": "desired_generation",
             "format": "int64"
           },
@@ -1093,6 +1351,278 @@
         "title": "PurgeTrashResponse",
         "additionalProperties": false
       },
+      "openlet_api.letfs.v1.ReadImageRequest": {
+        "type": "object",
+        "properties": {
+          "filesystem_id": {
+            "type": "string",
+            "title": "filesystem_id"
+          },
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
+          },
+          "locator": {
+            "title": "locator",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.Locator"
+          },
+          "expected_fingerprint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "expected_fingerprint"
+          }
+        },
+        "title": "ReadImageRequest",
+        "additionalProperties": false
+      },
+      "openlet_api.letfs.v1.ReadImageResponse": {
+        "type": "object",
+        "properties": {
+          "stat": {
+            "title": "stat",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.FileStat"
+          },
+          "content": {
+            "type": "string",
+            "title": "content",
+            "format": "byte"
+          },
+          "mime": {
+            "type": "string",
+            "title": "mime"
+          },
+          "width": {
+            "type": "integer",
+            "title": "width",
+            "format": "int32"
+          },
+          "height": {
+            "type": "integer",
+            "title": "height",
+            "format": "int32"
+          },
+          "sha256": {
+            "type": "string",
+            "title": "sha256"
+          }
+        },
+        "title": "ReadImageResponse",
+        "additionalProperties": false
+      },
+      "openlet_api.letfs.v1.ReadTextRequest": {
+        "type": "object",
+        "not": {
+          "allOf": [
+            {
+              "anyOf": [
+                {
+                  "required": [
+                    "whole"
+                  ]
+                },
+                {
+                  "required": [
+                    "bytes"
+                  ]
+                },
+                {
+                  "required": [
+                    "lines"
+                  ]
+                },
+                {
+                  "required": [
+                    "head"
+                  ]
+                },
+                {
+                  "required": [
+                    "tail"
+                  ]
+                }
+              ]
+            },
+            {
+              "not": {
+                "oneOf": [
+                  {
+                    "required": [
+                      "whole"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "bytes"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "lines"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "head"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "tail"
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "properties": {
+          "filesystem_id": {
+            "type": "string",
+            "title": "filesystem_id"
+          },
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
+          },
+          "locator": {
+            "title": "locator",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.Locator"
+          },
+          "whole": {
+            "title": "whole",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.WholeText"
+          },
+          "bytes": {
+            "title": "bytes",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.ByteRange"
+          },
+          "lines": {
+            "title": "lines",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.LineRange"
+          },
+          "head": {
+            "title": "head",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.LineCount"
+          },
+          "tail": {
+            "title": "tail",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.LineCount"
+          },
+          "expected_fingerprint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "expected_fingerprint"
+          }
+        },
+        "title": "ReadTextRequest",
+        "additionalProperties": false,
+        "description": "At most one of `whole`, `bytes`, `lines`, `head`, `tail` may be set."
+      },
+      "openlet_api.letfs.v1.ReadTextResponse": {
+        "type": "object",
+        "properties": {
+          "stat": {
+            "title": "stat",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.FileStat"
+          },
+          "content": {
+            "type": "string",
+            "title": "content",
+            "format": "byte"
+          },
+          "offset": {
+            "type": "string",
+            "title": "offset",
+            "format": "int64"
+          },
+          "length": {
+            "type": "string",
+            "title": "length",
+            "format": "int64"
+          }
+        },
+        "title": "ReadTextResponse",
+        "additionalProperties": false
+      },
+      "openlet_api.letfs.v1.ReadTreeRequest": {
+        "type": "object",
+        "properties": {
+          "filesystem_id": {
+            "type": "string",
+            "title": "filesystem_id"
+          },
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
+          },
+          "root": {
+            "title": "root",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.Locator"
+          },
+          "depth": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "title": "depth",
+            "format": "int32"
+          },
+          "cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "cursor"
+          },
+          "limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "title": "limit",
+            "format": "int32"
+          },
+          "max_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "title": "max_bytes",
+            "format": "int32"
+          }
+        },
+        "title": "ReadTreeRequest",
+        "additionalProperties": false
+      },
+      "openlet_api.letfs.v1.ReadTreeResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/openlet_api.letfs.v1.TreeEntry"
+            },
+            "title": "items"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "next_cursor"
+          },
+          "complete": {
+            "type": "boolean",
+            "title": "complete"
+          }
+        },
+        "title": "ReadTreeResponse",
+        "additionalProperties": false
+      },
       "openlet_api.letfs.v1.ReplaceContentRequest": {
         "type": "object",
         "properties": {
@@ -1106,7 +1636,6 @@
           },
           "revision": {
             "type": [
-              "integer",
               "string",
               "null"
             ],
@@ -1172,10 +1701,7 @@
             "title": "file_id"
           },
           "generation": {
-            "type": [
-              "integer",
-              "string"
-            ],
+            "type": "string",
             "title": "generation",
             "format": "int64"
           },
@@ -1249,6 +1775,13 @@
               "null"
             ],
             "title": "name"
+          },
+          "root_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "root_id"
           }
         },
         "title": "RestoreTrashRequest",
@@ -1518,10 +2051,7 @@
             }
           },
           "content_length": {
-            "type": [
-              "integer",
-              "string"
-            ],
+            "type": "string",
             "title": "content_length",
             "format": "int64"
           },
@@ -1533,19 +2063,38 @@
         "title": "SignedUpload",
         "additionalProperties": false
       },
-      "openlet_api.letfs.v1.SignedUpload.HeadersEntry": {
+      "openlet_api.letfs.v1.StatRequest": {
         "type": "object",
         "properties": {
-          "key": {
+          "filesystem_id": {
             "type": "string",
-            "title": "key"
+            "title": "filesystem_id"
           },
-          "value": {
+          "scope_id": {
             "type": "string",
-            "title": "value"
+            "title": "scope_id"
+          },
+          "locator": {
+            "title": "locator",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.Locator"
+          },
+          "content_check": {
+            "type": "boolean",
+            "title": "content_check"
           }
         },
-        "title": "HeadersEntry",
+        "title": "StatRequest",
+        "additionalProperties": false
+      },
+      "openlet_api.letfs.v1.StatResponse": {
+        "type": "object",
+        "properties": {
+          "stat": {
+            "title": "stat",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.FileStat"
+          }
+        },
+        "title": "StatResponse",
         "additionalProperties": false
       },
       "openlet_api.letfs.v1.StreamArchiveRequest": {
@@ -1569,40 +2118,240 @@
       },
       "openlet_api.letfs.v1.StreamArchiveResponse": {
         "type": "object",
-        "oneOf": [
-          {
-            "properties": {
-              "data": {
-                "type": "string",
-                "title": "data",
-                "format": "byte",
-                "description": "Each chunk is at most 64 KiB. No archive bytes or signed URLs enter Temporal histories."
-              }
-            },
-            "title": "data",
-            "required": [
-              "data"
-            ]
-          },
-          {
-            "properties": {
-              "metadata": {
-                "title": "metadata",
-                "$ref": "#/components/schemas/openlet_api.letfs.v1.ArchiveMetadata"
-              }
-            },
+        "not": {
+          "required": [
+            "metadata",
+            "data"
+          ]
+        },
+        "properties": {
+          "metadata": {
             "title": "metadata",
-            "required": [
-              "metadata"
-            ]
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.ArchiveMetadata"
+          },
+          "data": {
+            "type": "string",
+            "title": "data",
+            "format": "byte",
+            "description": "Each chunk is at most 64 KiB. No archive bytes or signed URLs enter Temporal histories."
           }
-        ],
+        },
         "title": "StreamArchiveResponse",
+        "additionalProperties": false,
+        "description": "At most one of `metadata`, `data` may be set."
+      },
+      "openlet_api.letfs.v1.TextCreation": {
+        "type": "object",
+        "properties": {
+          "parent": {
+            "title": "parent",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.Locator"
+          },
+          "name": {
+            "type": "string",
+            "title": "name"
+          },
+          "media_type": {
+            "type": "string",
+            "title": "media_type"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "title": "idempotency_key"
+          },
+          "node_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "node_id"
+          }
+        },
+        "title": "TextCreation",
         "additionalProperties": false
+      },
+      "openlet_api.letfs.v1.TextMetricsRequest": {
+        "type": "object",
+        "properties": {
+          "filesystem_id": {
+            "type": "string",
+            "title": "filesystem_id"
+          },
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
+          },
+          "locator": {
+            "title": "locator",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.Locator"
+          },
+          "algorithm": {
+            "type": "string",
+            "title": "algorithm"
+          }
+        },
+        "title": "TextMetricsRequest",
+        "additionalProperties": false
+      },
+      "openlet_api.letfs.v1.TextMetricsResponse": {
+        "type": "object",
+        "properties": {
+          "stat": {
+            "title": "stat",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.FileStat"
+          },
+          "algorithm": {
+            "type": "string",
+            "title": "algorithm"
+          },
+          "digest": {
+            "type": "string",
+            "title": "digest"
+          },
+          "supported": {
+            "type": "boolean",
+            "title": "supported"
+          }
+        },
+        "title": "TextMetricsResponse",
+        "additionalProperties": false
+      },
+      "openlet_api.letfs.v1.TextMutation": {
+        "type": "object",
+        "properties": {
+          "stat": {
+            "title": "stat",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.FileStat"
+          },
+          "before_revision": {
+            "type": "string",
+            "title": "before_revision",
+            "format": "int64",
+            "description": "Zero/empty for a creation; otherwise the exact observation before mutation."
+          },
+          "before_fingerprint": {
+            "type": "string",
+            "title": "before_fingerprint"
+          }
+        },
+        "title": "TextMutation",
+        "additionalProperties": false
+      },
+      "openlet_api.letfs.v1.TextSearchRequest": {
+        "type": "object",
+        "properties": {
+          "filesystem_id": {
+            "type": "string",
+            "title": "filesystem_id"
+          },
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
+          },
+          "locator": {
+            "title": "locator",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.Locator"
+          },
+          "mode": {
+            "type": "string",
+            "title": "mode",
+            "description": "files or lines"
+          },
+          "text": {
+            "type": "string",
+            "title": "text"
+          },
+          "ignore_case": {
+            "type": "boolean",
+            "title": "ignore_case"
+          },
+          "max_files": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "title": "max_files",
+            "format": "int32"
+          },
+          "max_lines": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "title": "max_lines",
+            "format": "int32"
+          },
+          "max_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "title": "max_bytes",
+            "format": "int32"
+          }
+        },
+        "title": "TextSearchRequest",
+        "additionalProperties": false,
+        "description": "Literal candidate selection. Command/regex matching belongs to the caller."
+      },
+      "openlet_api.letfs.v1.TextSearchResponse": {
+        "type": "object",
+        "properties": {
+          "complete": {
+            "type": "boolean",
+            "title": "complete",
+            "description": "Incomplete means no payload; the caller may fall back to ordinary permitted reads."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/openlet_api.letfs.v1.TreeEntry"
+            },
+            "title": "items"
+          },
+          "content": {
+            "type": "string",
+            "title": "content",
+            "format": "byte"
+          },
+          "stat": {
+            "title": "stat",
+            "description": "present only for a complete lines result",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.FileStat"
+          }
+        },
+        "title": "TextSearchResponse",
+        "additionalProperties": false
+      },
+      "openlet_api.letfs.v1.TextTarget": {
+        "type": "object",
+        "not": {
+          "required": [
+            "existing",
+            "create"
+          ]
+        },
+        "properties": {
+          "existing": {
+            "title": "existing",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.ExistingText"
+          },
+          "create": {
+            "title": "create",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.TextCreation"
+          }
+        },
+        "title": "TextTarget",
+        "additionalProperties": false,
+        "description": "At most one of `existing`, `create` may be set."
       },
       "openlet_api.letfs.v1.TrashEntry": {
         "type": "object",
         "properties": {
+          "actor_kind": {
+            "type": "string",
+            "title": "actor_kind"
+          },
           "id": {
             "type": "string",
             "title": "id"
@@ -1651,7 +2400,6 @@
           },
           "revision": {
             "type": [
-              "integer",
               "string",
               "null"
             ],
@@ -1661,6 +2409,11 @@
           "scope_id": {
             "type": "string",
             "title": "scope_id"
+          },
+          "empty_directory": {
+            "type": "boolean",
+            "title": "empty_directory",
+            "description": "Atomically require an ordinary empty directory before moving it to trash."
           }
         },
         "title": "TrashNodeRequest",
@@ -1675,6 +2428,60 @@
           }
         },
         "title": "TrashNodeResponse",
+        "additionalProperties": false
+      },
+      "openlet_api.letfs.v1.TreeEntry": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "path"
+          },
+          "stat": {
+            "title": "stat",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.FileStat"
+          }
+        },
+        "title": "TreeEntry",
+        "additionalProperties": false
+      },
+      "openlet_api.letfs.v1.TruncateTextRequest": {
+        "type": "object",
+        "properties": {
+          "filesystem_id": {
+            "type": "string",
+            "title": "filesystem_id"
+          },
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
+          },
+          "target": {
+            "title": "target",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.TextTarget"
+          },
+          "length": {
+            "type": "string",
+            "title": "length",
+            "format": "int64"
+          },
+          "no_create": {
+            "type": "boolean",
+            "title": "no_create"
+          }
+        },
+        "title": "TruncateTextRequest",
+        "additionalProperties": false
+      },
+      "openlet_api.letfs.v1.TruncateTextResponse": {
+        "type": "object",
+        "properties": {
+          "result": {
+            "title": "result",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.TextMutation"
+          }
+        },
+        "title": "TruncateTextResponse",
         "additionalProperties": false
       },
       "openlet_api.letfs.v1.UpdateNodeRequest": {
@@ -1697,7 +2504,6 @@
           },
           "revision": {
             "type": [
-              "integer",
               "string",
               "null"
             ],
@@ -1736,88 +2542,69 @@
       },
       "openlet_api.letfs.v1.Upload": {
         "type": "object",
-        "allOf": [
-          {
-            "properties": {
-              "id": {
-                "type": "string",
-                "title": "id"
-              },
-              "status": {
-                "type": "string",
-                "title": "status"
-              },
-              "transport": {
-                "type": "string",
-                "title": "transport"
-              },
-              "expires_at": {
-                "title": "expires_at",
-                "$ref": "#/components/schemas/google.protobuf.Timestamp"
-              },
-              "size_bytes": {
-                "type": [
-                  "integer",
-                  "string",
-                  "null"
-                ],
-                "title": "size_bytes",
-                "format": "int64"
-              },
-              "part_size_bytes": {
-                "type": [
-                  "integer",
-                  "string",
-                  "null"
-                ],
-                "title": "part_size_bytes",
-                "format": "int64"
-              },
-              "part_count": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "title": "part_count",
-                "format": "int32"
-              },
-              "transfer": {
-                "title": "transfer",
-                "$ref": "#/components/schemas/openlet_api.letfs.v1.SignedUpload"
-              }
-            }
+        "not": {
+          "required": [
+            "publication",
+            "receipt"
+          ]
+        },
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "id"
           },
-          {
-            "oneOf": [
-              {
-                "properties": {
-                  "publication": {
-                    "title": "publication",
-                    "$ref": "#/components/schemas/openlet_api.letfs.v1.UploadPublication"
-                  }
-                },
-                "title": "publication",
-                "required": [
-                  "publication"
-                ]
-              },
-              {
-                "properties": {
-                  "receipt": {
-                    "title": "receipt",
-                    "$ref": "#/components/schemas/openlet_api.letfs.v1.UploadReceipt"
-                  }
-                },
-                "title": "receipt",
-                "required": [
-                  "receipt"
-                ]
-              }
-            ]
+          "status": {
+            "type": "string",
+            "title": "status"
+          },
+          "transport": {
+            "type": "string",
+            "title": "transport"
+          },
+          "expires_at": {
+            "title": "expires_at",
+            "$ref": "#/components/schemas/google.protobuf.Timestamp"
+          },
+          "size_bytes": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "size_bytes",
+            "format": "int64"
+          },
+          "part_size_bytes": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "title": "part_size_bytes",
+            "format": "int64"
+          },
+          "part_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "title": "part_count",
+            "format": "int32"
+          },
+          "transfer": {
+            "title": "transfer",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.SignedUpload"
+          },
+          "publication": {
+            "title": "publication",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.UploadPublication"
+          },
+          "receipt": {
+            "title": "receipt",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.UploadReceipt"
           }
-        ],
+        },
         "title": "Upload",
-        "additionalProperties": false
+        "additionalProperties": false,
+        "description": "At most one of `publication`, `receipt` may be set."
       },
       "openlet_api.letfs.v1.UploadDestination": {
         "type": "object",
@@ -1862,10 +2649,7 @@
             "title": "status"
           },
           "revision": {
-            "type": [
-              "integer",
-              "string"
-            ],
+            "type": "string",
             "title": "revision",
             "format": "int64"
           }
@@ -1885,10 +2669,7 @@
             "title": "status"
           },
           "size_bytes": {
-            "type": [
-              "integer",
-              "string"
-            ],
+            "type": "string",
             "title": "size_bytes",
             "format": "int64"
           }
@@ -1905,7 +2686,6 @@
           },
           "revision": {
             "type": [
-              "integer",
               "string",
               "null"
             ],
@@ -1915,6 +2695,81 @@
         },
         "title": "UploadReplacement",
         "additionalProperties": false
+      },
+      "openlet_api.letfs.v1.WholeText": {
+        "type": "object",
+        "title": "WholeText",
+        "additionalProperties": false
+      },
+      "openlet_api.letfs.v1.WriteTextRequest": {
+        "type": "object",
+        "properties": {
+          "filesystem_id": {
+            "type": "string",
+            "title": "filesystem_id"
+          },
+          "scope_id": {
+            "type": "string",
+            "title": "scope_id"
+          },
+          "target": {
+            "title": "target",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.TextTarget"
+          },
+          "content": {
+            "type": "string",
+            "title": "content",
+            "format": "byte"
+          }
+        },
+        "title": "WriteTextRequest",
+        "additionalProperties": false
+      },
+      "openlet_api.letfs.v1.WriteTextResponse": {
+        "type": "object",
+        "properties": {
+          "result": {
+            "title": "result",
+            "$ref": "#/components/schemas/openlet_api.letfs.v1.TextMutation"
+          }
+        },
+        "title": "WriteTextResponse",
+        "additionalProperties": false
+      },
+      "Problem": {
+        "type": "object",
+        "required": [
+          "type",
+          "title",
+          "status",
+          "code"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "format": "uri-reference"
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer",
+            "minimum": 400,
+            "maximum": 599
+          },
+          "detail": {
+            "type": "string"
+          },
+          "instance": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        }
       }
     }
   },
