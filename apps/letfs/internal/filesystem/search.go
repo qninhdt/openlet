@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/qninhdt/openlet/packages/go/identity"
 	"io"
 	"strings"
 	"time"
@@ -95,12 +96,12 @@ func (input SearchInput) validate(semantic bool) (int32, error) {
 	return limit, nil
 }
 
-func (s *Store) searchBinding(scopeID, actor uuid.UUID, input SearchInput) (string, error) {
+func (s *Store) searchBinding(scopeID uuid.UUID, actor identity.Actor, input SearchInput) (string, error) {
 	input.Cursor, input.Query = nil, strings.TrimSpace(input.Query)
 	return fingerprint(struct {
-		Scope uuid.UUID   `json:"scope"`
-		Actor uuid.UUID   `json:"actor"`
-		Input SearchInput `json:"input"`
+		Scope uuid.UUID      `json:"scope"`
+		Actor identity.Actor `json:"actor"`
+		Input SearchInput    `json:"input"`
 	}{scopeID, actor, input})
 }
 
