@@ -30,7 +30,15 @@ func (s *Filesystem) CreateCopy(ctx context.Context, input *letfsv1.CreateCopyRe
 			return nil, err
 		}
 	}
-	state, err := s.Service.CreateCopy(ctx, fs, key, filesystem.CreateCopy{DestinationScopeID: destination, SourceID: source, ParentID: parent, Name: input.GetName(), Revision: input.Revision})
+	sourceRoot, err := optionalID(input.SourceRootId)
+	if err != nil {
+		return nil, err
+	}
+	destinationRoot, err := optionalID(input.DestinationRootId)
+	if err != nil {
+		return nil, err
+	}
+	state, err := s.Service.CreateCopy(ctx, fs, key, filesystem.CreateCopy{DestinationScopeID: destination, SourceID: source, ParentID: parent, Name: input.GetName(), Revision: input.Revision, SourceRootID: sourceRoot, DestinationRootID: destinationRoot})
 	if err != nil {
 		return nil, err
 	}

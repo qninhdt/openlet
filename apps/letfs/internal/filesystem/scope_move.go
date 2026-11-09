@@ -51,7 +51,7 @@ func (s *session) transferTree(ctx context.Context, node Node, destination *sess
 	}
 
 	if !destination.allowBlobFiles {
-		rows, err := s.tx.Query(ctx, `SELECT object_key,inline_bytes FROM files WHERE node_id=ANY($1)`, ids)
+		rows, err := s.tx.Query(ctx, `SELECT object_key,COALESCE(inline_bytes,convert_to(text_content,'UTF8')) FROM files WHERE node_id=ANY($1)`, ids)
 		if err != nil {
 			return databaseError(err)
 		}

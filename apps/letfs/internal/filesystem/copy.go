@@ -14,11 +14,13 @@ import (
 )
 
 type CreateCopy struct {
-	DestinationScopeID uuid.UUID `json:"destination_scope_id"`
-	SourceID           uuid.UUID `json:"source_id"`
-	ParentID           uuid.UUID `json:"parent_id"`
-	Name               string    `json:"name"`
-	Revision           *int64    `json:"revision"`
+	DestinationScopeID uuid.UUID  `json:"destination_scope_id"`
+	SourceID           uuid.UUID  `json:"source_id"`
+	ParentID           uuid.UUID  `json:"parent_id"`
+	Name               string     `json:"name"`
+	Revision           *int64     `json:"revision"`
+	SourceRootID       *uuid.UUID `json:"source_root_id,omitempty"`
+	DestinationRootID  *uuid.UUID `json:"destination_root_id,omitempty"`
 }
 
 // copyItem captures identity and payload fingerprints without carrying file bytes.
@@ -44,6 +46,8 @@ type copyPlan struct {
 	DestinationScopeID uuid.UUID
 	ID                 uuid.UUID
 	ScopeID            uuid.UUID
+	SourceRootID       *uuid.UUID
+	DestinationRootID  *uuid.UUID
 
 	Root         copyItem
 	MaxNodes     int64
@@ -71,7 +75,7 @@ func (s *session) selectCopy(ctx context.Context, copyID uuid.UUID, node, parent
 		Kind: node.Kind, Size: node.SizeBytes, Destination: copyDestination(copyID, node.ID), Parent: parent.ID, ParentRevision: parent.Revision,
 		Name: name, Derived: derived, Depth: depth}
 	var content []byte
-	err := s.tx.QueryRow(ctx, `SELECT object_key,inline_bytes FROM files WHERE node_id=$1`, node.ID).Scan(&item.ObjectKey, &content)
+	err := s.tx.QueryRow(ctx, `SELECT object_key,COALESCE(inline_bytes,convert_to(text_content,'UTF8')) FROM files WHERE node_id=$1`, node.ID).Scan(&item.ObjectKey, &content)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return copyItem{}, databaseError(err)
 	}
@@ -92,6 +96,9 @@ func (s *Store) prepareCopy(ctx context.Context, scopeID uuid.UUID, key uuid.UUI
 	if input.DestinationScopeID == uuid.Nil {
 		input.DestinationScopeID = scopeID
 	}
+	if input.DestinationRootID == nil && input.DestinationScopeID == scopeID {
+		input.DestinationRootID = input.SourceRootID
+	}
 	actor, err := s.authorize(ctx, input.DestinationScopeID, "scope", authz.ScopeWrite)
 	if err != nil {
 		return copyPlan{}, err
@@ -103,7 +110,10 @@ func (s *Store) prepareCopy(ctx context.Context, scopeID uuid.UUID, key uuid.UUI
 		return copyPlan{}, apperr.New(apperr.Invalid, "VALIDATION", "copy identities required")
 	}
 
-	if _, err = pathParts(Locator{NodeID: &input.SourceID}); err != nil {
+	if _, err = pathParts(Locator{NodeID: &input.SourceID, RootID: input.SourceRootID}); err != nil {
+		return copyPlan{}, err
+	}
+	if _, err = pathParts(Locator{NodeID: &input.ParentID, RootID: input.DestinationRootID}); err != nil {
 		return copyPlan{}, err
 	}
 	hash, err := fingerprint(input)
@@ -141,14 +151,14 @@ func (s *Store) prepareCopy(ctx context.Context, scopeID uuid.UUID, key uuid.UUI
 	if err = session.uploadCapacity(ctx, s.MaxOutstanding, s.MaxCleanupBacklog); err != nil {
 		return copyPlan{}, err
 	}
-	source, err := sourceSession.resolveOne(ctx, Locator{NodeID: &input.SourceID})
+	source, err := sourceSession.resolveOne(ctx, Locator{NodeID: &input.SourceID, RootID: input.SourceRootID})
 	if err != nil {
 		return copyPlan{}, err
 	}
 	if err = source.revision(input.Revision); err != nil {
 		return copyPlan{}, err
 	}
-	parent, err := session.resolveOne(ctx, Locator{NodeID: &input.ParentID})
+	parent, err := session.resolveOne(ctx, Locator{NodeID: &input.ParentID, RootID: input.DestinationRootID})
 	if err != nil {
 		return copyPlan{}, err
 	}
@@ -161,7 +171,7 @@ func (s *Store) prepareCopy(ctx context.Context, scopeID uuid.UUID, key uuid.UUI
 	if input.Name == "" {
 		input.Name = source.Name
 	}
-	if err = session.name(parent.ID, input.Name); err != nil {
+	if err = session.name(parent.ID, input.Name, input.DestinationRootID); err != nil {
 		return copyPlan{}, err
 	}
 	if scopeID == input.DestinationScopeID {
@@ -199,7 +209,7 @@ func (s *Store) prepareCopy(ctx context.Context, scopeID uuid.UUID, key uuid.UUI
 	if s.MaxCopyNodes <= 0 {
 		return copyPlan{}, apperr.New(apperr.Conflict, "RESOURCE_LIMIT", "invalid copy node limit")
 	}
-	plan := copyPlan{ID: id, ScopeID: scopeID, DestinationScopeID: input.DestinationScopeID, Root: root, MaxNodes: s.MaxCopyNodes, MaxBytes: maxBytes, Hash: hash, ReceiptScope: scope, Key: key}
+	plan := copyPlan{ID: id, ScopeID: scopeID, DestinationScopeID: input.DestinationScopeID, SourceRootID: input.SourceRootID, DestinationRootID: input.DestinationRootID, Root: root, MaxNodes: s.MaxCopyNodes, MaxBytes: maxBytes, Hash: hash, ReceiptScope: scope, Key: key}
 	return plan, databaseError(session.tx.Commit(ctx))
 }
 
@@ -219,7 +229,7 @@ func (s *Store) CopyNode(ctx context.Context, scopeID, key uuid.UUID, input Crea
 		return Node{}, err
 	}
 	defer session.tx.Rollback(ctx)
-	node, err := session.resolveOne(ctx, Locator{NodeID: &plan.Root.Destination})
+	node, err := session.resolveOne(ctx, Locator{NodeID: &plan.Root.Destination, RootID: plan.DestinationRootID})
 	if err != nil {
 		return Node{}, err
 	}

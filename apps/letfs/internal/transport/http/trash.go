@@ -20,7 +20,7 @@ func (s *Server) trashNode(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	entry, err := s.Service.TrashNode(r.Context(), fs, locator, rev)
+	entry, err := s.Service.TrashNode(r.Context(), fs, locator, rev, false)
 	if err != nil {
 		return err
 	}

@@ -19,7 +19,7 @@ func TestIntegrationCrossScopeMoveRestoreAndBatchStat(t *testing.T) {
 	s := Store{DB: db, Graph: graph, MaxNodes: 1000, InlineLimit: 128, MaxFileBytes: 128}
 	owner := identity.WithPrincipal(t.Context(), identity.Principal{Service: "resource-owner"})
 	actor := uuid.New()
-	ctx := identity.WithPrincipal(t.Context(), identity.Principal{Service: "gateway", Gateway: true, ActorID: actor})
+	ctx := identity.WithPrincipal(t.Context(), identity.Principal{ActorKind: identity.User, Service: "gateway", Gateway: true, ActorID: actor})
 	fs, source, destination := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	_, err := s.CreateFilesystem(owner, uuid.New(), CreateFilesystem{ID: fs, LimitBytes: 1000})
 	require.NoError(t, err)
@@ -69,7 +69,7 @@ func TestIntegrationCrossScopeMoveRestoreAndBatchStat(t *testing.T) {
 	items, err = s.BatchStat(ctx, fs, []ScopedLocator{{ScopeID: source, Locator: Locator{NodeID: &file.ID}}})
 	require.Equal(t, "NOT_FOUND", reason(err))
 	require.Nil(t, items)
-	entry, err := s.TrashNode(ctx, destination, Locator{NodeID: &moved.ID}, &moved.Revision)
+	entry, err := s.TrashNode(ctx, destination, Locator{NodeID: &moved.ID}, &moved.Revision, false)
 	require.NoError(t, err)
 	restored, err := s.RestoreTrash(ctx, destination, entry.ID, RestoreTrash{DestinationScopeID: &source, Parent: &Locator{NodeID: a[0].RootID}, Name: ptr("restored")})
 	require.NoError(t, err)

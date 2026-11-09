@@ -31,7 +31,7 @@ func TestIntegrationDirectCopyAndPurgeOverAuthenticatedRPC(t *testing.T) {
 		MaxOutstanding: 100, MaxCleanupBacklog: 100}
 	owner := identity.WithPrincipal(t.Context(), identity.Principal{Service: "resource-owner"})
 	actor := uuid.New()
-	actorContext := identity.WithPrincipal(t.Context(), identity.Principal{Service: "gateway", Gateway: true, ActorID: actor})
+	actorContext := identity.WithPrincipal(t.Context(), identity.Principal{ActorKind: identity.User, Service: "gateway", Gateway: true, ActorID: actor})
 	filesystemID, fs := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	_, err := store.CreateFilesystem(owner, uuid.New(), filesystem.CreateFilesystem{ID: filesystemID, LimitBytes: 1000})
 	require.NoError(t, err)
@@ -60,7 +60,7 @@ func TestIntegrationDirectCopyAndPurgeOverAuthenticatedRPC(t *testing.T) {
 	api := letfsv1.NewFilesystemServiceClient(connection)
 	deadline, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
-	public := metadata.NewOutgoingContext(deadline, metadata.Pairs("authorization", "Bearer "+gatewayToken, "x-openlet-account-id", actor.String()))
+	public := metadata.NewOutgoingContext(deadline, metadata.Pairs("authorization", "Bearer "+gatewayToken, "x-openlet-user-id", actor.String()))
 
 	input := &letfsv1.CreateCopyRequest{FilesystemId: filesystemID.String(), ScopeId: fs.String(), SourceId: source.ID.String(), ParentId: created.RootID.String(),
 		DestinationScopeId: func() *string { v := fs.String(); return &v }(), Name: "copy.bin", Revision: &source.Revision, IdempotencyKey: uuid.NewString()}
@@ -72,11 +72,11 @@ func TestIntegrationDirectCopyAndPurgeOverAuthenticatedRPC(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, admitted.Node.Id, replayed.Node.Id)
 	other := uuid.New()
-	foreign := metadata.NewOutgoingContext(deadline, metadata.Pairs("authorization", "Bearer "+gatewayToken, "x-openlet-account-id", other.String()))
+	foreign := metadata.NewOutgoingContext(deadline, metadata.Pairs("authorization", "Bearer "+gatewayToken, "x-openlet-user-id", other.String()))
 	copiedID := uuid.MustParse(admitted.Node.Id)
 	copied, err := store.GetNode(actorContext, fs, filesystem.Locator{NodeID: &copiedID})
 	require.NoError(t, err)
-	entry, err := store.TrashNode(actorContext, fs, filesystem.Locator{NodeID: &copied.ID}, &copied.Revision)
+	entry, err := store.TrashNode(actorContext, fs, filesystem.Locator{NodeID: &copied.ID}, &copied.Revision, false)
 	require.NoError(t, err)
 	purge := &letfsv1.PurgeTrashRequest{FilesystemId: filesystemID.String(), ScopeId: fs.String(), EntryId: entry.ID.String()}
 	_, err = api.PurgeTrash(foreign, purge)

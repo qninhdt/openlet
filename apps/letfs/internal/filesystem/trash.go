@@ -7,23 +7,25 @@ import (
 	"github.com/google/uuid"
 	"github.com/qninhdt/openlet/packages/go/apperr"
 	"github.com/qninhdt/openlet/packages/go/authz"
+	"github.com/qninhdt/openlet/packages/go/identity"
 )
 
 type TrashEntry struct {
-	ID        uuid.UUID  `json:"id"`
-	NodeID    uuid.UUID  `json:"node_id"`
-	ParentID  *uuid.UUID `json:"parent_id"`
-	Name      string     `json:"name"`
-	ActorID   uuid.UUID  `json:"actor_id"`
-	Status    string     `json:"status"`
-	CreatedAt time.Time  `json:"created_at"`
+	ActorKind identity.ActorKind `json:"actor_kind"`
+	ID        uuid.UUID          `json:"id"`
+	NodeID    uuid.UUID          `json:"node_id"`
+	ParentID  *uuid.UUID         `json:"parent_id"`
+	Name      string             `json:"name"`
+	ActorID   uuid.UUID          `json:"actor_id"`
+	Status    string             `json:"status"`
+	CreatedAt time.Time          `json:"created_at"`
 }
 
 func (entry *TrashEntry) fields() []any {
-	return []any{&entry.ID, &entry.NodeID, &entry.ParentID, &entry.Name, &entry.ActorID, &entry.Status, &entry.CreatedAt}
+	return []any{&entry.ID, &entry.NodeID, &entry.ParentID, &entry.Name, &entry.ActorID, &entry.Status, &entry.CreatedAt, &entry.ActorKind}
 }
 
-const trashColumns = `id,node_id,original_parent_id,original_name,actor_id,state,created_at`
+const trashColumns = `id,node_id,original_parent_id,original_name,actor_id,state,created_at,actor_kind`
 
 func (s *session) queueObject(ctx context.Context, id uuid.UUID) error {
 	_, err := s.tx.Exec(ctx, `INSERT INTO object_deletions(object_key,filesystem_id)
@@ -96,7 +98,7 @@ func (s *Store) ListTrash(ctx context.Context, scopeID uuid.UUID, cursor *string
 	return result, nil
 }
 
-func (s *Store) TrashNode(ctx context.Context, scopeID uuid.UUID, locator Locator, revision *int64) (TrashEntry, error) {
+func (s *Store) TrashNode(ctx context.Context, scopeID uuid.UUID, locator Locator, revision *int64, emptyDirectory bool) (TrashEntry, error) {
 	actor, err := s.authorize(ctx, scopeID, "scope", authz.ScopeTrash)
 	if err != nil {
 		return TrashEntry{}, err
@@ -119,14 +121,26 @@ func (s *Store) TrashNode(ctx context.Context, scopeID uuid.UUID, locator Locato
 	if err = node.revision(revision); err != nil {
 		return TrashEntry{}, err
 	}
-	if node.ID == session.root {
+	if node.ID == session.root || locator.RootID != nil && node.ID == *locator.RootID {
 		return TrashEntry{}, apperr.New(apperr.Conflict, "ROOT_IMMUTABLE", "root is immutable")
+	}
+	if emptyDirectory {
+		if err = node.directory(); err != nil {
+			return TrashEntry{}, err
+		}
+		var children bool
+		if err = session.tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM nodes WHERE scope_id=$1 AND parent_id=$2)`, scopeID, node.ID).Scan(&children); err != nil {
+			return TrashEntry{}, databaseError(err)
+		}
+		if children {
+			return TrashEntry{}, apperr.New(apperr.Conflict, "DIRECTORY_NOT_EMPTY", "directory is not empty")
+		}
 	}
 	if err = session.fenceTrashed(ctx, node.ID); err != nil {
 		return TrashEntry{}, err
 	}
 	id := uuid.Must(uuid.NewV7())
-	_, err = session.tx.Exec(ctx, `INSERT INTO trash_entries(id,scope_id,node_id,original_parent_id,original_name,actor_id) VALUES($1,$2,$3,$4,$5,$6)`, id, scopeID, node.ID, node.ParentID, node.Name, actor)
+	_, err = session.tx.Exec(ctx, `INSERT INTO trash_entries(id,scope_id,node_id,original_parent_id,original_name,actor_id,actor_kind) VALUES($1,$2,$3,$4,$5,$6,$7)`, id, scopeID, node.ID, node.ParentID, node.Name, actor.ID, actor.Kind)
 	if err != nil {
 		return TrashEntry{}, databaseError(err)
 	}
@@ -146,6 +160,7 @@ func (s *Store) TrashNode(ctx context.Context, scopeID uuid.UUID, locator Locato
 
 type RestoreTrash struct {
 	DestinationScopeID *uuid.UUID
+	RootID             *uuid.UUID
 	Parent             *Locator
 	Name               *string
 }
@@ -178,9 +193,17 @@ func (s *Store) RestoreTrash(ctx context.Context, scopeID, id uuid.UUID, input R
 	if entry.Status != "trashed" {
 		return Node{}, apperr.New(apperr.Conflict, "TRASH_PURGING", "trash entry is being purged")
 	}
-	parentLocator := Locator{NodeID: entry.ParentID}
+	if input.RootID != nil {
+		if _, err = session.resolveOne(ctx, Locator{NodeID: entry.ParentID, RootID: input.RootID}); err != nil {
+			return Node{}, err
+		}
+	}
+	parentLocator := Locator{NodeID: entry.ParentID, RootID: input.RootID}
 	if input.Parent != nil {
 		parentLocator = *input.Parent
+		if parentLocator.RootID == nil && destinationID == scopeID {
+			parentLocator.RootID = input.RootID
+		}
 	}
 	if parentLocator.NodeID == nil && parentLocator.Path == nil {
 		return Node{}, apperr.New(apperr.Missing, "NOT_FOUND", "original parent not found")
@@ -208,7 +231,7 @@ func (s *Store) RestoreTrash(ctx context.Context, scopeID, id uuid.UUID, input R
 	if input.Name != nil {
 		name = *input.Name
 	}
-	if err = destination.name(parent.ID, name); err != nil {
+	if err = destination.name(parent.ID, name, parentLocator.RootID); err != nil {
 		return Node{}, err
 	}
 	_, err = session.tx.Exec(ctx, `DELETE FROM trash_entries WHERE id=$1`, id)

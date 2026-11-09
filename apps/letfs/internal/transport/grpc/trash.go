@@ -14,7 +14,7 @@ func trashMessage(entry filesystem.TrashEntry) *letfsv1.TrashEntry {
 		parent = &value
 	}
 	return &letfsv1.TrashEntry{Id: entry.ID.String(), NodeId: entry.NodeID.String(), ParentId: parent, Name: entry.Name,
-		ActorId: entry.ActorID.String(), Status: entry.Status, CreatedAt: timestamppb.New(entry.CreatedAt)}
+		ActorKind: string(entry.ActorKind), ActorId: entry.ActorID.String(), Status: entry.Status, CreatedAt: timestamppb.New(entry.CreatedAt)}
 }
 
 func (s *Filesystem) TrashNode(ctx context.Context, input *letfsv1.TrashNodeRequest) (*letfsv1.TrashNodeResponse, error) {
@@ -26,7 +26,7 @@ func (s *Filesystem) TrashNode(ctx context.Context, input *letfsv1.TrashNodeRequ
 	if err != nil {
 		return nil, err
 	}
-	entry, err := s.Service.TrashNode(ctx, fs, locator, input.Revision)
+	entry, err := s.Service.TrashNode(ctx, fs, locator, input.Revision, input.EmptyDirectory)
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +78,11 @@ func (s *Filesystem) RestoreTrash(ctx context.Context, input *letfsv1.RestoreTra
 	if err != nil {
 		return nil, err
 	}
-	restore := filesystem.RestoreTrash{DestinationScopeID: destination, Name: input.Name}
+	root, err := optionalID(input.RootId)
+	if err != nil {
+		return nil, err
+	}
+	restore := filesystem.RestoreTrash{DestinationScopeID: destination, RootID: root, Name: input.Name}
 	if input.Parent != nil {
 		parent, e := locatorInput(input.Parent)
 		if e != nil {
