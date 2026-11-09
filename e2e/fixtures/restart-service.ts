@@ -6,7 +6,7 @@ import { ports, project, root, state } from '../setup/settings.ts';
 
 const execute = promisify(execFile);
 
-export async function ownedService(service: 'letfs' | 'ingest-cpu' | 'ingest-io') {
+export async function ownedService(service: 'letfs' | 'ingest-cpu' | 'ingest-io' | 'leta-worker') {
   const admission = JSON.parse(await readFile(join(state, 'environment.json'), 'utf8'));
   if (admission.project !== project || admission.root !== root || typeof admission.run !== 'string') throw new Error('E2E restart ownership mismatch');
   const { stdout } = await execute('docker', ['container', 'ls', '--all', '--quiet', '--filter', `label=com.docker.compose.project=${project}`, '--filter', `label=com.docker.compose.service=${service}`]);
@@ -24,4 +24,9 @@ export async function restartService(service: 'letfs' | 'ingest-cpu' | 'ingest-i
     cwd: root, timeout: 90_000, env: { ...process.env, OPENLET_E2E_ROOT: root, OPENLET_E2E_STATE: state, OPENLET_E2E_RUN: admission.run,
       OPENLET_E2E_GATEWAY_PORT: String(ports.gateway), OPENLET_E2E_CONTROL_PORT: String(ports.control), OPENLET_E2E_STORAGE_PORT: String(ports.storage) },
   });
+}
+
+export async function setLetaWorkerRunning(running: boolean) {
+  const { id } = await ownedService('leta-worker');
+  await execute('docker', [running ? 'start' : 'stop', id], { timeout: 60_000 });
 }

@@ -24,6 +24,10 @@ const invalidSigning = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const jwk = { ...signing.publicKey.export({ format: 'jwk' }), kid: 'api-e2e', use: 'sig', alg: 'RS256' };
 const users = new Map<string, User>();
 const failures = { metadata: 0, generation: 0, embeddings: 0, rerank: 0 };
+const agentModels = new Map<string, {
+  responses: Record<string, unknown>[]; calls: number; pauseAt?: number;
+  blocked: boolean; release: () => void; released: Promise<void>;
+}>();
 const traces: Array<{ path: string; traceparent: string; baggage: boolean }> = [];
 let fault: StorageFault | undefined;
 
@@ -69,6 +73,26 @@ async function serve(request: IncomingMessage, response: ServerResponse) {
 
   if (url.pathname.startsWith('/control/')) {
     if (!authenticated(request, secrets.fixture_control_token)) return reply(response, 401, { error: 'control authentication required' });
+    if (request.method === 'PUT' && url.pathname === '/control/agent-model') {
+      const body = await jsonBody(request);
+      if (typeof body.marker !== 'string' || !body.marker || !Array.isArray(body.responses)
+        || body.responses.some(item => !item || typeof item !== 'object' || Array.isArray(item))
+        || body.pause_at !== undefined && (typeof body.pause_at !== 'number' || !Number.isInteger(body.pause_at) || body.pause_at < 1 || body.pause_at > body.responses.length)) {
+        return reply(response, 400, { error: 'marker and assistant responses required' });
+      }
+      agentModels.get(body.marker)?.release();
+      let release!: () => void;
+      const released = new Promise<void>(resolve => { release = resolve; });
+      agentModels.set(body.marker, { responses: body.responses, calls: 0, pauseAt: typeof body.pause_at === 'number' ? body.pause_at : undefined,
+        blocked: false, release, released });
+      return reply(response, 200, { configured: true });
+    }
+    if (url.pathname === '/control/agent-model' && ['GET', 'POST'].includes(request.method ?? '')) {
+      const model = agentModels.get(url.searchParams.get('marker') ?? '');
+      if (!model) return reply(response, 404, { error: 'unknown agent script' });
+      if (request.method === 'POST') model.release();
+      return reply(response, 200, { calls: model.calls, blocked: model.blocked });
+    }
     if (request.method === 'POST' && url.pathname === '/control/users') {
       const body = await jsonBody(request);
       if (typeof body.email !== 'string') return reply(response, 400, { error: 'email required' });
@@ -163,10 +187,37 @@ async function serve(request: IncomingMessage, response: ServerResponse) {
     if (url.pathname.endsWith('/chat/completions')) {
       if (failures.generation > 0) { failures.generation--; return reply(response, 503, { error: 'injected model outage' }); }
       if (!Array.isArray(body.messages)) return reply(response, 400, { error: 'messages required' });
-      const serialized = body.messages.flatMap(message => typeof message.content === 'string' ? [message.content]
-        : Array.isArray(message.content) ? message.content.flatMap((part: { type?: string; text?: string }) =>
-          part.type === 'text' && typeof part.text === 'string' ? [part.text] : []) : []).join('\n');
-      const values = /"enum"\s*:\s*(\[[^\]]+\])/.exec(serialized);
+      const system = body.messages.filter(item => item.role === 'system').map(item => JSON.stringify(item.content)).join('\n');
+      const scripted = [...agentModels].find(([marker]) => system.includes(marker))?.[1];
+      if (scripted) {
+        const message = scripted.responses[scripted.calls++];
+        if (!message) return reply(response, 400, { error: 'agent model script exhausted' });
+        if (scripted.calls === scripted.pauseAt) {
+          scripted.blocked = true;
+          try {
+            await Promise.race([scripted.released, new Promise<void>(resolve => response.once('close', resolve))]);
+          } finally { scripted.blocked = false; }
+          if (response.destroyed) return;
+        }
+        const id = randomUUID();
+        const created = Math.floor(Date.now() / 1000);
+        const finish = message.tool_calls ? 'tool_calls' : 'stop';
+        if (!body.stream) return reply(response, 200, { id, created, object: 'chat.completion', model: body.model,
+          choices: [{ index: 0, finish_reason: finish, message: { role: 'assistant', ...message } }] });
+        response.writeHead(200, { 'content-type': 'text/event-stream' });
+        const delta = { role: 'assistant', ...message,
+          ...(Array.isArray(message.tool_calls) ? { tool_calls: message.tool_calls.map((call, index) => ({ index, ...call })) } : {}) };
+        for (const choice of [{ index: 0, delta, finish_reason: null }, { index: 0, delta: {}, finish_reason: finish }]) {
+          response.write(`data: ${JSON.stringify({ id, created, object: 'chat.completion.chunk', model: body.model, choices: [choice] })}\n\n`);
+        }
+        response.end('data: [DONE]\n\n');
+        return;
+      }
+      const format = body.response_format;
+      if (!format || typeof format !== 'object' || !('type' in format) || format.type !== 'json_schema') {
+        return reply(response, 400, { error: 'native structured output required' });
+      }
+      const values = /"enum"\s*:\s*(\[[^\]]+\])/.exec(JSON.stringify(format));
       if (!values) return reply(response, 400, { error: 'structured semantic schema required' });
       const semanticType: unknown = JSON.parse(values[1])[0];
       if (typeof semanticType !== 'string') return reply(response, 400, { error: 'semantic enum required' });
@@ -235,5 +286,6 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) process.once(signal, () => 
   if (shuttingDown) return;
   shuttingDown = true;
   fault?.release();
+  for (const model of agentModels.values()) model.release();
   api.close(); storage.close(); api.closeAllConnections(); storage.closeAllConnections();
 });
