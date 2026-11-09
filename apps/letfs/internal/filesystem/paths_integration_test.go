@@ -21,7 +21,7 @@ func TestIntegrationLivePathsMetadataAndActionBoundaries(t *testing.T) {
 	s := Store{DB: db, Graph: graph, MaxNodes: 100}
 	service := identity.WithPrincipal(t.Context(), identity.Principal{Service: "resource-owner"})
 	actor := uuid.New()
-	ctx := identity.WithPrincipal(t.Context(), identity.Principal{ActorID: actor, Service: "gateway", Gateway: true})
+	ctx := identity.WithPrincipal(t.Context(), identity.Principal{ActorKind: identity.User, ActorID: actor, Service: "gateway", Gateway: true})
 	bucketID, fsID := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	_, err := s.CreateFilesystem(service, uuid.New(), CreateFilesystem{ID: bucketID, LimitBytes: 1024})
 	require.NoError(t, err)

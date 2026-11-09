@@ -28,7 +28,7 @@ func Postgres(t *testing.T, baseline string) *pgxpool.Pool {
 		files = append(files, testcontainers.ContainerFile{HostFilePath: migration, ContainerFilePath: "/docker-entrypoint-initdb.d/" + filepath.Base(migration), FileMode: 0o444})
 	}
 	server, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{Started: true, ContainerRequest: testcontainers.ContainerRequest{
-		Image:        "postgres:18.6-trixie@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336",
+		Image:        "postgres:18.6-trixie@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42",
 		Env:          map[string]string{"POSTGRES_USER": "owner", "POSTGRES_DB": "application", "POSTGRES_PASSWORD": "isolated-test-password"},
 		ExposedPorts: []string{"5432/tcp"},
 		Files:        files,

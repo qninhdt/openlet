@@ -17,6 +17,7 @@ type fakeAdministration struct {
 	letfsv1.StorageAdministrationServiceClient
 	createFilesystem func(context.Context, *letfsv1.CreateFilesystemRequest) (*letfsv1.CreateFilesystemResponse, error)
 	createScopes     func(context.Context, *letfsv1.CreateScopesRequest) (*letfsv1.CreateScopesResponse, error)
+	listScopes       func(context.Context, *letfsv1.ListScopesRequest) (*letfsv1.ListScopesResponse, error)
 	delete           func(context.Context, *letfsv1.DeleteFilesystemRequest) (*letfsv1.DeleteFilesystemResponse, error)
 }
 
@@ -146,6 +147,16 @@ func TestFilesystemReadsRejectForeignObjects(t *testing.T) {
 
 func pointer[T any](value T) *T { return &value }
 
+func TestNativeLocatorCarriesMountRoot(t *testing.T) {
+	root := uuid.New()
+	value, err := nativeLocator(Locator{Path: pointer("/notes.txt"), RootID: &root})
+	require.NoError(t, err)
+	require.Equal(t, root.String(), value.GetRootId())
+	require.Equal(t, "/notes.txt", value.GetPath().GetPath())
+	_, err = nativeLocator(Locator{Path: pointer("/"), RootID: pointer(uuid.Nil)})
+	require.Equal(t, apperr.Invalid, apperr.KindOf(err))
+}
+
 func TestMutationRequestsCarryScopeAndNativeTargets(t *testing.T) {
 	filesystem, scope, parent, node, key, entry := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	api := fakeFilesystem{
@@ -156,7 +167,7 @@ func TestMutationRequestsCarryScopeAndNativeTargets(t *testing.T) {
 		},
 		trash: func(_ context.Context, in *letfsv1.TrashNodeRequest) (*letfsv1.TrashNodeResponse, error) {
 			require.Equal(t, node.String(), in.GetLocator().GetNodeId())
-			return &letfsv1.TrashNodeResponse{Entry: &letfsv1.TrashEntry{Id: entry.String(), NodeId: node.String(), ActorId: uuid.NewString(), Name: "x", Status: "trashed"}}, nil
+			return &letfsv1.TrashNodeResponse{Entry: &letfsv1.TrashEntry{Id: entry.String(), NodeId: node.String(), ActorId: uuid.NewString(), ActorKind: "user", Name: "x", Status: "trashed"}}, nil
 		},
 	}
 	client := FilesystemClient{API: api}

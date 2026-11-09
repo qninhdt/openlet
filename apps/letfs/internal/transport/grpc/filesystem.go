@@ -26,7 +26,7 @@ func nodeMessage(node filesystem.Node) *letfsv1.Node {
 	return &letfsv1.Node{Id: node.ID.String(), ScopeId: node.ScopeID.String(), ParentId: parent,
 		Name: node.Name, Kind: node.Kind, Revision: node.Revision, SizeBytes: node.SizeBytes,
 		CreatedAt: timestamppb.New(node.CreatedAt), UpdatedAt: timestamppb.New(node.UpdatedAt), MediaType: node.MediaType,
-		Title: node.Title, Description: node.Description, SemanticType: node.SemanticType, Context: node.Context}
+		Title: node.Title, Description: node.Description, SemanticType: node.SemanticType, Context: node.Context, Readonly: node.ReadOnly()}
 }
 
 func (s *Filesystem) scopeInput(ctx context.Context, fs, scope string) (uuid.UUID, error) {
@@ -75,6 +75,10 @@ func locatorInput(value *letfsv1.Locator) (filesystem.Locator, error) {
 		return result, err
 	}
 	result.ExpectedParentID, err = optionalID(value.ExpectedParentId)
+	if err != nil {
+		return result, err
+	}
+	result.RootID, err = optionalID(value.RootId)
 	return result, err
 }
 
@@ -180,6 +184,10 @@ func (s *Filesystem) CreateNode(ctx context.Context, input *letfsv1.CreateNodeRe
 		return nil, err
 	}
 	var creation filesystem.CreateNode
+	creation.NodeID, err = optionalID(input.NodeId)
+	if err != nil {
+		return nil, err
+	}
 	var parent *letfsv1.Locator
 	switch value := input.Input.(type) {
 	case *letfsv1.CreateNodeRequest_Directory:
@@ -201,6 +209,22 @@ func (s *Filesystem) CreateNode(ctx context.Context, input *letfsv1.CreateNodeRe
 		return nil, err
 	}
 	return &letfsv1.CreateNodeResponse{Node: nodeMessage(node)}, nil
+}
+
+func (s *Filesystem) CreateDirectories(ctx context.Context, input *letfsv1.CreateDirectoriesRequest) (*letfsv1.CreateDirectoriesResponse, error) {
+	scope, err := s.scopeInput(ctx, input.GetFilesystemId(), input.GetScopeId())
+	if err != nil {
+		return nil, err
+	}
+	parent, err := locatorInput(input.GetParent())
+	if err != nil {
+		return nil, err
+	}
+	node, err := s.Service.CreateDirectories(ctx, scope, parent, input.Components, input.Parents)
+	if err != nil {
+		return nil, err
+	}
+	return &letfsv1.CreateDirectoriesResponse{Node: nodeMessage(node)}, nil
 }
 
 func (s *Filesystem) UpdateNode(ctx context.Context, input *letfsv1.UpdateNodeRequest) (*letfsv1.UpdateNodeResponse, error) {

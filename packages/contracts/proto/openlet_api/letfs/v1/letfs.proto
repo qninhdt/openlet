@@ -9,6 +9,7 @@ option go_package = "github.com/qninhdt/openlet/packages/go/gen/openlet_api/letf
 service FilesystemService {
   rpc GetFilesystem(GetFilesystemRequest) returns (GetFilesystemResponse);
   rpc CreateNode(CreateNodeRequest) returns (CreateNodeResponse);
+  rpc CreateDirectories(CreateDirectoriesRequest) returns (CreateDirectoriesResponse);
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
   rpc GetNode(GetNodeRequest) returns (GetNodeResponse) {
     option (google.api.http) = {
@@ -18,6 +19,16 @@ service FilesystemService {
   }
   rpc ResolveNode(ResolveNodeRequest) returns (ResolveNodeResponse);
   rpc BatchStat(BatchStatRequest) returns (BatchStatResponse);
+  rpc Stat(StatRequest) returns (StatResponse);
+  rpc ReadText(ReadTextRequest) returns (ReadTextResponse);
+  rpc TextMetrics(TextMetricsRequest) returns (TextMetricsResponse);
+  rpc ReadTree(ReadTreeRequest) returns (ReadTreeResponse);
+  rpc TextSearch(TextSearchRequest) returns (TextSearchResponse);
+  rpc ReadImage(ReadImageRequest) returns (ReadImageResponse);
+  rpc WriteText(WriteTextRequest) returns (WriteTextResponse);
+  rpc AppendText(AppendTextRequest) returns (AppendTextResponse);
+  rpc PatchText(PatchTextRequest) returns (PatchTextResponse);
+  rpc TruncateText(TruncateTextRequest) returns (TruncateTextResponse);
   rpc UpdateNode(UpdateNodeRequest) returns (UpdateNodeResponse);
   rpc ReplaceContent(ReplaceContentRequest) returns (ReplaceContentResponse);
   rpc CreateCopy(CreateCopyRequest) returns (CreateCopyResponse);
@@ -64,6 +75,8 @@ service StorageAdministrationService {
   rpc DeleteFilesystem(DeleteFilesystemRequest) returns (DeleteFilesystemResponse);
   rpc CreateFilesystem(CreateFilesystemRequest) returns (CreateFilesystemResponse);
   rpc CreateScopes(CreateScopesRequest) returns (CreateScopesResponse);
+  // Read-only candidates for Workspace's authorized accessible-scope view.
+  rpc ListScopes(ListScopesRequest) returns (ListScopesResponse);
 }
 
 message DeleteFilesystemRequest {
@@ -89,6 +102,7 @@ message Node {
   // Omitted from list/search metadata; only explicitly requested detail can include context.
   optional string context = 14;
   string scope_id = 15;
+  bool readonly = 16;
 }
 message GetNodeRequest {
   string filesystem_id = 1;
@@ -186,6 +200,121 @@ message Locator {
   }
   optional string expected_node_id = 3;
   optional string expected_parent_id = 4;
+  // Traversal boundary inside the scope; omitted uses the ordinary scope root.
+  optional string root_id = 5;
+}
+// These representations contain bounded text or blob metadata, never original blob bytes/URLs.
+message FileStat {
+  Node node = 1;
+  string storage_kind = 2;
+  string representation_kind = 3;
+  int64 readable_size = 4;
+  string fingerprint = 5;
+  optional int64 newline_count = 6;
+  optional string sha256 = 7;
+}
+message StatRequest {
+  string filesystem_id = 1;
+  string scope_id = 2;
+  Locator locator = 3;
+  bool content_check = 4;
+}
+message StatResponse {
+  FileStat stat = 1;
+}
+message ByteRange {
+  int64 offset = 1;
+  optional int64 length = 2;
+}
+message LineRange {
+  int64 start_line = 1;
+  int64 line_count = 2;
+}
+message LineCount {
+  int64 line_count = 1;
+}
+message WholeText {}
+message ReadTextRequest {
+  string filesystem_id = 1;
+  string scope_id = 2;
+  Locator locator = 3;
+  oneof selection {
+    WholeText whole = 4;
+    ByteRange bytes = 5;
+    LineRange lines = 6;
+    LineCount head = 7;
+    LineCount tail = 8;
+  }
+  optional string expected_fingerprint = 9;
+}
+message ReadTextResponse {
+  FileStat stat = 1;
+  bytes content = 2;
+  int64 offset = 3;
+  int64 length = 4;
+}
+message TextMetricsRequest {
+  string filesystem_id = 1;
+  string scope_id = 2;
+  Locator locator = 3;
+  string algorithm = 4;
+}
+message TextMetricsResponse {
+  FileStat stat = 1;
+  string algorithm = 2;
+  string digest = 3;
+  bool supported = 4;
+}
+message ReadTreeRequest {
+  string filesystem_id = 1;
+  string scope_id = 2;
+  Locator root = 3;
+  optional int32 depth = 4;
+  optional string cursor = 5;
+  optional int32 limit = 6;
+  optional int32 max_bytes = 7;
+}
+message TreeEntry {
+  string path = 1;
+  FileStat stat = 2;
+}
+message ReadTreeResponse {
+  repeated TreeEntry items = 1;
+  optional string next_cursor = 2;
+  bool complete = 3;
+}
+// Literal candidate selection. Command/regex matching belongs to the caller.
+message TextSearchRequest {
+  string filesystem_id = 1;
+  string scope_id = 2;
+  Locator locator = 3;
+  string mode = 4; // files or lines
+  string text = 5;
+  bool ignore_case = 6;
+  optional int32 max_files = 7;
+  optional int32 max_lines = 8;
+  optional int32 max_bytes = 9;
+}
+message TextSearchResponse {
+  // Incomplete means no payload; the caller may fall back to ordinary permitted reads.
+  bool complete = 1;
+  repeated TreeEntry items = 2;
+  bytes content = 3;
+  FileStat stat = 4; // present only for a complete lines result
+}
+message ReadImageRequest {
+  string filesystem_id = 1;
+  string scope_id = 2;
+  Locator locator = 3;
+  optional string expected_fingerprint = 4;
+}
+message ReadImageResponse {
+  FileStat stat = 1;
+  bytes content = 2;
+  string mime = 3;
+  int32 width = 4;
+  int32 height = 5;
+  string sha256 = 6;
 }
 message GetFilesystemRequest {
   string filesystem_id = 1;
@@ -193,9 +322,94 @@ message GetFilesystemRequest {
 message GetFilesystemResponse {
   Filesystem filesystem = 1;
 }
+// Existing writes bind the observed identity and revision. Creation binds parent/name absence.
+message ExistingText {
+  Locator locator = 1;
+  int64 revision = 2;
+  optional string expected_fingerprint = 3;
+}
+message TextCreation {
+  Locator parent = 1;
+  string name = 2;
+  string media_type = 3;
+  string idempotency_key = 4;
+  optional string node_id = 5;
+}
+message TextTarget {
+  oneof target {
+    ExistingText existing = 1;
+    TextCreation create = 2;
+  }
+}
+message WriteTextRequest {
+  string filesystem_id = 1;
+  string scope_id = 2;
+  TextTarget target = 3;
+  bytes content = 4;
+}
+message AppendTextRequest {
+  string filesystem_id = 1;
+  string scope_id = 2;
+  TextTarget target = 3;
+  bytes content = 4;
+}
+message ByteOverwrite {
+  int64 offset = 1;
+  bytes content = 2;
+}
+message LiteralReplacement {
+  string old_text = 1;
+  string new_text = 2;
+  bool replace_all = 3;
+}
+message PatchTextRequest {
+  string filesystem_id = 1;
+  string scope_id = 2;
+  TextTarget target = 3;
+  oneof patch {
+    ByteOverwrite bytes = 4;
+    LiteralReplacement literal = 5;
+  }
+}
+message TruncateTextRequest {
+  string filesystem_id = 1;
+  string scope_id = 2;
+  TextTarget target = 3;
+  int64 length = 4;
+  bool no_create = 5;
+}
+message TextMutation {
+  FileStat stat = 1;
+  // Zero/empty for a creation; otherwise the exact observation before mutation.
+  int64 before_revision = 2;
+  string before_fingerprint = 3;
+}
+message WriteTextResponse {
+  TextMutation result = 1;
+}
+message AppendTextResponse {
+  TextMutation result = 1;
+}
+message PatchTextResponse {
+  TextMutation result = 1;
+}
+message TruncateTextResponse {
+  TextMutation result = 1;
+}
+
 message DirectoryCreation {
   Locator parent = 1;
   string name = 2;
+}
+message CreateDirectoriesRequest {
+  string filesystem_id = 1;
+  string scope_id = 2;
+  Locator parent = 3;
+  repeated string components = 4;
+  bool parents = 5;
+}
+message CreateDirectoriesResponse {
+  Node node = 1;
 }
 message InlineFileCreation {
   Locator parent = 1;
@@ -211,6 +425,7 @@ message CreateNodeRequest {
     InlineFileCreation file = 5;
   }
   string scope_id = 6;
+  optional string node_id = 7;
 }
 message CreateNodeResponse {
   Node node = 1;
@@ -272,6 +487,8 @@ message ReplaceContentResponse {
 }
 message CreateCopyRequest {
   optional string destination_scope_id = 8;
+  optional string source_root_id = 9;
+  optional string destination_root_id = 10;
   string filesystem_id = 1;
   string source_id = 2;
   string parent_id = 3;
@@ -311,6 +528,7 @@ message ReprocessNodeResponse {
   string workflow_id = 3;
 }
 message TrashEntry {
+  string actor_kind = 8;
   string id = 1;
   string node_id = 2;
   optional string parent_id = 3;
@@ -324,6 +542,8 @@ message TrashNodeRequest {
   Locator locator = 2;
   optional int64 revision = 4;
   string scope_id = 5;
+  // Atomically require an ordinary empty directory before moving it to trash.
+  bool empty_directory = 6;
 }
 message TrashNodeResponse {
   TrashEntry entry = 1;
@@ -353,6 +573,7 @@ message RestoreTrashRequest {
   optional string destination_scope_id = 4;
   Locator parent = 5;
   optional string name = 6;
+  optional string root_id = 7;
 }
 message RestoreTrashResponse {
   Node node = 1;
@@ -699,4 +920,13 @@ message CreateScopesRequest {
 }
 message CreateScopesResponse {
   repeated Scope scopes = 1;
+}
+message ListScopesRequest {
+  string filesystem_id = 1;
+  optional string cursor = 2;
+  optional int32 limit = 3;
+}
+message ListScopesResponse {
+  repeated Scope scopes = 1;
+  optional string next_cursor = 2;
 }

@@ -43,7 +43,11 @@ func (s *session) recordIntent(ctx context.Context, node Node) error {
 			publication = "pending"
 		}
 	}
-	_, err := s.tx.Exec(ctx, `UPDATE files SET desired_generation=desired_generation+1,processing_format=$2,publication_status=$3,processing_error=NULL,processing_updated_at=now() WHERE node_id=$1`, node.ID, storedFormat, publication)
+	// Explicit TEXT remains text processing even when its filename resembles a blob.
+	_, err := s.tx.Exec(ctx, `UPDATE files SET desired_generation=desired_generation+1,
+ processing_format=CASE WHEN storage_kind='text' THEN CASE WHEN $2::text='csv' THEN 'csv' ELSE 'text' END ELSE $2 END,
+ publication_status=CASE WHEN storage_kind='text' THEN 'parsed' ELSE $3 END,
+ processing_error=NULL,processing_updated_at=now() WHERE node_id=$1`, node.ID, storedFormat, publication)
 	return databaseError(err)
 }
 

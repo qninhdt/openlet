@@ -76,13 +76,13 @@ func TestIntegrationFilesystemOperationsOverAuthenticatedRPC(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, connection.Close()) })
 	client := letfsv1.NewFilesystemServiceClient(connection)
-	ctx := metadata.NewOutgoingContext(t.Context(), metadata.Pairs("authorization", "Bearer "+gatewayToken, "x-openlet-account-id", actor.String()))
+	ctx := metadata.NewOutgoingContext(t.Context(), metadata.Pairs("authorization", "Bearer "+gatewayToken, "x-openlet-user-id", actor.String()))
 
-	denied := metadata.NewOutgoingContext(t.Context(), metadata.Pairs("authorization", "Bearer "+gatewayToken, "x-openlet-account-id", uuid.NewString()))
+	denied := metadata.NewOutgoingContext(t.Context(), metadata.Pairs("authorization", "Bearer "+gatewayToken, "x-openlet-user-id", uuid.NewString()))
 	request := &letfsv1.GetNodeRequest{FilesystemId: bucketID.String(), ScopeId: fsID.String(), NodeId: file.String()}
 	node, err := client.GetNode(ctx, request)
 	require.NoError(t, err)
-	delegated := metadata.NewOutgoingContext(t.Context(), metadata.Pairs("authorization", "Bearer "+delegatedToken, "x-openlet-account-id", actor.String()))
+	delegated := metadata.NewOutgoingContext(t.Context(), metadata.Pairs("authorization", "Bearer "+delegatedToken, "x-openlet-user-id", actor.String()))
 	delegatedNode, err := client.GetNode(delegated, request)
 	require.NoError(t, err, "authorized services may delegate an actor without impersonating the gateway")
 	require.Equal(t, node.Node.Id, delegatedNode.Node.Id)
@@ -91,7 +91,8 @@ func TestIntegrationFilesystemOperationsOverAuthenticatedRPC(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, nativeConnection.Close()) })
 	nativeClient := letfsclient.FilesystemClient{API: letfsv1.NewFilesystemServiceClient(nativeConnection)}
 
-	nativeContext := rpc.WithActor(t.Context(), actor)
+	nativeContext, err := rpc.WithActor(t.Context(), identity.Actor{Kind: identity.User, ID: actor})
+	require.NoError(t, err)
 	native, err := nativeClient.GetNode(nativeContext, bucketID, fsID, file)
 	require.NoError(t, err)
 	require.Equal(t, file, native.ID)
@@ -100,7 +101,9 @@ func TestIntegrationFilesystemOperationsOverAuthenticatedRPC(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, nativePage.Items, 1)
 	require.Equal(t, file, nativePage.Items[0].ID)
-	_, err = nativeClient.GetNode(rpc.WithActor(t.Context(), uuid.New()), bucketID, fsID, file)
+	foreignContext, err := rpc.WithActor(t.Context(), identity.Actor{Kind: identity.User, ID: uuid.New()})
+	require.NoError(t, err)
+	_, err = nativeClient.GetNode(foreignContext, bucketID, fsID, file)
 	require.Equal(t, apperr.Forbidden, apperr.KindOf(err), "owner checks delegated actor permission")
 
 	require.Equal(t, int64(9223372036854775807), node.Node.Revision)
@@ -197,9 +200,9 @@ func TestIntegrationFilesystemOperationsOverAuthenticatedRPC(t *testing.T) {
 	}{
 		{metadata.MD{}, codes.Unauthenticated},
 		{metadata.Pairs("authorization", "Bearer "+gatewayToken), codes.Unauthenticated},
-		{metadata.Pairs("authorization", "Bearer "+gatewayToken, "x-openlet-account-id", actor.String(), "x-openlet-account-id", uuid.NewString()), codes.Unauthenticated},
-		{metadata.Pairs("authorization", "Bearer "+gatewayToken, "x-openlet-account-id", uuid.NewString()), codes.PermissionDenied},
-		{metadata.Pairs("authorization", "Bearer "+serviceToken, "x-openlet-account-id", actor.String()), codes.PermissionDenied},
+		{metadata.Pairs("authorization", "Bearer "+gatewayToken, "x-openlet-user-id", actor.String(), "x-openlet-user-id", uuid.NewString()), codes.Unauthenticated},
+		{metadata.Pairs("authorization", "Bearer "+gatewayToken, "x-openlet-user-id", uuid.NewString()), codes.PermissionDenied},
+		{metadata.Pairs("authorization", "Bearer "+serviceToken, "x-openlet-user-id", actor.String()), codes.PermissionDenied},
 		{metadata.Pairs("authorization", "Bearer "+serviceToken), codes.Unauthenticated},
 	} {
 		_, err := client.GetNode(metadata.NewOutgoingContext(t.Context(), test.md), request)
@@ -214,6 +217,30 @@ func TestIntegrationFilesystemOperationsOverAuthenticatedRPC(t *testing.T) {
 	_, err = client.CreateNode(ctx, creation)
 	require.Equal(t, codes.PermissionDenied, status.Code(err), "read action cannot mutate")
 	testfixture.Grant(t, graph, "scope", fsID, actor, authz.ScopeWrite, authz.ScopeWrite, authz.ScopeWrite, authz.ScopeTrash, authz.ScopeReadMetadata, authz.ScopeRestore)
+	box, err := client.CreateNode(ctx, &letfsv1.CreateNodeRequest{FilesystemId: bucketID.String(), ScopeId: fsID.String(), IdempotencyKey: uuid.NewString(),
+		Input: &letfsv1.CreateNodeRequest_Directory{Directory: &letfsv1.DirectoryCreation{Name: "box", Parent: &letfsv1.Locator{Target: &letfsv1.Locator_NodeId{NodeId: fs.RootID.String()}}}}})
+	require.NoError(t, err)
+	boxID := box.Node.Id
+	bound := &letfsv1.Locator{Target: &letfsv1.Locator_Path{Path: &letfsv1.PathLocator{Path: "/"}}, RootId: &boxID}
+	resolved, err = client.ResolveNode(ctx, &letfsv1.ResolveNodeRequest{FilesystemId: bucketID.String(), ScopeId: fsID.String(), Locator: bound})
+	require.NoError(t, err)
+	require.Equal(t, boxID, resolved.Node.Id)
+	artifact := uuid.Must(uuid.NewV7())
+	_, err = db.Exec(ctx, `INSERT INTO nodes(id,scope_id,parent_id,name,kind) VALUES($1,$2,$3,'parts','directory')`, artifact, fsID, file)
+	require.NoError(t, err)
+	children, err := client.ListNodes(ctx, &letfsv1.ListNodesRequest{FilesystemId: bucketID.String(), ScopeId: fsID.String(), Parent: &letfsv1.Locator{Target: &letfsv1.Locator_NodeId{NodeId: file.String()}}})
+	require.NoError(t, err)
+	require.Len(t, children.Items, 1)
+	require.True(t, children.Items[0].Readonly)
+	require.Equal(t, "directory", children.Items[0].Kind)
+	for _, path := range []string{"/../report.txt", "/@" + file.String()} {
+		bound.Target = &letfsv1.Locator_Path{Path: &letfsv1.PathLocator{Path: path}}
+		_, err = client.ResolveNode(ctx, &letfsv1.ResolveNodeRequest{FilesystemId: bucketID.String(), ScopeId: fsID.String(), Locator: bound})
+		require.Equal(t, codes.NotFound, status.Code(err))
+	}
+	bound.Target = &letfsv1.Locator_NodeId{NodeId: file.String()}
+	_, err = client.ReplaceContent(ctx, &letfsv1.ReplaceContentRequest{FilesystemId: bucketID.String(), ScopeId: fsID.String(), Locator: bound, Revision: &node.Node.Revision, Content: []byte("blocked"), MediaType: "text/plain"})
+	require.Equal(t, codes.NotFound, status.Code(err), "direct RPC cannot write outside supplied root")
 	created, err := client.CreateNode(ctx, creation)
 	require.NoError(t, err)
 	require.EqualValues(t, 3, created.Node.SizeBytes)

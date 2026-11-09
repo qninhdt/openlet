@@ -20,6 +20,7 @@ type InlineFile struct {
 }
 
 type CreateNode struct {
+	NodeID *uuid.UUID  `json:"node_id,omitempty"`
 	Parent Locator     `json:"parent"`
 	Name   string      `json:"name"`
 	File   *InlineFile `json:"file,omitempty"`
@@ -75,11 +76,11 @@ func (s *session) validateInlineText(content []byte) error {
 	return nil
 }
 
-func (s *session) name(parent uuid.UUID, name string) error {
+func (s *session) name(parent uuid.UUID, name string, root *uuid.UUID) error {
 	if err := ValidateName(name); err != nil {
 		return err
 	}
-	if _, alias := nodeAlias(name); parent == s.root && alias {
+	if _, alias := nodeAlias(name); alias && (parent == s.root || root != nil && parent == *root) {
 		return apperr.New(apperr.Invalid, "VALIDATION", "root UUID alias names are reserved")
 	}
 	return nil
@@ -130,12 +131,19 @@ func (s *session) depth(ctx context.Context, id uuid.UUID) (int64, error) {
 }
 
 func (s *Store) CreateNode(ctx context.Context, scopeID uuid.UUID, key uuid.UUID, input CreateNode) (Node, error) {
+	return s.createNode(ctx, scopeID, key, input, false)
+}
+
+func (s *Store) createNode(ctx context.Context, scopeID uuid.UUID, key uuid.UUID, input CreateNode, textOnly bool) (Node, error) {
 	actor, err := s.authorize(ctx, scopeID, "scope", authz.ScopeWrite)
 	if err != nil {
 		return Node{}, err
 	}
 	if key == uuid.Nil {
 		return Node{}, apperr.New(apperr.Invalid, "VALIDATION", "request key required")
+	}
+	if input.NodeID != nil && (*input.NodeID == uuid.Nil || input.NodeID.Version() != 7) {
+		return Node{}, apperr.New(apperr.Invalid, "VALIDATION", "node identity must be UUIDv7")
 	}
 	if err = ValidateName(input.Name); err != nil {
 		return Node{}, err
@@ -156,7 +164,17 @@ func (s *Store) CreateNode(ctx context.Context, scopeID uuid.UUID, key uuid.UUID
 			return Node{}, err
 		}
 	}
-	hash, err := fingerprint(input)
+	if textOnly && (input.File == nil || !utf8.Valid(input.File.Content) || strings.ContainsRune(string(input.File.Content), 0)) {
+		return Node{}, invalidText()
+	}
+	var receiptInput any = input
+	if textOnly {
+		receiptInput = struct {
+			Input      CreateNode
+			NativeText bool
+		}{input, true}
+	}
+	hash, err := fingerprint(receiptInput)
 	if err != nil {
 		return Node{}, err
 	}
@@ -201,7 +219,7 @@ func (s *Store) CreateNode(ctx context.Context, scopeID uuid.UUID, key uuid.UUID
 	if err = parent.directory(); err != nil {
 		return Node{}, err
 	}
-	if err = session.name(parent.ID, input.Name); err != nil {
+	if err = session.name(parent.ID, input.Name, input.Parent.RootID); err != nil {
 		return Node{}, err
 	}
 	depth, err := session.depth(ctx, parent.ID)
@@ -223,15 +241,21 @@ func (s *Store) CreateNode(ctx context.Context, scopeID uuid.UUID, key uuid.UUID
 		return Node{}, err
 	}
 	id := uuid.Must(uuid.NewV7())
+	if input.NodeID != nil {
+		id = *input.NodeID
+	}
 	_, err = session.tx.Exec(ctx, `INSERT INTO nodes(id,scope_id,parent_id,name,kind,size_bytes) VALUES($1,$2,$3,$4,$5,$6)`, id, scopeID, parent.ID, input.Name, kind, len(content))
 	if err != nil {
 		return Node{}, databaseError(err)
 	}
 	if input.File != nil {
-		if content == nil {
-			content = []byte{}
+		var payload inlinePayload
+		if textOnly {
+			payload = textPayload(content)
+		} else {
+			payload = s.classifyInline(input.Name, input.File.MediaType, content, session.allowBlobFiles)
 		}
-		_, err = session.tx.Exec(ctx, `INSERT INTO files(node_id,storage_kind,inline_bytes,media_type) VALUES($1,'inline',$2,$3)`, id, content, input.File.MediaType)
+		_, err = session.tx.Exec(ctx, `INSERT INTO files(node_id,storage_kind,inline_bytes,media_type,text_content,newline_count,text_sha256) VALUES($1,$2,$3,$4,$5,$6,$7)`, id, payload.Kind, payload.Bytes, input.File.MediaType, payload.Text, payload.NewlineCount, payload.SHA256)
 		if err != nil {
 			return Node{}, databaseError(err)
 		}
@@ -313,7 +337,7 @@ func (s *Store) UpdateNode(ctx context.Context, scopeID uuid.UUID, input UpdateN
 	if err = node.revision(input.Revision); err != nil {
 		return Node{}, err
 	}
-	if node.ID == session.root {
+	if node.ID == session.root || input.Locator.RootID != nil && node.ID == *input.Locator.RootID {
 		return Node{}, apperr.New(apperr.Conflict, "ROOT_IMMUTABLE", "root is immutable")
 	}
 	name := node.Name
@@ -322,6 +346,11 @@ func (s *Store) UpdateNode(ctx context.Context, scopeID uuid.UUID, input UpdateN
 	}
 	parent := *node.ParentID
 	if input.Parent != nil {
+		if input.Parent.RootID == nil && destinationID == scopeID {
+			parent := *input.Parent
+			parent.RootID = input.Locator.RootID
+			input.Parent = &parent
+		}
 		destination, err := destinationSession.resolveOne(ctx, *input.Parent)
 		if err != nil {
 			return Node{}, err
@@ -337,7 +366,11 @@ func (s *Store) UpdateNode(ctx context.Context, scopeID uuid.UUID, input UpdateN
 		}
 		parent = destination.ID
 	}
-	if err = destinationSession.name(parent, name); err != nil {
+	root := input.Locator.RootID
+	if input.Parent != nil {
+		root = input.Parent.RootID
+	}
+	if err = destinationSession.name(parent, name, root); err != nil {
 		return Node{}, err
 	}
 	if destinationID == scopeID {
@@ -439,7 +472,7 @@ func (s *Store) ReplaceContent(ctx context.Context, scopeID uuid.UUID, locator L
 	if err = node.revision(revision); err != nil {
 		return Node{}, err
 	}
-	if node.ID == session.root {
+	if node.ID == session.root || locator.RootID != nil && node.ID == *locator.RootID {
 		return Node{}, apperr.New(apperr.Conflict, "ROOT_IMMUTABLE", "root is immutable")
 	}
 	if node.Kind != "file" {
@@ -457,10 +490,8 @@ func (s *Store) ReplaceContent(ctx context.Context, scopeID uuid.UUID, locator L
 	if err = session.queueObject(ctx, node.ID); err != nil {
 		return Node{}, err
 	}
-	if content == nil {
-		content = []byte{}
-	}
-	_, err = session.tx.Exec(ctx, `UPDATE files SET storage_kind='inline',inline_bytes=$2,object_key=NULL,media_type=$3 WHERE node_id=$1`, node.ID, content, mime)
+	payload := s.classifyInline(node.Name, mime, content, session.allowBlobFiles)
+	_, err = session.tx.Exec(ctx, `UPDATE files SET storage_kind=$2,inline_bytes=$3,object_key=NULL,media_type=$4,text_content=$5,newline_count=$6,text_sha256=$7 WHERE node_id=$1`, node.ID, payload.Kind, payload.Bytes, mime, payload.Text, payload.NewlineCount, payload.SHA256)
 	if err != nil {
 		return Node{}, databaseError(err)
 	}

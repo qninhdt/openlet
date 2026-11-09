@@ -225,7 +225,7 @@ func (s *Store) publishUpload(ctx context.Context, scopeID, id uuid.UUID, access
 		return UploadPublication{}, uploadState("INVALID_UPLOAD_STATE")
 	}
 	_, err = session.tx.Exec(ctx, `INSERT INTO files(node_id,storage_kind,object_key,media_type) VALUES($1,'object',$2,$3)
- ON CONFLICT(node_id) DO UPDATE SET storage_kind='object',inline_bytes=NULL,object_key=excluded.object_key,media_type=excluded.media_type`, nodeID, *upload.key, saved.Input.MediaType)
+ ON CONFLICT(node_id) DO UPDATE SET storage_kind='object',inline_bytes=NULL,text_content=NULL,newline_count=NULL,text_sha256=NULL,object_key=excluded.object_key,media_type=excluded.media_type`, nodeID, *upload.key, saved.Input.MediaType)
 	if err != nil {
 		return UploadPublication{}, databaseError(err)
 	}

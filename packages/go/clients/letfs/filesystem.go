@@ -34,6 +34,7 @@ type Node struct {
 	Description  *string
 	SemanticType *string
 	Context      *string
+	ReadOnly     bool
 }
 
 type NodePage struct {
@@ -45,6 +46,7 @@ type Locator struct {
 	NodeID                                  *uuid.UUID
 	Path                                    *string
 	CwdID, ExpectedNodeID, ExpectedParentID *uuid.UUID
+	RootID                                  *uuid.UUID
 }
 
 type Breadcrumb struct {
@@ -124,7 +126,7 @@ func nativeNode(value *letfsv1.Node, filesystem uuid.UUID) (Node, error) {
 	if err != nil || fs != filesystem {
 		return Node{}, scopeError()
 	}
-	result := Node{ID: id, ScopeID: fs, Name: value.GetName(), Kind: value.GetKind(), Revision: value.GetRevision(), SizeBytes: value.GetSizeBytes(), MediaType: value.MediaType, Title: value.Title, Description: value.Description, SemanticType: value.SemanticType, Context: value.Context}
+	result := Node{ID: id, ScopeID: fs, Name: value.GetName(), Kind: value.GetKind(), Revision: value.GetRevision(), SizeBytes: value.GetSizeBytes(), MediaType: value.MediaType, Title: value.Title, Description: value.Description, SemanticType: value.SemanticType, Context: value.Context, ReadOnly: value.GetReadonly()}
 	if value.ParentId != nil {
 		parent, err := parseID(value.GetParentId())
 		if err != nil {
@@ -170,7 +172,15 @@ func (c FilesystemClient) GetNode(ctx context.Context, filesystem, scope, node u
 }
 
 func (c FilesystemClient) ListNodes(ctx context.Context, filesystem, scope, parent uuid.UUID, limit int32, cursor *string) (NodePage, error) {
-	request := &letfsv1.ListNodesRequest{FilesystemId: filesystem.String(), ScopeId: scope.String(), Parent: nodeLocator(parent), Limit: &limit, Cursor: cursor}
+	return c.ListNodesAt(ctx, filesystem, scope, Locator{NodeID: &parent}, limit, cursor)
+}
+
+func (c FilesystemClient) ListNodesAt(ctx context.Context, filesystem, scope uuid.UUID, parent Locator, limit int32, cursor *string) (NodePage, error) {
+	locator, err := nativeLocator(parent)
+	if err != nil {
+		return NodePage{}, err
+	}
+	request := &letfsv1.ListNodesRequest{FilesystemId: filesystem.String(), ScopeId: scope.String(), Parent: locator, Limit: &limit, Cursor: cursor}
 	ctx, cancel := bounded(ctx)
 	defer cancel()
 	response, err := c.API.ListNodes(ctx, request)
@@ -193,6 +203,13 @@ func nodeLocator(id uuid.UUID) *letfsv1.Locator {
 
 func nativeLocator(value Locator) (*letfsv1.Locator, error) {
 	out := &letfsv1.Locator{}
+	if value.RootID != nil {
+		if *value.RootID == uuid.Nil {
+			return nil, apperr.New(apperr.Invalid, "VALIDATION", "invalid root")
+		}
+		raw := value.RootID.String()
+		out.RootId = &raw
+	}
 	switch {
 	case value.NodeID != nil && *value.NodeID != uuid.Nil:
 		out.Target = &letfsv1.Locator_NodeId{NodeId: value.NodeID.String()}
@@ -265,25 +282,68 @@ func (c FilesystemClient) BatchStat(ctx context.Context, filesystem uuid.UUID, l
 }
 
 func (c FilesystemClient) CreateDirectory(ctx context.Context, filesystem, scope, key, parent uuid.UUID, name string) (Node, error) {
-	request := &letfsv1.CreateNodeRequest{FilesystemId: filesystem.String(), ScopeId: scope.String(), IdempotencyKey: key.String(), Input: &letfsv1.CreateNodeRequest_Directory{Directory: &letfsv1.DirectoryCreation{Parent: nodeLocator(parent), Name: name}}}
-	ctx, cancel := bounded(ctx)
-	defer cancel()
-	response, err := c.API.CreateNode(ctx, request)
-	if err != nil {
-		return Node{}, rpc.DecodeError(err)
-	}
-	return nativeNode(response.GetNode(), scope)
+	return c.CreateNode(ctx, filesystem, scope, key, NodeCreation{Parent: Locator{NodeID: &parent}, Name: name})
 }
 
 func (c FilesystemClient) CreateFile(ctx context.Context, filesystem, scope, key, parent uuid.UUID, name, mediaType string, content []byte) (Node, error) {
-	request := &letfsv1.CreateNodeRequest{FilesystemId: filesystem.String(), ScopeId: scope.String(), IdempotencyKey: key.String(), Input: &letfsv1.CreateNodeRequest_File{File: &letfsv1.InlineFileCreation{Parent: nodeLocator(parent), Name: name, MediaType: mediaType, Content: content}}}
+	return c.CreateNode(ctx, filesystem, scope, key, NodeCreation{Parent: Locator{NodeID: &parent}, Name: name, File: &InlineFile{MediaType: mediaType, Content: content}})
+}
+
+type InlineFile struct {
+	Content   []byte
+	MediaType string
+}
+
+type NodeCreation struct {
+	NodeID *uuid.UUID
+	Parent Locator
+	Name   string
+	File   *InlineFile
+}
+
+func (c FilesystemClient) CreateNode(ctx context.Context, filesystem, scope, key uuid.UUID, input NodeCreation) (Node, error) {
+	parent, err := nativeLocator(input.Parent)
+	if err != nil {
+		return Node{}, err
+	}
+	request := &letfsv1.CreateNodeRequest{FilesystemId: filesystem.String(), ScopeId: scope.String(), IdempotencyKey: key.String(), NodeId: uuidString(input.NodeID)}
+	if input.File == nil {
+		request.Input = &letfsv1.CreateNodeRequest_Directory{Directory: &letfsv1.DirectoryCreation{Parent: parent, Name: input.Name}}
+	} else {
+		request.Input = &letfsv1.CreateNodeRequest_File{File: &letfsv1.InlineFileCreation{Parent: parent, Name: input.Name, MediaType: input.File.MediaType, Content: input.File.Content}}
+	}
 	ctx, cancel := bounded(ctx)
 	defer cancel()
 	response, err := c.API.CreateNode(ctx, request)
 	if err != nil {
 		return Node{}, rpc.DecodeError(err)
 	}
-	return nativeNode(response.GetNode(), scope)
+	node, err := nativeNode(response.GetNode(), scope)
+	if err != nil || input.NodeID != nil && node.ID != *input.NodeID {
+		return Node{}, scopeError()
+	}
+	return node, nil
+}
+
+func (c FilesystemClient) CreateDirectories(ctx context.Context, fs, scope uuid.UUID, parent Locator, components []string, parents bool) (Node, error) {
+	loc, err := nativeLocator(parent)
+	if err != nil {
+		return Node{}, err
+	}
+	ctx, cancel := bounded(ctx)
+	defer cancel()
+	response, err := c.API.CreateDirectories(ctx, &letfsv1.CreateDirectoriesRequest{FilesystemId: fs.String(), ScopeId: scope.String(), Parent: loc, Components: components, Parents: parents})
+	if err != nil {
+		return Node{}, rpc.DecodeError(err)
+	}
+	node, err := nativeNode(response.GetNode(), scope)
+	if err != nil {
+		return Node{}, err
+	}
+	if node.Kind != "directory" {
+		return Node{}, scopeError()
+	}
+	return node, nil
 }
 
 func (c FilesystemClient) UpdateNode(ctx context.Context, filesystem, scope, node uuid.UUID, revision *int64, name *string, parent *uuid.UUID, destinationScope *uuid.UUID) (Node, error) {

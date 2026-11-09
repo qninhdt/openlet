@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	letfsv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/letfs/v1"
+	"github.com/qninhdt/openlet/packages/go/identity"
 	"github.com/qninhdt/openlet/packages/go/rpc"
 )
 
@@ -28,6 +29,7 @@ type Reprocess struct {
 	WorkflowID string
 }
 type TrashEntry struct {
+	ActorKind           identity.ActorKind
 	ID, NodeID, ActorID uuid.UUID
 	ParentID            *uuid.UUID
 	Name, Status        string
@@ -89,7 +91,11 @@ func nativeTrash(value *letfsv1.TrashEntry, filesystem uuid.UUID) (TrashEntry, e
 	if err != nil {
 		return TrashEntry{}, err
 	}
-	out := TrashEntry{ID: id, NodeID: node, ActorID: actor, Name: value.GetName(), Status: value.GetStatus()}
+	kind := identity.ActorKind(value.GetActorKind())
+	if !(identity.Actor{Kind: kind, ID: actor}).Valid() {
+		return TrashEntry{}, scopeError()
+	}
+	out := TrashEntry{ID: id, NodeID: node, ActorID: actor, ActorKind: kind, Name: value.GetName(), Status: value.GetStatus()}
 	if value.ParentId != nil {
 		parent, err := parseID(value.GetParentId())
 		if err != nil {
@@ -168,13 +174,13 @@ func (c FilesystemClient) ReplaceContent(ctx context.Context, filesystem, scope,
 	}
 	return value, nil
 }
-func (c FilesystemClient) CreateCopy(ctx context.Context, filesystem, scope, destinationScope, source, parent, key uuid.UUID, name string, revision *int64) (Node, error) {
+func (c FilesystemClient) CreateCopy(ctx context.Context, filesystem, scope, destinationScope, source, parent, key uuid.UUID, name string, revision *int64, sourceRoot, destinationRoot *uuid.UUID) (Node, error) {
 	if destinationScope == uuid.Nil {
 		destinationScope = scope
 	}
 	ctx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
-	response, err := c.API.CreateCopy(ctx, &letfsv1.CreateCopyRequest{DestinationScopeId: uuidString(&destinationScope), FilesystemId: filesystem.String(), ScopeId: scope.String(), SourceId: source.String(), ParentId: parent.String(), Name: name, Revision: revision, IdempotencyKey: key.String()})
+	response, err := c.API.CreateCopy(ctx, &letfsv1.CreateCopyRequest{DestinationScopeId: uuidString(&destinationScope), FilesystemId: filesystem.String(), ScopeId: scope.String(), SourceId: source.String(), ParentId: parent.String(), Name: name, Revision: revision, IdempotencyKey: key.String(), SourceRootId: uuidString(sourceRoot), DestinationRootId: uuidString(destinationRoot)})
 	if err != nil {
 		return Node{}, rpc.DecodeError(err)
 	}
@@ -208,13 +214,28 @@ func (c FilesystemClient) Reprocess(ctx context.Context, filesystem, scope, node
 	return Reprocess{FileID: id, Generation: response.GetGeneration(), WorkflowID: response.GetWorkflowId()}, nil
 }
 func (c FilesystemClient) Trash(ctx context.Context, filesystem, scope, node uuid.UUID, revision *int64) (TrashEntry, error) {
+	return c.TrashNode(ctx, filesystem, scope, Locator{NodeID: &node}, revision, false)
+}
+
+func (c FilesystemClient) TrashNode(ctx context.Context, filesystem, scope uuid.UUID, locator Locator, revision *int64, emptyDirectory bool) (TrashEntry, error) {
+	loc, err := nativeLocator(locator)
+	if err != nil {
+		return TrashEntry{}, err
+	}
 	ctx, cancel := bounded(ctx)
 	defer cancel()
-	response, err := c.API.TrashNode(ctx, &letfsv1.TrashNodeRequest{FilesystemId: filesystem.String(), ScopeId: scope.String(), Locator: nodeLocator(node), Revision: revision})
+	response, err := c.API.TrashNode(ctx, &letfsv1.TrashNodeRequest{FilesystemId: filesystem.String(), ScopeId: scope.String(), Locator: loc, Revision: revision, EmptyDirectory: emptyDirectory})
 	if err != nil {
 		return TrashEntry{}, rpc.DecodeError(err)
 	}
-	return nativeTrash(response.GetEntry(), scope)
+	entry, err := nativeTrash(response.GetEntry(), scope)
+	if err != nil {
+		return TrashEntry{}, err
+	}
+	if locator.NodeID != nil && entry.NodeID != *locator.NodeID || locator.ExpectedNodeID != nil && entry.NodeID != *locator.ExpectedNodeID {
+		return TrashEntry{}, scopeError()
+	}
+	return entry, nil
 }
 func (c FilesystemClient) ListTrash(ctx context.Context, filesystem, scope uuid.UUID, limit int32, cursor *string) (TrashPage, error) {
 	ctx, cancel := bounded(ctx)
@@ -245,10 +266,11 @@ func (c FilesystemClient) GetTrash(ctx context.Context, filesystem, scope, id uu
 	}
 	return value, nil
 }
-func (c FilesystemClient) RestoreTrash(ctx context.Context, filesystem, scope, id uuid.UUID, destinationScope, parent *uuid.UUID, name *string) (Node, error) {
-	request := &letfsv1.RestoreTrashRequest{FilesystemId: filesystem.String(), ScopeId: scope.String(), EntryId: id.String(), DestinationScopeId: uuidString(destinationScope), Name: name}
+func (c FilesystemClient) RestoreTrash(ctx context.Context, filesystem, scope, id uuid.UUID, destinationScope, parent *uuid.UUID, name *string, root, destinationRoot *uuid.UUID) (Node, error) {
+	request := &letfsv1.RestoreTrashRequest{FilesystemId: filesystem.String(), ScopeId: scope.String(), EntryId: id.String(), DestinationScopeId: uuidString(destinationScope), Name: name, RootId: uuidString(root)}
 	if parent != nil {
 		request.Parent = nodeLocator(*parent)
+		request.Parent.RootId = uuidString(destinationRoot)
 	}
 	ctx, cancel := bounded(ctx)
 	defer cancel()

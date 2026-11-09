@@ -23,7 +23,7 @@ func TestIntegrationNodeWritesReceiptsQuotaAndTreeGuards(t *testing.T) {
 	s := Store{DB: db, Graph: graph, MaxNodes: 1000, InlineLimit: 256, MaxFileBytes: 128}
 	owner := identity.WithPrincipal(t.Context(), identity.Principal{Service: "resource-owner"})
 	actor := uuid.New()
-	ctx := identity.WithPrincipal(t.Context(), identity.Principal{Service: "gateway", Gateway: true, ActorID: actor})
+	ctx := identity.WithPrincipal(t.Context(), identity.Principal{ActorKind: identity.User, Service: "gateway", Gateway: true, ActorID: actor})
 	newFS := func(limit int64) (uuid.UUID, uuid.UUID, uuid.UUID) {
 		t.Helper()
 		filesystemID, id := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
@@ -54,6 +54,35 @@ func TestIntegrationNodeWritesReceiptsQuotaAndTreeGuards(t *testing.T) {
 		return nodes, errs
 	}
 	filesystemID, fs, root := newFS(1024)
+	// A persisted box-home ID survives retries without adopting an unrelated path.
+	stableFS, stableScope, stableRoot := newFS(1024)
+	stableID, stableKey := uuid.Must(uuid.NewV7()), uuid.New()
+	stableInput := CreateNode{NodeID: &stableID, Parent: Locator{NodeID: &stableRoot, RootID: &stableRoot}, Name: "box-home"}
+	stable, err := s.CreateNode(ctx, stableScope, stableKey, stableInput)
+	require.NoError(t, err)
+	require.Equal(t, stableID, stable.ID)
+	stableReplay, err := s.CreateNode(ctx, stableScope, stableKey, stableInput)
+	require.NoError(t, err)
+	require.Equal(t, stableID, stableReplay.ID)
+	// Receipt expiry does not allow a conflicting identity or name to be adopted.
+	_, err = db.Exec(ctx, `UPDATE idempotency_keys SET expires_at=now()-interval '1 second' WHERE request_key=$1`, stableKey.String())
+	require.NoError(t, err)
+	_, err = s.CreateNode(ctx, stableScope, stableKey, stableInput)
+	require.Equal(t, "NAME_CONFLICT", reason(err))
+	_, err = s.CreateNode(ctx, fs, uuid.New(), CreateNode{NodeID: &stableID, Parent: Locator{NodeID: &root}, Name: "wrong-scope"})
+	require.Equal(t, "NAME_CONFLICT", reason(err))
+	otherID := uuid.Must(uuid.NewV7())
+	_, err = s.CreateNode(ctx, stableScope, uuid.New(), CreateNode{NodeID: &otherID, Parent: stableInput.Parent, Name: stableInput.Name})
+	require.Equal(t, "NAME_CONFLICT", reason(err))
+	badID := uuid.New()
+	_, err = s.CreateNode(ctx, stableScope, uuid.New(), CreateNode{NodeID: &badID, Parent: stableInput.Parent, Name: "bad-id"})
+	require.Equal(t, "VALIDATION", reason(err))
+	var stableCount int64
+	require.NoError(t, db.QueryRow(ctx, `SELECT node_count FROM filesystems WHERE id=$1`, stableFS).Scan(&stableCount))
+	require.EqualValues(t, 2, stableCount)
+	observed, err := s.ResolveNode(ctx, stableScope, Locator{NodeID: &stableID, RootID: &stableRoot})
+	require.NoError(t, err)
+	require.Equal(t, stableInput.Name, observed.Name)
 	content := []byte{0, 255, 10, 13, 1, 0}
 	input := CreateNode{Parent: Locator{NodeID: &root}, Name: "document.PDF", File: &InlineFile{Content: content, MediaType: "application/pdf"}}
 	key := uuid.New()
@@ -76,7 +105,7 @@ func TestIntegrationNodeWritesReceiptsQuotaAndTreeGuards(t *testing.T) {
 	require.NoError(t, db.QueryRow(ctx, `SELECT node_count FROM filesystems WHERE id=$1`, filesystemID).Scan(&count))
 	require.EqualValues(t, 2, count)
 	input.Name = "different"
-	_, err := s.CreateNode(ctx, fs, key, input)
+	_, err = s.CreateNode(ctx, fs, key, input)
 	require.Equal(t, "IDEMPOTENCY_CONFLICT", reason(err))
 	_, err = s.CreateNode(ctx, fs, uuid.New(), CreateNode{Parent: Locator{NodeID: &root}, Name: file.Name, File: input.File})
 	require.Equal(t, "NAME_CONFLICT", reason(err))

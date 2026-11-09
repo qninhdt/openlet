@@ -19,31 +19,42 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	FilesystemService_GetFilesystem_FullMethodName  = "/openlet_api.letfs.v1.FilesystemService/GetFilesystem"
-	FilesystemService_CreateNode_FullMethodName     = "/openlet_api.letfs.v1.FilesystemService/CreateNode"
-	FilesystemService_ListNodes_FullMethodName      = "/openlet_api.letfs.v1.FilesystemService/ListNodes"
-	FilesystemService_GetNode_FullMethodName        = "/openlet_api.letfs.v1.FilesystemService/GetNode"
-	FilesystemService_ResolveNode_FullMethodName    = "/openlet_api.letfs.v1.FilesystemService/ResolveNode"
-	FilesystemService_BatchStat_FullMethodName      = "/openlet_api.letfs.v1.FilesystemService/BatchStat"
-	FilesystemService_UpdateNode_FullMethodName     = "/openlet_api.letfs.v1.FilesystemService/UpdateNode"
-	FilesystemService_ReplaceContent_FullMethodName = "/openlet_api.letfs.v1.FilesystemService/ReplaceContent"
-	FilesystemService_CreateCopy_FullMethodName     = "/openlet_api.letfs.v1.FilesystemService/CreateCopy"
-	FilesystemService_GetProcessing_FullMethodName  = "/openlet_api.letfs.v1.FilesystemService/GetProcessing"
-	FilesystemService_ReprocessNode_FullMethodName  = "/openlet_api.letfs.v1.FilesystemService/ReprocessNode"
-	FilesystemService_TrashNode_FullMethodName      = "/openlet_api.letfs.v1.FilesystemService/TrashNode"
-	FilesystemService_ListTrash_FullMethodName      = "/openlet_api.letfs.v1.FilesystemService/ListTrash"
-	FilesystemService_GetTrash_FullMethodName       = "/openlet_api.letfs.v1.FilesystemService/GetTrash"
-	FilesystemService_RestoreTrash_FullMethodName   = "/openlet_api.letfs.v1.FilesystemService/RestoreTrash"
-	FilesystemService_PurgeTrash_FullMethodName     = "/openlet_api.letfs.v1.FilesystemService/PurgeTrash"
-	FilesystemService_CreateUpload_FullMethodName   = "/openlet_api.letfs.v1.FilesystemService/CreateUpload"
-	FilesystemService_GetUpload_FullMethodName      = "/openlet_api.letfs.v1.FilesystemService/GetUpload"
-	FilesystemService_GetUploadParts_FullMethodName = "/openlet_api.letfs.v1.FilesystemService/GetUploadParts"
-	FilesystemService_CompleteUpload_FullMethodName = "/openlet_api.letfs.v1.FilesystemService/CompleteUpload"
-	FilesystemService_AbortUpload_FullMethodName    = "/openlet_api.letfs.v1.FilesystemService/AbortUpload"
-	FilesystemService_SearchFiles_FullMethodName    = "/openlet_api.letfs.v1.FilesystemService/SearchFiles"
-	FilesystemService_SemanticSearch_FullMethodName = "/openlet_api.letfs.v1.FilesystemService/SemanticSearch"
-	FilesystemService_GetDownload_FullMethodName    = "/openlet_api.letfs.v1.FilesystemService/GetDownload"
-	FilesystemService_StreamArchive_FullMethodName  = "/openlet_api.letfs.v1.FilesystemService/StreamArchive"
+	FilesystemService_GetFilesystem_FullMethodName     = "/openlet_api.letfs.v1.FilesystemService/GetFilesystem"
+	FilesystemService_CreateNode_FullMethodName        = "/openlet_api.letfs.v1.FilesystemService/CreateNode"
+	FilesystemService_CreateDirectories_FullMethodName = "/openlet_api.letfs.v1.FilesystemService/CreateDirectories"
+	FilesystemService_ListNodes_FullMethodName         = "/openlet_api.letfs.v1.FilesystemService/ListNodes"
+	FilesystemService_GetNode_FullMethodName           = "/openlet_api.letfs.v1.FilesystemService/GetNode"
+	FilesystemService_ResolveNode_FullMethodName       = "/openlet_api.letfs.v1.FilesystemService/ResolveNode"
+	FilesystemService_BatchStat_FullMethodName         = "/openlet_api.letfs.v1.FilesystemService/BatchStat"
+	FilesystemService_Stat_FullMethodName              = "/openlet_api.letfs.v1.FilesystemService/Stat"
+	FilesystemService_ReadText_FullMethodName          = "/openlet_api.letfs.v1.FilesystemService/ReadText"
+	FilesystemService_TextMetrics_FullMethodName       = "/openlet_api.letfs.v1.FilesystemService/TextMetrics"
+	FilesystemService_ReadTree_FullMethodName          = "/openlet_api.letfs.v1.FilesystemService/ReadTree"
+	FilesystemService_TextSearch_FullMethodName        = "/openlet_api.letfs.v1.FilesystemService/TextSearch"
+	FilesystemService_ReadImage_FullMethodName         = "/openlet_api.letfs.v1.FilesystemService/ReadImage"
+	FilesystemService_WriteText_FullMethodName         = "/openlet_api.letfs.v1.FilesystemService/WriteText"
+	FilesystemService_AppendText_FullMethodName        = "/openlet_api.letfs.v1.FilesystemService/AppendText"
+	FilesystemService_PatchText_FullMethodName         = "/openlet_api.letfs.v1.FilesystemService/PatchText"
+	FilesystemService_TruncateText_FullMethodName      = "/openlet_api.letfs.v1.FilesystemService/TruncateText"
+	FilesystemService_UpdateNode_FullMethodName        = "/openlet_api.letfs.v1.FilesystemService/UpdateNode"
+	FilesystemService_ReplaceContent_FullMethodName    = "/openlet_api.letfs.v1.FilesystemService/ReplaceContent"
+	FilesystemService_CreateCopy_FullMethodName        = "/openlet_api.letfs.v1.FilesystemService/CreateCopy"
+	FilesystemService_GetProcessing_FullMethodName     = "/openlet_api.letfs.v1.FilesystemService/GetProcessing"
+	FilesystemService_ReprocessNode_FullMethodName     = "/openlet_api.letfs.v1.FilesystemService/ReprocessNode"
+	FilesystemService_TrashNode_FullMethodName         = "/openlet_api.letfs.v1.FilesystemService/TrashNode"
+	FilesystemService_ListTrash_FullMethodName         = "/openlet_api.letfs.v1.FilesystemService/ListTrash"
+	FilesystemService_GetTrash_FullMethodName          = "/openlet_api.letfs.v1.FilesystemService/GetTrash"
+	FilesystemService_RestoreTrash_FullMethodName      = "/openlet_api.letfs.v1.FilesystemService/RestoreTrash"
+	FilesystemService_PurgeTrash_FullMethodName        = "/openlet_api.letfs.v1.FilesystemService/PurgeTrash"
+	FilesystemService_CreateUpload_FullMethodName      = "/openlet_api.letfs.v1.FilesystemService/CreateUpload"
+	FilesystemService_GetUpload_FullMethodName         = "/openlet_api.letfs.v1.FilesystemService/GetUpload"
+	FilesystemService_GetUploadParts_FullMethodName    = "/openlet_api.letfs.v1.FilesystemService/GetUploadParts"
+	FilesystemService_CompleteUpload_FullMethodName    = "/openlet_api.letfs.v1.FilesystemService/CompleteUpload"
+	FilesystemService_AbortUpload_FullMethodName       = "/openlet_api.letfs.v1.FilesystemService/AbortUpload"
+	FilesystemService_SearchFiles_FullMethodName       = "/openlet_api.letfs.v1.FilesystemService/SearchFiles"
+	FilesystemService_SemanticSearch_FullMethodName    = "/openlet_api.letfs.v1.FilesystemService/SemanticSearch"
+	FilesystemService_GetDownload_FullMethodName       = "/openlet_api.letfs.v1.FilesystemService/GetDownload"
+	FilesystemService_StreamArchive_FullMethodName     = "/openlet_api.letfs.v1.FilesystemService/StreamArchive"
 )
 
 // FilesystemServiceClient is the client API for FilesystemService service.
@@ -52,10 +63,21 @@ const (
 type FilesystemServiceClient interface {
 	GetFilesystem(ctx context.Context, in *GetFilesystemRequest, opts ...grpc.CallOption) (*GetFilesystemResponse, error)
 	CreateNode(ctx context.Context, in *CreateNodeRequest, opts ...grpc.CallOption) (*CreateNodeResponse, error)
+	CreateDirectories(ctx context.Context, in *CreateDirectoriesRequest, opts ...grpc.CallOption) (*CreateDirectoriesResponse, error)
 	ListNodes(ctx context.Context, in *ListNodesRequest, opts ...grpc.CallOption) (*ListNodesResponse, error)
 	GetNode(ctx context.Context, in *GetNodeRequest, opts ...grpc.CallOption) (*GetNodeResponse, error)
 	ResolveNode(ctx context.Context, in *ResolveNodeRequest, opts ...grpc.CallOption) (*ResolveNodeResponse, error)
 	BatchStat(ctx context.Context, in *BatchStatRequest, opts ...grpc.CallOption) (*BatchStatResponse, error)
+	Stat(ctx context.Context, in *StatRequest, opts ...grpc.CallOption) (*StatResponse, error)
+	ReadText(ctx context.Context, in *ReadTextRequest, opts ...grpc.CallOption) (*ReadTextResponse, error)
+	TextMetrics(ctx context.Context, in *TextMetricsRequest, opts ...grpc.CallOption) (*TextMetricsResponse, error)
+	ReadTree(ctx context.Context, in *ReadTreeRequest, opts ...grpc.CallOption) (*ReadTreeResponse, error)
+	TextSearch(ctx context.Context, in *TextSearchRequest, opts ...grpc.CallOption) (*TextSearchResponse, error)
+	ReadImage(ctx context.Context, in *ReadImageRequest, opts ...grpc.CallOption) (*ReadImageResponse, error)
+	WriteText(ctx context.Context, in *WriteTextRequest, opts ...grpc.CallOption) (*WriteTextResponse, error)
+	AppendText(ctx context.Context, in *AppendTextRequest, opts ...grpc.CallOption) (*AppendTextResponse, error)
+	PatchText(ctx context.Context, in *PatchTextRequest, opts ...grpc.CallOption) (*PatchTextResponse, error)
+	TruncateText(ctx context.Context, in *TruncateTextRequest, opts ...grpc.CallOption) (*TruncateTextResponse, error)
 	UpdateNode(ctx context.Context, in *UpdateNodeRequest, opts ...grpc.CallOption) (*UpdateNodeResponse, error)
 	ReplaceContent(ctx context.Context, in *ReplaceContentRequest, opts ...grpc.CallOption) (*ReplaceContentResponse, error)
 	CreateCopy(ctx context.Context, in *CreateCopyRequest, opts ...grpc.CallOption) (*CreateCopyResponse, error)
@@ -106,6 +128,16 @@ func (c *filesystemServiceClient) CreateNode(ctx context.Context, in *CreateNode
 	return out, nil
 }
 
+func (c *filesystemServiceClient) CreateDirectories(ctx context.Context, in *CreateDirectoriesRequest, opts ...grpc.CallOption) (*CreateDirectoriesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateDirectoriesResponse)
+	err := c.cc.Invoke(ctx, FilesystemService_CreateDirectories_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *filesystemServiceClient) ListNodes(ctx context.Context, in *ListNodesRequest, opts ...grpc.CallOption) (*ListNodesResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListNodesResponse)
@@ -140,6 +172,106 @@ func (c *filesystemServiceClient) BatchStat(ctx context.Context, in *BatchStatRe
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(BatchStatResponse)
 	err := c.cc.Invoke(ctx, FilesystemService_BatchStat_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *filesystemServiceClient) Stat(ctx context.Context, in *StatRequest, opts ...grpc.CallOption) (*StatResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StatResponse)
+	err := c.cc.Invoke(ctx, FilesystemService_Stat_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *filesystemServiceClient) ReadText(ctx context.Context, in *ReadTextRequest, opts ...grpc.CallOption) (*ReadTextResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReadTextResponse)
+	err := c.cc.Invoke(ctx, FilesystemService_ReadText_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *filesystemServiceClient) TextMetrics(ctx context.Context, in *TextMetricsRequest, opts ...grpc.CallOption) (*TextMetricsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TextMetricsResponse)
+	err := c.cc.Invoke(ctx, FilesystemService_TextMetrics_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *filesystemServiceClient) ReadTree(ctx context.Context, in *ReadTreeRequest, opts ...grpc.CallOption) (*ReadTreeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReadTreeResponse)
+	err := c.cc.Invoke(ctx, FilesystemService_ReadTree_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *filesystemServiceClient) TextSearch(ctx context.Context, in *TextSearchRequest, opts ...grpc.CallOption) (*TextSearchResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TextSearchResponse)
+	err := c.cc.Invoke(ctx, FilesystemService_TextSearch_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *filesystemServiceClient) ReadImage(ctx context.Context, in *ReadImageRequest, opts ...grpc.CallOption) (*ReadImageResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReadImageResponse)
+	err := c.cc.Invoke(ctx, FilesystemService_ReadImage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *filesystemServiceClient) WriteText(ctx context.Context, in *WriteTextRequest, opts ...grpc.CallOption) (*WriteTextResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WriteTextResponse)
+	err := c.cc.Invoke(ctx, FilesystemService_WriteText_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *filesystemServiceClient) AppendText(ctx context.Context, in *AppendTextRequest, opts ...grpc.CallOption) (*AppendTextResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AppendTextResponse)
+	err := c.cc.Invoke(ctx, FilesystemService_AppendText_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *filesystemServiceClient) PatchText(ctx context.Context, in *PatchTextRequest, opts ...grpc.CallOption) (*PatchTextResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PatchTextResponse)
+	err := c.cc.Invoke(ctx, FilesystemService_PatchText_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *filesystemServiceClient) TruncateText(ctx context.Context, in *TruncateTextRequest, opts ...grpc.CallOption) (*TruncateTextResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TruncateTextResponse)
+	err := c.cc.Invoke(ctx, FilesystemService_TruncateText_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -351,10 +483,21 @@ type FilesystemService_StreamArchiveClient = grpc.ServerStreamingClient[StreamAr
 type FilesystemServiceServer interface {
 	GetFilesystem(context.Context, *GetFilesystemRequest) (*GetFilesystemResponse, error)
 	CreateNode(context.Context, *CreateNodeRequest) (*CreateNodeResponse, error)
+	CreateDirectories(context.Context, *CreateDirectoriesRequest) (*CreateDirectoriesResponse, error)
 	ListNodes(context.Context, *ListNodesRequest) (*ListNodesResponse, error)
 	GetNode(context.Context, *GetNodeRequest) (*GetNodeResponse, error)
 	ResolveNode(context.Context, *ResolveNodeRequest) (*ResolveNodeResponse, error)
 	BatchStat(context.Context, *BatchStatRequest) (*BatchStatResponse, error)
+	Stat(context.Context, *StatRequest) (*StatResponse, error)
+	ReadText(context.Context, *ReadTextRequest) (*ReadTextResponse, error)
+	TextMetrics(context.Context, *TextMetricsRequest) (*TextMetricsResponse, error)
+	ReadTree(context.Context, *ReadTreeRequest) (*ReadTreeResponse, error)
+	TextSearch(context.Context, *TextSearchRequest) (*TextSearchResponse, error)
+	ReadImage(context.Context, *ReadImageRequest) (*ReadImageResponse, error)
+	WriteText(context.Context, *WriteTextRequest) (*WriteTextResponse, error)
+	AppendText(context.Context, *AppendTextRequest) (*AppendTextResponse, error)
+	PatchText(context.Context, *PatchTextRequest) (*PatchTextResponse, error)
+	TruncateText(context.Context, *TruncateTextRequest) (*TruncateTextResponse, error)
 	UpdateNode(context.Context, *UpdateNodeRequest) (*UpdateNodeResponse, error)
 	ReplaceContent(context.Context, *ReplaceContentRequest) (*ReplaceContentResponse, error)
 	CreateCopy(context.Context, *CreateCopyRequest) (*CreateCopyResponse, error)
@@ -391,6 +534,9 @@ func (UnimplementedFilesystemServiceServer) GetFilesystem(context.Context, *GetF
 func (UnimplementedFilesystemServiceServer) CreateNode(context.Context, *CreateNodeRequest) (*CreateNodeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateNode not implemented")
 }
+func (UnimplementedFilesystemServiceServer) CreateDirectories(context.Context, *CreateDirectoriesRequest) (*CreateDirectoriesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateDirectories not implemented")
+}
 func (UnimplementedFilesystemServiceServer) ListNodes(context.Context, *ListNodesRequest) (*ListNodesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListNodes not implemented")
 }
@@ -402,6 +548,36 @@ func (UnimplementedFilesystemServiceServer) ResolveNode(context.Context, *Resolv
 }
 func (UnimplementedFilesystemServiceServer) BatchStat(context.Context, *BatchStatRequest) (*BatchStatResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method BatchStat not implemented")
+}
+func (UnimplementedFilesystemServiceServer) Stat(context.Context, *StatRequest) (*StatResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Stat not implemented")
+}
+func (UnimplementedFilesystemServiceServer) ReadText(context.Context, *ReadTextRequest) (*ReadTextResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReadText not implemented")
+}
+func (UnimplementedFilesystemServiceServer) TextMetrics(context.Context, *TextMetricsRequest) (*TextMetricsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method TextMetrics not implemented")
+}
+func (UnimplementedFilesystemServiceServer) ReadTree(context.Context, *ReadTreeRequest) (*ReadTreeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReadTree not implemented")
+}
+func (UnimplementedFilesystemServiceServer) TextSearch(context.Context, *TextSearchRequest) (*TextSearchResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method TextSearch not implemented")
+}
+func (UnimplementedFilesystemServiceServer) ReadImage(context.Context, *ReadImageRequest) (*ReadImageResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReadImage not implemented")
+}
+func (UnimplementedFilesystemServiceServer) WriteText(context.Context, *WriteTextRequest) (*WriteTextResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method WriteText not implemented")
+}
+func (UnimplementedFilesystemServiceServer) AppendText(context.Context, *AppendTextRequest) (*AppendTextResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AppendText not implemented")
+}
+func (UnimplementedFilesystemServiceServer) PatchText(context.Context, *PatchTextRequest) (*PatchTextResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PatchText not implemented")
+}
+func (UnimplementedFilesystemServiceServer) TruncateText(context.Context, *TruncateTextRequest) (*TruncateTextResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method TruncateText not implemented")
 }
 func (UnimplementedFilesystemServiceServer) UpdateNode(context.Context, *UpdateNodeRequest) (*UpdateNodeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpdateNode not implemented")
@@ -517,6 +693,24 @@ func _FilesystemService_CreateNode_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _FilesystemService_CreateDirectories_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateDirectoriesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FilesystemServiceServer).CreateDirectories(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FilesystemService_CreateDirectories_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FilesystemServiceServer).CreateDirectories(ctx, req.(*CreateDirectoriesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _FilesystemService_ListNodes_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListNodesRequest)
 	if err := dec(in); err != nil {
@@ -585,6 +779,186 @@ func _FilesystemService_BatchStat_Handler(srv interface{}, ctx context.Context, 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(FilesystemServiceServer).BatchStat(ctx, req.(*BatchStatRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FilesystemService_Stat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StatRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FilesystemServiceServer).Stat(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FilesystemService_Stat_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FilesystemServiceServer).Stat(ctx, req.(*StatRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FilesystemService_ReadText_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReadTextRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FilesystemServiceServer).ReadText(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FilesystemService_ReadText_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FilesystemServiceServer).ReadText(ctx, req.(*ReadTextRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FilesystemService_TextMetrics_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TextMetricsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FilesystemServiceServer).TextMetrics(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FilesystemService_TextMetrics_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FilesystemServiceServer).TextMetrics(ctx, req.(*TextMetricsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FilesystemService_ReadTree_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReadTreeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FilesystemServiceServer).ReadTree(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FilesystemService_ReadTree_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FilesystemServiceServer).ReadTree(ctx, req.(*ReadTreeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FilesystemService_TextSearch_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TextSearchRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FilesystemServiceServer).TextSearch(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FilesystemService_TextSearch_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FilesystemServiceServer).TextSearch(ctx, req.(*TextSearchRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FilesystemService_ReadImage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReadImageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FilesystemServiceServer).ReadImage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FilesystemService_ReadImage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FilesystemServiceServer).ReadImage(ctx, req.(*ReadImageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FilesystemService_WriteText_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WriteTextRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FilesystemServiceServer).WriteText(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FilesystemService_WriteText_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FilesystemServiceServer).WriteText(ctx, req.(*WriteTextRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FilesystemService_AppendText_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AppendTextRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FilesystemServiceServer).AppendText(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FilesystemService_AppendText_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FilesystemServiceServer).AppendText(ctx, req.(*AppendTextRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FilesystemService_PatchText_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PatchTextRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FilesystemServiceServer).PatchText(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FilesystemService_PatchText_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FilesystemServiceServer).PatchText(ctx, req.(*PatchTextRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _FilesystemService_TruncateText_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TruncateTextRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FilesystemServiceServer).TruncateText(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FilesystemService_TruncateText_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FilesystemServiceServer).TruncateText(ctx, req.(*TruncateTextRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -940,6 +1314,10 @@ var FilesystemService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _FilesystemService_CreateNode_Handler,
 		},
 		{
+			MethodName: "CreateDirectories",
+			Handler:    _FilesystemService_CreateDirectories_Handler,
+		},
+		{
 			MethodName: "ListNodes",
 			Handler:    _FilesystemService_ListNodes_Handler,
 		},
@@ -954,6 +1332,46 @@ var FilesystemService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "BatchStat",
 			Handler:    _FilesystemService_BatchStat_Handler,
+		},
+		{
+			MethodName: "Stat",
+			Handler:    _FilesystemService_Stat_Handler,
+		},
+		{
+			MethodName: "ReadText",
+			Handler:    _FilesystemService_ReadText_Handler,
+		},
+		{
+			MethodName: "TextMetrics",
+			Handler:    _FilesystemService_TextMetrics_Handler,
+		},
+		{
+			MethodName: "ReadTree",
+			Handler:    _FilesystemService_ReadTree_Handler,
+		},
+		{
+			MethodName: "TextSearch",
+			Handler:    _FilesystemService_TextSearch_Handler,
+		},
+		{
+			MethodName: "ReadImage",
+			Handler:    _FilesystemService_ReadImage_Handler,
+		},
+		{
+			MethodName: "WriteText",
+			Handler:    _FilesystemService_WriteText_Handler,
+		},
+		{
+			MethodName: "AppendText",
+			Handler:    _FilesystemService_AppendText_Handler,
+		},
+		{
+			MethodName: "PatchText",
+			Handler:    _FilesystemService_PatchText_Handler,
+		},
+		{
+			MethodName: "TruncateText",
+			Handler:    _FilesystemService_TruncateText_Handler,
 		},
 		{
 			MethodName: "UpdateNode",
@@ -1680,6 +2098,7 @@ const (
 	StorageAdministrationService_DeleteFilesystem_FullMethodName = "/openlet_api.letfs.v1.StorageAdministrationService/DeleteFilesystem"
 	StorageAdministrationService_CreateFilesystem_FullMethodName = "/openlet_api.letfs.v1.StorageAdministrationService/CreateFilesystem"
 	StorageAdministrationService_CreateScopes_FullMethodName     = "/openlet_api.letfs.v1.StorageAdministrationService/CreateScopes"
+	StorageAdministrationService_ListScopes_FullMethodName       = "/openlet_api.letfs.v1.StorageAdministrationService/ListScopes"
 )
 
 // StorageAdministrationServiceClient is the client API for StorageAdministrationService service.
@@ -1691,6 +2110,8 @@ type StorageAdministrationServiceClient interface {
 	DeleteFilesystem(ctx context.Context, in *DeleteFilesystemRequest, opts ...grpc.CallOption) (*DeleteFilesystemResponse, error)
 	CreateFilesystem(ctx context.Context, in *CreateFilesystemRequest, opts ...grpc.CallOption) (*CreateFilesystemResponse, error)
 	CreateScopes(ctx context.Context, in *CreateScopesRequest, opts ...grpc.CallOption) (*CreateScopesResponse, error)
+	// Read-only candidates for Workspace's authorized accessible-scope view.
+	ListScopes(ctx context.Context, in *ListScopesRequest, opts ...grpc.CallOption) (*ListScopesResponse, error)
 }
 
 type storageAdministrationServiceClient struct {
@@ -1731,6 +2152,16 @@ func (c *storageAdministrationServiceClient) CreateScopes(ctx context.Context, i
 	return out, nil
 }
 
+func (c *storageAdministrationServiceClient) ListScopes(ctx context.Context, in *ListScopesRequest, opts ...grpc.CallOption) (*ListScopesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListScopesResponse)
+	err := c.cc.Invoke(ctx, StorageAdministrationService_ListScopes_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // StorageAdministrationServiceServer is the server API for StorageAdministrationService service.
 // All implementations must embed UnimplementedStorageAdministrationServiceServer
 // for forward compatibility.
@@ -1740,6 +2171,8 @@ type StorageAdministrationServiceServer interface {
 	DeleteFilesystem(context.Context, *DeleteFilesystemRequest) (*DeleteFilesystemResponse, error)
 	CreateFilesystem(context.Context, *CreateFilesystemRequest) (*CreateFilesystemResponse, error)
 	CreateScopes(context.Context, *CreateScopesRequest) (*CreateScopesResponse, error)
+	// Read-only candidates for Workspace's authorized accessible-scope view.
+	ListScopes(context.Context, *ListScopesRequest) (*ListScopesResponse, error)
 	mustEmbedUnimplementedStorageAdministrationServiceServer()
 }
 
@@ -1758,6 +2191,9 @@ func (UnimplementedStorageAdministrationServiceServer) CreateFilesystem(context.
 }
 func (UnimplementedStorageAdministrationServiceServer) CreateScopes(context.Context, *CreateScopesRequest) (*CreateScopesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateScopes not implemented")
+}
+func (UnimplementedStorageAdministrationServiceServer) ListScopes(context.Context, *ListScopesRequest) (*ListScopesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListScopes not implemented")
 }
 func (UnimplementedStorageAdministrationServiceServer) mustEmbedUnimplementedStorageAdministrationServiceServer() {
 }
@@ -1835,6 +2271,24 @@ func _StorageAdministrationService_CreateScopes_Handler(srv interface{}, ctx con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _StorageAdministrationService_ListScopes_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListScopesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(StorageAdministrationServiceServer).ListScopes(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: StorageAdministrationService_ListScopes_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(StorageAdministrationServiceServer).ListScopes(ctx, req.(*ListScopesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // StorageAdministrationService_ServiceDesc is the grpc.ServiceDesc for StorageAdministrationService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1853,6 +2307,10 @@ var StorageAdministrationService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CreateScopes",
 			Handler:    _StorageAdministrationService_CreateScopes_Handler,
+		},
+		{
+			MethodName: "ListScopes",
+			Handler:    _StorageAdministrationService_ListScopes_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

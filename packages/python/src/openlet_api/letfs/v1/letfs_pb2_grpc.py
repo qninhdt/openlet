@@ -44,6 +44,11 @@ class FilesystemServiceStub:
                 request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateNodeRequest.SerializeToString,
                 response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateNodeResponse.FromString,
                 _registered_method=True)
+        self.CreateDirectories = channel.unary_unary(
+                '/openlet_api.letfs.v1.FilesystemService/CreateDirectories',
+                request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateDirectoriesRequest.SerializeToString,
+                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateDirectoriesResponse.FromString,
+                _registered_method=True)
         self.ListNodes = channel.unary_unary(
                 '/openlet_api.letfs.v1.FilesystemService/ListNodes',
                 request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ListNodesRequest.SerializeToString,
@@ -63,6 +68,56 @@ class FilesystemServiceStub:
                 '/openlet_api.letfs.v1.FilesystemService/BatchStat',
                 request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.BatchStatRequest.SerializeToString,
                 response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.BatchStatResponse.FromString,
+                _registered_method=True)
+        self.Stat = channel.unary_unary(
+                '/openlet_api.letfs.v1.FilesystemService/Stat',
+                request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.StatRequest.SerializeToString,
+                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.StatResponse.FromString,
+                _registered_method=True)
+        self.ReadText = channel.unary_unary(
+                '/openlet_api.letfs.v1.FilesystemService/ReadText',
+                request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ReadTextRequest.SerializeToString,
+                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ReadTextResponse.FromString,
+                _registered_method=True)
+        self.TextMetrics = channel.unary_unary(
+                '/openlet_api.letfs.v1.FilesystemService/TextMetrics',
+                request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.TextMetricsRequest.SerializeToString,
+                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.TextMetricsResponse.FromString,
+                _registered_method=True)
+        self.ReadTree = channel.unary_unary(
+                '/openlet_api.letfs.v1.FilesystemService/ReadTree',
+                request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ReadTreeRequest.SerializeToString,
+                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ReadTreeResponse.FromString,
+                _registered_method=True)
+        self.TextSearch = channel.unary_unary(
+                '/openlet_api.letfs.v1.FilesystemService/TextSearch',
+                request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.TextSearchRequest.SerializeToString,
+                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.TextSearchResponse.FromString,
+                _registered_method=True)
+        self.ReadImage = channel.unary_unary(
+                '/openlet_api.letfs.v1.FilesystemService/ReadImage',
+                request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ReadImageRequest.SerializeToString,
+                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ReadImageResponse.FromString,
+                _registered_method=True)
+        self.WriteText = channel.unary_unary(
+                '/openlet_api.letfs.v1.FilesystemService/WriteText',
+                request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.WriteTextRequest.SerializeToString,
+                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.WriteTextResponse.FromString,
+                _registered_method=True)
+        self.AppendText = channel.unary_unary(
+                '/openlet_api.letfs.v1.FilesystemService/AppendText',
+                request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.AppendTextRequest.SerializeToString,
+                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.AppendTextResponse.FromString,
+                _registered_method=True)
+        self.PatchText = channel.unary_unary(
+                '/openlet_api.letfs.v1.FilesystemService/PatchText',
+                request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.PatchTextRequest.SerializeToString,
+                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.PatchTextResponse.FromString,
+                _registered_method=True)
+        self.TruncateText = channel.unary_unary(
+                '/openlet_api.letfs.v1.FilesystemService/TruncateText',
+                request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.TruncateTextRequest.SerializeToString,
+                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.TruncateTextResponse.FromString,
                 _registered_method=True)
         self.UpdateNode = channel.unary_unary(
                 '/openlet_api.letfs.v1.FilesystemService/UpdateNode',
@@ -176,6 +231,12 @@ class FilesystemServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def CreateDirectories(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def ListNodes(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -195,6 +256,66 @@ class FilesystemServiceServicer:
         raise NotImplementedError('Method not implemented!')
 
     def BatchStat(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Stat(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ReadText(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def TextMetrics(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ReadTree(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def TextSearch(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ReadImage(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def WriteText(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def AppendText(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def PatchText(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def TruncateText(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -328,6 +449,11 @@ def add_FilesystemServiceServicer_to_server(servicer, server):
                     request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateNodeRequest.FromString,
                     response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateNodeResponse.SerializeToString,
             ),
+            'CreateDirectories': grpc.unary_unary_rpc_method_handler(
+                    servicer.CreateDirectories,
+                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateDirectoriesRequest.FromString,
+                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateDirectoriesResponse.SerializeToString,
+            ),
             'ListNodes': grpc.unary_unary_rpc_method_handler(
                     servicer.ListNodes,
                     request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ListNodesRequest.FromString,
@@ -347,6 +473,56 @@ def add_FilesystemServiceServicer_to_server(servicer, server):
                     servicer.BatchStat,
                     request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.BatchStatRequest.FromString,
                     response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.BatchStatResponse.SerializeToString,
+            ),
+            'Stat': grpc.unary_unary_rpc_method_handler(
+                    servicer.Stat,
+                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.StatRequest.FromString,
+                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.StatResponse.SerializeToString,
+            ),
+            'ReadText': grpc.unary_unary_rpc_method_handler(
+                    servicer.ReadText,
+                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ReadTextRequest.FromString,
+                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ReadTextResponse.SerializeToString,
+            ),
+            'TextMetrics': grpc.unary_unary_rpc_method_handler(
+                    servicer.TextMetrics,
+                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.TextMetricsRequest.FromString,
+                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.TextMetricsResponse.SerializeToString,
+            ),
+            'ReadTree': grpc.unary_unary_rpc_method_handler(
+                    servicer.ReadTree,
+                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ReadTreeRequest.FromString,
+                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ReadTreeResponse.SerializeToString,
+            ),
+            'TextSearch': grpc.unary_unary_rpc_method_handler(
+                    servicer.TextSearch,
+                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.TextSearchRequest.FromString,
+                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.TextSearchResponse.SerializeToString,
+            ),
+            'ReadImage': grpc.unary_unary_rpc_method_handler(
+                    servicer.ReadImage,
+                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ReadImageRequest.FromString,
+                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ReadImageResponse.SerializeToString,
+            ),
+            'WriteText': grpc.unary_unary_rpc_method_handler(
+                    servicer.WriteText,
+                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.WriteTextRequest.FromString,
+                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.WriteTextResponse.SerializeToString,
+            ),
+            'AppendText': grpc.unary_unary_rpc_method_handler(
+                    servicer.AppendText,
+                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.AppendTextRequest.FromString,
+                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.AppendTextResponse.SerializeToString,
+            ),
+            'PatchText': grpc.unary_unary_rpc_method_handler(
+                    servicer.PatchText,
+                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.PatchTextRequest.FromString,
+                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.PatchTextResponse.SerializeToString,
+            ),
+            'TruncateText': grpc.unary_unary_rpc_method_handler(
+                    servicer.TruncateText,
+                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.TruncateTextRequest.FromString,
+                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.TruncateTextResponse.SerializeToString,
             ),
             'UpdateNode': grpc.unary_unary_rpc_method_handler(
                     servicer.UpdateNode,
@@ -509,6 +685,33 @@ class FilesystemService:
             _registered_method=True)
 
     @staticmethod
+    def CreateDirectories(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/openlet_api.letfs.v1.FilesystemService/CreateDirectories',
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateDirectoriesRequest.SerializeToString,
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateDirectoriesResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
     def ListNodes(request,
             target,
             options=(),
@@ -606,6 +809,276 @@ class FilesystemService:
             '/openlet_api.letfs.v1.FilesystemService/BatchStat',
             openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.BatchStatRequest.SerializeToString,
             openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.BatchStatResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Stat(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/openlet_api.letfs.v1.FilesystemService/Stat',
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.StatRequest.SerializeToString,
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.StatResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ReadText(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/openlet_api.letfs.v1.FilesystemService/ReadText',
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ReadTextRequest.SerializeToString,
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ReadTextResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def TextMetrics(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/openlet_api.letfs.v1.FilesystemService/TextMetrics',
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.TextMetricsRequest.SerializeToString,
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.TextMetricsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ReadTree(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/openlet_api.letfs.v1.FilesystemService/ReadTree',
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ReadTreeRequest.SerializeToString,
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ReadTreeResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def TextSearch(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/openlet_api.letfs.v1.FilesystemService/TextSearch',
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.TextSearchRequest.SerializeToString,
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.TextSearchResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ReadImage(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/openlet_api.letfs.v1.FilesystemService/ReadImage',
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ReadImageRequest.SerializeToString,
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ReadImageResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def WriteText(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/openlet_api.letfs.v1.FilesystemService/WriteText',
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.WriteTextRequest.SerializeToString,
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.WriteTextResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def AppendText(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/openlet_api.letfs.v1.FilesystemService/AppendText',
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.AppendTextRequest.SerializeToString,
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.AppendTextResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def PatchText(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/openlet_api.letfs.v1.FilesystemService/PatchText',
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.PatchTextRequest.SerializeToString,
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.PatchTextResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def TruncateText(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/openlet_api.letfs.v1.FilesystemService/TruncateText',
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.TruncateTextRequest.SerializeToString,
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.TruncateTextResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -1832,6 +2305,11 @@ class StorageAdministrationServiceStub:
                 request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateScopesRequest.SerializeToString,
                 response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateScopesResponse.FromString,
                 _registered_method=True)
+        self.ListScopes = channel.unary_unary(
+                '/openlet_api.letfs.v1.StorageAdministrationService/ListScopes',
+                request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ListScopesRequest.SerializeToString,
+                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ListScopesResponse.FromString,
+                _registered_method=True)
 
 
 class StorageAdministrationServiceServicer:
@@ -1856,6 +2334,13 @@ class StorageAdministrationServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ListScopes(self, request, context):
+        """Read-only candidates for Workspace's authorized accessible-scope view.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_StorageAdministrationServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -1873,6 +2358,11 @@ def add_StorageAdministrationServiceServicer_to_server(servicer, server):
                     servicer.CreateScopes,
                     request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateScopesRequest.FromString,
                     response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateScopesResponse.SerializeToString,
+            ),
+            'ListScopes': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListScopes,
+                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ListScopesRequest.FromString,
+                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ListScopesResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -1957,6 +2447,33 @@ class StorageAdministrationService:
             '/openlet_api.letfs.v1.StorageAdministrationService/CreateScopes',
             openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateScopesRequest.SerializeToString,
             openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.CreateScopesResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListScopes(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/openlet_api.letfs.v1.StorageAdministrationService/ListScopes',
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ListScopesRequest.SerializeToString,
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ListScopesResponse.FromString,
             options,
             channel_credentials,
             insecure,

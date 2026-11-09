@@ -21,12 +21,19 @@ func Postgres(t *testing.T, migrationPath string) *pgxpool.Pool {
 	defer cancel()
 	baseline, err := filepath.Abs(migrationPath)
 	require.NoError(t, err)
+	migrations, err := filepath.Glob(filepath.Join(filepath.Dir(baseline), "*.sql"))
+	require.NoError(t, err)
+	require.Contains(t, migrations, baseline)
+	files := make([]testcontainers.ContainerFile, 0, len(migrations))
+	for _, migration := range migrations {
+		files = append(files, testcontainers.ContainerFile{HostFilePath: migration, ContainerFilePath: "/docker-entrypoint-initdb.d/" + filepath.Base(migration), FileMode: 0o444})
+	}
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
-			Image:        "postgres:18.6-trixie@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336",
+			Image:        "postgres:18.6-trixie@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42",
 			Env:          map[string]string{"POSTGRES_USER": "owner", "POSTGRES_DB": "application", "POSTGRES_PASSWORD": "isolated-test-password"},
 			ExposedPorts: []string{"5432/tcp"},
-			Files:        []testcontainers.ContainerFile{{HostFilePath: baseline, ContainerFilePath: "/docker-entrypoint-initdb.d/10-baseline.sql", FileMode: 0o444}},
+			Files:        files,
 			WaitingFor:   wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(45 * time.Second),
 		}, Started: true,
 	})

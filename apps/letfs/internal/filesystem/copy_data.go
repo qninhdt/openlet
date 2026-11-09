@@ -11,11 +11,11 @@ import (
 	"github.com/qninhdt/openlet/packages/go/apperr"
 )
 
-func (s *session) copyNode(ctx context.Context, id uuid.UUID) (Node, error) {
-	return s.resolveOne(ctx, Locator{NodeID: &id})
+func (s *session) copyNode(ctx context.Context, id uuid.UUID, root *uuid.UUID) (Node, error) {
+	return s.resolveOne(ctx, Locator{NodeID: &id, RootID: root})
 }
-func (s *session) copySource(ctx context.Context, item copyItem, exact bool) (Node, error) {
-	node, err := s.copyNode(ctx, item.Source)
+func (s *session) copySource(ctx context.Context, item copyItem, exact bool, root *uuid.UUID) (Node, error) {
+	node, err := s.copyNode(ctx, item.Source, root)
 	if errorReason(err) == "NOT_FOUND" {
 		return Node{}, apperr.New(apperr.Conflict, "SOURCE_REPLACED", "copy source changed")
 	}
@@ -29,7 +29,7 @@ func (s *session) copySource(ctx context.Context, item copyItem, exact bool) (No
 	if node.Kind == "file" {
 		var object *string
 		var content []byte
-		if err = s.tx.QueryRow(ctx, `SELECT object_key,inline_bytes FROM files WHERE node_id=$1`, node.ID).Scan(&object, &content); err != nil {
+		if err = s.tx.QueryRow(ctx, `SELECT object_key,COALESCE(inline_bytes,convert_to(text_content,'UTF8')) FROM files WHERE node_id=$1`, node.ID).Scan(&object, &content); err != nil {
 			return Node{}, databaseError(err)
 		}
 		var digest *string
@@ -46,7 +46,7 @@ func (s *session) copySource(ctx context.Context, item copyItem, exact bool) (No
 	return node, nil
 }
 func (s *session) copyCommitted(ctx context.Context, admission copyPlan, item copyItem) (bool, error) {
-	parent, err := s.copyNode(ctx, item.Parent)
+	parent, err := s.copyNode(ctx, item.Parent, admission.DestinationRootID)
 	if err != nil {
 		return false, err
 	}
@@ -124,7 +124,7 @@ func (s *session) validateCopyCandidate(ctx context.Context, admission copyPlan,
 	if err != nil {
 		return false, err
 	}
-	_, err = sourceSession.copySource(ctx, item, true)
+	_, err = sourceSession.copySource(ctx, item, true, admission.SourceRootID)
 	return false, err
 }
 
@@ -147,7 +147,7 @@ func (s *Store) commitCopyItem(ctx context.Context, admission copyPlan, item cop
 	if err != nil {
 		return err
 	}
-	if _, err = sourceSession.copySource(ctx, item, true); err != nil {
+	if _, err = sourceSession.copySource(ctx, item, true, admission.SourceRootID); err != nil {
 		return err
 	}
 	if item.Kind == "file" && !session.allowBlobFiles {
@@ -155,7 +155,7 @@ func (s *Store) commitCopyItem(ctx context.Context, admission copyPlan, item cop
 			return apperr.New(apperr.Invalid, "BLOB_FILES_DISABLED", "destination scope does not allow blob files")
 		}
 		var content []byte
-		if err = session.tx.QueryRow(ctx, `SELECT inline_bytes FROM files WHERE node_id=$1`, item.Source).Scan(&content); err != nil {
+		if err = session.tx.QueryRow(ctx, `SELECT COALESCE(inline_bytes,convert_to(text_content,'UTF8')) FROM files WHERE node_id=$1`, item.Source).Scan(&content); err != nil {
 			return databaseError(err)
 		}
 		if err = session.validateInlineText(content); err != nil {
@@ -220,8 +220,8 @@ func (s *Store) commitCopyItem(ctx context.Context, admission copyPlan, item cop
 			return databaseError(err)
 		}
 		if item.Kind == "file" {
-			if _, err := session.tx.Exec(ctx, `INSERT INTO files(node_id,storage_kind,inline_bytes,object_key,media_type,title,description,semantic_type,context)
- SELECT $1,storage_kind,inline_bytes,$3,media_type,title,description,semantic_type,context FROM files WHERE node_id=$2`, item.Destination, item.Source, key); err != nil {
+			if _, err := session.tx.Exec(ctx, `INSERT INTO files(node_id,storage_kind,inline_bytes,object_key,media_type,title,description,semantic_type,context,text_content,newline_count,text_sha256)
+ SELECT $1,storage_kind,inline_bytes,$3,media_type,title,description,semantic_type,context,text_content,newline_count,text_sha256 FROM files WHERE node_id=$2`, item.Destination, item.Source, key); err != nil {
 				return databaseError(err)
 			}
 		}
@@ -250,15 +250,15 @@ type copyFrame struct {
 	Revision      int64
 }
 
-func (s *session) copyFrame(ctx context.Context, frame copyFrame) (Node, error) {
+func (s *session) copyFrame(ctx context.Context, admission copyPlan, frame copyFrame) (Node, error) {
 	sourceSession, err := s.inScope(ctx, frame.SourceScopeID)
 	if err != nil {
 		return Node{}, err
 	}
-	if _, err := sourceSession.copySource(ctx, frame.Item, false); err != nil {
+	if _, err := sourceSession.copySource(ctx, frame.Item, false, admission.SourceRootID); err != nil {
 		return Node{}, err
 	}
-	node, err := s.copyNode(ctx, frame.Item.Destination)
+	node, err := s.copyNode(ctx, frame.Item.Destination, admission.DestinationRootID)
 	if err != nil {
 		return Node{}, err
 	}
@@ -276,7 +276,7 @@ func (s *Store) nextCopyItem(ctx context.Context, admission copyPlan, frame copy
 		return nil, err
 	}
 	defer session.tx.Rollback(ctx)
-	parent, err := session.copyFrame(ctx, frame)
+	parent, err := session.copyFrame(ctx, admission, frame)
 	if err != nil {
 		return nil, err
 	}
@@ -295,7 +295,7 @@ func (s *Store) nextCopyItem(ctx context.Context, admission copyPlan, frame copy
 	if err != nil {
 		return nil, err
 	}
-	node, err := sourceSession.copyNode(ctx, child)
+	node, err := sourceSession.copyNode(ctx, child, admission.SourceRootID)
 	if err != nil {
 		return nil, err
 	}
@@ -313,7 +313,7 @@ func (s *Store) finishCopyFile(ctx context.Context, admission copyPlan, frame co
 		return err
 	}
 	defer session.tx.Rollback(ctx)
-	node, err := session.copyFrame(ctx, frame)
+	node, err := session.copyFrame(ctx, admission, frame)
 	if err != nil {
 		return err
 	}

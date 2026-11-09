@@ -192,11 +192,14 @@ func (s *Store) CompleteParse(ctx context.Context, a Generation, manifest ParseM
 		ids[path] = uuid.Must(uuid.NewV7())
 	}
 	type entry struct {
-		ID        uuid.UUID  `json:"id"`
-		Parent    uuid.UUID  `json:"parent"`
-		Name      string     `json:"name"`
-		Upload    *uuid.UUID `json:"upload"`
-		MediaType string     `json:"media_type"`
+		ID           uuid.UUID  `json:"id"`
+		Parent       uuid.UUID  `json:"parent"`
+		Name         string     `json:"name"`
+		Upload       *uuid.UUID `json:"upload"`
+		MediaType    string     `json:"media_type"`
+		Text         bool       `json:"text"`
+		NewlineCount *int64     `json:"newline_count"`
+		SHA256       *string    `json:"sha256"`
 	}
 	entries := make([]entry, 0, len(tree))
 	for path, upload := range tree {
@@ -204,7 +207,39 @@ func (s *Store) CompleteParse(ctx context.Context, a Generation, manifest ParseM
 		if at := strings.LastIndexByte(path, '/'); at >= 0 {
 			parent, name = ids[path[:at]], path[at+1:]
 		}
-		entries = append(entries, entry{ids[path], parent, name, upload, artifactMediaType(name)})
+		entries = append(entries, entry{ID: ids[path], Parent: parent, Name: name, Upload: upload, MediaType: artifactMediaType(name)})
+	}
+	// Read bounded inline batches after validating the complete output count/byte budget.
+	byUpload := make(map[uuid.UUID]int)
+	candidates := make([]uuid.UUID, 0, len(outputs))
+	for i, item := range entries {
+		if item.Upload != nil && textCandidate(item.Name, item.MediaType, session.allowBlobFiles) {
+			byUpload[*item.Upload] = i
+			candidates = append(candidates, *item.Upload)
+		}
+	}
+	for start := 0; start < len(candidates); start += 100 {
+		rows, err := session.tx.Query(ctx, `SELECT id,inline_bytes FROM uploads WHERE id=ANY($1) AND transport='inline' AND expected_size<=$2`, candidates[start:min(start+100, len(candidates))], min(s.InlineLimit, s.MaxFileBytes))
+		if err != nil {
+			return databaseError(err)
+		}
+		type inlineOutput struct {
+			ID      uuid.UUID
+			Content []byte
+		}
+		items, err := pgx.CollectRows(rows, pgx.RowToStructByPos[inlineOutput])
+		if err != nil {
+			return databaseError(err)
+		}
+		for _, item := range items {
+			target := &entries[byUpload[item.ID]]
+			payload := s.classifyInline(target.Name, target.MediaType, item.Content, session.allowBlobFiles)
+			if payload.Text != nil {
+				target.Text = true
+				target.NewlineCount = payload.NewlineCount
+				target.SHA256 = payload.SHA256
+			}
+		}
 	}
 	encoded, err := json.Marshal(entries)
 	if err != nil {
@@ -215,8 +250,11 @@ func (s *Store) CompleteParse(ctx context.Context, a Generation, manifest ParseM
 	if err != nil {
 		return databaseError(err)
 	}
-	_, err = session.tx.Exec(ctx, `WITH entries AS (SELECT * FROM jsonb_to_recordset($1) AS x(id uuid,parent uuid,name text,upload uuid,media_type text))
- INSERT INTO files(node_id,storage_kind,inline_bytes,object_key,media_type) SELECT e.id,CASE WHEN u.transport='inline' THEN 'inline' ELSE 'object' END,u.inline_bytes,u.candidate_key,e.media_type FROM entries e JOIN uploads u ON u.id=e.upload`, encoded)
+	_, err = session.tx.Exec(ctx, `WITH entries AS (SELECT * FROM jsonb_to_recordset($1) AS x(id uuid,parent uuid,name text,upload uuid,media_type text,text boolean,newline_count bigint,sha256 text))
+ INSERT INTO files(node_id,storage_kind,inline_bytes,object_key,media_type,text_content,newline_count,text_sha256)
+ SELECT e.id,CASE WHEN e.text THEN 'text' WHEN u.transport='inline' THEN 'inline' ELSE 'object' END,
+ CASE WHEN NOT e.text THEN u.inline_bytes END,u.candidate_key,e.media_type,
+ CASE WHEN e.text THEN convert_from(u.inline_bytes,'UTF8') END,e.newline_count,e.sha256 FROM entries e JOIN uploads u ON u.id=e.upload`, encoded)
 	if err != nil {
 		return databaseError(err)
 	}

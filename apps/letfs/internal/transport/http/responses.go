@@ -67,6 +67,7 @@ func nodeResponseFrom(value filesystem.Node) nodeResponse {
 }
 
 type trashResponse struct {
+	ActorKind string    `json:"actor_kind"`
 	ID        string    `json:"id"`
 	NodeID    string    `json:"node_id"`
 	ParentID  *string   `json:"parent_id,omitempty"`
@@ -82,7 +83,7 @@ func trashResponseFrom(value filesystem.TrashEntry) trashResponse {
 		id := value.ParentID.String()
 		parent = &id
 	}
-	return trashResponse{value.ID.String(), value.NodeID.String(), parent, value.Name, value.ActorID.String(), value.Status, timestamp{value.CreatedAt}}
+	return trashResponse{string(value.ActorKind), value.ID.String(), value.NodeID.String(), parent, value.Name, value.ActorID.String(), value.Status, timestamp{value.CreatedAt}}
 }
 
 type signedUploadResponse struct {

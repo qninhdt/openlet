@@ -18,6 +18,7 @@ type Locator struct {
 	CwdID            *uuid.UUID `json:"cwd_id,omitempty"`
 	ExpectedNodeID   *uuid.UUID `json:"expected_node_id,omitempty"`
 	ExpectedParentID *uuid.UUID `json:"expected_parent_id,omitempty"`
+	RootID           *uuid.UUID `json:"root_id,omitempty"`
 }
 
 func nodeAlias(name string) (uuid.UUID, bool) {
@@ -30,7 +31,7 @@ func nodeAlias(name string) (uuid.UUID, bool) {
 
 func pathParts(locator Locator) ([]string, error) {
 	invalid := func() error { return apperr.New(apperr.Invalid, "VALIDATION", "invalid locator") }
-	for _, id := range []*uuid.UUID{locator.NodeID, locator.CwdID, locator.ExpectedNodeID, locator.ExpectedParentID} {
+	for _, id := range []*uuid.UUID{locator.NodeID, locator.CwdID, locator.ExpectedNodeID, locator.ExpectedParentID, locator.RootID} {
 		if id != nil && *id == uuid.Nil {
 			return nil, invalid()
 		}
@@ -89,6 +90,7 @@ func (s *session) resolve(ctx context.Context, locators []Locator) ([]Node, erro
 		Index int       `json:"idx"`
 		Start uuid.UUID `json:"start_id"`
 		Parts []string  `json:"parts"`
+		Root  uuid.UUID `json:"root_id"`
 	}
 	requests := make([]request, len(locators))
 	for i, locator := range locators {
@@ -96,18 +98,22 @@ func (s *session) resolve(ctx context.Context, locators []Locator) ([]Node, erro
 		if err != nil {
 			return nil, err
 		}
-		start := s.root
+		root := s.root
+		if locator.RootID != nil {
+			root = *locator.RootID
+		}
+		start := root
 		if locator.NodeID != nil {
 			start = *locator.NodeID
 		} else if locator.CwdID != nil {
 			start = *locator.CwdID
 		}
-		if locator.Path != nil && start == s.root && len(parts) > 0 {
+		if locator.Path != nil && start == root && len(parts) > 0 {
 			if alias, ok := nodeAlias(parts[0]); ok {
 				start, parts = alias, parts[1:]
 			}
 		}
-		requests[i] = request{i, start, parts}
+		requests[i] = request{i, start, parts, root}
 	}
 	encoded, err := json.Marshal(requests)
 	if err != nil {
@@ -115,14 +121,21 @@ func (s *session) resolve(ctx context.Context, locators []Locator) ([]Node, erro
 	}
 	// One bounded statement shares liveness and provenance with every locator's walk.
 	rows, err := s.tx.Query(ctx, `WITH RECURSIVE req AS (
- SELECT * FROM jsonb_to_recordset($3) AS x(idx int,start_id uuid,parts text[])
+ SELECT * FROM jsonb_to_recordset($3) AS x(idx int,start_id uuid,parts text[],root_id uuid)
+), roots(idx,id,parent_id,kind,depth) AS (
+ SELECT r.idx,n.id,n.parent_id,n.kind,0 FROM req r JOIN nodes n ON n.id=r.root_id AND n.scope_id=$1 AND n.kind='directory'
+ UNION ALL SELECT a.idx,n.id,n.parent_id,n.kind,a.depth+1 FROM roots a JOIN nodes n ON n.id=a.parent_id AND n.scope_id=$1 WHERE a.id<>$2 AND a.depth<128
+), valid_roots AS (
+ SELECT idx FROM roots GROUP BY idx HAVING bool_or(id=$2) AND NOT bool_or(depth>0 AND kind='file')
 ), ancestors(idx,id,parent_id,depth) AS (
  SELECT r.idx,n.id,n.parent_id,0 FROM req r JOIN nodes n ON n.id=r.start_id AND n.scope_id=$1
  UNION ALL SELECT a.idx,n.id,n.parent_id,a.depth+1 FROM ancestors a JOIN nodes n ON n.id=a.parent_id AND n.scope_id=$1 WHERE a.id<>$2 AND a.depth<128
-), live AS (SELECT DISTINCT idx FROM ancestors WHERE id=$2), walk(idx,pos,id,parent_id,kind) AS (
- SELECT r.idx,0,n.id,n.parent_id,n.kind FROM req r JOIN live l USING(idx) JOIN nodes n ON n.id=r.start_id AND n.scope_id=$1
+), live AS (
+ SELECT a.idx FROM ancestors a JOIN req r USING(idx) GROUP BY a.idx HAVING bool_or(a.id=$2) AND bool_or(a.id=r.root_id)
+), walk(idx,pos,id,parent_id,kind) AS (
+ SELECT r.idx,0,n.id,n.parent_id,n.kind FROM req r JOIN live l USING(idx) JOIN valid_roots v USING(idx) JOIN nodes n ON n.id=r.start_id AND n.scope_id=$1
  UNION ALL SELECT w.idx,w.pos+1,n.id,n.parent_id,n.kind FROM walk w JOIN req r USING(idx)
- JOIN nodes n ON n.scope_id=$1 AND ((r.parts[w.pos+1]='..' AND n.id=w.parent_id AND w.id<>$2)
+ JOIN nodes n ON n.scope_id=$1 AND ((r.parts[w.pos+1]='..' AND n.id=w.parent_id AND w.id<>r.root_id)
  OR (r.parts[w.pos+1]<>'..' AND n.parent_id=w.id AND n.name=r.parts[w.pos+1]))
  WHERE w.pos<cardinality(r.parts)
 ), resolved AS (

@@ -19,7 +19,7 @@ func TestIntegrationDetachedArtifactCleanupPreservesTrashAndLiveRoots(t *testing
 	s := Store{DB: db, Graph: graph, MaxNodes: 100, InlineLimit: 64, MaxFileBytes: 64}
 	owner := identity.WithPrincipal(t.Context(), identity.Principal{Service: "resource-owner"})
 	actor := uuid.New()
-	ctx := identity.WithPrincipal(t.Context(), identity.Principal{Service: "gateway", Gateway: true, ActorID: actor})
+	ctx := identity.WithPrincipal(t.Context(), identity.Principal{ActorKind: identity.User, Service: "gateway", Gateway: true, ActorID: actor})
 	filesystemID, fs := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	_, err := s.CreateFilesystem(owner, uuid.New(), CreateFilesystem{ID: filesystemID, LimitBytes: 1000})
 	require.NoError(t, err)
@@ -31,7 +31,7 @@ func TestIntegrationDetachedArtifactCleanupPreservesTrashAndLiveRoots(t *testing
 	require.NoError(t, err)
 	trash, err := s.CreateNode(ctx, fs, uuid.New(), CreateNode{Parent: Locator{NodeID: created.RootID}, Name: "trash.bin", File: &InlineFile{Content: []byte("keep"), MediaType: "application/octet-stream"}})
 	require.NoError(t, err)
-	entry, err := s.TrashNode(ctx, fs, Locator{NodeID: &trash.ID}, &trash.Revision)
+	entry, err := s.TrashNode(ctx, fs, Locator{NodeID: &trash.ID}, &trash.Revision, false)
 	require.NoError(t, err)
 	artifact, leaf := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	_, err = db.Exec(ctx, `INSERT INTO nodes(id,scope_id,parent_id,name,kind,size_bytes) VALUES($1,$2,$3,'artifacts','directory',0),($4,$2,$1,'text.txt','file',8)`, artifact, fs, file.ID, leaf)

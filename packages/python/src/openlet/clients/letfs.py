@@ -1,11 +1,13 @@
+import posixpath
 import re
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import aclosing
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Literal
 
 from openlet.errors import AppError
-from openlet.rpc import RpcClient
+from openlet.rpc import Actor, RpcClient
 from openlet_api.letfs.v1 import letfs_pb2 as pb
 from openlet_api.letfs.v1.letfs_pb2_grpc import (
     FilesystemServiceStub,
@@ -165,6 +167,7 @@ class Node:
     description: str | None = None
     semantic_type: str | None = None
     context: str | None = None
+    readonly: bool = False
 
 
 @dataclass(frozen=True)
@@ -187,18 +190,118 @@ class Scope:
 
 
 @dataclass(frozen=True)
+class ScopePage:
+    items: tuple[Scope, ...]
+    next_cursor: str | None = None
+
+
+@dataclass(frozen=True)
 class Locator:
     node_id: str | None = None
     path: str | None = None
     cwd_id: str | None = None
     expected_node_id: str | None = None
     expected_parent_id: str | None = None
+    root_id: str | None = None
 
 
 @dataclass(frozen=True)
 class ScopedLocator:
     scope_id: str
     locator: Locator
+
+
+@dataclass(frozen=True)
+class FileStat:
+    node: Node
+    storage_kind: str
+    representation_kind: str
+    readable_size: int
+    fingerprint: str
+    newline_count: int | None
+    sha256: str | None
+
+
+@dataclass(frozen=True)
+class ExistingText:
+    locator: Locator
+    revision: int
+    expected_fingerprint: str | None = None
+
+
+@dataclass(frozen=True)
+class TextCreation:
+    parent: Locator
+    name: str
+    idempotency_key: str
+    media_type: str = "text/plain"
+    node_id: str | None = None
+
+
+TextTarget = ExistingText | TextCreation
+
+
+@dataclass(frozen=True)
+class TextMutationResult:
+    stat: FileStat
+    before_revision: int
+    before_fingerprint: str
+
+
+@dataclass(frozen=True)
+class TextSelection:
+    kind: Literal["whole", "bytes", "lines", "head", "tail"] = "whole"
+    offset: int = 0
+    length: int | None = None
+    start_line: int = 1
+    line_count: int = 0
+
+
+@dataclass(frozen=True)
+class TextRead:
+    stat: FileStat
+    content: bytes
+    offset: int
+    length: int
+
+
+@dataclass(frozen=True)
+class TextMetric:
+    stat: FileStat
+    algorithm: str
+    digest: str
+    supported: bool
+
+
+@dataclass(frozen=True)
+class TreeEntry:
+    path: str
+    stat: FileStat
+
+
+@dataclass(frozen=True)
+class TreePage:
+    items: tuple[TreeEntry, ...]
+    next_cursor: str | None
+    complete: bool
+
+
+@dataclass(frozen=True)
+class TextSearchResult:
+    complete: bool
+    items: tuple[TreeEntry, ...] = ()
+    content: bytes = b""
+    stat: FileStat | None = None
+
+
+@dataclass(frozen=True)
+class ImageRead:
+    stat: FileStat
+    content: bytes
+    mime: str
+    width: int
+    height: int
+    sha256: str
 
 
 @dataclass(frozen=True)
@@ -223,6 +326,7 @@ class TrashEntry:
     parent_id: str | None
     name: str
     actor_id: str
+    actor_kind: str
     status: str
     created_at: datetime
 
@@ -386,6 +490,8 @@ def _locator(value: Locator):
         result.expected_node_id = value.expected_node_id
     if value.expected_parent_id is not None:
         result.expected_parent_id = value.expected_parent_id
+    if value.root_id is not None:
+        result.root_id = value.root_id
     return result
 
 
@@ -421,16 +527,112 @@ def _node(value, scope_id: str | None = None):
         value.description if value.HasField("description") else None,
         value.semantic_type if value.HasField("semantic_type") else None,
         value.context if value.HasField("context") else None,
+        value.readonly,
     )
 
 
+def _invalid_result():
+    return AppError(
+        "invalid filesystem result",
+        reason="FILESYSTEM_SCOPE_CONFLICT",
+        kind="conflict",
+        retryable=False,
+    )
+
+
+def _file_stat(value, scope_id: str, locator: Locator | None = None):
+    node = _node(value.node, scope_id)
+    if (
+        not node.id
+        or value.readable_size < 0
+        or not value.fingerprint
+        or value.representation_kind not in {"directory", "text", "blob_metadata"}
+        or node.kind
+        != ("directory" if value.representation_kind == "directory" else "file")
+        or locator is not None
+        and (
+            locator.node_id is not None
+            and node.id != locator.node_id
+            or locator.expected_node_id is not None
+            and node.id != locator.expected_node_id
+        )
+    ):
+        raise _invalid_result()
+    return FileStat(
+        node,
+        value.storage_kind,
+        value.representation_kind,
+        value.readable_size,
+        value.fingerprint,
+        value.newline_count if value.HasField("newline_count") else None,
+        value.sha256 if value.HasField("sha256") else None,
+    )
+
+
+def _text_target(value: TextTarget) -> pb.TextTarget:
+    if isinstance(value, TextCreation):
+        return pb.TextTarget(
+            create=pb.TextCreation(
+                parent=_locator(value.parent),
+                name=value.name,
+                media_type=value.media_type,
+                idempotency_key=value.idempotency_key,
+                node_id=value.node_id,
+            )
+        )
+    return pb.TextTarget(
+        existing=pb.ExistingText(
+            locator=_locator(value.locator),
+            revision=value.revision,
+            expected_fingerprint=value.expected_fingerprint,
+        )
+    )
+
+
+def _text_mutation(
+    value: pb.TextMutation, scope_id: str, target: TextTarget
+) -> TextMutationResult:
+    stat = _file_stat(
+        value.stat,
+        scope_id,
+        target.locator if isinstance(target, ExistingText) else None,
+    )
+    if (
+        stat.storage_kind != "text"
+        or stat.representation_kind != "text"
+        or stat.newline_count is None
+        or stat.sha256 is None
+    ):
+        raise _invalid_result()
+    if isinstance(target, TextCreation):
+        if (
+            value.before_revision != 0
+            or value.before_fingerprint
+            or target.node_id is not None
+            and stat.node.id != target.node_id
+        ):
+            raise _invalid_result()
+    elif (
+        value.before_revision != target.revision
+        or not value.before_fingerprint
+        or stat.node.revision < target.revision
+        or target.expected_fingerprint is not None
+        and value.before_fingerprint != target.expected_fingerprint
+    ):
+        raise _invalid_result()
+    return TextMutationResult(stat, value.before_revision, value.before_fingerprint)
+
+
 def _trash(value):
+    if value.actor_kind not in {"user", "leta"}:
+        raise ValueError("invalid trash actor")
     return TrashEntry(
         value.id,
         value.node_id,
         value.parent_id if value.HasField("parent_id") else None,
         value.name,
         value.actor_id,
+        value.actor_kind,
         value.status,
         _datetime(value.created_at),
     )
@@ -738,11 +940,13 @@ class FilesystemClient:
         self._rpc = rpc
         self._stub = FilesystemServiceStub(rpc.channel)
 
-    async def get_filesystem(self, filesystem_id: str, *, actor_id=None) -> Filesystem:
+    async def get_filesystem(
+        self, filesystem_id: str, *, actor: Actor | None = None
+    ) -> Filesystem:
         response = await self._rpc.invoke(
             self._stub.GetFilesystem,
             pb.GetFilesystemRequest(filesystem_id=filesystem_id),
-            actor_id=actor_id,
+            actor=actor,
         )
         value = response.filesystem
         if value.id != filesystem_id:
@@ -766,7 +970,7 @@ class FilesystemClient:
         scope_id: str,
         node_id: str,
         *,
-        actor_id=None,
+        actor: Actor | None = None,
     ) -> Node:
         response = await self._rpc.invoke(
             self._stub.GetNode,
@@ -775,7 +979,7 @@ class FilesystemClient:
                 scope_id=scope_id,
                 node_id=node_id,
             ),
-            actor_id=actor_id,
+            actor=actor,
         )
         return _node(response.node, scope_id)
 
@@ -785,7 +989,7 @@ class FilesystemClient:
         scope_id: str,
         locator: Locator,
         *,
-        actor_id=None,
+        actor: Actor | None = None,
     ) -> Node:
         response = await self._rpc.invoke(
             self._stub.ResolveNode,
@@ -794,12 +998,258 @@ class FilesystemClient:
                 scope_id=scope_id,
                 locator=_locator(locator),
             ),
-            actor_id=actor_id,
+            actor=actor,
         )
         return _node(response.node, scope_id)
 
+    async def stat(
+        self,
+        filesystem_id: str,
+        scope_id: str,
+        locator: Locator,
+        *,
+        content_check: bool = False,
+        actor: Actor | None = None,
+    ) -> FileStat:
+        response = await self._rpc.invoke(
+            self._stub.Stat,
+            pb.StatRequest(
+                filesystem_id=filesystem_id,
+                scope_id=scope_id,
+                locator=_locator(locator),
+                content_check=content_check,
+            ),
+            actor=actor,
+        )
+        return _file_stat(response.stat, scope_id, locator)
+
+    async def read_text(
+        self,
+        filesystem_id: str,
+        scope_id: str,
+        locator: Locator,
+        selection: TextSelection = TextSelection(),
+        *,
+        expected_fingerprint: str | None = None,
+        actor: Actor | None = None,
+    ) -> TextRead:
+        request = pb.ReadTextRequest(
+            filesystem_id=filesystem_id,
+            scope_id=scope_id,
+            locator=_locator(locator),
+            expected_fingerprint=expected_fingerprint,
+        )
+        match selection.kind:
+            case "whole":
+                request.whole.SetInParent()
+            case "bytes":
+                request.bytes.CopyFrom(
+                    pb.ByteRange(offset=selection.offset, length=selection.length)
+                )
+            case "lines":
+                request.lines.CopyFrom(
+                    pb.LineRange(
+                        start_line=selection.start_line, line_count=selection.line_count
+                    )
+                )
+            case "head" | "tail":
+                getattr(request, selection.kind).CopyFrom(
+                    pb.LineCount(line_count=selection.line_count)
+                )
+            case _:
+                raise ValueError("invalid text selection")
+        response = await self._rpc.invoke(self._stub.ReadText, request, actor=actor)
+        stat = _file_stat(response.stat, scope_id, locator)
+        if (
+            not 0 <= response.offset <= stat.readable_size
+            or response.length != len(response.content)
+            or response.length > stat.readable_size - response.offset
+            or expected_fingerprint is not None
+            and stat.fingerprint != expected_fingerprint
+        ):
+            raise _invalid_result()
+        return TextRead(stat, response.content, response.offset, response.length)
+
+    async def text_metrics(
+        self,
+        filesystem_id: str,
+        scope_id: str,
+        locator: Locator,
+        algorithm: str,
+        *,
+        actor: Actor | None = None,
+    ) -> TextMetric:
+        response = await self._rpc.invoke(
+            self._stub.TextMetrics,
+            pb.TextMetricsRequest(
+                filesystem_id=filesystem_id,
+                scope_id=scope_id,
+                locator=_locator(locator),
+                algorithm=algorithm,
+            ),
+            actor=actor,
+        )
+        return TextMetric(
+            _file_stat(response.stat, scope_id, locator),
+            response.algorithm,
+            response.digest,
+            response.supported,
+        )
+
+    async def read_tree(
+        self,
+        filesystem_id: str,
+        scope_id: str,
+        root: Locator,
+        *,
+        depth: int | None = None,
+        cursor: str | None = None,
+        limit: int | None = None,
+        max_bytes: int | None = None,
+        actor: Actor | None = None,
+    ) -> TreePage:
+        response = await self._rpc.invoke(
+            self._stub.ReadTree,
+            pb.ReadTreeRequest(
+                filesystem_id=filesystem_id,
+                scope_id=scope_id,
+                root=_locator(root),
+                depth=depth,
+                cursor=cursor,
+                limit=limit,
+                max_bytes=max_bytes,
+            ),
+            actor=actor,
+        )
+        cursor = response.next_cursor if response.HasField("next_cursor") else None
+        if response.complete != (cursor is None):
+            raise _invalid_result()
+        return TreePage(
+            tuple(
+                TreeEntry(item.path, _file_stat(item.stat, scope_id))
+                for item in response.items
+            ),
+            cursor,
+            response.complete,
+        )
+
+    async def text_search(
+        self,
+        filesystem_id: str,
+        scope_id: str,
+        locator: Locator,
+        text: str,
+        *,
+        mode: Literal["files", "lines"] = "files",
+        ignore_case: bool = False,
+        max_files: int | None = None,
+        max_lines: int | None = None,
+        max_bytes: int | None = None,
+        actor: Actor | None = None,
+    ) -> TextSearchResult:
+        if mode not in {"files", "lines"}:
+            raise ValueError("invalid text search mode")
+        response = await self._rpc.invoke(
+            self._stub.TextSearch,
+            pb.TextSearchRequest(
+                filesystem_id=filesystem_id,
+                scope_id=scope_id,
+                locator=_locator(locator),
+                mode=mode,
+                text=text,
+                ignore_case=ignore_case,
+                max_files=max_files,
+                max_lines=max_lines,
+                max_bytes=max_bytes,
+            ),
+            actor=actor,
+        )
+        if not response.complete:
+            if response.items or response.content or response.HasField("stat"):
+                raise _invalid_result()
+            return TextSearchResult(False)
+        if mode == "lines":
+            stat = _file_stat(response.stat, scope_id, locator)
+            if (
+                response.items
+                or stat.node.kind != "file"
+                or len(response.content) > stat.readable_size
+            ):
+                raise _invalid_result()
+            return TextSearchResult(True, content=response.content, stat=stat)
+        if (
+            response.HasField("stat")
+            or response.content
+            or max_files is not None
+            and len(response.items) > max_files
+        ):
+            raise _invalid_result()
+        items = []
+        seen = set()
+        last = ""
+        for item in response.items:
+            stat = _file_stat(item.stat, scope_id)
+            path = item.path
+            if (
+                not path
+                or path in {".", ".."}
+                or path.startswith(("/", "../"))
+                or posixpath.normpath(path) != path
+                or stat.node.kind != "file"
+                or stat.node.id in seen
+                or path <= last
+            ):
+                raise _invalid_result()
+            seen.add(stat.node.id)
+            last = path
+            items.append(TreeEntry(path, stat))
+        return TextSearchResult(True, tuple(items))
+
+    async def read_image(
+        self,
+        filesystem_id: str,
+        scope_id: str,
+        locator: Locator,
+        *,
+        expected_fingerprint: str | None = None,
+        actor: Actor | None = None,
+    ) -> ImageRead:
+        response = await self._rpc.invoke(
+            self._stub.ReadImage,
+            pb.ReadImageRequest(
+                filesystem_id=filesystem_id,
+                scope_id=scope_id,
+                locator=_locator(locator),
+                expected_fingerprint=expected_fingerprint,
+            ),
+            actor=actor,
+        )
+        stat = _file_stat(response.stat, scope_id, locator)
+        if (
+            response.mime != "image/png"
+            or not 1 <= response.width <= 2048
+            or not 1 <= response.height <= 2048
+            or not response.content
+            or not response.sha256
+            or expected_fingerprint is not None
+            and stat.fingerprint != expected_fingerprint
+        ):
+            raise _invalid_result()
+        return ImageRead(
+            stat,
+            response.content,
+            response.mime,
+            response.width,
+            response.height,
+            response.sha256,
+        )
+
     async def batch_stat(
-        self, filesystem_id: str, locators: Sequence[ScopedLocator], *, actor_id=None
+        self,
+        filesystem_id: str,
+        locators: Sequence[ScopedLocator],
+        *,
+        actor: Actor | None = None,
     ) -> tuple[Node, ...]:
         if not locators or len(locators) > 100:
             raise ValueError("batch stat requires 1 to 100 locators")
@@ -814,7 +1264,7 @@ class FilesystemClient:
                     for item in locators
                 ],
             ),
-            actor_id=actor_id,
+            actor=actor,
         )
         if len(response.items) != len(locators):
             raise AppError(
@@ -828,6 +1278,127 @@ class FilesystemClient:
             for item, locator in zip(response.items, locators, strict=True)
         )
 
+    async def write_text(
+        self,
+        filesystem_id: str,
+        scope_id: str,
+        target: TextTarget,
+        content: bytes,
+        *,
+        actor: Actor | None = None,
+    ) -> TextMutationResult:
+        response = await self._rpc.invoke(
+            self._stub.WriteText,
+            pb.WriteTextRequest(
+                filesystem_id=filesystem_id,
+                scope_id=scope_id,
+                target=_text_target(target),
+                content=content,
+            ),
+            actor=actor,
+        )
+        return _text_mutation(response.result, scope_id, target)
+
+    async def append_text(
+        self,
+        filesystem_id: str,
+        scope_id: str,
+        target: TextTarget,
+        content: bytes,
+        *,
+        actor: Actor | None = None,
+    ) -> TextMutationResult:
+        response = await self._rpc.invoke(
+            self._stub.AppendText,
+            pb.AppendTextRequest(
+                filesystem_id=filesystem_id,
+                scope_id=scope_id,
+                target=_text_target(target),
+                content=content,
+            ),
+            actor=actor,
+        )
+        return _text_mutation(response.result, scope_id, target)
+
+    async def patch_text(
+        self,
+        filesystem_id: str,
+        scope_id: str,
+        target: TextTarget,
+        content: bytes,
+        *,
+        offset: int | None = None,
+        old_text: str | None = None,
+        replace_all: bool = False,
+        actor: Actor | None = None,
+    ) -> TextMutationResult:
+        if (offset is None) == (old_text is None) or offset is not None and replace_all:
+            raise ValueError("exactly one patch kind required")
+        request = pb.PatchTextRequest(
+            filesystem_id=filesystem_id, scope_id=scope_id, target=_text_target(target)
+        )
+        if offset is not None:
+            request.bytes.CopyFrom(pb.ByteOverwrite(offset=offset, content=content))
+        else:
+            request.literal.CopyFrom(
+                pb.LiteralReplacement(
+                    old_text=old_text,
+                    new_text=content.decode("utf-8"),
+                    replace_all=replace_all,
+                )
+            )
+        response = await self._rpc.invoke(self._stub.PatchText, request, actor=actor)
+        return _text_mutation(response.result, scope_id, target)
+
+    async def truncate_text(
+        self,
+        filesystem_id: str,
+        scope_id: str,
+        target: TextTarget,
+        length: int,
+        *,
+        no_create: bool = False,
+        actor: Actor | None = None,
+    ) -> TextMutationResult:
+        response = await self._rpc.invoke(
+            self._stub.TruncateText,
+            pb.TruncateTextRequest(
+                filesystem_id=filesystem_id,
+                scope_id=scope_id,
+                target=_text_target(target),
+                length=length,
+                no_create=no_create,
+            ),
+            actor=actor,
+        )
+        return _text_mutation(response.result, scope_id, target)
+
+    async def create_directories(
+        self,
+        filesystem_id: str,
+        scope_id: str,
+        parent: Locator,
+        components: list[str],
+        *,
+        parents: bool = False,
+        actor: Actor | None = None,
+    ) -> Node:
+        response = await self._rpc.invoke(
+            self._stub.CreateDirectories,
+            pb.CreateDirectoriesRequest(
+                filesystem_id=filesystem_id,
+                scope_id=scope_id,
+                parent=_locator(parent),
+                components=components,
+                parents=parents,
+            ),
+            actor=actor,
+        )
+        node = _node(response.node, scope_id)
+        if node.kind != "directory":
+            raise _invalid_result()
+        return node
+
     async def create_directory(
         self,
         filesystem_id: str,
@@ -836,7 +1407,8 @@ class FilesystemClient:
         name: str,
         idempotency_key: str,
         *,
-        actor_id=None,
+        node_id: str | None = None,
+        actor: Actor | None = None,
     ) -> Node:
         response = await self._rpc.invoke(
             self._stub.CreateNode,
@@ -844,11 +1416,15 @@ class FilesystemClient:
                 filesystem_id=filesystem_id,
                 scope_id=scope_id,
                 idempotency_key=idempotency_key,
+                node_id=node_id,
                 directory=pb.DirectoryCreation(parent=_locator(parent), name=name),
             ),
-            actor_id=actor_id,
+            actor=actor,
         )
-        return _node(response.node, scope_id)
+        node = _node(response.node, scope_id)
+        if node_id is not None and node.id != node_id:
+            raise _invalid_result()
+        return node
 
     async def create_inline_file(
         self,
@@ -860,7 +1436,8 @@ class FilesystemClient:
         media_type: str,
         idempotency_key: str,
         *,
-        actor_id=None,
+        node_id: str | None = None,
+        actor: Actor | None = None,
     ) -> Node:
         response = await self._rpc.invoke(
             self._stub.CreateNode,
@@ -868,6 +1445,7 @@ class FilesystemClient:
                 filesystem_id=filesystem_id,
                 scope_id=scope_id,
                 idempotency_key=idempotency_key,
+                node_id=node_id,
                 file=pb.InlineFileCreation(
                     parent=_locator(parent),
                     name=name,
@@ -875,32 +1453,37 @@ class FilesystemClient:
                     media_type=media_type,
                 ),
             ),
-            actor_id=actor_id,
+            actor=actor,
         )
-        return _node(response.node, scope_id)
+        node = _node(response.node, scope_id)
+        if node_id is not None and node.id != node_id:
+            raise _invalid_result()
+        return node
 
     async def list_nodes(
         self,
         filesystem_id: str,
         scope_id: str,
-        parent_id: str,
+        parent_id: str | Locator,
         *,
-        actor_id=None,
+        actor: Actor | None = None,
         limit: int | None = None,
         cursor: str | None = None,
     ) -> tuple[tuple[Node, ...], str | None]:
         request = pb.ListNodesRequest(
             filesystem_id=filesystem_id,
             scope_id=scope_id,
-            parent=pb.Locator(node_id=parent_id),
+            parent=_locator(
+                parent_id
+                if isinstance(parent_id, Locator)
+                else Locator(node_id=parent_id)
+            ),
         )
         if limit is not None:
             request.limit = limit
         if cursor is not None:
             request.cursor = cursor
-        response = await self._rpc.invoke(
-            self._stub.ListNodes, request, actor_id=actor_id
-        )
+        response = await self._rpc.invoke(self._stub.ListNodes, request, actor=actor)
         return tuple(
             _node(item, scope_id) for item in response.items
         ), response.next_cursor if response.HasField("next_cursor") else None
@@ -911,7 +1494,7 @@ class FilesystemClient:
         scope_id: str,
         locator: Locator,
         *,
-        actor_id=None,
+        actor: Actor | None = None,
         revision: int | None = None,
         name: str | None = None,
         parent: Locator | None = None,
@@ -930,9 +1513,7 @@ class FilesystemClient:
             request.name = name
         if parent is not None:
             request.parent.CopyFrom(_locator(parent))
-        response = await self._rpc.invoke(
-            self._stub.UpdateNode, request, actor_id=actor_id
-        )
+        response = await self._rpc.invoke(self._stub.UpdateNode, request, actor=actor)
         return _node(response.node, destination_scope_id or scope_id)
 
     async def replace_content(
@@ -943,7 +1524,7 @@ class FilesystemClient:
         content: bytes,
         media_type: str,
         *,
-        actor_id=None,
+        actor: Actor | None = None,
         revision: int | None = None,
     ) -> Node:
         request = pb.ReplaceContentRequest(
@@ -956,7 +1537,7 @@ class FilesystemClient:
         if revision is not None:
             request.revision = revision
         response = await self._rpc.invoke(
-            self._stub.ReplaceContent, request, actor_id=actor_id
+            self._stub.ReplaceContent, request, actor=actor
         )
         return _node(response.node, scope_id)
 
@@ -969,8 +1550,10 @@ class FilesystemClient:
         idempotency_key: str,
         *,
         destination_scope_id: str | None = None,
+        source_root_id: str | None = None,
+        destination_root_id: str | None = None,
         name: str = "",
-        actor_id=None,
+        actor: Actor | None = None,
         revision: int | None = None,
     ) -> Node:
         request = pb.CreateCopyRequest(
@@ -978,6 +1561,8 @@ class FilesystemClient:
             scope_id=scope_id,
             source_id=source_id,
             destination_scope_id=destination_scope_id or scope_id,
+            source_root_id=source_root_id,
+            destination_root_id=destination_root_id,
             parent_id=parent_id,
             name=name,
             idempotency_key=idempotency_key,
@@ -985,7 +1570,7 @@ class FilesystemClient:
         if revision is not None:
             request.revision = revision
         response = await self._rpc.invoke(
-            self._stub.CreateCopy, request, actor_id=actor_id, timeout=120
+            self._stub.CreateCopy, request, actor=actor, timeout=120
         )
         return _node(response.node, destination_scope_id or scope_id)
 
@@ -995,7 +1580,7 @@ class FilesystemClient:
         scope_id: str,
         node_id: str,
         *,
-        actor_id=None,
+        actor: Actor | None = None,
     ) -> ProcessingStatus:
         response = await self._rpc.invoke(
             self._stub.GetProcessing,
@@ -1004,7 +1589,7 @@ class FilesystemClient:
                 scope_id=scope_id,
                 node_id=node_id,
             ),
-            actor_id=actor_id,
+            actor=actor,
         )
         value = response.processing
         return ProcessingStatus(
@@ -1021,7 +1606,7 @@ class FilesystemClient:
         node_id: str,
         idempotency_key: str,
         *,
-        actor_id=None,
+        actor: Actor | None = None,
     ) -> Reprocessing:
         response = await self._rpc.invoke(
             self._stub.ReprocessNode,
@@ -1031,7 +1616,7 @@ class FilesystemClient:
                 node_id=node_id,
                 idempotency_key=idempotency_key,
             ),
-            actor_id=actor_id,
+            actor=actor,
         )
         return Reprocessing(response.file_id, response.generation, response.workflow_id)
 
@@ -1041,19 +1626,19 @@ class FilesystemClient:
         scope_id: str,
         locator: Locator,
         *,
-        actor_id=None,
+        actor: Actor | None = None,
         revision: int | None = None,
+        empty_directory: bool = False,
     ) -> TrashEntry:
         request = pb.TrashNodeRequest(
             filesystem_id=filesystem_id,
             scope_id=scope_id,
             locator=_locator(locator),
+            empty_directory=empty_directory,
         )
         if revision is not None:
             request.revision = revision
-        response = await self._rpc.invoke(
-            self._stub.TrashNode, request, actor_id=actor_id
-        )
+        response = await self._rpc.invoke(self._stub.TrashNode, request, actor=actor)
         return _trash(response.entry)
 
     async def list_trash(
@@ -1061,7 +1646,7 @@ class FilesystemClient:
         filesystem_id: str,
         scope_id: str,
         *,
-        actor_id=None,
+        actor: Actor | None = None,
         limit: int | None = None,
         cursor: str | None = None,
     ) -> tuple[tuple[TrashEntry, ...], str | None]:
@@ -1070,22 +1655,25 @@ class FilesystemClient:
             request.limit = limit
         if cursor is not None:
             request.cursor = cursor
-        response = await self._rpc.invoke(
-            self._stub.ListTrash, request, actor_id=actor_id
-        )
+        response = await self._rpc.invoke(self._stub.ListTrash, request, actor=actor)
         return tuple(_trash(item) for item in response.items), (
             response.next_cursor if response.HasField("next_cursor") else None
         )
 
     async def get_trash(
-        self, filesystem_id: str, scope_id: str, entry_id: str, *, actor_id=None
+        self,
+        filesystem_id: str,
+        scope_id: str,
+        entry_id: str,
+        *,
+        actor: Actor | None = None,
     ) -> TrashEntry:
         response = await self._rpc.invoke(
             self._stub.GetTrash,
             pb.GetTrashRequest(
                 filesystem_id=filesystem_id, scope_id=scope_id, entry_id=entry_id
             ),
-            actor_id=actor_id,
+            actor=actor,
         )
         result = _trash(response.entry)
         if result.id != entry_id:
@@ -1103,13 +1691,17 @@ class FilesystemClient:
         scope_id: str,
         entry_id: str,
         *,
-        actor_id=None,
+        actor: Actor | None = None,
         destination_scope_id: str | None = None,
+        root_id: str | None = None,
         parent: Locator | None = None,
         name: str | None = None,
     ) -> Node:
         request = pb.RestoreTrashRequest(
-            filesystem_id=filesystem_id, scope_id=scope_id, entry_id=entry_id
+            filesystem_id=filesystem_id,
+            scope_id=scope_id,
+            entry_id=entry_id,
+            root_id=root_id,
         )
         if destination_scope_id is not None:
             request.destination_scope_id = destination_scope_id
@@ -1117,20 +1709,23 @@ class FilesystemClient:
             request.parent.CopyFrom(_locator(parent))
         if name is not None:
             request.name = name
-        response = await self._rpc.invoke(
-            self._stub.RestoreTrash, request, actor_id=actor_id
-        )
+        response = await self._rpc.invoke(self._stub.RestoreTrash, request, actor=actor)
         return _node(response.node, destination_scope_id or scope_id)
 
     async def purge_trash(
-        self, filesystem_id: str, scope_id: str, entry_id: str, *, actor_id=None
+        self,
+        filesystem_id: str,
+        scope_id: str,
+        entry_id: str,
+        *,
+        actor: Actor | None = None,
     ) -> None:
         await self._rpc.invoke(
             self._stub.PurgeTrash,
             pb.PurgeTrashRequest(
                 filesystem_id=filesystem_id, scope_id=scope_id, entry_id=entry_id
             ),
-            actor_id=actor_id,
+            actor=actor,
             timeout=120,
         )
 
@@ -1145,7 +1740,7 @@ class FilesystemClient:
         replacement: UploadReplacement | None = None,
         size_bytes: int | None = None,
         content_md5: str | None = None,
-        actor_id=None,
+        actor: Actor | None = None,
     ) -> FileUpload:
         if (destination is None) == (replacement is None):
             raise ValueError("upload requires exactly one target")
@@ -1169,20 +1764,23 @@ class FilesystemClient:
             request.replacement.locator.CopyFrom(_locator(replacement.locator))
             if replacement.revision is not None:
                 request.replacement.revision = replacement.revision
-        response = await self._rpc.invoke(
-            self._stub.CreateUpload, request, actor_id=actor_id
-        )
+        response = await self._rpc.invoke(self._stub.CreateUpload, request, actor=actor)
         return _file_upload(response.upload)
 
     async def get_upload(
-        self, filesystem_id: str, scope_id: str, upload_id: str, *, actor_id=None
+        self,
+        filesystem_id: str,
+        scope_id: str,
+        upload_id: str,
+        *,
+        actor: Actor | None = None,
     ) -> FileUpload:
         response = await self._rpc.invoke(
             self._stub.GetUpload,
             pb.GetUploadRequest(
                 filesystem_id=filesystem_id, scope_id=scope_id, upload_id=upload_id
             ),
-            actor_id=actor_id,
+            actor=actor,
         )
         result = _file_upload(response.upload)
         if result.id != upload_id:
@@ -1201,7 +1799,7 @@ class FilesystemClient:
         upload_id: str,
         numbers: Sequence[int],
         *,
-        actor_id=None,
+        actor: Actor | None = None,
     ) -> tuple[UploadPart, ...]:
         response = await self._rpc.invoke(
             self._stub.GetUploadParts,
@@ -1211,7 +1809,7 @@ class FilesystemClient:
                 upload_id=upload_id,
                 numbers=numbers,
             ),
-            actor_id=actor_id,
+            actor=actor,
         )
         return tuple(
             UploadPart(item.part_number, _transfer(item.transfer))
@@ -1225,7 +1823,7 @@ class FilesystemClient:
         upload_id: str,
         parts: Sequence[PartReceipt] = (),
         *,
-        actor_id=None,
+        actor: Actor | None = None,
     ) -> UploadPublication:
         response = await self._rpc.invoke(
             self._stub.CompleteUpload,
@@ -1238,19 +1836,24 @@ class FilesystemClient:
                     for item in parts
                 ],
             ),
-            actor_id=actor_id,
+            actor=actor,
         )
         return _publication(response.publication)
 
     async def abort_upload(
-        self, filesystem_id: str, scope_id: str, upload_id: str, *, actor_id=None
+        self,
+        filesystem_id: str,
+        scope_id: str,
+        upload_id: str,
+        *,
+        actor: Actor | None = None,
     ) -> None:
         await self._rpc.invoke(
             self._stub.AbortUpload,
             pb.AbortUploadRequest(
                 filesystem_id=filesystem_id, scope_id=scope_id, upload_id=upload_id
             ),
-            actor_id=actor_id,
+            actor=actor,
         )
 
     async def search_files(
@@ -1259,7 +1862,7 @@ class FilesystemClient:
         scope_id: str,
         query: str,
         *,
-        actor_id=None,
+        actor: Actor | None = None,
         filters: SearchFilters | None = None,
         limit: int | None = None,
         cursor: str | None = None,
@@ -1281,7 +1884,7 @@ class FilesystemClient:
             if value is not None:
                 setattr(request, name, value)
         return _search_page(
-            await self._rpc.invoke(self._stub.SearchFiles, request, actor_id=actor_id),
+            await self._rpc.invoke(self._stub.SearchFiles, request, actor=actor),
             scope_id,
         )
 
@@ -1291,7 +1894,7 @@ class FilesystemClient:
         scope_id: str,
         query: str,
         *,
-        actor_id=None,
+        actor: Actor | None = None,
         filters: SearchFilters | None = None,
         limit: int | None = None,
     ) -> SemanticSearchResults:
@@ -1303,9 +1906,7 @@ class FilesystemClient:
         )
         if limit is not None:
             request.limit = limit
-        value = await self._rpc.invoke(
-            self._stub.SemanticSearch, request, actor_id=actor_id
-        )
+        value = await self._rpc.invoke(self._stub.SemanticSearch, request, actor=actor)
         return SemanticSearchResults(
             tuple(_search_result(item, scope_id) for item in value.items),
             value.degraded,
@@ -1318,7 +1919,7 @@ class FilesystemClient:
         scope_id: str,
         node_id: str,
         *,
-        actor_id=None,
+        actor: Actor | None = None,
         revision: int | None = None,
     ) -> Download:
         request = pb.GetDownloadRequest(
@@ -1329,7 +1930,7 @@ class FilesystemClient:
         if revision is not None:
             request.revision = revision
         value = (
-            await self._rpc.invoke(self._stub.GetDownload, request, actor_id=actor_id)
+            await self._rpc.invoke(self._stub.GetDownload, request, actor=actor)
         ).download
         return Download(
             value.mime,
@@ -1348,7 +1949,7 @@ class FilesystemClient:
         scope_id: str,
         node_id: str,
         *,
-        actor_id=None,
+        actor: Actor | None = None,
     ) -> AsyncIterator[ArchiveFrame]:
         request = pb.StreamArchiveRequest(
             filesystem_id=filesystem_id,
@@ -1356,9 +1957,7 @@ class FilesystemClient:
             node_id=node_id,
         )
         async with aclosing(
-            self._rpc.invoke_stream(
-                self._stub.StreamArchive, request, actor_id=actor_id
-            )
+            self._rpc.invoke_stream(self._stub.StreamArchive, request, actor=actor)
         ) as stream:
             async for value in stream:
                 frame = value.WhichOneof("frame")
@@ -1373,6 +1972,57 @@ class StorageAdministrationClient:
     def __init__(self, rpc: RpcClient):
         self._rpc = rpc
         self._stub = StorageAdministrationServiceStub(rpc.channel)
+
+    async def list_scopes(
+        self, filesystem_id: str, *, limit: int = 100, cursor: str | None = None
+    ) -> ScopePage:
+        if not 1 <= limit <= 100 or cursor is not None and not 1 <= len(cursor) <= 512:
+            raise ValueError("invalid scope page")
+        response = await self._rpc.invoke(
+            self._stub.ListScopes,
+            pb.ListScopesRequest(
+                filesystem_id=filesystem_id, limit=limit, cursor=cursor
+            ),
+            timeout=10,
+        )
+        values = response.scopes
+        next_cursor = response.next_cursor if response.HasField("next_cursor") else None
+        if (
+            len(values) > limit
+            or any(
+                not value.id
+                or not value.root_id
+                or value.filesystem_id != filesystem_id
+                or value.state != "active"
+                for value in values
+            )
+            or [value.id for value in values] != sorted({value.id for value in values})
+            or len({value.root_id for value in values}) != len(values)
+            or next_cursor is not None
+            and (
+                not values or not 1 <= len(next_cursor) <= 512 or next_cursor == cursor
+            )
+        ):
+            raise AppError(
+                "invalid scope result",
+                reason="STORAGE_SCOPE_CONFLICT",
+                kind="conflict",
+                retryable=False,
+            )
+        return ScopePage(
+            tuple(
+                Scope(
+                    value.id,
+                    value.filesystem_id,
+                    value.root_id,
+                    value.state,
+                    value.allow_blob_files,
+                    value.allow_indexing,
+                )
+                for value in values
+            ),
+            next_cursor,
+        )
 
     async def create_filesystem(
         self,
