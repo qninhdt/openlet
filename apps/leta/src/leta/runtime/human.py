@@ -6,10 +6,9 @@ from uuid import UUID, uuid5
 from openlet.errors import AppError
 from pydantic import TypeAdapter
 
-from leta.domain import HumanStatus, NewHumanRequest, TimeCursor
+from leta.domain import HumanStatus, NewHumanRequest, TimeCursor, fault
 from leta.human import AskForm, PersonalResource, Question, RequestResolution
 from leta.runtime.state import RuntimeContext
-from leta.store import fault
 from leta.temporal.bridges import open_human_request, resolve_human_request
 from leta.temporal.human_activities import has_scope_access
 from leta.temporal.human_types import OpenHumanRequest

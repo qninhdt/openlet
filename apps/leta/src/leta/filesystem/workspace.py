@@ -14,10 +14,10 @@ from openlet.clients.workspace import WorkspaceClient
 from openlet.rpc import Actor
 from redis.asyncio import Redis
 
-from leta.domain import Lifecycle
+from leta.domain import Lifecycle, fault
 from leta.filesystem.access_policy import AccessPolicy, cache_network
 from leta.filesystem.letfs_vfs import MAX_READ_BYTES, LetFSVFS, Mount
-from leta.store import Store, fault
+from leta.store import Store
 
 AGENT_PROFILE = {"commands": {"deny": ["curl", "wget", "git clone", "git fetch"]}}
 

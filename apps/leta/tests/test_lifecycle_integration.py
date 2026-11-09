@@ -187,7 +187,7 @@ async def test_box_lifecycle_retry_identity_delete_and_retention(
         )
         assert snapshot.status == "archived"
         await client.get_workflow_handle(f"box-lifecycle/{box.id}").result()
-        graph = await store.get_box(root.id, box.id)
+        graph = await store.get_box_graph(root.id, box.id)
         assert all(agent["status"] == "archived" for agent in graph["letis"])
         assert services.trashed == 1
         # An Activity retry discovers the exact known home in trash.
@@ -364,7 +364,7 @@ async def test_paused_root_new_box_and_archive_keep_home(store, temporal_environ
         await change_leta(client, LetaChange(leta_id=root.id, action="resume"))
         assert not (await store.bootstrap_agent(root.id, box.letis[0].id))["paused"]
         await change_leta(client, LetaChange(leta_id=root.id, action="deleting"))
-        graph = await store.get_box(root.id, box.id)
+        graph = await store.get_box_graph(root.id, box.id)
         assert graph["status"] == "archived" and services.trashed == 0
         assert str(box.home_node_id) in services.nodes
         box_handle = client.get_workflow_handle(f"box-lifecycle/{box.id}")

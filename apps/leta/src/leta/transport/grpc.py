@@ -10,7 +10,8 @@ from openlet_api.leta.v1 import leta_pb2_grpc as leta_rpc
 from opentelemetry import trace
 
 from leta.config import Settings
-from leta.store import Store, fault
+from leta.domain import fault
+from leta.store import Store
 
 SERVICE = pb.DESCRIPTOR.services_by_name["LetaService"].full_name
 GET_BINDING = f"/{SERVICE}/GetLetaBinding"

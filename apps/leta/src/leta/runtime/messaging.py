@@ -5,10 +5,9 @@ from uuid import UUID
 from openlet.errors import AppError
 from pydantic import Field
 
-from leta.domain import Input, NewMessage
+from leta.domain import Input, NewMessage, fault
 from leta.history import InboxItem
 from leta.runtime.state import RuntimeContext
-from leta.store import fault
 from leta.temporal.bridges import deliver_agent_input
 from leta.temporal.types import AgentInput
 
@@ -43,7 +42,7 @@ async def messaging_roster(context: RuntimeContext) -> list[dict]:
             if len(page) < 200:
                 return roster
             after = page[-1]["id"]
-    box = await context.store.get_box(request.leta_id, context.agent["box_id"])
+    box = await context.store.get_box_graph(request.leta_id, context.agent["box_id"])
     peers = set()
     for edge in box["edges"]:
         if request.agent_id in (edge["agent_low_id"], edge["agent_high_id"]):
@@ -237,9 +236,7 @@ async def list_inbox(context, from_=None, unread_only=True, limit=20, cursor=Non
     }
 
 
-async def read_inbox(
-    context, conversation_id, unread_only=True, limit=20, cursor=None, *, mark_read=True
-):
+async def read_inbox(context, conversation_id, unread_only=True, limit=20, cursor=None):
     after = inbox_cursor(context, limit, cursor)
     found = await context.store.list_inbox(
         context.request.leta_id,
@@ -248,7 +245,6 @@ async def read_inbox(
         unread_only=unread_only,
         after=after or 0,
         limit=limit,
-        mark_read=mark_read,
         lookahead=True,
     )
     page = found[:limit]

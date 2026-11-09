@@ -18,9 +18,9 @@ from temporalio import activity
 from temporalio.client import Client, WithStartWorkflowOperation
 from temporalio.common import WorkflowIDConflictPolicy
 
-from leta.domain import Lifecycle, box_slug
+from leta.domain import Lifecycle, box_slug, fault
 from leta.filesystem.workspace import discover_mounts
-from leta.store import Store, fault
+from leta.store import Store
 from leta.temporal.agent import AgentWorkflow
 from leta.temporal.bridges import start_agent
 from leta.temporal.lifecycle_types import (
@@ -119,9 +119,13 @@ class LifecycleActivities:
                 box = await self.store.get_box(value.leta_id, value.box_id)
             else:
                 await self.store.archive(value.leta_id, value.box_id)
-                box = await self.store.get_box(value.leta_id, value.box_id)
+                box = await self.store.get_box_graph(value.leta_id, value.box_id)
             if "agent_ids" not in snapshot:
-                graph = await self.store.get_box(value.leta_id, value.box_id)
+                graph = (
+                    box
+                    if value.action == "archived"
+                    else await self.store.get_box_graph(value.leta_id, value.box_id)
+                )
                 snapshot["agent_ids"] = [agent["id"] for agent in graph["letis"]]
             return LifecycleSnapshot(
                 leta_id=value.leta_id,

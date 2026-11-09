@@ -5,10 +5,9 @@ from fastapi.responses import JSONResponse
 from openlet.errors import AppError
 from pydantic import ValidationError
 
-from leta.domain import LetiSpec, NewBox
+from leta.domain import LetiSpec, NewBox, fault
 from leta.http.common import API, JSON, Limit, cursor_scope, page, read_cursor
 from leta.http.models import BoxView, CreateBox, Page, agent_view
-from leta.store import fault
 from leta.temporal.bridges import change_box
 from leta.temporal.lifecycle_types import BoxChange
 
@@ -49,7 +48,7 @@ async def create(leta_id: UUID, body: CreateBox, context: API):
     box_id = saved["resource_id"]
     home_node_id = uuid7()
     try:
-        existing = await context.store.get_box(leta_id, box_id, details=True)
+        existing = await context.store.get_box_graph(leta_id, box_id, details=True)
     except AppError as error:
         if error.kind != "missing":
             raise
@@ -89,7 +88,7 @@ async def create(leta_id: UUID, body: CreateBox, context: API):
         result
         if isinstance(result, JSONResponse)
         else box_view(
-            await context.store.get_box(leta_id, box_id, details=True),
+            await context.store.get_box_graph(leta_id, box_id, details=True),
             paused=root["paused"],
         )
     )
@@ -99,7 +98,7 @@ async def create(leta_id: UUID, body: CreateBox, context: API):
 async def get(leta_id: UUID, box_id: UUID, context: API):
     root = await context.root(leta_id)
     return box_view(
-        await context.store.get_box(leta_id, box_id, details=True),
+        await context.store.get_box_graph(leta_id, box_id, details=True),
         paused=root["paused"],
     )
 
@@ -125,7 +124,7 @@ async def delete(leta_id: UUID, box_id: UUID, context: API):
         result
         if isinstance(result, JSONResponse)
         else box_view(
-            await context.store.get_box(leta_id, box_id, details=True),
+            await context.store.get_box_graph(leta_id, box_id, details=True),
             paused=root["paused"],
         )
     )

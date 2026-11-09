@@ -2,10 +2,10 @@ from uuid import UUID
 
 from fastapi import APIRouter
 
+from leta.domain import fault
 from leta.history import ActivityEntry, activity_entry
 from leta.http.common import API, Limit, cursor_scope, page, read_cursor
 from leta.http.models import Page, RunView
-from leta.store import fault
 
 router = APIRouter()
 

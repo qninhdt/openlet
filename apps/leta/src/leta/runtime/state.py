@@ -15,9 +15,10 @@ from openlet.clients.workspace import WorkspaceClient
 from temporalio.client import Client
 
 from leta.config import ModelCatalog, ModelSelection
+from leta.domain import fault
 from leta.filesystem.workspace import AgentWorkspace
 from leta.runtime.events import ModelEvents
-from leta.store import Row, Store, fault
+from leta.store import Row, Store
 from leta.temporal.types import RunInput
 
 # Domain effects retain identity across Activity attempts and graph recovery.

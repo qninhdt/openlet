@@ -12,7 +12,7 @@ from test_lifecycle_integration import RemoteServices, unused_runtime
 from test_store_integration import active_box, active_root
 
 from leta.api import create_app
-from leta.domain import NewActivity, NewHumanRequest, NewMessage
+from leta.domain import NewActivity, NewHumanRequest, NewMessage, NewSchedule
 from leta.http.common import Context, api
 from leta.temporal.bridges import open_human_request
 from leta.temporal.human_activities import HumanActivities
@@ -79,6 +79,56 @@ def headers(settings, user, key=None):
         "x-openlet-user-id": str(user),
         "x-clerk-sub": "fixture-human",
     } | ({"idempotency-key": str(key)} if key else {})
+
+
+@pytest.mark.parametrize("method", ["POST", "PATCH"])
+@pytest.mark.parametrize(
+    "spec",
+    [
+        {"type": "calendar", "timezone": "Invalid/Zone", "fields": {"hour": [9]}},
+        {"type": "calendar", "timezone": "UTC", "fields": {"hour": [24]}},
+        {"type": "at", "after_seconds": 10**30},
+    ],
+)
+async def test_rejected_schedule_does_not_reserve_idempotency_key(
+    http, settings, method, spec
+):
+    root = await active_root(http.store)
+    value = NewSchedule(
+        id=uuid7(),
+        leta_id=root.id,
+        creator_agent_id=root.id,
+        target_agent_id=root.id,
+        title="Reminder",
+        content="Work",
+        spec={"type": "at", "at": "2030-01-01T00:00:00Z"},
+    )
+    await http.store.create_schedule(value)
+    path = f"/v1/letas/{root.id}/schedules"
+    body = {"spec": spec}
+    if method == "PATCH":
+        path += f"/{value.id}"
+    else:
+        body |= {"title": "Rejected reminder", "content": "Work"}
+    keys = [uuid7(), uuid7()]
+    for key in keys:
+        response = await http.client.request(
+            method,
+            path,
+            headers=headers(settings, root.created_by_user_id, key),
+            json=body,
+        )
+        assert response.status_code == 400, response.text
+    async with http.store.database.connection() as connection:
+        receipts = await (
+            await connection.execute(
+                "SELECT request_key FROM idempotency_keys WHERE actor_id=%s",
+                (root.created_by_user_id,),
+            )
+        ).fetchall()
+    assert receipts == []
+    assert (await http.store.get_schedule(root.id, value.id))["spec"] == value.spec
+    assert len(await http.store.list_schedules(root.id)) == 1
 
 
 async def test_owner_read_models_scoping_cursors_and_public_history(http, settings):
@@ -399,6 +449,35 @@ async def test_lifecycle_box_and_calendar_commands_use_stable_keys(http, setting
             headers=sh,
         )
         assert again.json()["spec"] == schedule.json()["spec"]
+        patch_headers = headers(settings, root.created_by_user_id, uuid7())
+        patch = {"spec": {"type": "at", "after_seconds": 3600}}
+        patched = await http.client.patch(
+            base + f"/schedules/{schedule_id}", json=patch, headers=patch_headers
+        )
+        assert patched.status_code == 200, patched.text
+        changed = await http.client.patch(
+            base + f"/schedules/{schedule_id}",
+            json={
+                "spec": {"type": "interval", "every_seconds": 3600},
+                "end_at": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+            },
+            headers=headers(settings, root.created_by_user_id, uuid7()),
+        )
+        assert changed.status_code == 200, changed.text
+        # A completed retry must not revalidate against a later definition.
+        replay = await http.client.patch(
+            base + f"/schedules/{schedule_id}", json=patch, headers=patch_headers
+        )
+        assert (
+            replay.status_code == 200
+            and replay.json()["spec"] == changed.json()["spec"]
+        )
+        restored = await http.client.patch(
+            base + f"/schedules/{schedule_id}",
+            json=patch | {"end_at": None},
+            headers=headers(settings, root.created_by_user_id, uuid7()),
+        )
+        assert restored.status_code == 200, restored.text
         now = datetime.now(UTC)
         calendar = await http.client.get(
             base + "/schedule-occurrences",

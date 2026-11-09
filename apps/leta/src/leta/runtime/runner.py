@@ -16,7 +16,7 @@ from psycopg.rows import dict_row
 from temporalio import activity
 
 from leta.config import ModelSelection, Settings
-from leta.domain import RunStatus
+from leta.domain import RunStatus, fault
 from leta.filesystem.workspace import WorkspaceFactory
 from leta.runtime.events import ModelEvents
 from leta.runtime.history import PublishAssistant, PublishContext
@@ -29,7 +29,7 @@ from leta.runtime.middleware import (
 )
 from leta.runtime.state import LetaAgentState, RuntimeContext
 from leta.runtime.tools import build_tools
-from leta.store import Store, fault
+from leta.store import Store
 from leta.streaming import Publisher
 from leta.temporal.types import RunInput, RunResult
 

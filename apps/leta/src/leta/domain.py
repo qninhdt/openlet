@@ -5,6 +5,7 @@ from enum import StrEnum
 from typing import Annotated, Literal
 from uuid import UUID
 
+from openlet.errors import AppError
 from pydantic import (
     AfterValidator,
     AwareDatetime,
@@ -18,6 +19,10 @@ from pydantic import (
 )
 
 from leta.config import ModelSelection
+
+
+def fault(reason: str, detail: str, kind: str = "conflict") -> AppError:
+    return AppError(detail, reason=reason, kind=kind, retryable=False)
 
 
 def _nonzero(value: UUID) -> UUID:

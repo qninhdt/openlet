@@ -3,10 +3,10 @@ from uuid import UUID
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-from leta.domain import NewMessage, TimeCursor
+from leta.domain import NewMessage, TimeCursor, fault
 from leta.http.common import API, Limit, cursor_scope, page, read_cursor, time_position
 from leta.http.models import MessageView, Page, SendMessage, message_view
-from leta.store import fault, message_values, same
+from leta.store import message_values, same
 from leta.temporal.bridges import deliver_agent_input
 from leta.temporal.types import AgentInput
 

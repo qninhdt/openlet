@@ -25,7 +25,7 @@ from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.service import RPCError, RPCStatusCode
 
 from leta.domain import NewMessage, Source
-from leta.schedules import canonicalize_schedule, compile_schedule
+from leta.schedules import canonicalize_schedule, compile_schedule, validate_schedule
 from leta.store import Store
 from leta.temporal.schedule_types import (
     ScheduleChange,
@@ -89,7 +89,7 @@ class ScheduleActivities:
                         )
                     }
                 )
-                compile_schedule(creation.spec, end_at=creation.end_at)
+                validate_schedule(creation.spec, end_at=creation.end_at)
                 saved = await self.store.create_schedule(creation)
             elif value.action == "delete":
                 saved = await self.store.delete_schedule(

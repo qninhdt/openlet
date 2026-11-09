@@ -6,10 +6,9 @@ from openlet.authz import Resource, bulk_check, check
 from openlet.errors import AppError
 
 from leta.config import ModelCatalog, ModelSelection
-from leta.domain import AgentConfiguration, Lifecycle, NewLeta
+from leta.domain import AgentConfiguration, Lifecycle, NewLeta, fault
 from leta.http.common import API, Limit, cursor_scope, page, read_cursor
 from leta.http.models import AgentView, ChildConfiguration, CreateLeta, Page, agent_view
-from leta.store import fault
 from leta.temporal.bridges import change_leta
 from leta.temporal.lifecycle_types import LetaChange
 

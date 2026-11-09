@@ -5,12 +5,15 @@ from fastapi.responses import JSONResponse
 from pydantic import AwareDatetime
 from temporalio.service import RPCError
 
-from leta.domain import NewSchedule, SchedulePatch
+from leta.domain import NewSchedule, SchedulePatch, fault
 from leta.http.common import API, Limit, cursor_scope, page, read_cursor
 from leta.http.models import CreateSchedule, Occurrence, Page, ScheduleView
 from leta.runtime.schedules import projection
-from leta.schedules import calendar_occurrences, canonicalize_schedule, compile_schedule
-from leta.store import fault
+from leta.schedules import (
+    calendar_occurrences,
+    canonicalize_schedule,
+    validate_schedule,
+)
 from leta.temporal.bridges import change_schedule
 from leta.temporal.schedule_types import ScheduleChange
 
@@ -27,7 +30,7 @@ async def targets(context, leta_id, agent_id, box_id):
 
 def validate_spec(spec, end_at, now):
     try:
-        compile_schedule(canonicalize_schedule(spec, now=now), end_at=end_at)
+        validate_schedule(canonicalize_schedule(spec, now=now), end_at=end_at)
     except ValueError as error:
         raise fault("VALIDATION", str(error), "invalid") from error
 
@@ -70,13 +73,14 @@ async def create(leta_id: UUID, body: CreateSchedule, context: API):
         selected = box or await context.store.get_box(leta_id, box_id)
         if target != selected["representative_agent_id"]:
             raise fault("VALIDATION", "schedule the box representative", "invalid")
-    key, saved = await context.command(body)
+    spec = body.spec.model_dump(mode="json")
+    key, saved = await context.command(
+        body, validate=lambda now: validate_spec(spec, body.end_at, now)
+    )
     if saved["expires_at"] is not None:
         return projection(
             await context.store.get_schedule(leta_id, saved["resource_id"])
         )
-    spec = body.spec.model_dump(mode="json")
-    validate_spec(spec, body.end_at, saved["created_at"])
     creation = NewSchedule(
         id=saved["resource_id"],
         leta_id=leta_id,
@@ -135,15 +139,16 @@ async def get(leta_id: UUID, schedule_id: UUID, context: API):
 async def update(leta_id: UUID, schedule_id: UUID, body: SchedulePatch, context: API):
     await context.root(leta_id, manage=True)
     row = await context.store.get_schedule(leta_id, schedule_id)
-    key, saved = await context.command(body, resource_id=schedule_id)
+    fields = body.model_dump(exclude_unset=True)
+    key, saved = await context.command(
+        body,
+        resource_id=schedule_id,
+        validate=lambda now: validate_spec(
+            fields.get("spec", row["spec"]), fields.get("end_at", row["end_at"]), now
+        ),
+    )
     if saved["expires_at"] is not None:
         return projection(row)
-    fields = body.model_dump(exclude_unset=True)
-    validate_spec(
-        fields.get("spec", row["spec"]),
-        fields.get("end_at", row["end_at"]),
-        saved["created_at"],
-    )
     result = await context.execute(
         change_schedule(
             context.temporal,

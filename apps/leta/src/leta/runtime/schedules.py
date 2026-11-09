@@ -6,8 +6,7 @@ from uuid import UUID
 from pydantic import TypeAdapter
 from temporalio.service import RPCError
 
-from leta.domain import NewSchedule, SchedulePatch
-from leta.store import fault
+from leta.domain import NewSchedule, SchedulePatch, fault
 from leta.temporal.bridges import change_schedule
 from leta.temporal.schedule_types import ScheduleChange
 

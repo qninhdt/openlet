@@ -1,12 +1,12 @@
 """Leta-owned SQL; remote authorization and effects stay outside transactions."""
 
 import json
+from collections.abc import Callable
 from contextlib import asynccontextmanager
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid7
 
-from openlet.errors import AppError
 from psycopg import AsyncCursor, sql
 from psycopg.errors import UniqueViolation
 from psycopg.rows import dict_row
@@ -28,6 +28,7 @@ from leta.domain import (
     SchedulePatch,
     TimeCursor,
     box_slug,
+    fault,
 )
 from leta.human import (
     AskForm,
@@ -35,13 +36,10 @@ from leta.human import (
     RequestResolution,
     normalize_answers,
 )
+from leta.schedules import validate_schedule
 
 Row = dict[str, Any]
 Cursor = AsyncCursor[Row]
-
-
-def fault(reason: str, detail: str, kind: str = "conflict") -> AppError:
-    return AppError(detail, reason=reason, kind=kind, retryable=False)
 
 
 async def one(cursor: Cursor, query, parameters=()) -> Row:
@@ -122,8 +120,11 @@ class Store:
             async with self.database.connection() as connection:
                 async with connection.transaction():
                     async with connection.cursor(row_factory=dict_row) as cursor:
-                        await cursor.execute("SET LOCAL statement_timeout = '2s'")
-                        await cursor.execute("SET LOCAL lock_timeout = '2s'")
+                        await cursor.execute(
+                            "SET LOCAL statement_timeout = '2s'; "
+                            "SET LOCAL lock_timeout = '2s'",
+                            prepare=False,
+                        )
                         yield cursor
         except UniqueViolation as error:
             raise fault(
@@ -329,17 +330,6 @@ class Store:
                 )
             ).fetchone()
 
-    async def list_roots(
-        self, workspace_id: UUID, *, after: UUID | None = None, limit=20
-    ):
-        async with self.transaction() as cursor:
-            return await rows(
-                cursor,
-                "SELECT * FROM agents WHERE kind='leta' AND workspace_id=%s "
-                "AND (%s::uuid IS NULL OR id>%s) ORDER BY id LIMIT %s",
-                (workspace_id, after, after, page_limit(limit)),
-            )
-
     async def activate_leta(self, leta_id: UUID) -> Row:
         async with self.transaction() as cursor:
             root = await self._root(cursor, leta_id, exclusive=True)
@@ -361,18 +351,18 @@ class Store:
                 "UPDATE agents SET paused=%s,updated_at=now() WHERE id=%s",
                 (paused, leta_id),
             )
-            snapshot = await self._snapshot(cursor, leta_id, None)
-            snapshot["agent_ids"] = [
-                row["id"]
-                for row in await rows(
-                    cursor,
-                    "SELECT a.id FROM agents a LEFT JOIN boxes b ON b.id=a.box_id "
-                    "WHERE a.leta_id=%s AND a.status='active' "
-                    "AND (a.box_id IS NULL OR b.status='active') ORDER BY a.id",
-                    (leta_id,),
-                )
-            ]
-            return snapshot
+            return {
+                "agent_ids": [
+                    row["id"]
+                    for row in await rows(
+                        cursor,
+                        "SELECT a.id FROM agents a LEFT JOIN boxes b ON b.id=a.box_id "
+                        "WHERE a.leta_id=%s AND a.status='active' "
+                        "AND (a.box_id IS NULL OR b.status='active') ORDER BY a.id",
+                        (leta_id,),
+                    )
+                ]
+            }
 
     async def create_box(self, value: NewBox) -> Row:
         async with self.transaction() as cursor:
@@ -418,30 +408,39 @@ class Store:
             if any(box_slug(row["name"]) == box_slug(value.name) for row in live):
                 raise fault("STATE_CONFLICT", "box home path already reserved")
             box = await insert(cursor, "boxes", expected)
-            for agent in value.letis:
-                await insert(
-                    cursor,
-                    "agents",
-                    agent.model_dump()
-                    | {
-                        "leta_id": value.leta_id,
-                        "kind": "leti",
-                        "box_id": value.id,
-                    },
-                )
-            for low, high in edges:
-                await insert(
-                    cursor,
-                    "box_edges",
-                    {
-                        "box_id": value.id,
-                        "agent_low_id": low,
-                        "agent_high_id": high,
-                    },
+            await cursor.executemany(
+                "INSERT INTO agents (id,name,description,system_prompt,"
+                "leta_id,kind,box_id) "
+                "VALUES (%s,%s,%s,%s,%s,'leti',%s)",
+                [
+                    (
+                        agent.id,
+                        agent.name,
+                        agent.description,
+                        agent.system_prompt,
+                        value.leta_id,
+                        value.id,
+                    )
+                    for agent in value.letis
+                ],
+            )
+            if edges:
+                await cursor.executemany(
+                    "INSERT INTO box_edges (box_id,agent_low_id,agent_high_id) "
+                    "VALUES (%s,%s,%s)",
+                    [(value.id, low, high) for low, high in edges],
                 )
             return box
 
-    async def get_box(self, leta_id: UUID, box_id: UUID, *, details=False) -> Row:
+    async def get_box(self, leta_id: UUID, box_id: UUID) -> Row:
+        async with self.transaction() as cursor:
+            return await one(
+                cursor,
+                "SELECT * FROM boxes WHERE id=%s AND leta_id=%s",
+                (box_id, leta_id),
+            )
+
+    async def get_box_graph(self, leta_id: UUID, box_id: UUID, *, details=False) -> Row:
         async with self.transaction() as cursor:
             box = await one(
                 cursor,
@@ -795,14 +794,11 @@ class Store:
         through: int | None = None,
         conversation: str | None = None,
         unread_only=False,
-        mark_read=False,
         limit=20,
         lookahead=False,
     ):
         if after < 0 or (through is not None and through < after):
             raise fault("VALIDATION", "invalid inbox range", "invalid")
-        if mark_read and agent_id != leta_id:
-            raise fault("FORBIDDEN", "Leti has no inbox read tool", "forbidden")
         async with self.transaction() as cursor:
             found = await rows(
                 cursor,
@@ -823,16 +819,6 @@ class Store:
                     page_limit(limit) + int(lookahead),
                 ),
             )
-            if mark_read and found:
-                marked = await rows(
-                    cursor,
-                    "UPDATE messages SET read_at=COALESCE(read_at,now()) WHERE "
-                    "id=ANY(%s) RETURNING id,read_at",
-                    ([row["id"] for row in found[:limit]],),
-                )
-                times = {row["id"]: row["read_at"] for row in marked}
-                for row in found[:limit]:
-                    row["read_at"] = times[row["id"]]
             return found
 
     async def list_inbox_groups(
@@ -868,30 +854,6 @@ class Store:
                     before,
                     before,
                     page_limit(limit) + 1,
-                ),
-            )
-
-    async def list_conversation(
-        self,
-        leta_id: UUID,
-        conversation: str,
-        *,
-        after: TimeCursor | None = None,
-        limit=20,
-    ):
-        async with self.transaction() as cursor:
-            return await rows(
-                cursor,
-                "SELECT * FROM messages WHERE leta_id=%s AND conversation_key=%s "
-                "AND (%s::timestamptz IS NULL OR (created_at,id)>(%s,%s)) ORDER "
-                "BY created_at,id LIMIT %s",
-                (
-                    leta_id,
-                    conversation,
-                    after.at if after else None,
-                    after.at if after else None,
-                    after.id if after else None,
-                    page_limit(limit),
                 ),
             )
 
@@ -1406,7 +1368,8 @@ class Store:
                         "Leta must schedule the box representative",
                         "forbidden",
                     )
-            await self._agent_gate(cursor, value.leta_id, value.target_agent_id)
+            if value.target_agent_id != value.creator_agent_id:
+                await self._agent_gate(cursor, value.leta_id, value.target_agent_id)
             return await insert(cursor, "schedules", expected)
 
     async def list_schedules(
@@ -1463,14 +1426,13 @@ class Store:
             self._schedule_actor(saved, requester_agent_id)
             if saved["deleted_at"] is not None:
                 raise fault("RESOURCE_INACTIVE", "schedule is deleted")
-            await self._agent_gate(cursor, leta_id, saved["target_agent_id"])
+            if saved["target_agent_id"] != requester_agent_id:
+                await self._agent_gate(cursor, leta_id, saved["target_agent_id"])
             fields = patch.model_dump(exclude_unset=True)
             combined = NewSchedule.model_validate(
                 {key: fields.get(key, saved[key]) for key in NewSchedule.model_fields}
             )
-            from leta.schedules import compile_schedule
-
-            compile_schedule(combined.spec, end_at=combined.end_at)
+            validate_schedule(combined.spec, end_at=combined.end_at)
             return await one(
                 cursor,
                 sql.SQL(
@@ -1568,6 +1530,7 @@ class Store:
         request_hash: str,
         *,
         resource_id: UUID | None = None,
+        validate: Callable[[datetime], None] | None = None,
     ) -> Row:
         async with self.transaction() as cursor:
             await cursor.execute(
@@ -1590,6 +1553,9 @@ class Store:
             same(saved, {"request_hash": request_hash})
             if resource_id is not None:
                 same(saved, {"resource_id": resource_id})
+            if saved["expires_at"] is None and validate is not None:
+                # Rejected input rolls back its receipt; retries keep the first time.
+                validate(saved["created_at"])
             return saved
 
     async def complete_api_request(self, actor_id: UUID, key: UUID):

@@ -2,7 +2,9 @@ import asyncio
 import base64
 import hashlib
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -16,8 +18,8 @@ from temporalio.client import Client, WorkflowUpdateRPCTimeoutOrCancelledError
 from temporalio.service import RPCError, RPCStatusCode
 
 from leta.config import ModelCatalog
-from leta.domain import ID, Input, TimeCursor
-from leta.store import Store, fault
+from leta.domain import ID, Input, TimeCursor, fault
+from leta.store import Store
 
 JSON = TypeAdapter(dict)
 Limit = Annotated[int, Query(ge=1, le=100)]
@@ -97,7 +99,11 @@ class Context:
         return root
 
     async def command(
-        self, body: Input | None = None, *, resource_id: UUID | None = None
+        self,
+        body: Input | None = None,
+        *,
+        resource_id: UUID | None = None,
+        validate: Callable[[datetime], None] | None = None,
     ):
         keys = self.request.headers.getlist("idempotency-key")
         try:
@@ -122,6 +128,7 @@ class Context:
             key,
             hashlib.sha256(payload.encode()).hexdigest(),
             resource_id=resource_id,
+            validate=validate,
         )
         return key, saved
 

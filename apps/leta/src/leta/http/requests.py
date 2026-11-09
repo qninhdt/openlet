@@ -4,7 +4,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from openlet.authz import Resource, check
 
-from leta.domain import HumanStatus, TimeCursor
+from leta.domain import HumanStatus, TimeCursor, fault
 from leta.http.common import API, Limit, cursor_scope, page, read_cursor, time_position
 from leta.http.models import (
     CancelRequest,
@@ -15,7 +15,6 @@ from leta.http.models import (
 )
 from leta.human import RequestResolution
 from leta.runtime.human import projection
-from leta.store import fault
 from leta.temporal.bridges import resolve_human_request
 
 router = APIRouter()

@@ -13,10 +13,10 @@ from openlet.errors import AppError
 from redis.exceptions import RedisError
 from starlette.responses import StreamingResponse
 
+from leta.domain import fault
 from leta.history import activity_entry
 from leta.http.common import API
 from leta.http.models import agent_view
-from leta.store import fault
 from leta.streaming import (
     DELTA_TYPES,
     FRAME_BYTES,

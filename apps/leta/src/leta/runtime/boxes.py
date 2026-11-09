@@ -5,9 +5,8 @@ from uuid import UUID, uuid5, uuid7
 from openlet.errors import AppError
 from pydantic import Field, TypeAdapter
 
-from leta.domain import LetiSpec, Named, NewBox, box_slug
+from leta.domain import LetiSpec, Named, NewBox, box_slug, fault
 from leta.runtime.state import RuntimeContext
-from leta.store import fault
 from leta.temporal.bridges import change_box
 from leta.temporal.lifecycle_types import BoxChange
 
@@ -91,7 +90,7 @@ async def get_box(context, reference):
     require_root(context)
     root_id = context.request.leta_id
     selected = await context.store.resolve_box(root_id, reference)
-    box = await context.store.get_box(root_id, selected["id"], details=True)
+    box = await context.store.get_box_graph(root_id, selected["id"], details=True)
     return JSON.dump_python(
         {
             **{

@@ -10,9 +10,9 @@ from openlet_api.workspace.v1 import workspace_pb2 as pb
 from temporalio import activity
 from temporalio.client import Client
 
-from leta.domain import Lifecycle
+from leta.domain import Lifecycle, fault
 from leta.human import RequestResolution
-from leta.store import Store, fault
+from leta.store import Store
 from leta.temporal.activities import AgentActivities
 from leta.temporal.bridges import settle_hitl
 from leta.temporal.human_types import (

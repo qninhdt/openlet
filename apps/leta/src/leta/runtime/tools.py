@@ -308,7 +308,7 @@ def build_tools(context: RuntimeContext):
     ) -> tuple[dict, dict]:
         """Read one inbox conversation and mark only the returned items read."""
         result = await messaging.read_inbox(
-            context, conversation_id, unread_only, limit, cursor, mark_read=False
+            context, conversation_id, unread_only, limit, cursor
         )
         return result, {
             "read_message_ids": [item["message_id"] for item in result["items"]]

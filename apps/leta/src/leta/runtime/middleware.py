@@ -18,7 +18,7 @@ from langgraph.types import interrupt
 from openlet.errors import AppError
 from temporalio import activity
 
-from leta.domain import ActivityKind, Lifecycle, NewActivity
+from leta.domain import ActivityKind, Lifecycle, NewActivity, fault
 from leta.history import (
     INBOX_INPUT,
     DigestInput,
@@ -33,7 +33,6 @@ from leta.runtime.state import (
     RuntimeContext,
     effect_id,
 )
-from leta.store import fault
 
 
 def check_context(context: RuntimeContext, messages, tools):

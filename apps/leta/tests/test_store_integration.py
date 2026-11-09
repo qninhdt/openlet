@@ -3,17 +3,20 @@ from uuid import uuid7
 
 import pytest
 from openlet.errors import AppError
+from psycopg import AsyncCursor
 from psycopg.errors import CheckViolation, ForeignKeyViolation
 from test_domain import box_input, root_input
 
 from leta.domain import (
     ActivityKind,
+    LetiSpec,
     NewActivity,
     NewHumanRequest,
     NewMessage,
     NewSchedule,
     ReplyTo,
     RunStatus,
+    SchedulePatch,
     Source,
     TimeCursor,
 )
@@ -173,7 +176,7 @@ async def test_atomic_graph_constraints_identities_and_model_validation(store):
         )
     box = await active_box(store, root)
     assert (await store.create_box(box))["id"] == box.id
-    loaded = await store.get_box(root.id, box.id)
+    loaded = await store.get_box_graph(root.id, box.id)
     assert {a["id"] for a in loaded["letis"]} == {a.id for a in box.letis}
     assert all(
         a["model_id"] is None and a["workspace_id"] is None for a in loaded["letis"]
@@ -202,6 +205,94 @@ async def test_atomic_graph_constraints_identities_and_model_validation(store):
     with pytest.raises(AppError, match="live name"):
         await store.create_box(collision)
     assert [b["id"] for b in await store.list_boxes(root.id)] == [box.id]
+    first = LetiSpec(id=uuid7(), name="New child", system_prompt="Work")
+    collision = box_input(
+        root.id,
+        name="Partial graph",
+        representative=first.name,
+        letis=[
+            first,
+            LetiSpec(id=box.letis[0].id, name="Collision", system_prompt="Work"),
+        ],
+        edges=[(first.name, "Collision")],
+    )
+    with pytest.raises(AppError, match="live name"):
+        await store.create_box(collision)
+    with pytest.raises(AppError, match="not found"):
+        await store.get_agent(root.id, first.id)
+    with pytest.raises(AppError, match="not found"):
+        await store.get_box(root.id, collision.id)
+
+
+async def test_metadata_and_pause_reads_do_not_load_the_box_graph(store, monkeypatch):
+    root = await active_root(store)
+    small = await active_box(store, root)
+    agents = [
+        LetiSpec(id=uuid7(), name=f"Extra {i}", system_prompt="x" * 4000)
+        for i in range(12)
+    ]
+    large = await active_box(
+        store,
+        root,
+        name="Larger graph",
+        letis=agents,
+        representative=agents[0].name,
+        edges=[(agents[i - 1].name, agents[i].name) for i in range(1, len(agents))],
+    )
+    queries = []
+    execute = AsyncCursor.execute
+
+    async def record(cursor, query, *args, **kwargs):
+        queries.append(str(query))
+        return await execute(cursor, query, *args, **kwargs)
+
+    monkeypatch.setattr(AsyncCursor, "execute", record)
+    for box in (small, large):
+        queries.clear()
+        metadata = await store.get_box(root.id, box.id)
+        assert metadata["id"] == box.id
+        assert not {"letis", "edges"} & metadata.keys()
+        assert len(queries) == 2  # One timeout setup and one metadata SELECT.
+    queries.clear()
+    snapshot = await store.set_paused(root.id, True)
+    assert set(snapshot["agent_ids"]) == {
+        root.id,
+        *(a.id for a in small.letis + large.letis),
+    }
+    assert len(queries) == 4  # Setup, root lock, update and active-agent SELECT.
+
+
+async def test_self_schedule_admission_locks_each_agent_once(store, monkeypatch):
+    root = await active_root(store)
+    box = await active_box(store, root)
+    queries = []
+    execute = AsyncCursor.execute
+
+    async def record(cursor, query, *args, **kwargs):
+        queries.append(str(query))
+        return await execute(cursor, query, *args, **kwargs)
+
+    monkeypatch.setattr(AsyncCursor, "execute", record)
+    for agent_id in (root.id, box.letis[0].id):
+        value = NewSchedule(
+            id=uuid7(),
+            leta_id=root.id,
+            creator_agent_id=agent_id,
+            target_agent_id=agent_id,
+            box_id=box.id if agent_id != root.id else None,
+            title="Reminder",
+            content="Work",
+            spec={"type": "at", "at": "2030-01-01T00:00:00Z"},
+        )
+        for change in (False, True):
+            queries.clear()
+            if change:
+                await store.update_schedule(
+                    root.id, value.id, agent_id, SchedulePatch(title="Changed")
+                )
+            else:
+                await store.create_schedule(value)
+            assert sum("kind='leta'" in q and "FOR " in q for q in queries) == 1
 
 
 async def test_slug_collision_archive_reuse_and_history_retention(store):
@@ -218,7 +309,7 @@ async def test_slug_collision_archive_reuse_and_history_retention(store):
     assert (await store.list_inbox(root.id, box.letis[0].id))[0]["id"] == row["id"]
 
 
-async def test_generic_message_retry_commit_sequence_and_read_markers(store):
+async def test_generic_message_retry_commit_sequence_and_pure_reads(store):
     root = await active_root(store)
     items = [message(root, content=str(i)) for i in range(3)]
     for index, item in enumerate(items, 1):
@@ -226,13 +317,11 @@ async def test_generic_message_retry_commit_sequence_and_read_markers(store):
     assert (await store.receive(items[0]))["seq"] == 1
     with pytest.raises(AppError, match="different content"):
         await store.receive(items[0].model_copy(update={"content": "Changed"}))
-    selected = await store.list_inbox(
-        root.id, root.id, through=2, limit=1, mark_read=True
-    )
-    assert selected[0]["read_at"] is not None
+    selected = await store.list_inbox(root.id, root.id, through=2, limit=1)
+    assert selected[0]["read_at"] is None
     assert [
         r["seq"] for r in await store.list_inbox(root.id, root.id, unread_only=True)
-    ] == [2, 3]
+    ] == [1, 2, 3]
     assert [
         r["seq"] for r in await store.list_inbox(root.id, root.id, after=1, through=2)
     ] == [2]
@@ -703,22 +792,52 @@ async def test_runs_public_history_and_foreign_root_boundaries(store):
     assert (await store.list_activity(root.id, root.id))[0]["id"] == item.id
 
 
-async def test_keyset_reads_do_not_fetch_lifetime_history(store):
+async def test_owner_read_pages_preserve_order_and_actor_scope(store):
     root = await active_root(store)
     for index in range(3):
-        await store.receive(message(root, content=str(index)))
-    first = await store.list_conversation(root.id, "owner", limit=1)
-    rest = await store.list_conversation(
+        await store.receive(
+            message(
+                root,
+                content=str(index),
+                source={
+                    "type": "owner",
+                    "id": str(root.created_by_user_id),
+                    "label": "Owner",
+                },
+            )
+        )
+    await store.receive(message(root, content="Internal"))
+    first = await store.api_messages(root.id, root.created_by_user_id, limit=1)
+    rest = await store.api_messages(
         root.id,
-        "owner",
+        root.created_by_user_id,
         after=TimeCursor(at=first[0]["created_at"], id=first[0]["id"]),
         limit=2,
     )
     assert [row["content"] for row in first + rest] == ["0", "1", "2"]
-    assert [r["id"] for r in await store.list_roots(root.workspace_id, limit=1)] == [
-        root.id
-    ]
-    assert await store.list_roots(root.workspace_id, after=root.id) == []
+    assert await store.api_messages(root.id, uuid7()) == []
+    sibling = root_input(
+        created_by_user_id=root.created_by_user_id, workspace_id=root.workspace_id
+    )
+    await store.create_leta(sibling)
+    await active_root(store)
+    assert [
+        r["id"]
+        for r in await store.api_roots(
+            root.created_by_user_id, workspace_id=root.workspace_id, limit=1
+        )
+    ] == [root.id]
+    assert [
+        r["id"]
+        for r in await store.api_roots(
+            root.created_by_user_id, workspace_id=root.workspace_id, after=root.id
+        )
+    ] == [sibling.id]
+    assert await store.api_roots(root.created_by_user_id, after=sibling.id) == []
+    assert [
+        r["id"] for r in await store.api_roots(root.created_by_user_id, status="active")
+    ] == [root.id]
+    assert await store.api_roots(root.created_by_user_id, workspace_id=uuid7()) == []
     for limit in (0, 201):
         with pytest.raises(AppError, match="limit"):
             await store.list_boxes(root.id, limit=limit)

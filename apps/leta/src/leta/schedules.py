@@ -12,7 +12,7 @@ from temporalio.client import (
     ScheduleSpec,
 )
 
-from leta.domain import Input
+from leta.domain import Input, fault
 
 
 class AtSchedule(Input):
@@ -146,13 +146,34 @@ def canonicalize_schedule(spec: dict, *, now: datetime) -> dict:
     }
 
 
-def compile_schedule(spec: dict, *, end_at: datetime | None = None) -> ScheduleSpec:
+def validate_schedule(
+    spec: dict, *, end_at: datetime | None = None
+) -> AtSchedule | IntervalSchedule | CalendarSchedule:
     if end_at is not None:
-        end_at = TypeAdapter(AwareDatetime).validate_python(end_at)
+        TypeAdapter(AwareDatetime).validate_python(end_at)
     value = SCHEDULE.validate_python(spec)
     if isinstance(value, AtSchedule):
         if value.at is None or end_at is not None:
             raise ValueError("canonical one-shot requires at and no end_at")
+        canonicalize_schedule(spec, now=value.at)
+    elif isinstance(value, IntervalSchedule):
+        if value.anchor_at is None:
+            raise ValueError("canonical interval requires an anchor")
+        canonicalize_schedule(spec, now=value.anchor_at)
+    else:
+        try:
+            ZoneInfo(value.timezone)
+        except (KeyError, ValueError) as error:
+            raise ValueError("unknown IANA timezone") from error
+        calendar_fields(value.fields)
+    return value
+
+
+def compile_schedule(spec: dict, *, end_at: datetime | None = None) -> ScheduleSpec:
+    value = validate_schedule(spec, end_at=end_at)
+    if end_at is not None:
+        end_at = TypeAdapter(AwareDatetime).validate_python(end_at)
+    if isinstance(value, AtSchedule):
         when = ceil_second(value.at)
         return ScheduleSpec(
             calendars=[
@@ -168,8 +189,6 @@ def compile_schedule(spec: dict, *, end_at: datetime | None = None) -> ScheduleS
             time_zone_name="UTC",
         )
     if isinstance(value, IntervalSchedule):
-        if value.anchor_at is None:
-            raise ValueError("canonical interval requires an anchor")
         anchor = ceil_second(value.anchor_at)
         seconds = (anchor - datetime(1970, 1, 1, tzinfo=UTC)) // timedelta(seconds=1)
         return ScheduleSpec(
@@ -182,7 +201,6 @@ def compile_schedule(spec: dict, *, end_at: datetime | None = None) -> ScheduleS
             start_at=anchor,
             end_at=end_at,
         )
-    ZoneInfo(value.timezone)
     return ScheduleSpec(
         calendars=[
             ScheduleCalendarSpec(
@@ -205,8 +223,6 @@ async def calendar_occurrences(client, definitions, *, start: datetime, end: dat
     from openlet.errors import AppError
     from temporalio.api.workflowservice.v1 import ListScheduleMatchingTimesRequest
     from temporalio.service import RPCError
-
-    from leta.store import fault
 
     start = TypeAdapter(AwareDatetime).validate_python(start).astimezone(UTC)
     end = TypeAdapter(AwareDatetime).validate_python(end).astimezone(UTC)

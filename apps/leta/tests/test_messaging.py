@@ -180,7 +180,7 @@ async def test_send_tool_reuses_committed_message_after_lost_result_and_hides_ru
     with pytest.raises(RuntimeError, match="message result checkpoint"):
         await runner.execute(request)
     assert (await runner.execute(request)).outcome == "completed"
-    chat = await store.list_conversation(root.id, "owner")
+    chat = await store.api_messages(root.id, root.created_by_user_id)
     received = [row for row in chat if row["recipient_user_id"]]
     assert len(received) == 1 and received[0]["content"] == "Actual reply"
     assert received[0]["seq"] is None
@@ -283,10 +283,10 @@ async def test_inbox_tools_group_generic_sources_and_mark_only_returned_details(
     assert first["items"][0]["message_id"] == str(sent[0].id)
     assert first["next_cursor"]
     stored = await store.list_inbox(root.id, root.id, conversation="owner")
-    assert [row["read_at"] is not None for row in stored] == [True, False, False]
+    assert all(row["read_at"] is None for row in stored)
     second = await read_inbox(own, "owner", limit=1, cursor=first["next_cursor"])
     assert second["items"][0]["message_id"] == str(sent[1].id)
-    assert (await list_inbox(own, from_="owner"))["items"][0]["unread_count"] == 1
+    assert (await list_inbox(own, from_="owner"))["items"][0]["unread_count"] == 3
     assert (await store.bootstrap_agent(root.id, root.id))["cursor"] == 0
     assert (await store.get_agent(root.id, root.id))["inbox_seq"] == 4
     newest = await list_inbox(own, limit=1)
