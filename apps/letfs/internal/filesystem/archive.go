@@ -184,7 +184,7 @@ func (s *Store) archivePayload(ctx context.Context, plan archivePlan, entry arch
 	rows, err := session.tx.Query(ctx, `WITH RECURSIVE ancestors AS (
  SELECT n.*,0 AS depth FROM nodes n WHERE n.id=$1 AND n.scope_id=$2
  UNION ALL SELECT n.*,a.depth+1 FROM ancestors a JOIN nodes n ON n.id=a.parent_id AND n.scope_id=$2 WHERE a.id!=$3 AND a.depth<128)
- SELECT a.id,a.parent_id,a.name,a.kind,a.revision,a.size_bytes,f.object_key,CASE WHEN a.id=$1 THEN f.inline_bytes END FROM ancestors a LEFT JOIN files f ON f.node_id=a.id ORDER BY depth`, entry.ID, plan.ScopeID, session.root)
+ SELECT a.id,a.parent_id,a.name,a.kind,a.revision,a.size_bytes,f.object_key,CASE WHEN a.id=$1 THEN COALESCE(f.inline_bytes,convert_to(f.text_content,'UTF8')) END FROM ancestors a LEFT JOIN files f ON f.node_id=a.id ORDER BY depth`, entry.ID, plan.ScopeID, session.root)
 	if err != nil {
 		return nil, databaseError(err)
 	}

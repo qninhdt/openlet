@@ -4,6 +4,7 @@ package workspace
 
 import (
 	"crypto/sha256"
+	"github.com/qninhdt/openlet/packages/go/identity"
 	"testing"
 	"time"
 
@@ -29,7 +30,7 @@ func TestIntegrationMembershipIsolationAndInvitationReplay(t *testing.T) {
 	}
 	check := func(actor uuid.UUID, action authz.Action, kind string, id uuid.UUID, want bool) {
 		t.Helper()
-		got, err := authz.Check(ctx, store.Graph, actor.String(), action, authz.Resource{Type: kind, ID: id.String()})
+		got, err := authz.Check(ctx, store.Graph, identity.Actor{Kind: identity.User, ID: actor}, action, authz.Resource{Type: kind, ID: id.String()})
 		require.NoError(t, err)
 		require.Equal(t, want, got)
 	}

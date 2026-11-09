@@ -16,11 +16,11 @@ from openlet.config import secret
 from openlet.errors import AppError
 from openlet.httpapi import problem_json
 from openlet.identity import GatewayAuthenticationError, authenticate_gateway
-from openlet.rpc import Authenticator, Credential
+from openlet.rpc import Actor, Authenticator, Credential
 from openlet.temporal import application_error
 
 ACTOR = "019a3b66-0000-7000-8000-000000000001"
-METHOD = "/openlet_api.account.v1.AccountService/GetAccountSummaries"
+METHOD = "/openlet_api.account.v1.AccountService/GetUserSummaries"
 TOKEN = "isolated-owner-service-credential-12345"
 
 
@@ -29,11 +29,11 @@ def test_gateway_identity_and_rpc_delegation_are_separate_trust_boundaries():
         {
             "X-Gateway-Token": TOKEN,
             "X-Clerk-Sub": "subject",
-            "X-Openlet-Account-ID": ACTOR,
+            "X-Openlet-User-ID": ACTOR,
         },
         TOKEN,
     )
-    assert principal.actor_id == UUID(ACTOR)
+    assert principal.actor.id == UUID(ACTOR)
     with pytest.raises(GatewayAuthenticationError):
         authenticate_gateway({"X-Clerk-Sub": "subject"}, TOKEN)
 
@@ -41,18 +41,33 @@ def test_gateway_identity_and_rpc_delegation_are_separate_trust_boundaries():
         [Credential("workspace", TOKEN, frozenset({METHOD}), delegate_actor=True)]
     )
     delegated, failure = service.authenticate(
-        (("authorization", f"Bearer {TOKEN}"), ("x-openlet-account-id", ACTOR)),
+        (("authorization", f"Bearer {TOKEN}"), ("x-openlet-user-id", ACTOR)),
         METHOD,
     )
     assert failure is None
-    assert delegated.actor_id == UUID(ACTOR)
+    assert delegated.actor.id == UUID(ACTOR)
     _, failure = Authenticator(
         [Credential("workspace", TOKEN, frozenset({METHOD}))]
     ).authenticate(
-        (("authorization", f"Bearer {TOKEN}"), ("x-openlet-account-id", ACTOR)),
+        (("authorization", f"Bearer {TOKEN}"), ("x-openlet-user-id", ACTOR)),
         METHOD,
     )
     assert failure is not None
+
+
+@pytest.mark.parametrize(
+    "header", ["X-Gateway-Token", "X-Clerk-Sub", "X-Openlet-User-ID"]
+)
+@pytest.mark.parametrize("bootstrap", [False, True])
+def test_gateway_rejects_duplicate_headers_with_different_casing(header, bootstrap):
+    headers = {
+        "X-Gateway-Token": TOKEN,
+        "X-Clerk-Sub": "subject",
+        "X-Openlet-User-ID": ACTOR,
+    }
+    headers[header.lower()] = headers[header]
+    with pytest.raises(GatewayAuthenticationError):
+        authenticate_gateway(headers, TOKEN, bootstrap=bootstrap)
 
 
 def test_file_secret_precedence_and_problem_details(tmp_path, monkeypatch):
@@ -123,9 +138,16 @@ async def test_authz_uses_generated_action_resource_contract():
                 permissionship=CheckPermissionResponse.PERMISSIONSHIP_HAS_PERMISSION
             )
 
-    assert await check(API(), ACTOR, "read_metadata", Resource("scope", "drive"))
+    assert await check(
+        API(), Actor("user", UUID(ACTOR)), "read_metadata", Resource("scope", "drive")
+    )
     with pytest.raises(ValueError, match="invalid authorization check"):
-        await check(API(), ACTOR, "read_metadata", Resource("workspace", "drive"))
+        await check(
+            API(),
+            Actor("user", UUID(ACTOR)),
+            "read_metadata",
+            Resource("workspace", "drive"),
+        )
 
 
 async def test_bulk_authz_preserves_order_and_rejects_mismatched_responses():
@@ -156,7 +178,9 @@ async def test_bulk_authz_preserves_order_and_rejects_mismatched_responses():
                 ]
             )
 
-    assert await bulk_check(API(), ACTOR, "read_metadata", resources) == (True, False)
+    assert await bulk_check(
+        API(), Actor("user", UUID(ACTOR)), "read_metadata", resources
+    ) == (True, False)
 
     class Mismatch:
         async def CheckBulkPermissions(self, request, **options):
@@ -169,7 +193,9 @@ async def test_bulk_authz_preserves_order_and_rejects_mismatched_responses():
             return CheckBulkPermissionsResponse(pairs=[pair, pair])
 
     with pytest.raises(ValueError, match="does not match"):
-        await bulk_check(Mismatch(), ACTOR, "read_metadata", resources)
+        await bulk_check(
+            Mismatch(), Actor("user", UUID(ACTOR)), "read_metadata", resources
+        )
 
 
 async def test_bulk_authz_item_failure_is_dependency_failure():
@@ -187,7 +213,7 @@ async def test_bulk_authz_item_failure_is_dependency_failure():
             )
 
     with pytest.raises(AppError) as captured:
-        await bulk_check(API(), ACTOR, "read_metadata", resources)
+        await bulk_check(API(), Actor("user", UUID(ACTOR)), "read_metadata", resources)
     assert captured.value.reason == "DEPENDENCY_UNAVAILABLE"
     assert "private" not in str(captured.value)
 
@@ -198,7 +224,12 @@ async def test_authz_does_not_translate_caller_cancellation():
             raise asyncio.CancelledError
 
     with pytest.raises(asyncio.CancelledError):
-        await check(API(), ACTOR, "read_metadata", Resource("scope", "drive"))
+        await check(
+            API(),
+            Actor("user", UUID(ACTOR)),
+            "read_metadata",
+            Resource("scope", "drive"),
+        )
 
 
 def test_vector_space_rejects_invalid_remote_index_configuration():

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { control, gateway, state } from '../setup/settings.ts';
 
 type Identity = { id: string; email: string };
-export type Session = { api: APIRequestContext; accountId: string; workspaceId: string; filesystemId: string; scopeId: string; personalScopeId: string; rootId: string };
+export type Session = { api: APIRequestContext; userId: string; workspaceId: string; filesystemId: string; scopeId: string; personalScopeId: string; rootId: string };
 
 export const test = base.extend<{ identity: Identity; controls: APIRequestContext; session: Session }>({
   controls: async ({ playwright }, use) => {
@@ -41,7 +41,7 @@ export async function onboard(controls: APIRequestContext, identity: Identity, f
     const response = await initial.put('/v1/me/onboarding');
     expect(response.status()).toBe(202);
     const admission = await response.json();
-    expect(admission.account_id).toEqual(expect.any(String));
+    expect(admission.user_id).toEqual(expect.any(String));
     await expect.poll(async () => {
       const status = await initial.get('/v1/me/onboarding');
       expect(status.status()).toBe(200);
@@ -61,8 +61,8 @@ export async function onboard(controls: APIRequestContext, identity: Identity, f
       expect(root.status()).toBe(200);
       const members=await api.get(`/v1/workspaces/${resource.id}/members`);
       expect(members.status()).toBe(200);
-      const self=(await members.json()).items.find((m:{account:{id:string}})=>m.account.id===admission.account_id);
-      return { api, accountId: admission.account_id, workspaceId: resource.id, filesystemId: resource.filesystem_id, scopeId: resource.shared_scope_id, personalScopeId:self.personal_scope_id, rootId: (await root.json()).id };
+      const self=(await members.json()).items.find((m:{user:{id:string}})=>m.user.id===admission.user_id);
+      return { api, userId: admission.user_id, workspaceId: resource.id, filesystemId: resource.filesystem_id, scopeId: resource.shared_scope_id, personalScopeId:self.personal_scope_id, rootId: (await root.json()).id };
     } catch (error) { await api.dispose(); throw error; }
   } finally { await initial.dispose(); }
 }

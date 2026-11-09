@@ -6,36 +6,36 @@ from openlet_api.account.v1.account_pb2_grpc import AccountServiceStub
 
 
 @dataclass(frozen=True)
-class AccountSummary:
+class UserSummary:
     id: str
     display_name: str
     avatar_url: str
 
 
-class AccountClient:
+class UserClient:
     def __init__(self, rpc: RpcClient):
         self._rpc = rpc
         self._stub = AccountServiceStub(rpc.channel)
 
-    async def get_account_summaries(self, ids: list[str]) -> tuple[AccountSummary, ...]:
+    async def get_user_summaries(self, ids: list[str]) -> tuple[UserSummary, ...]:
         if not ids or len(ids) > 100 or len(set(ids)) != len(ids):
             raise ValueError("invalid user summary request")
         response = await self._rpc.invoke(
-            self._stub.GetAccountSummaries, pb.GetAccountSummariesRequest(ids=ids)
+            self._stub.GetUserSummaries, pb.GetUserSummariesRequest(ids=ids)
         )
         users = tuple(
-            AccountSummary(item.id, item.display_name, item.avatar_url)
-            for item in response.accounts
+            UserSummary(item.id, item.display_name, item.avatar_url)
+            for item in response.users
         )
         if {item.id for item in users} != set(ids) or len(users) != len(ids):
-            raise ValueError("account response does not match request")
+            raise ValueError("user response does not match request")
         return users
 
-    async def get_verified_emails(self, account_id: str) -> tuple[str, ...]:
-        if not account_id:
-            raise ValueError("account id is required")
+    async def get_verified_emails(self, user_id: str) -> tuple[str, ...]:
+        if not user_id:
+            raise ValueError("user id is required")
         response = await self._rpc.invoke(
             self._stub.GetVerifiedEmails,
-            pb.GetVerifiedEmailsRequest(account_id=account_id),
+            pb.GetVerifiedEmailsRequest(user_id=user_id),
         )
         return tuple(response.emails)

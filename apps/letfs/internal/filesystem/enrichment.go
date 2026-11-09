@@ -88,7 +88,7 @@ func (s *session) inventory(ctx context.Context, source uuid.UUID, limit int64) 
  SELECT n.*,''::text COLLATE "C" AS path,0 AS depth FROM nodes n WHERE n.id=$1 AND n.scope_id=$2
  UNION ALL SELECT n.*,CASE WHEN t.path='' THEN n.name ELSE t.path||'/'||n.name END,t.depth+1
  FROM nodes n JOIN tree t ON n.parent_id=t.id WHERE n.scope_id=$2 AND t.depth<128)
- SELECT `+nodeColumns+`,false,n.path,f.inline_bytes,f.object_key FROM tree n LEFT JOIN files f ON f.node_id=n.id ORDER BY n.depth,n.path LIMIT $3`, source, s.scopeID, limit+2)
+ SELECT `+nodeColumns+`,false,n.path,COALESCE(f.inline_bytes,convert_to(f.text_content,'UTF8')),f.object_key FROM tree n LEFT JOIN files f ON f.node_id=n.id ORDER BY n.depth,n.path LIMIT $3`, source, s.scopeID, limit+2)
 	if err != nil {
 		return nil, databaseError(err)
 	}
@@ -343,11 +343,15 @@ func (s *Store) CompleteEnrichment(ctx context.Context, a Generation, manifest E
 			if err = session.queueObject(ctx, node.ID); err != nil {
 				return err
 			}
-			kind := "object"
+			payload := inlinePayload{Kind: "object"}
 			if upload.Transport == "inline" {
-				kind = "inline"
+				media := ""
+				if node.MediaType != nil {
+					media = *node.MediaType
+				}
+				payload = s.classifyInline(name, media, upload.content, session.allowBlobFiles)
 			}
-			_, err = session.tx.Exec(ctx, `UPDATE files SET storage_kind=$2,inline_bytes=$3,object_key=$4 WHERE node_id=$1`, node.ID, kind, upload.content, upload.key)
+			_, err = session.tx.Exec(ctx, `UPDATE files SET storage_kind=$2,inline_bytes=$3,object_key=$4,text_content=$5,newline_count=$6,text_sha256=$7 WHERE node_id=$1`, node.ID, payload.Kind, payload.Bytes, upload.key, payload.Text, payload.NewlineCount, payload.SHA256)
 			if err != nil {
 				return databaseError(err)
 			}

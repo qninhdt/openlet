@@ -63,8 +63,8 @@ func TestIntegrationEnvoyPublicHTTPAndPrivateRPCIsolation(t *testing.T) {
 			request.Header.Set("Authorization", "Bearer "+token)
 		}
 		if spoof {
-			request.Header.Add("X-Openlet-Account-ID", "invalid")
-			request.Header.Add("X-Openlet-Account-ID", "019a3b66-0000-7000-8000-000000000099")
+			request.Header.Add("X-Openlet-User-ID", "invalid")
+			request.Header.Add("X-Openlet-User-ID", "019a3b66-0000-7000-8000-000000000099")
 			request.Header.Set("X-Gateway-Token", "spoofed")
 			request.Header.Set("X-Openlet-Service", "workspace")
 		}
@@ -128,7 +128,7 @@ func fixtureJWT(t *testing.T, key *rsa.PrivateKey, actor string) string {
 	}
 	claims := map[string]any{"iss": "https://issuer.example.test", "aud": "openlet-proof", "sub": "fixture-user", "exp": time.Now().Add(time.Minute).Unix()}
 	if actor != "" {
-		claims["openlet_account_id"] = actor
+		claims["openlet_user_id"] = actor
 	}
 	unsigned := encode(map[string]string{"alg": "RS256", "typ": "JWT", "kid": "proof"}) + "." + encode(claims)
 	hash := sha256.Sum256([]byte(unsigned))
@@ -174,7 +174,7 @@ func envoyProof(t *testing.T, backendURL string) (string, *rsa.PrivateKey) {
 	port, err := strconv.Atoi(backend.Port())
 	require.NoError(t, err)
 	clusters := []any{}
-	for _, name := range []string{"letfs", "account", "workspace"} {
+	for _, name := range []string{"letfs", "account", "workspace", "leta"} {
 		clusters = append(clusters, map[string]any{"name": name, "type": "STRICT_DNS", "connect_timeout": "3s",
 			"load_assignment": map[string]any{"cluster_name": name, "endpoints": []any{map[string]any{"lb_endpoints": []any{map[string]any{
 				"endpoint": map[string]any{"address": map[string]any{"socket_address": map[string]any{"address": testcontainers.HostInternal, "port_value": port}}},
@@ -184,7 +184,7 @@ func envoyProof(t *testing.T, backendURL string) (string, *rsa.PrivateKey) {
 	encoded, err := json.Marshal(config)
 	require.NoError(t, err)
 	proxy, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{Started: true, ContainerRequest: testcontainers.ContainerRequest{
-		Image:        "envoyproxy/envoy:v1.37.0@sha256:d9b4a70739d92b3e28cd407f106b0e90d55df453d7d87773efd22b4429777fe8",
+		Image:        "envoyproxy/envoy:v1.40.2@sha256:8de97e654644827d62afdbf7e1d3dc9fee01a8690d410dd1c63a30dc6b6cecbb",
 		ExposedPorts: []string{"8080/tcp"}, Cmd: []string{"-c", "/tmp/proof-envoy.json", "--concurrency", "1", "--log-level", "error"},
 		Files:           []testcontainers.ContainerFile{{Reader: bytes.NewReader(encoded), ContainerFilePath: "/tmp/proof-envoy.json", FileMode: 0o644}},
 		HostAccessPorts: []int{port},

@@ -21,7 +21,7 @@ func TestIntegrationParsePreparationFencesGenerationAndLifecycle(t *testing.T) {
 	s := Store{DB: db, Graph: graph, MaxNodes: 100, InlineLimit: 64, MaxFileBytes: 64}
 	owner := identity.WithPrincipal(t.Context(), identity.Principal{Service: "resource-owner"})
 	actor := uuid.New()
-	ctx := identity.WithPrincipal(t.Context(), identity.Principal{Service: "gateway", Gateway: true, ActorID: actor})
+	ctx := identity.WithPrincipal(t.Context(), identity.Principal{ActorKind: identity.User, Service: "gateway", Gateway: true, ActorID: actor})
 	filesystemID, fs := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	_, err := s.CreateFilesystem(owner, uuid.New(), CreateFilesystem{ID: filesystemID, LimitBytes: 1000})
 	require.NoError(t, err)
@@ -74,7 +74,7 @@ func TestIntegrationParseOutputPublicationAtomicReplayAndScope(t *testing.T) {
 	s := Store{DB: db, Graph: graph, MaxNodes: 100, InlineLimit: 64, MaxFileBytes: 64, ProcessingMaxOutputs: 10, ProcessingMaxOutputBytes: 100}
 	owner := identity.WithPrincipal(t.Context(), identity.Principal{Service: "resource-owner"})
 	actor := uuid.New()
-	ctx := identity.WithPrincipal(t.Context(), identity.Principal{Service: "gateway", Gateway: true, ActorID: actor})
+	ctx := identity.WithPrincipal(t.Context(), identity.Principal{ActorKind: identity.User, Service: "gateway", Gateway: true, ActorID: actor})
 	filesystemID, fs := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	_, err := s.CreateFilesystem(owner, uuid.New(), CreateFilesystem{ID: filesystemID, LimitBytes: 1000})
 	require.NoError(t, err)
@@ -151,7 +151,7 @@ func TestIntegrationParseOutputPublicationAtomicReplayAndScope(t *testing.T) {
 	require.Equal(t, "text/markdown", *artifact.MediaType)
 	require.True(t, artifact.readonly)
 	var content []byte
-	require.NoError(t, db.QueryRow(t.Context(), `SELECT inline_bytes FROM files WHERE node_id=$1`, artifact.ID).Scan(&content))
+	require.NoError(t, db.QueryRow(t.Context(), `SELECT COALESCE(inline_bytes,convert_to(text_content,'UTF8')) FROM files WHERE node_id=$1`, artifact.ID).Scan(&content))
 	require.Equal(t, []byte{0, 255, 1}, content)
 	var storedBytes []byte
 	var published uuid.UUID

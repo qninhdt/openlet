@@ -48,7 +48,7 @@ func TestIntegrationDeletionRetriesGraphAndPrunesOnlyUnreferencedStorage(t *test
 	failing.fail = false
 	require.NoError(t, s.DeleteScopeData(ctx, fs, scope))
 	require.NoError(t, s.RemoveFilesystem(ctx, fs))
-	_, err = db.Exec(ctx, `INSERT INTO uploads(id,scope_id,actor_id,input,transport,expected_size,state) VALUES($1,$2,$3,'{}','inline',0,'aborted')`, uuid.New(), scope, actor)
+	_, err = db.Exec(ctx, `INSERT INTO uploads(id,scope_id,actor_id,actor_kind,input,transport,expected_size,state) VALUES($1,$2,$3,'user','{}','inline',0,'aborted')`, uuid.New(), scope, actor)
 	require.NoError(t, err)
 	_, err = db.Exec(ctx, `INSERT INTO object_deletions(object_key,filesystem_id,state,open_writes) VALUES('ambiguous',$1,'deleted',1),('finished',$1,'deleted',0)`, fs)
 	require.NoError(t, err)
@@ -92,7 +92,7 @@ func TestIntegrationScopeDeletionCompletesOnlyAbortedUploadReceipts(t *testing.T
 	}
 	for _, test := range tests {
 		id := uuid.New()
-		_, err = db.Exec(ctx, `INSERT INTO uploads(id,scope_id,actor_id,input,transport,expected_size,state,result) VALUES($1,$2,$3,'{}','inline',0,$4,'{}')`, id, test.scope, uuid.New(), test.state)
+		_, err = db.Exec(ctx, `INSERT INTO uploads(id,scope_id,actor_id,actor_kind,input,transport,expected_size,state,result) VALUES($1,$2,$3,'user','{}','inline',0,$4,'{}')`, id, test.scope, uuid.New(), test.state)
 		require.NoError(t, err)
 		_, err = db.Exec(ctx, `INSERT INTO idempotency_keys(scope,operation,request_key,request_hash,result) VALUES('test',$1,$2,'hash',jsonb_build_object('id',$3::text))`, test.operation, test.name, id.String())
 		require.NoError(t, err)

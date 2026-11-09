@@ -4,10 +4,10 @@ package authz
 type Action string
 
 const (
-	AccountRead            Action = "read"
-	AccountUpdate          Action = "update"
 	FilesystemRead         Action = "read"
 	FilesystemDelete       Action = "delete"
+	LetaRead               Action = "read"
+	LetaManage             Action = "manage"
 	ScopeReadMetadata      Action = "read_metadata"
 	ScopeReadContent       Action = "read_content"
 	ScopeWrite             Action = "write"
@@ -18,19 +18,20 @@ const (
 	WorkspaceRead          Action = "read"
 	WorkspaceUpdate        Action = "update"
 	WorkspaceManageMembers Action = "manage_members"
+	WorkspaceCreateLeta    Action = "create_leta"
 	WorkspaceDelete        Action = "delete"
 )
 
 func (a Action) Valid(resource string) bool {
 	switch resource {
-	case "account":
-		switch a {
-		case AccountRead, AccountUpdate:
-			return true
-		}
 	case "filesystem":
 		switch a {
 		case FilesystemRead, FilesystemDelete:
+			return true
+		}
+	case "leta":
+		switch a {
+		case LetaRead, LetaManage:
 			return true
 		}
 	case "scope":
@@ -40,7 +41,7 @@ func (a Action) Valid(resource string) bool {
 		}
 	case "workspace":
 		switch a {
-		case WorkspaceRead, WorkspaceUpdate, WorkspaceManageMembers, WorkspaceDelete:
+		case WorkspaceRead, WorkspaceUpdate, WorkspaceManageMembers, WorkspaceCreateLeta, WorkspaceDelete:
 			return true
 		}
 	}

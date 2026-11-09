@@ -24,7 +24,7 @@ func TestIntegrationIdentityAndProfile(t *testing.T) {
 	for range calls {
 		workers.Go(func() {
 			<-start
-			v, err := store.EnsureAccount(ctx, "user-testcontainers")
+			v, err := store.EnsureUser(ctx, "user-testcontainers")
 			results <- v
 			errors <- err
 		})
@@ -53,7 +53,7 @@ func TestIntegrationIdentityAndProfile(t *testing.T) {
 	p, err = store.Profile(ctx, original)
 	require.NoError(t, err)
 	require.Equal(t, avatar, p.AvatarURL)
-	other, err := store.EnsureAccount(ctx, "user-other")
+	other, err := store.EnsureUser(ctx, "user-other")
 	require.NoError(t, err)
 	summaries, err := store.Summaries(ctx, []uuid.UUID{original, other})
 	require.NoError(t, err)

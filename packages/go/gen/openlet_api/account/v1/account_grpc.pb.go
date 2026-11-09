@@ -19,15 +19,15 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	AccountService_GetAccountSummaries_FullMethodName = "/openlet_api.account.v1.AccountService/GetAccountSummaries"
-	AccountService_GetVerifiedEmails_FullMethodName   = "/openlet_api.account.v1.AccountService/GetVerifiedEmails"
+	AccountService_GetUserSummaries_FullMethodName  = "/openlet_api.account.v1.AccountService/GetUserSummaries"
+	AccountService_GetVerifiedEmails_FullMethodName = "/openlet_api.account.v1.AccountService/GetVerifiedEmails"
 )
 
 // AccountServiceClient is the client API for AccountService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type AccountServiceClient interface {
-	GetAccountSummaries(ctx context.Context, in *GetAccountSummariesRequest, opts ...grpc.CallOption) (*GetAccountSummariesResponse, error)
+	GetUserSummaries(ctx context.Context, in *GetUserSummariesRequest, opts ...grpc.CallOption) (*GetUserSummariesResponse, error)
 	GetVerifiedEmails(ctx context.Context, in *GetVerifiedEmailsRequest, opts ...grpc.CallOption) (*GetVerifiedEmailsResponse, error)
 }
 
@@ -39,10 +39,10 @@ func NewAccountServiceClient(cc grpc.ClientConnInterface) AccountServiceClient {
 	return &accountServiceClient{cc}
 }
 
-func (c *accountServiceClient) GetAccountSummaries(ctx context.Context, in *GetAccountSummariesRequest, opts ...grpc.CallOption) (*GetAccountSummariesResponse, error) {
+func (c *accountServiceClient) GetUserSummaries(ctx context.Context, in *GetUserSummariesRequest, opts ...grpc.CallOption) (*GetUserSummariesResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(GetAccountSummariesResponse)
-	err := c.cc.Invoke(ctx, AccountService_GetAccountSummaries_FullMethodName, in, out, cOpts...)
+	out := new(GetUserSummariesResponse)
+	err := c.cc.Invoke(ctx, AccountService_GetUserSummaries_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +63,7 @@ func (c *accountServiceClient) GetVerifiedEmails(ctx context.Context, in *GetVer
 // All implementations must embed UnimplementedAccountServiceServer
 // for forward compatibility.
 type AccountServiceServer interface {
-	GetAccountSummaries(context.Context, *GetAccountSummariesRequest) (*GetAccountSummariesResponse, error)
+	GetUserSummaries(context.Context, *GetUserSummariesRequest) (*GetUserSummariesResponse, error)
 	GetVerifiedEmails(context.Context, *GetVerifiedEmailsRequest) (*GetVerifiedEmailsResponse, error)
 	mustEmbedUnimplementedAccountServiceServer()
 }
@@ -75,8 +75,8 @@ type AccountServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedAccountServiceServer struct{}
 
-func (UnimplementedAccountServiceServer) GetAccountSummaries(context.Context, *GetAccountSummariesRequest) (*GetAccountSummariesResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetAccountSummaries not implemented")
+func (UnimplementedAccountServiceServer) GetUserSummaries(context.Context, *GetUserSummariesRequest) (*GetUserSummariesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetUserSummaries not implemented")
 }
 func (UnimplementedAccountServiceServer) GetVerifiedEmails(context.Context, *GetVerifiedEmailsRequest) (*GetVerifiedEmailsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetVerifiedEmails not implemented")
@@ -102,20 +102,20 @@ func RegisterAccountServiceServer(s grpc.ServiceRegistrar, srv AccountServiceSer
 	s.RegisterService(&AccountService_ServiceDesc, srv)
 }
 
-func _AccountService_GetAccountSummaries_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetAccountSummariesRequest)
+func _AccountService_GetUserSummaries_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetUserSummariesRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(AccountServiceServer).GetAccountSummaries(ctx, in)
+		return srv.(AccountServiceServer).GetUserSummaries(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: AccountService_GetAccountSummaries_FullMethodName,
+		FullMethod: AccountService_GetUserSummaries_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(AccountServiceServer).GetAccountSummaries(ctx, req.(*GetAccountSummariesRequest))
+		return srv.(AccountServiceServer).GetUserSummaries(ctx, req.(*GetUserSummariesRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -146,8 +146,8 @@ var AccountService_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*AccountServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "GetAccountSummaries",
-			Handler:    _AccountService_GetAccountSummaries_Handler,
+			MethodName: "GetUserSummaries",
+			Handler:    _AccountService_GetUserSummaries_Handler,
 		},
 		{
 			MethodName: "GetVerifiedEmails",

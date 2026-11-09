@@ -4,67 +4,66 @@ package http
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
-	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/google/uuid"
 	"github.com/qninhdt/openlet/apps/account/internal/account"
 	"github.com/qninhdt/openlet/apps/account/internal/config"
 	"github.com/qninhdt/openlet/apps/account/internal/testfixture"
-	sharedfixture "github.com/qninhdt/openlet/packages/go/testfixture"
 	"github.com/stretchr/testify/require"
 )
 
-func TestIntegrationProfileRequiresNativeSelfPermission(t *testing.T) {
-	db := testfixture.Postgres(t)
-	store := &account.Store{DB: db}
-	graph, _, server := sharedfixture.SpiceDB(t, testfixture.Path("packages", "contracts", "authz", "schema.zed"))
+func TestIntegrationProfileUsesVerifiedHumanIdentity(t *testing.T) {
+	store := &account.Store{DB: testfixture.Postgres(t)}
 	ctx := t.Context()
-	id, err := store.EnsureAccount(ctx, "profile-test")
+	id, err := store.EnsureUser(ctx, "profile-test")
+	require.NoError(t, err)
+	other, err := store.EnsureUser(ctx, "other-profile")
+	require.NoError(t, err)
+	otherName := "Other human"
+	_, err = store.UpdateProfile(ctx, other, &otherName, nil)
 	require.NoError(t, err)
 	secret := strings.Repeat("g", 32)
-	app := &Server{Service: &account.Service{Store: store, Graph: graph}, Ready: func(context.Context) error { return nil }, Config: config.Config{GatewayToken: secret}}
+	app := &Server{
+		Service: &account.Service{Store: store},
+		Ready:   func(context.Context) error { return nil },
+		Config:  config.Config{GatewayToken: secret},
+	}
 	router := app.Router()
-	actorID := id
-	request := func(method, path, body string) *httptest.ResponseRecorder {
+	request := func(actor uuid.UUID, method, path, body string) *httptest.ResponseRecorder {
 		t.Helper()
 		r := httptest.NewRequest(method, path, strings.NewReader(body))
 		r.Header.Set("X-Gateway-Token", secret)
 		r.Header.Set("X-Clerk-Sub", "profile-test")
-		r.Header.Set("X-Openlet-Account-ID", actorID.String())
-		deadline, cancel := context.WithTimeout(ctx, 3*time.Second)
-		defer cancel()
+		r.Header.Set("X-Openlet-User-ID", actor.String())
 		response := httptest.NewRecorder()
-		router.ServeHTTP(response, r.WithContext(deadline))
+		router.ServeHTTP(response, r)
 		return response
 	}
-	actorID = uuid.New()
 	for _, method := range []string{http.MethodGet, http.MethodPatch} {
-		require.Equal(t, http.StatusNotFound, request(method, "/v1/me", `{"display_name":"unknown"}`).Code)
+		response := request(uuid.New(), method, "/v1/me", `{"display_name":"unknown"}`)
+		require.Equal(t, http.StatusNotFound, response.Code, response.Body.String())
 	}
-	actorID = id
+	response := request(id, http.MethodPatch, "/v1/me", `{"display_name":"Self"}`)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	response = request(id, http.MethodGet, "/v1/me", "")
+	require.Equal(t, http.StatusOK, response.Code)
+	var profile map[string]any
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &profile))
+	require.Equal(t, id.String(), profile["id"])
+	require.Equal(t, "Self", profile["display_name"])
+	require.NotContains(t, profile, "type")
+	require.NotContains(t, profile, "owner_id")
 	for _, method := range []string{http.MethodGet, http.MethodPatch} {
-		response := request(method, "/v1/me", `{"display_name":"denied"}`)
-		require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+		response := request(id, method, "/v1/accounts/"+other.String(), `{"display_name":"Forbidden"}`)
+		require.Equal(t, http.StatusNotFound, response.Code)
 	}
-	profile, err := store.Profile(ctx, id)
+	require.Equal(t, http.StatusNotFound, request(id, http.MethodPost, "/v1/accounts", `{}`).Code)
+	unchanged, err := store.Profile(ctx, other)
 	require.NoError(t, err)
-	require.Empty(t, profile.DisplayName)
-	require.NoError(t, store.SyncRelationships(ctx, graph, id))
-	require.Equal(t, http.StatusOK, request(http.MethodGet, "/v1/me", "").Code)
-	require.Equal(t, http.StatusOK, request(http.MethodPatch, "/v1/me", `{"display_name":"allowed"}`).Code)
-	_, err = graph.DeleteRelationships(ctx, &v1.DeleteRelationshipsRequest{RelationshipFilter: &v1.RelationshipFilter{ResourceType: "account"}})
-	require.NoError(t, err)
-	require.Equal(t, http.StatusForbidden, request(http.MethodPatch, "/v1/me", `{"display_name":"revoked"}`).Code)
-	require.NoError(t, server.Stop(ctx, nil))
-	for _, method := range []string{http.MethodGet, http.MethodPatch} {
-		require.Equal(t, http.StatusServiceUnavailable, request(method, "/v1/me", `{"display_name":"outage"}`).Code)
-	}
-	profile, err = store.Profile(ctx, id)
-	require.NoError(t, err)
-	require.Equal(t, "allowed", profile.DisplayName)
+	require.Equal(t, otherName, unchanged.DisplayName)
 }

@@ -4,6 +4,7 @@ import hmac
 import re
 from contextlib import contextmanager
 from dataclasses import dataclass
+from typing import Literal
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -57,9 +58,23 @@ _STATUS = {
 
 
 @dataclass(frozen=True)
+class Actor:
+    kind: Literal["user", "leta"]
+    id: UUID
+
+    def __post_init__(self):
+        if (
+            self.kind not in {"user", "leta"}
+            or not isinstance(self.id, UUID)
+            or not self.id.int
+        ):
+            raise ValueError("invalid actor identity")
+
+
+@dataclass(frozen=True)
 class Principal:
     service: str
-    actor_id: UUID | None = None
+    actor: Actor | None = None
     subject: str = ""
     gateway: bool = False
 
@@ -71,6 +86,7 @@ class Credential:
     methods: frozenset[str]
     gateway: bool = False
     delegate_actor: bool = False
+    leta_methods: frozenset[str] = frozenset()
 
 
 _principal = contextvars.ContextVar[Principal | None]("openlet_principal", default=None)
@@ -122,7 +138,7 @@ def _reason(error: grpc.aio.AioRpcError) -> str:
                     and re.fullmatch(r"[A-Z][A-Z0-9_]{0,79}", info.reason)
                 ):
                     return info.reason
-        except (DecodeError, TypeError):
+        except DecodeError, TypeError:
             break
     return _KINDS.get(error.code(), ("internal", "INTERNAL"))[1]
 
@@ -171,14 +187,16 @@ class RpcClient:
         method,
         request,
         *,
-        actor_id: UUID | str | None = None,
+        actor: Actor | None = None,
         retry_transient: bool = False,
         timeout: float = UNARY_TIMEOUT,
     ):
         headers: dict[str, str] = {}
         propagate.inject(headers)
-        if actor_id is not None:
-            headers["x-openlet-account-id"] = str(actor_id)
+        if actor is not None:
+            if not isinstance(actor, Actor):
+                raise ValueError("invalid actor identity")
+            headers[f"x-openlet-{actor.kind}-id"] = str(actor.id)
         attempts = 3 if retry_transient else 1
         for attempt in range(attempts):
             try:
@@ -200,13 +218,15 @@ class RpcClient:
         method,
         request,
         *,
-        actor_id: UUID | str | None = None,
+        actor: Actor | None = None,
         timeout: float = STREAM_TIMEOUT,
     ):
         headers: dict[str, str] = {}
         propagate.inject(headers)
-        if actor_id is not None:
-            headers["x-openlet-account-id"] = str(actor_id)
+        if actor is not None:
+            if not isinstance(actor, Actor):
+                raise ValueError("invalid actor identity")
+            headers[f"x-openlet-{actor.kind}-id"] = str(actor.id)
         call = method(
             request,
             metadata=self._metadata + tuple(headers.items()),
@@ -232,6 +252,8 @@ class Authenticator(grpc.aio.ServerInterceptor):
             if (
                 not item.service
                 or not item.methods
+                or not item.leta_methods.issubset(item.methods)
+                or (item.leta_methods and (item.gateway or not item.delegate_actor))
                 or any(
                     not re.fullmatch(r"/openlet_api\.[^/]+/[^/]+", method)
                     for method in item.methods
@@ -244,6 +266,9 @@ class Authenticator(grpc.aio.ServerInterceptor):
         handler = await continuation(details)
         if handler is None:
             return None
+        # Only readiness Check is public, matching the Go native transport.
+        if details.method == "/grpc.health.v1.Health/Check":
+            return handler
         value, failure = self.authenticate(
             tuple(details.invocation_metadata or ()), details.method
         )
@@ -257,11 +282,13 @@ class Authenticator(grpc.aio.ServerInterceptor):
         for key, value in metadata:
             values.setdefault(key.lower(), []).append(value)
         authorization = values.get("authorization", [])
-        actors = values.get("x-openlet-account-id", [])
+        users = values.get("x-openlet-user-id", [])
+        letas = values.get("x-openlet-leta-id", [])
         if (
             len(authorization) != 1
-            or len(actors) > 1
+            or len(users) + len(letas) > 1
             or values.get("x-openlet-service")
+            or values.get("x-openlet-account-id")
         ):
             return None, (grpc.StatusCode.UNAUTHENTICATED, "invalid caller metadata")
         raw = authorization[0]
@@ -275,6 +302,12 @@ class Authenticator(grpc.aio.ServerInterceptor):
                     "caller cannot invoke method",
                 )
             actor = None
+            actors, kind = (letas, "leta") if letas else (users, "user")
+            if letas and method not in credential.leta_methods:
+                return None, (
+                    grpc.StatusCode.PERMISSION_DENIED,
+                    "caller cannot delegate Leta",
+                )
             if actors:
                 if not (credential.gateway or credential.delegate_actor):
                     return None, (
@@ -282,13 +315,8 @@ class Authenticator(grpc.aio.ServerInterceptor):
                         "caller cannot delegate user",
                     )
                 try:
-                    actor = UUID(actors[0])
+                    actor = Actor(kind, UUID(actors[0]))
                 except ValueError:
-                    return None, (
-                        grpc.StatusCode.UNAUTHENTICATED,
-                        "invalid actor identity",
-                    )
-                if actor.int == 0:
                     return None, (
                         grpc.StatusCode.UNAUTHENTICATED,
                         "invalid actor identity",

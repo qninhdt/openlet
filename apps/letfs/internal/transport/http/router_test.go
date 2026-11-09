@@ -25,7 +25,7 @@ func TestHTTPAuthenticatesBeforeDispatchAndHidesPrivateRoutes(t *testing.T) {
 	} {
 		request := httptest.NewRequest("GET", test.path, nil)
 		request.Header.Set("X-Gateway-Token", test.token)
-		request.Header.Set("X-Openlet-Account-ID", actor.String())
+		request.Header.Set("X-Openlet-User-ID", actor.String())
 		request.Header.Set("X-Clerk-Sub", "user_test")
 		response := httptest.NewRecorder()
 		app.ServeHTTP(response, request)

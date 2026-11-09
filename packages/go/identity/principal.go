@@ -6,12 +6,30 @@ import (
 	"github.com/google/uuid"
 )
 
-type Principal struct {
-	Service string
-	ActorID uuid.UUID
-	Subject string
-	Gateway bool
+type ActorKind string
+
+const (
+	User ActorKind = "user"
+	Leta ActorKind = "leta"
+)
+
+type Actor struct {
+	Kind ActorKind `json:"kind"`
+	ID   uuid.UUID `json:"id"`
 }
+
+func (a Actor) Valid() bool    { return (a.Kind == User || a.Kind == Leta) && a.ID != uuid.Nil }
+func (a Actor) String() string { return string(a.Kind) + ":" + a.ID.String() }
+
+type Principal struct {
+	Service   string
+	ActorID   uuid.UUID
+	ActorKind ActorKind
+	Subject   string
+	Gateway   bool
+}
+
+func (p Principal) Actor() Actor { return Actor{Kind: p.ActorKind, ID: p.ActorID} }
 
 type principalKey struct{}
 

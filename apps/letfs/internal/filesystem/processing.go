@@ -39,7 +39,7 @@ func (s *Store) processingSession(ctx context.Context, source Generation, lifecy
 
 func (s *session) currentProcessing(ctx context.Context, source Generation) (processingState, error) {
 	var p processingState
-	err := s.tx.QueryRow(ctx, `SELECT f.node_id,f.desired_generation,f.processing_format,f.publication_status,f.object_key,f.inline_bytes
+	err := s.tx.QueryRow(ctx, `SELECT f.node_id,f.desired_generation,f.processing_format,f.publication_status,f.object_key,COALESCE(f.inline_bytes,convert_to(f.text_content,'UTF8'))
  FROM files f JOIN nodes n ON n.id=f.node_id WHERE f.node_id=$1 AND n.scope_id=$2 FOR UPDATE OF f`, source.FileID, s.scopeID).
 		Scan(&p.id, &p.generation, &p.format, &p.publication, &p.key, &p.content)
 	if err != nil {

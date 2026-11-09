@@ -128,7 +128,7 @@ func (s *Store) AdmitInvitation(ctx context.Context, actor uuid.UUID, hash [32]b
 	var email, role, status string
 	var expires time.Time
 	var accepted *uuid.UUID
-	err := s.DB.QueryRow(ctx, `SELECT workspace_id,email,role,status,expires_at,accepted_account_id FROM workspace_invitations WHERE token_hash=$1`, hash[:]).Scan(&ws, &email, &role, &status, &expires, &accepted)
+	err := s.DB.QueryRow(ctx, `SELECT workspace_id,email,role,status,expires_at,accepted_user_id FROM workspace_invitations WHERE token_hash=$1`, hash[:]).Scan(&ws, &email, &role, &status, &expires, &accepted)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ws, "", Fault{"INVITATION_INVALID"}
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
-	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/exaring/otelpgx"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -14,7 +13,6 @@ import (
 	jobs "github.com/qninhdt/openlet/apps/account/internal/temporal"
 	accountRPC "github.com/qninhdt/openlet/apps/account/internal/transport/grpc"
 	api "github.com/qninhdt/openlet/apps/account/internal/transport/http"
-	"github.com/qninhdt/openlet/packages/go/authz"
 	accountv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/account/v1"
 	sharedrpc "github.com/qninhdt/openlet/packages/go/rpc"
 	"github.com/qninhdt/openlet/packages/go/telemetry"
@@ -87,26 +85,7 @@ func run() error {
 	if e = db.Ping(startupCtx); e != nil {
 		return errors.New("database unavailable")
 	}
-	graphConnection, e := sharedrpc.Dial(cfg.SpiceDBAddress, cfg.SpiceDBKey, sharedrpc.Transport{AllowPlaintext: cfg.AllowPlaintextRPC})
-	if e != nil {
-		return errors.New("authorization transport configuration rejected")
-	}
-	defer graphConnection.Close()
-	graph := v1.NewPermissionsServiceClient(graphConnection)
-	contract, e := authz.LoadContract("/contracts/schema.zed")
-	if e != nil {
-		return e
-	}
-	graphReady := func(ctx context.Context) error {
-		return contract.Verify(ctx, v1.NewSchemaServiceClient(graphConnection))
-	}
-	if e = graphReady(startupCtx); e != nil {
-		return errors.New("authorization schema unavailable")
-	}
 	store := &account.Store{DB: db}
-	if len(os.Args) == 2 && os.Args[1] == "--rebuild-authorization" {
-		return store.RebuildRelationships(ctx, graph)
-	}
 	tracing, e := sharedtemporal.Tracing()
 	if e != nil {
 		return errors.New("Temporal tracing configuration rejected")
@@ -117,16 +96,13 @@ func run() error {
 	}
 	defer tc.Close()
 	clerkClient := clerk.Client{BaseURL: cfg.ClerkURL, Secret: cfg.ClerkSecret}
-	service := &account.Service{Store: store, Graph: graph, Clerk: clerkClient}
+	service := &account.Service{Store: store, Clerk: clerkClient}
 	service.StartOnboarding = func(ctx context.Context, subject string) (account.Onboarding, error) {
 		return jobs.StartOnboarding(ctx, tc, subject)
 	}
-	service.StartManaged = func(ctx context.Context, in account.ManagedCreation) (account.Profile, error) {
-		return jobs.StartManaged(ctx, tc, in)
-	}
 	authentication, e := sharedrpc.NewAuthenticator([]sharedrpc.Credential{{
 		Service: "workspace", Token: cfg.WorkspaceToken,
-		Methods: []string{accountv1.AccountService_GetAccountSummaries_FullMethodName, accountv1.AccountService_GetVerifiedEmails_FullMethodName},
+		Methods: []string{accountv1.AccountService_GetUserSummaries_FullMethodName, accountv1.AccountService_GetVerifiedEmails_FullMethodName},
 	}})
 	if e != nil {
 		return e
@@ -144,7 +120,7 @@ func run() error {
 		return e
 	}
 	defer rpcServer.Stop()
-	rpcHandler := &accountRPC.Server{GraphReady: graphReady, Service: service}
+	rpcHandler := &accountRPC.Server{Service: service}
 	accountv1.RegisterAccountServiceServer(rpcServer, rpcHandler)
 	healthv1.RegisterHealthServer(rpcServer, rpcHandler)
 	rpcListener, e := net.Listen("tcp", cfg.RPCListen)
@@ -155,7 +131,6 @@ func run() error {
 	activities := &jobs.Activities{Service: service}
 	owner := temporalworker.New(tc, jobs.Queue, temporalworker.Options{MaxConcurrentActivityExecutionSize: 16, WorkerStopTimeout: 20 * time.Second})
 	owner.RegisterWorkflow(jobs.OnboardUser)
-	owner.RegisterWorkflow(jobs.AccountChanges)
 	owner.RegisterActivity(activities)
 	if e = owner.Start(); e != nil {
 		return errors.New("worker startup failed")
@@ -165,7 +140,7 @@ func run() error {
 		if err := db.Ping(ctx); err != nil {
 			return err
 		}
-		return graphReady(ctx)
+		return nil
 	}}
 	srv := &http.Server{Addr: cfg.Listen, Handler: app.Router(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 125 * time.Second, WriteTimeout: 125 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32768}
 	defer srv.Close()

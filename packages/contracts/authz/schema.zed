@@ -1,23 +1,24 @@
-definition account {
-	relation self: account
-	relation owner: account
-	permission read = self + owner
-	permission update = self + owner
-}
-
 definition filesystem {
-	relation reader: account | workspace#owner | workspace#admin | workspace#member
-	relation deleter: account | workspace#owner
+	relation reader: user | leta | workspace#owner | workspace#admin | workspace#member
+	relation deleter: user | workspace#owner
 	permission read = reader + deleter
 	permission delete = deleter
 }
 
+definition leta {
+	relation workspace: workspace
+	relation creator: user
+	permission read = creator & workspace->read
+	permission manage = creator & workspace->read
+}
+
 definition scope {
-	relation manager: account | workspace#owner | workspace#admin
-	relation editor: account | workspace#member
-	relation viewer: account
-	permission read_metadata = viewer + editor + manager
-	permission read_content = viewer + editor + manager
+	relation manager: user | workspace#owner | workspace#admin
+	relation editor: user | leta | workspace#member
+	relation viewer: user | leta
+	relation home_of: leta
+	permission read_metadata = viewer + editor + manager + home_of->read
+	permission read_content = viewer + editor + manager + home_of->read
 	permission write = editor + manager
 	permission trash = editor + manager
 	permission restore = editor + manager
@@ -25,12 +26,15 @@ definition scope {
 	permission manage_access = manager
 }
 
+definition user {}
+
 definition workspace {
-	relation owner: account
-	relation admin: account
-	relation member: account
+	relation owner: user
+	relation admin: user
+	relation member: user
 	permission read = owner + admin + member
 	permission update = owner + admin
 	permission manage_members = owner + admin
+	permission create_leta = owner + admin + member
 	permission delete = owner
 }

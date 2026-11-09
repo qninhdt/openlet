@@ -88,7 +88,7 @@ func TestIntegrationPythonNativeClientPublishesParseViaGoRPC(t *testing.T) {
 	require.EqualValues(t, 4, prepareCalls.Load(), "two transient requests, actual prepare, then completed replay")
 	var content []byte
 	var publication string
-	require.NoError(t, db.QueryRow(t.Context(), `SELECT f.inline_bytes FROM files f JOIN nodes n ON n.id=f.node_id WHERE n.parent_id=$1 AND n.name='README.md'`, file).Scan(&content))
+	require.NoError(t, db.QueryRow(t.Context(), `SELECT COALESCE(f.inline_bytes,convert_to(f.text_content,'UTF8')) FROM files f JOIN nodes n ON n.id=f.node_id WHERE n.parent_id=$1 AND n.name='README.md'`, file).Scan(&content))
 	require.Equal(t, []byte("# Report\n"), content)
 	require.NoError(t, db.QueryRow(t.Context(), `SELECT publication_status FROM files WHERE node_id=$1`, file).Scan(&publication))
 	require.Equal(t, "parsed", publication)

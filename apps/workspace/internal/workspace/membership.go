@@ -29,7 +29,7 @@ func (s *Store) applyMembership(ctx context.Context, in Mutation) error {
 	}
 	var role, memberStatus string
 	var personal uuid.UUID
-	err = tx.QueryRow(ctx, `SELECT role,status,personal_scope_id FROM workspace_members WHERE workspace_id=$1 AND account_id=$2`, in.WorkspaceID, in.TargetID).Scan(&role, &memberStatus, &personal)
+	err = tx.QueryRow(ctx, `SELECT role,status,personal_scope_id FROM workspace_members WHERE workspace_id=$1 AND user_id=$2`, in.WorkspaceID, in.TargetID).Scan(&role, &memberStatus, &personal)
 	exists := err == nil
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
@@ -45,7 +45,7 @@ func (s *Store) applyMembership(ctx context.Context, in Mutation) error {
 			var invitationStatus, invitationRole string
 			var expires time.Time
 			var accepted *uuid.UUID
-			if err = tx.QueryRow(ctx, `SELECT status,role,expires_at,accepted_account_id FROM workspace_invitations WHERE workspace_id=$1 AND token_hash=$2 FOR UPDATE`, in.WorkspaceID, in.InvitationHash[:]).Scan(&invitationStatus, &invitationRole, &expires, &accepted); err != nil {
+			if err = tx.QueryRow(ctx, `SELECT status,role,expires_at,accepted_user_id FROM workspace_invitations WHERE workspace_id=$1 AND token_hash=$2 FOR UPDATE`, in.WorkspaceID, in.InvitationHash[:]).Scan(&invitationStatus, &invitationRole, &expires, &accepted); err != nil {
 				return err
 			}
 			if invitationStatus == "accepted" {
@@ -67,12 +67,12 @@ func (s *Store) applyMembership(ctx context.Context, in Mutation) error {
 			if count >= s.MaxMembers {
 				return Fault{"RESOURCE_LIMIT"}
 			}
-			if _, err = tx.Exec(ctx, `INSERT INTO workspace_members(workspace_id,account_id,role,personal_scope_id) VALUES($1,$2,$3,$4) ON CONFLICT(workspace_id,account_id) DO UPDATE SET role=excluded.role,status='active'`, in.WorkspaceID, in.TargetID, in.Role, in.PersonalScopeID); err != nil {
+			if _, err = tx.Exec(ctx, `INSERT INTO workspace_members(workspace_id,user_id,role,personal_scope_id) VALUES($1,$2,$3,$4) ON CONFLICT(workspace_id,user_id) DO UPDATE SET role=excluded.role,status='active'`, in.WorkspaceID, in.TargetID, in.Role, in.PersonalScopeID); err != nil {
 				return err
 			}
 		}
 		if in.Kind == "join" {
-			if _, err = tx.Exec(ctx, `UPDATE workspace_invitations SET status='accepted',accepted_account_id=$2 WHERE token_hash=$1`, in.InvitationHash[:], in.ActorID); err != nil {
+			if _, err = tx.Exec(ctx, `UPDATE workspace_invitations SET status='accepted',accepted_user_id=$2 WHERE token_hash=$1`, in.InvitationHash[:], in.ActorID); err != nil {
 				return err
 			}
 		}
@@ -81,12 +81,12 @@ func (s *Store) applyMembership(ctx context.Context, in Mutation) error {
 			return Fault{"NOT_FOUND"}
 		}
 		if in.Remove {
-			_, err = tx.Exec(ctx, `UPDATE workspace_members SET status='inactive' WHERE workspace_id=$1 AND account_id=$2`, in.WorkspaceID, in.TargetID)
+			_, err = tx.Exec(ctx, `UPDATE workspace_members SET status='inactive' WHERE workspace_id=$1 AND user_id=$2`, in.WorkspaceID, in.TargetID)
 		} else {
 			if in.Role != "admin" && in.Role != "member" {
 				return Fault{"VALIDATION"}
 			}
-			_, err = tx.Exec(ctx, `UPDATE workspace_members SET role=$3 WHERE workspace_id=$1 AND account_id=$2 AND status='active'`, in.WorkspaceID, in.TargetID, in.Role)
+			_, err = tx.Exec(ctx, `UPDATE workspace_members SET role=$3 WHERE workspace_id=$1 AND user_id=$2 AND status='active'`, in.WorkspaceID, in.TargetID, in.Role)
 		}
 		if err != nil {
 			return err

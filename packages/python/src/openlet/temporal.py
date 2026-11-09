@@ -1,10 +1,19 @@
 from temporalio.client import Client
+from temporalio.converter import DataConverter
 from temporalio.exceptions import ApplicationError
 
 from openlet.errors import AppError
 
 
-async def connect(address: str, namespace: str, *, interceptor, runtime=None) -> Client:
+async def connect(
+    address: str,
+    namespace: str,
+    *,
+    interceptor,
+    runtime=None,
+    tls: bool = False,
+    data_converter: DataConverter = DataConverter.default,
+) -> Client:
     if not address or not namespace:
         raise ValueError("invalid Temporal configuration")
     return await Client.connect(
@@ -12,6 +21,8 @@ async def connect(address: str, namespace: str, *, interceptor, runtime=None) ->
         namespace=namespace,
         interceptors=[interceptor],
         runtime=runtime,
+        tls=tls,
+        data_converter=data_converter,
     )
 
 

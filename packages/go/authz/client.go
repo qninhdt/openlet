@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/qninhdt/openlet/packages/go/apperr"
+	"github.com/qninhdt/openlet/packages/go/identity"
 
 	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"google.golang.org/grpc/status"
@@ -19,15 +20,15 @@ type Resource struct {
 }
 
 // Check uses the official client and never falls back to a local role decision.
-func Check(ctx context.Context, client v1.PermissionsServiceClient, actor string, action Action, resource Resource) (bool, error) {
-	if actor == "" || resource.ID == "" || !action.Valid(resource.Type) {
+func Check(ctx context.Context, client v1.PermissionsServiceClient, actor identity.Actor, action Action, resource Resource) (bool, error) {
+	if !actor.Valid() || resource.ID == "" || !action.Valid(resource.Type) {
 		return false, ErrInvalidCheck
 	}
 	response, err := client.CheckPermission(ctx, &v1.CheckPermissionRequest{
 		Consistency: fullyConsistent(),
 		Resource:    &v1.ObjectReference{ObjectType: resource.Type, ObjectId: resource.ID},
 		Permission:  string(action),
-		Subject:     &v1.SubjectReference{Object: &v1.ObjectReference{ObjectType: "account", ObjectId: actor}},
+		Subject:     &v1.SubjectReference{Object: &v1.ObjectReference{ObjectType: string(actor.Kind), ObjectId: actor.ID.String()}},
 	})
 	if err != nil {
 		return false, dependencyError(ctx, err)
@@ -40,8 +41,8 @@ func fullyConsistent() *v1.Consistency {
 }
 
 // BulkCheck returns decisions in candidate order, using one fully consistent graph request.
-func BulkCheck(ctx context.Context, client v1.PermissionsServiceClient, actor string, action Action, resources []Resource) ([]bool, error) {
-	if actor == "" || len(resources) == 0 || len(resources) > 100 {
+func BulkCheck(ctx context.Context, client v1.PermissionsServiceClient, actor identity.Actor, action Action, resources []Resource) ([]bool, error) {
+	if !actor.Valid() || len(resources) == 0 || len(resources) > 100 {
 		return nil, ErrInvalidCheck
 	}
 	items := make([]*v1.CheckBulkPermissionsRequestItem, len(resources))
@@ -53,7 +54,7 @@ func BulkCheck(ctx context.Context, client v1.PermissionsServiceClient, actor st
 		indices[resource] = i
 		items[i] = &v1.CheckBulkPermissionsRequestItem{
 			Resource: &v1.ObjectReference{ObjectType: resource.Type, ObjectId: resource.ID}, Permission: string(action),
-			Subject: &v1.SubjectReference{Object: &v1.ObjectReference{ObjectType: "account", ObjectId: actor}},
+			Subject: &v1.SubjectReference{Object: &v1.ObjectReference{ObjectType: string(actor.Kind), ObjectId: actor.ID.String()}},
 		}
 	}
 	response, err := client.CheckBulkPermissions(ctx, &v1.CheckBulkPermissionsRequest{Consistency: fullyConsistent(), Items: items})

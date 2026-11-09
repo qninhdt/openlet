@@ -28,46 +28,36 @@ func TestOnboardUserCreatesChildBeforePublishing(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
 	a := &Activities{}
-	admission := account.Onboarding{AccountID: uuid.Must(uuid.NewV7()), Status: "pending"}
+	admission := account.Onboarding{UserID: uuid.Must(uuid.NewV7()), Status: "pending"}
 	env.RegisterWorkflowWithOptions(func(ctx workflow.Context, in shared.WorkspaceCreation) error {
 		return nil
 	}, workflow.RegisterOptions{Name: shared.CreateWorkspaceWorkflow})
-	env.OnActivity(a.EnsureAccount, mock.Anything, "subject").Return(admission, nil).Once()
-	env.OnWorkflow(shared.CreateWorkspaceWorkflow, mock.Anything, shared.WorkspaceCreation{ActorID: admission.AccountID, Key: admission.AccountID, Name: "My Workspace"}).Return(nil).Once()
-	env.OnActivity(a.PublishAccountIdentity, mock.Anything, "subject", admission.AccountID).Return(nil).Once()
+	env.OnActivity(a.EnsureUser, mock.Anything, "subject").Return(admission, nil).Once()
+	env.OnWorkflow(shared.CreateWorkspaceWorkflow, mock.Anything, shared.WorkspaceCreation{ActorID: admission.UserID, Key: admission.UserID, Name: "My Workspace"}).Return(nil).Once()
+	env.OnActivity(a.PublishUserIdentity, mock.Anything, "subject", admission.UserID).Return(nil).Once()
 	env.ExecuteWorkflow(OnboardUser, "subject")
 	require.NoError(t, env.GetWorkflowError())
 	var id uuid.UUID
 	require.NoError(t, env.GetWorkflowResult(&id))
-	require.Equal(t, admission.AccountID, id)
+	require.Equal(t, admission.UserID, id)
 	env.AssertExpectations(t)
 }
 func TestCompletedOnboardingSkipsChild(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
 	a := &Activities{}
-	env.OnActivity(a.EnsureAccount, mock.Anything, "subject").Return(account.Onboarding{AccountID: uuid.New(), Status: "active"}, nil).Once()
+	env.OnActivity(a.EnsureUser, mock.Anything, "subject").Return(account.Onboarding{UserID: uuid.New(), Status: "active"}, nil).Once()
 	env.ExecuteWorkflow(OnboardUser, "subject")
 	require.NoError(t, env.GetWorkflowError())
 	env.AssertExpectations(t)
 }
-func TestOnboardingRelationshipFailureDoesNotPublish(t *testing.T) {
+func TestOnboardingFailureDoesNotPublish(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
 	a := &Activities{}
-	env.OnActivity(a.EnsureAccount, mock.Anything, "subject").Return(account.Onboarding{}, temporal.NewNonRetryableApplicationError("rejected", "INVALID_RELATIONSHIP", nil)).Once()
+	env.OnActivity(a.EnsureUser, mock.Anything, "subject").Return(account.Onboarding{}, temporal.NewNonRetryableApplicationError("rejected", "ONBOARDING_FAILED", nil)).Once()
 	env.ExecuteWorkflow(OnboardUser, "subject")
 	require.Error(t, env.GetWorkflowError())
-	env.AssertNotCalled(t, "PublishAccountIdentity", mock.Anything, mock.Anything, mock.Anything)
-	env.AssertExpectations(t)
-}
-func TestAccountChangesPublishesManagedCreation(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	env := suite.NewTestWorkflowEnvironment()
-	a := &Activities{}
-	input := account.ManagedCreation{ID: uuid.New(), OwnerID: uuid.New()}
-	env.OnActivity(a.ApplyAccountChange, mock.Anything, input).Return(account.Profile{ID: input.ID, Type: "agent", OwnerID: &input.OwnerID}, nil).Once()
-	env.ExecuteWorkflow(AccountChanges, input)
-	require.NoError(t, env.GetWorkflowError())
+	env.AssertNotCalled(t, "PublishUserIdentity", mock.Anything, mock.Anything, mock.Anything)
 	env.AssertExpectations(t)
 }

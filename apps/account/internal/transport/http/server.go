@@ -51,9 +51,6 @@ func (s *Server) Router() *gin.Engine {
 	public.GET("/me/onboarding", s.onboardingGet)
 	public.GET("/me", s.me)
 	public.PATCH("/me", s.updateMe)
-	public.POST("/accounts", s.createAccount)
-	public.GET("/accounts/:id", s.getAccount)
-	public.PATCH("/accounts/:id", s.updateAccount)
 	r.NoRoute(func(c *gin.Context) {
 		Error(c.Writer, c.Request, 404, "NOT_FOUND", "resource not found")
 	})

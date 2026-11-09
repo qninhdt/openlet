@@ -10,28 +10,28 @@ import (
 	"github.com/qninhdt/openlet/packages/go/identity"
 )
 
-func (s *Store) authorize(ctx context.Context, id uuid.UUID, kind string, action authz.Action) (uuid.UUID, error) {
+func (s *Store) authorize(ctx context.Context, id uuid.UUID, kind string, action authz.Action) (identity.Actor, error) {
 	principal, ok := identity.FromContext(ctx)
-	if !ok || principal.ActorID == uuid.Nil {
-		return uuid.Nil, apperr.New(apperr.Unauthenticated, "UNAUTHENTICATED", "verified actor required")
+	if !ok || !principal.Actor().Valid() {
+		return identity.Actor{}, apperr.New(apperr.Unauthenticated, "UNAUTHENTICATED", "verified actor required")
 	}
 	if id == uuid.Nil {
-		return uuid.Nil, apperr.New(apperr.Invalid, "VALIDATION", "resource identity required")
+		return identity.Actor{}, apperr.New(apperr.Invalid, "VALIDATION", "resource identity required")
 	}
 	if s.Graph == nil {
-		return uuid.Nil, apperr.New(apperr.Unavailable, "DEPENDENCY_UNAVAILABLE", "authorization unavailable")
+		return identity.Actor{}, apperr.New(apperr.Unavailable, "DEPENDENCY_UNAVAILABLE", "authorization unavailable")
 	}
 	check, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	allowed, err := authz.Check(check, s.Graph, principal.ActorID.String(), action, authz.Resource{Type: kind, ID: id.String()})
+	allowed, err := authz.Check(check, s.Graph, principal.Actor(), action, authz.Resource{Type: kind, ID: id.String()})
 	if err != nil {
 		if ctx.Err() != nil {
-			return uuid.Nil, ctx.Err()
+			return identity.Actor{}, ctx.Err()
 		}
-		return uuid.Nil, apperr.New(apperr.Unavailable, "DEPENDENCY_UNAVAILABLE", "authorization unavailable")
+		return identity.Actor{}, apperr.New(apperr.Unavailable, "DEPENDENCY_UNAVAILABLE", "authorization unavailable")
 	}
 	if !allowed {
-		return uuid.Nil, apperr.New(apperr.Forbidden, "FORBIDDEN", "permission denied")
+		return identity.Actor{}, apperr.New(apperr.Forbidden, "FORBIDDEN", "permission denied")
 	}
-	return principal.ActorID, nil
+	return principal.Actor(), nil
 }

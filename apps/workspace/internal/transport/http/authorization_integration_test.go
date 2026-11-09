@@ -44,7 +44,7 @@ func TestIntegrationWorkspaceListScansDeniedCandidates(t *testing.T) {
 		request := httptest.NewRequest(http.MethodGet, path, nil)
 		request.Header.Set("X-Gateway-Token", secret)
 		request.Header.Set("X-Clerk-Sub", "list-test")
-		request.Header.Set("X-Openlet-Account-ID", actor.String())
+		request.Header.Set("X-Openlet-User-ID", actor.String())
 		response := httptest.NewRecorder()
 		router.ServeHTTP(response, request)
 		return response
@@ -85,7 +85,7 @@ func TestIntegrationWorkspaceListScansDeniedCandidates(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPatch, path, strings.NewReader(`{"name":"Renamed"}`))
 			request.Header.Set("X-Gateway-Token", secret)
 			request.Header.Set("X-Clerk-Sub", "list-test")
-			request.Header.Set("X-Openlet-Account-ID", actor.String())
+			request.Header.Set("X-Openlet-User-ID", actor.String())
 			response := httptest.NewRecorder()
 			router.ServeHTTP(response, request)
 			return response

@@ -12,6 +12,7 @@ import (
 	"github.com/qninhdt/openlet/apps/letfs/internal/clients/storage"
 	"github.com/qninhdt/openlet/packages/go/apperr"
 	"github.com/qninhdt/openlet/packages/go/authz"
+	"github.com/qninhdt/openlet/packages/go/identity"
 )
 
 type UploadDestination struct {
@@ -57,7 +58,7 @@ type Upload struct {
 }
 
 type uploadAccess struct {
-	actor  uuid.UUID
+	actor  identity.Actor
 	source *Generation
 	stage  string
 }
@@ -98,15 +99,16 @@ func (s *session) loadUpload(ctx context.Context, id uuid.UUID, access uploadAcc
 	var generation *int64
 	var stage *string
 	var actor *uuid.UUID
+	var actorKind *string
 	err := s.tx.QueryRow(ctx, `SELECT id,state,transport,expires_at,expected_size,part_size,input,candidate_key,content_md5,multipart_id,completion_parts,result,
- inline_bytes,actor_id,processing_file_id,processing_generation,processing_stage
+ inline_bytes,actor_id,actor_kind,processing_file_id,processing_generation,processing_stage
  FROM uploads WHERE id=$1 AND scope_id=$2 FOR UPDATE`, id, s.scopeID).
 		Scan(&result.ID, &result.State, &result.Transport, &result.ExpiresAt, &result.SizeBytes, &result.PartSize, &result.input, &result.key, &result.md5, &result.multipartID, &result.parts, &publication,
-			&result.content, &actor, &fileID, &generation, &stage)
+			&result.content, &actor, &actorKind, &fileID, &generation, &stage)
 	if err != nil {
 		return Upload{}, databaseError(err)
 	}
-	permitted := actor != nil && *actor == access.actor && fileID == nil
+	permitted := access.actor.Valid() && actor != nil && *actor == access.actor.ID && actorKind != nil && *actorKind == string(access.actor.Kind) && fileID == nil
 	if a := access.source; a != nil {
 		permitted = fileID != nil && *fileID == a.FileID && generation != nil && *generation == a.Generation &&
 			stage != nil && *stage == access.stage
@@ -167,7 +169,7 @@ func (s *session) uploadTarget(ctx context.Context, saved savedUpload) (*Node, u
 	if err = parent.directory(); err != nil {
 		return nil, uuid.Nil, "", err
 	}
-	if err = s.name(parent.ID, d.Name); err != nil {
+	if err = s.name(parent.ID, d.Name, d.Parent.RootID); err != nil {
 		return nil, uuid.Nil, "", err
 	}
 	var exists bool
@@ -292,7 +294,7 @@ func (s *Store) CreateUpload(ctx context.Context, scopeID uuid.UUID, key uuid.UU
 	if err != nil {
 		return Upload{}, err
 	}
-	_, err = session.tx.Exec(ctx, `INSERT INTO uploads(id,scope_id,actor_id,input,candidate_key,transport,expected_size,content_md5,part_size) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, id, scopeID, actor, encoded, candidate, transport, *input.SizeBytes, input.ContentMD5, partSize)
+	_, err = session.tx.Exec(ctx, `INSERT INTO uploads(id,scope_id,actor_id,input,candidate_key,transport,expected_size,content_md5,part_size,actor_kind) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, id, scopeID, actor.ID, encoded, candidate, transport, *input.SizeBytes, input.ContentMD5, partSize, actor.Kind)
 	if err != nil {
 		return Upload{}, databaseError(err)
 	}

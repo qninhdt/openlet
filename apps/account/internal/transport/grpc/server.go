@@ -17,8 +17,7 @@ import (
 type Server struct {
 	accountv1.UnimplementedAccountServiceServer
 	healthv1.UnimplementedHealthServer
-	GraphReady func(context.Context) error
-	Service    *account.Service
+	Service *account.Service
 }
 
 func (s *Server) Check(ctx context.Context, request *healthv1.HealthCheckRequest) (*healthv1.HealthCheckResponse, error) {
@@ -26,7 +25,7 @@ func (s *Server) Check(ctx context.Context, request *healthv1.HealthCheckRequest
 		return nil, status.Error(codes.NotFound, "unknown service")
 	}
 	state := healthv1.HealthCheckResponse_SERVING
-	if s.GraphReady == nil || s.GraphReady(ctx) != nil || s.Service.Store.DB.Ping(ctx) != nil {
+	if s.Service.Store.DB.Ping(ctx) != nil {
 		state = healthv1.HealthCheckResponse_NOT_SERVING
 	}
 	return &healthv1.HealthCheckResponse{Status: state}, nil
@@ -59,7 +58,7 @@ func storeError(err error) error {
 	return sharedrpc.Fault(codes.Unavailable, "DEPENDENCY_UNAVAILABLE", "account dependency unavailable")
 }
 
-func (s *Server) GetAccountSummaries(ctx context.Context, input *accountv1.GetAccountSummariesRequest) (*accountv1.GetAccountSummariesResponse, error) {
+func (s *Server) GetUserSummaries(ctx context.Context, input *accountv1.GetUserSummariesRequest) (*accountv1.GetUserSummariesResponse, error) {
 	if err := workspaceCaller(ctx); err != nil {
 		return nil, err
 	}
@@ -80,9 +79,9 @@ func (s *Server) GetAccountSummaries(ctx context.Context, input *accountv1.GetAc
 	if err != nil {
 		return nil, storeError(err)
 	}
-	result := &accountv1.GetAccountSummariesResponse{Accounts: make([]*accountv1.AccountSummary, 0, len(profiles))}
+	result := &accountv1.GetUserSummariesResponse{Users: make([]*accountv1.UserSummary, 0, len(profiles))}
 	for _, profile := range profiles {
-		result.Accounts = append(result.Accounts, &accountv1.AccountSummary{Id: profile.ID.String(), DisplayName: profile.DisplayName, AvatarUrl: profile.AvatarURL})
+		result.Users = append(result.Users, &accountv1.UserSummary{Id: profile.ID.String(), DisplayName: profile.DisplayName, AvatarUrl: profile.AvatarURL})
 	}
 	return result, nil
 }
@@ -91,7 +90,7 @@ func (s *Server) GetVerifiedEmails(ctx context.Context, input *accountv1.GetVeri
 	if err := workspaceCaller(ctx); err != nil {
 		return nil, err
 	}
-	id, err := uuid.Parse(input.GetAccountId())
+	id, err := uuid.Parse(input.GetUserId())
 	if err != nil || id == uuid.Nil {
 		return nil, storeError(account.Fault{Code: "VALIDATION"})
 	}

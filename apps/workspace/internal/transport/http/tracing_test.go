@@ -89,7 +89,7 @@ func TestGinPropagatesHTTPTraceWithoutBaggage(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/v1/probe/"+uuid.NewString()+"?token=must-not-export", nil)
 	request.Header.Set("X-Gateway-Token", s.Config.GatewayToken)
 	request.Header.Set("X-Clerk-Sub", "user_trace")
-	request.Header.Set("X-Openlet-Account-ID", uuid.NewString())
+	request.Header.Set("X-Openlet-User-ID", uuid.NewString())
 	request.Header.Set("Traceparent", "00-"+traceID+"-1234567890abcdef-01")
 	request.Header.Set("Baggage", "private=must-not-export")
 	response := httptest.NewRecorder()
@@ -123,6 +123,6 @@ func TestGinPropagatesHTTPTraceWithoutBaggage(t *testing.T) {
 		t.Fatal("outbound span is not a child of inbound HTTP")
 	}
 	if account.Parent.SpanID() != outbound.SpanContext.SpanID() {
-		t.Fatal("Account span is not a child of outbound RPC")
+		t.Fatal("User span is not a child of outbound RPC")
 	}
 }

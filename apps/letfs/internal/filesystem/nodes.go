@@ -46,6 +46,8 @@ func (n Node) writable() error {
 	return nil
 }
 
+func (n Node) ReadOnly() bool { return n.readonly }
+
 func (n Node) directory() error {
 	if n.Kind != "directory" {
 		return apperr.New(apperr.Conflict, "NOT_DIRECTORY", "directory required")
@@ -284,8 +286,8 @@ func (s *Store) ListNodes(ctx context.Context, scopeID uuid.UUID, parent Locator
 	if err != nil {
 		return NodePage{}, err
 	}
-	rows, err := session.tx.Query(ctx, `SELECT `+strings.Replace(nodeColumns, "f.context", "NULL::text", 1)+`,false
- FROM nodes n LEFT JOIN files f ON f.node_id=n.id WHERE n.scope_id=$1 AND n.parent_id=$2 AND n.id>$3 ORDER BY n.id LIMIT $4`, scopeID, node.ID, after, count+1)
+	rows, err := session.tx.Query(ctx, `SELECT `+strings.Replace(nodeColumns, "f.context", "NULL::text", 1)+`,$5::boolean
+ FROM nodes n LEFT JOIN files f ON f.node_id=n.id WHERE n.scope_id=$1 AND n.parent_id=$2 AND n.id>$3 ORDER BY n.id LIMIT $4`, scopeID, node.ID, after, count+1, node.readonly || node.Kind == "file")
 	if err != nil {
 		return NodePage{}, databaseError(err)
 	}

@@ -60,7 +60,7 @@ func TestIntegrationArchiveRPCFramesCancellationAndBlockedSendDeadline(t *testin
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, connection.Close()) })
 	client := letfsv1.NewFilesystemServiceClient(connection)
-	ctx := metadata.NewOutgoingContext(t.Context(), metadata.Pairs("authorization", "Bearer "+token, "x-openlet-account-id", actor.String()))
+	ctx := metadata.NewOutgoingContext(t.Context(), metadata.Pairs("authorization", "Bearer "+token, "x-openlet-user-id", actor.String()))
 	input := &letfsv1.StreamArchiveRequest{FilesystemId: filesystemID.String(), ScopeId: fs.String(), NodeId: created.RootID.String()}
 	stream, err := client.StreamArchive(ctx, input)
 	require.NoError(t, err)

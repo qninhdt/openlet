@@ -37,6 +37,7 @@ type Store struct {
 	AI                                             *search.AI
 	Archive                                        ArchiveConfig
 	ArchiveSlots                                   *semaphore.Weighted
+	ImageSlots                                     *semaphore.Weighted
 }
 
 type Filesystem struct {

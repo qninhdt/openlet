@@ -1,27 +1,29 @@
+from uuid import UUID
+
 import grpc
 import pytest
 from google.rpc import error_details_pb2, status_pb2
 
 from openlet.errors import AppError
-from openlet.rpc import Authenticator, Credential, new_server, principal
+from openlet.rpc import Actor, Authenticator, Credential, new_server, principal
 from openlet_api.account.v1 import account_pb2 as pb
 from openlet_api.account.v1 import account_pb2_grpc as account_rpc
 
 ACTOR = "019a3b66-0000-7000-8000-000000000001"
 GATEWAY_TOKEN = "isolated-public-gateway-credential-12345"
 SERVICE_TOKEN = "isolated-owner-service-credential-12345"
-SUMMARIES = "/openlet_api.account.v1.AccountService/GetAccountSummaries"
+SUMMARIES = "/openlet_api.account.v1.AccountService/GetUserSummaries"
 EMAILS = "/openlet_api.account.v1.AccountService/GetVerifiedEmails"
 STREAM = "/openlet_api.test.v1.StreamService/Read"
 
 
 class Account(account_rpc.AccountServiceServicer):
-    async def GetAccountSummaries(self, request, context):
+    async def GetUserSummaries(self, request, context):
         caller = principal()
-        return pb.GetAccountSummariesResponse(
-            accounts=[
-                pb.AccountSummary(
-                    id=str(caller.actor_id),
+        return pb.GetUserSummariesResponse(
+            users=[
+                pb.UserSummary(
+                    id=str(caller.actor.id),
                     display_name=caller.service,
                 )
             ]
@@ -48,6 +50,13 @@ async def account_server():
                     gateway=True,
                 ),
                 Credential("workspace", SERVICE_TOKEN, frozenset({SUMMARIES})),
+                Credential(
+                    "leta",
+                    "isolated-leta-method-credential-12345",
+                    frozenset({SUMMARIES}),
+                    delegate_actor=True,
+                    leta_methods=frozenset({SUMMARIES}),
+                ),
                 Credential(
                     "reader",
                     "isolated-stream-service-credential-123",
@@ -96,12 +105,12 @@ async def account_server():
         await server.stop(None)
 
 
-async def invoke(stub, metadata, method="GetAccountSummaries"):
+async def invoke(stub, metadata, method="GetUserSummaries"):
     call = getattr(stub, method)
     request = (
-        pb.GetAccountSummariesRequest(ids=[ACTOR])
-        if method == "GetAccountSummaries"
-        else pb.GetVerifiedEmailsRequest(account_id=ACTOR)
+        pb.GetUserSummariesRequest(ids=[ACTOR])
+        if method == "GetUserSummaries"
+        else pb.GetVerifiedEmailsRequest(user_id=ACTOR)
     )
     return await call(request, metadata=metadata, timeout=2)
 
@@ -113,11 +122,11 @@ async def test_authenticated_rpc_wire_enforces_identity_and_method_scope(
         stub = account_rpc.AccountServiceStub(channel)
         gateway = (
             ("authorization", f"Bearer {GATEWAY_TOKEN}"),
-            ("x-openlet-account-id", ACTOR),
+            ("x-openlet-user-id", ACTOR),
         )
         response = await invoke(stub, gateway)
-        assert response.accounts[0].id == ACTOR
-        assert response.accounts[0].display_name == "gateway"
+        assert response.users[0].id == ACTOR
+        assert response.users[0].display_name == "gateway"
 
         cases = [
             ((), grpc.StatusCode.UNAUTHENTICATED),
@@ -126,7 +135,7 @@ async def test_authenticated_rpc_wire_enforces_identity_and_method_scope(
                 grpc.StatusCode.UNAUTHENTICATED,
             ),
             (
-                gateway + (("x-openlet-account-id", ACTOR),),
+                gateway + (("x-openlet-user-id", ACTOR),),
                 grpc.StatusCode.UNAUTHENTICATED,
             ),
             (
@@ -140,7 +149,7 @@ async def test_authenticated_rpc_wire_enforces_identity_and_method_scope(
             (
                 (
                     ("authorization", f"Bearer {SERVICE_TOKEN}"),
-                    ("x-openlet-account-id", ACTOR),
+                    ("x-openlet-user-id", ACTOR),
                 ),
                 grpc.StatusCode.PERMISSION_DENIED,
             ),
@@ -167,7 +176,7 @@ async def test_server_preserves_safe_application_error_details(account_server):
                 stub,
                 (
                     ("authorization", f"Bearer {GATEWAY_TOKEN}"),
-                    ("x-openlet-account-id", ACTOR),
+                    ("x-openlet-user-id", ACTOR),
                 ),
                 "GetVerifiedEmails",
             )
@@ -215,3 +224,68 @@ async def test_streaming_rpc_preserves_cardinality_auth_context_and_safe_errors(
         with pytest.raises(grpc.aio.AioRpcError) as captured:
             await denied.read()
         assert captured.value.code() == grpc.StatusCode.UNAUTHENTICATED
+
+
+async def test_typed_leta_delegation_and_invalid_headers(account_server):
+    from openlet.rpc import RpcClient
+
+    token = "isolated-leta-method-credential-12345"
+    async with RpcClient(account_server, token, allow_plaintext=True) as rpc:
+        stub = account_rpc.AccountServiceStub(rpc.channel)
+        result = await rpc.invoke(
+            stub.GetUserSummaries,
+            pb.GetUserSummariesRequest(ids=[ACTOR]),
+            actor=Actor("leta", UUID(ACTOR)),
+        )
+        assert result.users[0].id == ACTOR
+        assert result.users[0].display_name == "leta"
+        for metadata in (
+            (
+                ("authorization", f"Bearer {token}"),
+                ("x-openlet-user-id", ACTOR),
+                ("x-openlet-leta-id", ACTOR),
+            ),
+            (
+                ("authorization", f"Bearer {token}"),
+                ("x-openlet-leta-id", ACTOR),
+                ("x-openlet-leta-id", ACTOR),
+            ),
+            (("authorization", f"Bearer {token}"), ("x-openlet-account-id", ACTOR)),
+            (
+                ("authorization", f"Bearer {GATEWAY_TOKEN}"),
+                ("x-openlet-leta-id", ACTOR),
+            ),
+            (
+                ("authorization", f"Bearer {SERVICE_TOKEN}"),
+                ("x-openlet-leta-id", ACTOR),
+            ),
+        ):
+            with pytest.raises(grpc.aio.AioRpcError) as caught:
+                await invoke(stub, metadata)
+            assert caught.value.code() in {
+                grpc.StatusCode.UNAUTHENTICATED,
+                grpc.StatusCode.PERMISSION_DENIED,
+            }
+
+
+def test_actor_and_delegation_configuration_are_closed():
+    for kind, value in (
+        ("account", UUID(ACTOR)),
+        ("user", UUID(int=0)),
+        ("leta", ACTOR),
+    ):
+        with pytest.raises(ValueError, match="invalid actor identity"):
+            Actor(kind, value)
+    for options in ({"gateway": True}, {"delegate_actor": False}):
+        with pytest.raises(ValueError, match="invalid RPC credential"):
+            Authenticator(
+                [
+                    Credential(
+                        "invalid",
+                        SERVICE_TOKEN,
+                        frozenset({SUMMARIES}),
+                        leta_methods=frozenset({SUMMARIES}),
+                        **options,
+                    )
+                ]
+            )

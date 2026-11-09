@@ -14,7 +14,7 @@ import time
 from functools import partial
 
 name = f"openlet-api-sql-bench-{os.getpid()}"
-image = "postgres:18.6-trixie@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336"
+image = "postgres:18.6-trixie@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42"
 scope = "11111111-1111-4111-8111-111111111111"
 fs = "22222222-2222-4222-8222-222222222222"
 
@@ -181,7 +181,8 @@ def main():
             raise RuntimeError("postgres not ready")
         for svc in ["letfs", "account", "workspace"]:
             sql("CREATE DATABASE " + svc)
-            sql((root / f"apps/{svc}/migrations/0001_initial.sql").read_text(), svc)
+            for migration in sorted((root / f"apps/{svc}/migrations").glob("*.sql")):
+                sql(migration.read_text(), svc)
 
         def bench(
             label,
@@ -257,12 +258,23 @@ def main():
             names.insert(0, "n" + str(target))
             target = (target - 2) // 10 + 1
         for label, requests in [
-            ("path", [{"idx": 0, "start_id": uid(1), "parts": names}]),
-            ("id", [{"idx": 0, "start_id": uid(100000), "parts": []}]),
+            (
+                "path",
+                [{"idx": 0, "start_id": uid(1), "parts": names, "root_id": uid(1)}],
+            ),
+            (
+                "id",
+                [{"idx": 0, "start_id": uid(100000), "parts": [], "root_id": uid(1)}],
+            ),
             (
                 "batch-100",
                 [
-                    {"idx": i, "start_id": uid(99901 + i), "parts": []}
+                    {
+                        "idx": i,
+                        "start_id": uid(99901 + i),
+                        "parts": [],
+                        "root_id": uid(1),
+                    }
                     for i in range(100)
                 ],
             ),
@@ -408,9 +420,9 @@ def main():
                 [lit(scope)],
             ),
         )
-        # Indexed read/list controls in the other services: 100k accounts/members, 10k workspaces.
+        # Indexed read/list controls in the other services: 100k users/members, 10k workspaces.
         sql(
-            "INSERT INTO accounts(id,type,clerk_id) SELECT md5('node-'||i)::uuid,'user','clerk-'||i FROM generate_series(1,100000) i; ANALYZE;",
+            "INSERT INTO users(id,clerk_id) SELECT md5('node-'||i)::uuid,'clerk-'||i FROM generate_series(1,100000) i; ANALYZE;",
             "account",
         )
         bench(
@@ -418,7 +430,7 @@ def main():
             bind(
                 read(
                     "apps/account/internal/account/store.go",
-                    "SELECT id,type,owner_id,display_name,avatar_url FROM accounts WHERE id=$1",
+                    "SELECT id,display_name,avatar_url FROM users WHERE id=$1",
                 ),
                 [lit(uid(50000))],
             ),
@@ -429,7 +441,7 @@ def main():
             bind(
                 read(
                     "apps/account/internal/account/store.go",
-                    "SELECT id,type,owner_id,display_name,avatar_url FROM accounts WHERE id=ANY",
+                    "SELECT id,display_name,avatar_url FROM users WHERE id=ANY",
                 ),
                 [
                     "ARRAY["
@@ -440,7 +452,7 @@ def main():
             "account",
         )
         sql(
-            "INSERT INTO workspaces(id,name,filesystem_id,shared_scope_id) SELECT md5('ws-'||i)::uuid,'workspace',md5('fs-'||i)::uuid,md5('shared-'||i)::uuid FROM generate_series(1,10000) i; INSERT INTO workspace_members(workspace_id,account_id,role,personal_scope_id) SELECT md5('ws-'||((i-1)/10+1))::uuid,md5('member-'||((i-1)%10))::uuid,'member',md5('personal-'||i)::uuid FROM generate_series(1,100000) i; ANALYZE;",
+            "INSERT INTO workspaces(id,name,filesystem_id,shared_scope_id) SELECT md5('ws-'||i)::uuid,'workspace',md5('fs-'||i)::uuid,md5('shared-'||i)::uuid FROM generate_series(1,10000) i; INSERT INTO workspace_members(workspace_id,user_id,role,personal_scope_id) SELECT md5('ws-'||((i-1)/10+1))::uuid,md5('member-'||((i-1)%10))::uuid,'member',md5('personal-'||i)::uuid FROM generate_series(1,100000) i; ANALYZE;",
             "workspace",
         )
         wc = read(
@@ -471,7 +483,7 @@ def main():
             bind(
                 read(
                     "apps/workspace/internal/workspace/store.go",
-                    "SELECT account_id,role,personal_scope_id,status FROM workspace_members WHERE workspace_id=$1 AND account_id>$2",
+                    "SELECT user_id,role,personal_scope_id,status FROM workspace_members WHERE workspace_id=$1 AND user_id>$2",
                 ),
                 [
                     "md5('ws-1')::uuid",

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"errors"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -20,6 +21,7 @@ type Credential struct {
 	Methods       []string
 	Gateway       bool
 	DelegateActor bool
+	LetaMethods   []string
 }
 
 type Authenticator struct{ credentials []Credential }
@@ -39,6 +41,12 @@ func NewAuthenticator(credentials []Credential) (*Authenticator, error) {
 		}
 		seen[credential.Token] = true
 		credential.Methods = append([]string(nil), credential.Methods...)
+		credential.LetaMethods = append([]string(nil), credential.LetaMethods...)
+		for _, method := range credential.LetaMethods {
+			if !slices.Contains(credential.Methods, method) || credential.Gateway || !credential.DelegateActor {
+				return nil, errors.New("invalid Leta delegation allowlist")
+			}
+		}
 		for _, method := range credential.Methods {
 			if !strings.HasPrefix(method, "/openlet_api.") || strings.Count(method, "/") != 2 {
 				return nil, errors.New("invalid RPC method allowlist")
@@ -55,7 +63,8 @@ func NewAuthenticator(credentials []Credential) (*Authenticator, error) {
 // Authenticate verifies native gRPC caller identity and method scope.
 func (a *Authenticator) Authenticate(ctx context.Context, method string) (context.Context, error) {
 	md, _ := metadata.FromIncomingContext(ctx)
-	if len(md.Get("authorization")) != 1 || len(md.Get("x-openlet-account-id")) > 1 || len(md.Get("x-openlet-service")) != 0 {
+	users, letas := md.Get("x-openlet-user-id"), md.Get("x-openlet-leta-id")
+	if len(md.Get("authorization")) != 1 || len(users)+len(letas) > 1 || len(md.Get("x-openlet-service")) != 0 || len(md.Get("x-openlet-account-id")) != 0 {
 		return nil, status.Error(codes.Unauthenticated, "invalid caller metadata")
 	}
 	token, ok := strings.CutPrefix(md.Get("authorization")[0], "Bearer ")
@@ -66,15 +75,18 @@ func (a *Authenticator) Authenticate(ctx context.Context, method string) (contex
 		if subtle.ConstantTimeCompare([]byte(token), []byte(credential.Token)) != 1 {
 			continue
 		}
-		allowed := false
-		for _, candidate := range credential.Methods {
-			allowed = allowed || candidate == method
-		}
-		if !allowed {
+		if !slices.Contains(credential.Methods, method) {
 			return nil, status.Error(codes.PermissionDenied, "caller cannot invoke method")
 		}
 		principal := identity.Principal{Service: credential.Service, Gateway: credential.Gateway}
-		if actors := md.Get("x-openlet-account-id"); len(actors) == 1 {
+		actors, kind := users, identity.User
+		if len(letas) != 0 {
+			actors, kind = letas, identity.Leta
+			if !slices.Contains(credential.LetaMethods, method) {
+				return nil, status.Error(codes.PermissionDenied, "caller cannot delegate Leta")
+			}
+		}
+		if len(actors) == 1 {
 			if !credential.Gateway && !credential.DelegateActor {
 				return nil, status.Error(codes.PermissionDenied, "caller cannot delegate user")
 			}
@@ -83,6 +95,7 @@ func (a *Authenticator) Authenticate(ctx context.Context, method string) (contex
 				return nil, status.Error(codes.Unauthenticated, "invalid actor identity")
 			}
 			principal.ActorID = actor
+			principal.ActorKind = kind
 		} else if credential.Gateway {
 			return nil, status.Error(codes.Unauthenticated, "missing actor identity")
 		}

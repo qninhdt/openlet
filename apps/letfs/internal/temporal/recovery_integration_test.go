@@ -69,7 +69,7 @@ func TestIntegrationFilesystemDeletionWorkerRestart(t *testing.T) {
 	store := &filesystem.Store{DB: db, Graph: graph, MaxNodes: 1000, MaxCopyNodes: 100, InlineLimit: 64, MaxFileBytes: 64, MaxOutstanding: 100, MaxCleanupBacklog: 100}
 	owner := identity.WithPrincipal(t.Context(), identity.Principal{Service: "resource-owner"})
 	actor := uuid.New()
-	ctx, cancel := context.WithTimeout(identity.WithPrincipal(t.Context(), identity.Principal{Service: "gateway", Gateway: true, ActorID: actor}), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(identity.WithPrincipal(t.Context(), identity.Principal{ActorKind: identity.User, Service: "gateway", Gateway: true, ActorID: actor}), 2*time.Minute)
 	defer cancel()
 	fs, scope := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	_, err := store.CreateFilesystem(owner, uuid.New(), filesystem.CreateFilesystem{ID: fs, LimitBytes: 3})

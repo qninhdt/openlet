@@ -12,7 +12,6 @@ import (
 type Config struct {
 	Listen, RPCListen, RPCCertificatePath, RPCPrivateKeyPath                                             string
 	DatabaseURL, TemporalAddress, TemporalNamespace, GatewayToken, WorkspaceToken, ClerkURL, ClerkSecret string
-	SpiceDBAddress, SpiceDBKey                                                                           string
 	AllowPlaintextRPC                                                                                    bool
 }
 
@@ -33,10 +32,6 @@ func Parse(get func(string) string) (Config, error) {
 		return c, errors.New("ALLOW_PLAINTEXT_RPC must be true or false")
 	}
 	c.AllowPlaintextRPC = plaintext == "true"
-	c.SpiceDBAddress, c.SpiceDBKey = get("SPICEDB_ADDRESS"), get("SPICEDB_GRPC_PRESHARED_KEY")
-	if host, port, err := net.SplitHostPort(c.SpiceDBAddress); err != nil || host == "" || port == "" {
-		return c, errors.New("invalid SPICEDB_ADDRESS")
-	}
 	c.RPCCertificatePath, c.RPCPrivateKeyPath = get("RPC_TLS_CERT_PATH"), get("RPC_TLS_KEY_PATH")
 	if c.AllowPlaintextRPC {
 		if c.RPCCertificatePath != "" || c.RPCPrivateKeyPath != "" {
@@ -73,7 +68,7 @@ func Parse(get func(string) string) (Config, error) {
 	if _, _, e = net.SplitHostPort(c.TemporalAddress); e != nil || c.TemporalNamespace == "" {
 		return c, errors.New("invalid Temporal address or namespace")
 	}
-	for _, t := range []string{c.GatewayToken, c.WorkspaceToken, c.SpiceDBKey} {
+	for _, t := range []string{c.GatewayToken, c.WorkspaceToken} {
 		if len(t) < 32 || strings.IndexFunc(t, func(r rune) bool {
 			return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_')
 		}) >= 0 {

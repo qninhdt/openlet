@@ -4,6 +4,7 @@ package workspace
 
 import (
 	"context"
+	"github.com/qninhdt/openlet/packages/go/identity"
 	"testing"
 	"time"
 
@@ -44,16 +45,16 @@ func TestIntegrationRoleChangePreservesPersonalScopeGrants(t *testing.T) {
 	member, personal := uuid.New(), uuid.New()
 	_, err = service.ApplyMembership(ctx, Mutation{Kind: "add", Key: uuid.New(), WorkspaceID: in.ID, ActorID: in.Input.ActorID, TargetID: member, Role: "member", PersonalScopeID: personal})
 	require.NoError(t, err)
-	_, err = service.UpdateScopeAccess(ctx, Mutation{WorkspaceID: in.ID, ActorID: member, ScopeID: personal, TargetID: member, ScopeRole: "manager", Revoke: true})
+	_, err = service.UpdateScopeAccess(ctx, Mutation{TargetKind: identity.User, WorkspaceID: in.ID, ActorID: member, ScopeID: personal, TargetID: member, ScopeRole: "manager", Revoke: true})
 	require.NoError(t, err)
 	mutation := Mutation{Kind: "member", Key: uuid.New(), WorkspaceID: in.ID, ActorID: in.Input.ActorID, TargetID: member, Role: "admin"}
 	for range 2 {
 		_, err = service.ApplyMembership(ctx, mutation)
 		require.NoError(t, err)
-		allowed, err := authz.Check(ctx, store.Graph, member.String(), authz.WorkspaceManageMembers, authz.Resource{Type: "workspace", ID: in.ID.String()})
+		allowed, err := authz.Check(ctx, store.Graph, identity.Actor{Kind: identity.User, ID: member}, authz.WorkspaceManageMembers, authz.Resource{Type: "workspace", ID: in.ID.String()})
 		require.NoError(t, err)
 		require.True(t, allowed)
-		allowed, err = authz.Check(ctx, store.Graph, member.String(), authz.ScopeManageAccess, authz.Resource{Type: "scope", ID: personal.String()})
+		allowed, err = authz.Check(ctx, store.Graph, identity.Actor{Kind: identity.User, ID: member}, authz.ScopeManageAccess, authz.Resource{Type: "scope", ID: personal.String()})
 		require.NoError(t, err)
 		require.False(t, allowed, "a role change or its retry must not restore a revoked personal grant")
 	}

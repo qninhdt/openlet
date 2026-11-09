@@ -1,15 +1,15 @@
 # Generated from contracts/authz/schema.zed; DO NOT EDIT.
 RESOURCE_ACTIONS = {
-    "account": frozenset(
-        [
-            "read",
-            "update",
-        ]
-    ),
     "filesystem": frozenset(
         [
             "read",
             "delete",
+        ]
+    ),
+    "leta": frozenset(
+        [
+            "read",
+            "manage",
         ]
     ),
     "scope": frozenset(
@@ -28,6 +28,7 @@ RESOURCE_ACTIONS = {
             "read",
             "update",
             "manage_members",
+            "create_leta",
             "delete",
         ]
     ),

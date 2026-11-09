@@ -16,13 +16,13 @@ func TestMetadataPatchOnlyOwnsInternalID(t *testing.T) {
 			t.Error("wrong Clerk request")
 		}
 		var got map[string]map[string]string
-		if json.NewDecoder(r.Body).Decode(&got) != nil || len(got) != 1 || len(got["public_metadata"]) != 1 || got["public_metadata"]["openlet_account_id"] != "internal-id" {
+		if json.NewDecoder(r.Body).Decode(&got) != nil || len(got) != 1 || len(got["public_metadata"]) != 1 || got["public_metadata"]["openlet_user_id"] != "internal-id" {
 			t.Error("metadata scope changed")
 		}
 		w.WriteHeader(200)
 	}))
 	defer server.Close()
-	if e := (Client{BaseURL: server.URL, Secret: "test-secret"}).PublishAccountIdentity(context.Background(), "user_subject", "internal-id"); e != nil {
+	if e := (Client{BaseURL: server.URL, Secret: "test-secret"}).PublishUserIdentity(context.Background(), "user_subject", "internal-id"); e != nil {
 		t.Fatal(e)
 	}
 }

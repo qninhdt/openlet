@@ -62,6 +62,33 @@ func (s *Service) ReplaceContent(ctx context.Context, scopeID uuid.UUID, locator
 	return node, err
 }
 
+func (s *Service) dispatchTextMutation(ctx context.Context, result TextMutationResult, err error) (TextMutationResult, error) {
+	if err == nil && result.Stat.Node.Revision != result.BeforeRevision {
+		s.dispatchProcessing(ctx, result.Stat.Node.ID)
+	}
+	return result, err
+}
+
+func (s *Service) WriteText(ctx context.Context, scope uuid.UUID, target TextTarget, content []byte) (TextMutationResult, error) {
+	result, err := s.Store.WriteText(ctx, scope, target, content)
+	return s.dispatchTextMutation(ctx, result, err)
+}
+
+func (s *Service) AppendText(ctx context.Context, scope uuid.UUID, target TextTarget, content []byte) (TextMutationResult, error) {
+	result, err := s.Store.AppendText(ctx, scope, target, content)
+	return s.dispatchTextMutation(ctx, result, err)
+}
+
+func (s *Service) PatchText(ctx context.Context, scope uuid.UUID, target TextTarget, patch TextPatch) (TextMutationResult, error) {
+	result, err := s.Store.PatchText(ctx, scope, target, patch)
+	return s.dispatchTextMutation(ctx, result, err)
+}
+
+func (s *Service) TruncateText(ctx context.Context, scope uuid.UUID, target TextTarget, length int64, noCreate bool) (TextMutationResult, error) {
+	result, err := s.Store.TruncateText(ctx, scope, target, length, noCreate)
+	return s.dispatchTextMutation(ctx, result, err)
+}
+
 func (s *Service) CreateUpload(ctx context.Context, scopeID uuid.UUID, key uuid.UUID, input UploadCreation) (Upload, error) {
 	return s.Store.CreateUpload(ctx, scopeID, key, input)
 }
@@ -90,8 +117,12 @@ func (s *Service) CreateCopy(ctx context.Context, scopeID, key uuid.UUID, input 
 	return s.Store.CopyNode(ctx, scopeID, key, input)
 }
 
-func (s *Service) TrashNode(ctx context.Context, scopeID uuid.UUID, locator Locator, revision *int64) (TrashEntry, error) {
-	return s.Store.TrashNode(ctx, scopeID, locator, revision)
+func (s *Service) CreateDirectories(ctx context.Context, scope uuid.UUID, parent Locator, components []string, parents bool) (Node, error) {
+	return s.Store.CreateDirectories(ctx, scope, parent, components, parents)
+}
+
+func (s *Service) TrashNode(ctx context.Context, scopeID uuid.UUID, locator Locator, revision *int64, emptyDirectory bool) (TrashEntry, error) {
+	return s.Store.TrashNode(ctx, scopeID, locator, revision, emptyDirectory)
 }
 
 func (s *Service) RestoreTrash(ctx context.Context, scopeID, id uuid.UUID, input RestoreTrash) (Node, error) {

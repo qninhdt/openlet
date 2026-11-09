@@ -49,7 +49,7 @@ func TestIntegrationPythonWheelRPC(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, wheels, 1)
 	environment := filepath.Join(scratch, "environment")
-	run(scratch, "uv", "venv", "--python", "3.13", environment)
+	run(scratch, "uv", "venv", "--python", "3.14.10", environment)
 	python := filepath.Join(environment, "bin", "python")
 	run(scratch, "uv", "pip", "install", "--python", python, wheels[0])
 	authentication, err := NewAuthenticator([]Credential{
@@ -72,7 +72,7 @@ from openlet_api.letfs.v1 import letfs_pb2 as pb, letfs_pb2_grpc as rpc
 with grpc.insecure_channel(sys.argv[1]) as channel:
     client = rpc.FilesystemServiceStub(channel)
     actor = '019a3b66-0000-7000-8000-000000000001'
-    metadata = [('authorization', 'Bearer ' + sys.argv[2]), ('x-openlet-account-id', actor)]
+    metadata = [('authorization', 'Bearer ' + sys.argv[2]), ('x-openlet-user-id', actor)]
     request = pb.GetNodeRequest(filesystem_id='drive', node_id='node')
     response = client.GetNode(request, metadata=metadata, timeout=5)
     assert response.node.id == 'node'
@@ -80,7 +80,7 @@ with grpc.insecure_channel(sys.argv[1]) as channel:
     assert response.node.revision == 9223372036854775807
     assert not response.node.HasField('media_type')
     for supplied, expected in [([], grpc.StatusCode.UNAUTHENTICATED),
-            (metadata + [('x-openlet-account-id', actor)], grpc.StatusCode.UNAUTHENTICATED)]:
+            (metadata + [('x-openlet-user-id', actor)], grpc.StatusCode.UNAUTHENTICATED)]:
         try:
             client.GetNode(request, metadata=supplied, timeout=5)
             raise AssertionError('unauthorized call succeeded')

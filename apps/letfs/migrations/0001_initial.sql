@@ -96,6 +96,7 @@ CREATE TABLE public.trash_entries (
     original_parent_id uuid,
     original_name text NOT NULL,
     actor_id uuid NOT NULL,
+    actor_kind text NOT NULL CHECK (actor_kind IN ('user','leta')),
     state text DEFAULT 'trashed'::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT trash_entries_state_check CHECK ((state = ANY (ARRAY['trashed'::text, 'purging'::text])))
@@ -105,6 +106,7 @@ CREATE TABLE public.uploads (
     id uuid NOT NULL,
     scope_id uuid NOT NULL,
     actor_id uuid,
+    actor_kind text CHECK (actor_kind IN ('user','leta')),
     input jsonb NOT NULL,
     candidate_key text,
     state text DEFAULT 'open'::text NOT NULL,
@@ -128,8 +130,8 @@ CREATE TABLE public.uploads (
     CONSTRAINT uploads_direct_metadata CHECK ((((expected_size IS NOT NULL) AND (expected_size >= 0)))),
     CONSTRAINT uploads_object_identity CHECK ((((transport = 'inline'::text) AND (candidate_key IS NULL) AND (multipart_id IS NULL) AND (part_size IS NULL) AND (content_md5 IS NULL) AND (transfer_deadline IS NULL)) OR ((transport = 'single'::text) AND (candidate_key IS NOT NULL) AND (multipart_id IS NULL) AND (part_size IS NULL) AND (content_md5 IS NOT NULL)) OR ((transport = 'multipart'::text) AND (candidate_key IS NOT NULL) AND (part_size IS NOT NULL) AND (part_size >= 5242880) AND (content_md5 IS NULL)))),
     CONSTRAINT uploads_processing_owner CHECK (
-      (actor_id IS NOT NULL AND processing_file_id IS NULL AND processing_generation IS NULL AND relative_path IS NULL AND processing_stage IS NULL)
-      OR (processing_file_id IS NOT NULL AND processing_generation IS NOT NULL AND processing_generation > 0 AND relative_path IS NOT NULL AND processing_stage IS NOT NULL AND processing_stage IN ('parse','enrichment'))
+      (actor_id IS NOT NULL AND actor_kind IS NOT NULL AND processing_file_id IS NULL AND processing_generation IS NULL AND relative_path IS NULL AND processing_stage IS NULL)
+      OR (actor_id IS NULL AND actor_kind IS NULL AND processing_file_id IS NOT NULL AND processing_generation IS NOT NULL AND processing_generation > 0 AND relative_path IS NOT NULL AND processing_stage IS NOT NULL AND processing_stage IN ('parse','enrichment'))
     ),
     CONSTRAINT uploads_state_check CHECK ((state = ANY (ARRAY['open'::text, 'completing'::text, 'finalized'::text, 'aborted'::text]))),
     CONSTRAINT uploads_finalized_result CHECK (state != 'finalized' OR result IS NOT NULL),

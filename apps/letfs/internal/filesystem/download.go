@@ -43,13 +43,13 @@ func (s *Store) GetDownload(ctx context.Context, scopeID uuid.UUID, id uuid.UUID
 	}
 	var kind string
 	var key *string
-	err = session.tx.QueryRow(ctx, `SELECT storage_kind,inline_bytes,object_key FROM files WHERE node_id=$1`, node.ID).
+	err = session.tx.QueryRow(ctx, `SELECT storage_kind,COALESCE(inline_bytes,convert_to(text_content,'UTF8')),object_key FROM files WHERE node_id=$1`, node.ID).
 		Scan(&kind, &result.InlineContent, &key)
 	if err != nil {
 		return Download{}, databaseError(err)
 	}
 	switch kind {
-	case "inline":
+	case "inline", "text":
 		if result.InlineContent == nil || int64(len(result.InlineContent)) != result.SizeBytes {
 			return Download{}, apperr.New(apperr.Internal, "INTERNAL", "invalid stored content")
 		}

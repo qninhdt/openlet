@@ -41,7 +41,7 @@ func TestIntegrationDirectHTTPUsesFilesystemActionsAndExactBytes(t *testing.T) {
 		r, err := http.NewRequestWithContext(t.Context(), method, server.URL+path, bytes.NewReader(body))
 		require.NoError(t, err)
 		r.Header.Set("X-Gateway-Token", token)
-		r.Header.Set("X-Openlet-Account-ID", who.String())
+		r.Header.Set("X-Openlet-User-ID", who.String())
 		r.Header.Set("X-Clerk-Sub", "user_test")
 		for key, value := range headers {
 			r.Header.Set(key, value)

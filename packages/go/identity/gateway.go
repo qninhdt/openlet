@@ -23,8 +23,11 @@ func AuthenticateGateway(headers http.Header, token string, bootstrap bool) (Pri
 	if len(headers.Values("X-Clerk-Sub")) != 1 || headers.Get("X-Clerk-Sub") == "" {
 		return Principal{}, ErrGatewaySubject
 	}
+	if len(headers.Values("X-Openlet-Leta-ID")) != 0 || len(headers.Values("X-Openlet-Account-ID")) != 0 || len(headers.Values("X-Openlet-Service")) != 0 {
+		return Principal{}, ErrGatewayCredential
+	}
 	principal := Principal{Service: "gateway", Subject: headers.Get("X-Clerk-Sub"), Gateway: true}
-	actors := headers.Values("X-Openlet-Account-ID")
+	actors := headers.Values("X-Openlet-User-ID")
 	if len(actors) > 1 {
 		return Principal{}, ErrOnboardingRequired
 	}
@@ -39,5 +42,6 @@ func AuthenticateGateway(headers http.Header, token string, bootstrap bool) (Pri
 		return Principal{}, ErrOnboardingRequired
 	}
 	principal.ActorID = actor
+	principal.ActorKind = User
 	return principal, nil
 }

@@ -76,7 +76,7 @@ func (s *Store) Reprocess(ctx context.Context, scopeID uuid.UUID, id, key uuid.U
 	}
 	var object *string
 	var content []byte
-	err = session.tx.QueryRow(ctx, `SELECT object_key,inline_bytes FROM files WHERE node_id=$1 FOR UPDATE`, id).Scan(&object, &content)
+	err = session.tx.QueryRow(ctx, `SELECT object_key,COALESCE(inline_bytes,convert_to(text_content,'UTF8')) FROM files WHERE node_id=$1 FOR UPDATE`, id).Scan(&object, &content)
 	if err != nil {
 		return Reprocessing{}, databaseError(err)
 	}

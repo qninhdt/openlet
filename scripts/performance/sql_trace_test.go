@@ -78,13 +78,13 @@ func TestSQLBenchmarkAdditionalQueries(t *testing.T) {
 			id := uuid.MustParse("11111111-1111-4111-8111-111111111111")
 			scope := uuid.MustParse("22222222-2222-4222-8222-222222222222")
 			fixtureID := func(label string) uuid.UUID { return uuid.UUID(md5.Sum([]byte(label))) }
-			seed := `INSERT INTO accounts(id,type,clerk_id) SELECT md5('account-'||i)::uuid,'user','clerk-'||i FROM generate_series(1,100000) i;`
+			seed := `INSERT INTO users(id,clerk_id) SELECT md5('account-'||i)::uuid,'clerk-'||i FROM generate_series(1,100000) i;`
 			if service == "workspace" {
 				seed = fmt.Sprintf(`
 INSERT INTO workspaces(id,name,filesystem_id,shared_scope_id) SELECT md5('ws-'||i)::uuid,'workspace',md5('fs-'||i)::uuid,md5('scope-'||i)::uuid FROM generate_series(1,10000) i;
 INSERT INTO workspaces(id,name,filesystem_id,shared_scope_id) VALUES('%s','target',md5('target-fs')::uuid,'%s');
-INSERT INTO workspace_members(workspace_id,account_id,role,personal_scope_id) SELECT md5('ws-'||((i-1)/10+1))::uuid,md5('member-'||i)::uuid,'member',md5('personal-'||i)::uuid FROM generate_series(1,100000) i;
-INSERT INTO workspace_members(workspace_id,account_id,role,personal_scope_id) SELECT '%s',md5('target-member-'||i)::uuid,'member',md5('target-personal-'||i)::uuid FROM generate_series(1,100) i;
+INSERT INTO workspace_members(workspace_id,user_id,role,personal_scope_id) SELECT md5('ws-'||((i-1)/10+1))::uuid,md5('member-'||i)::uuid,'member',md5('personal-'||i)::uuid FROM generate_series(1,100000) i;
+INSERT INTO workspace_members(workspace_id,user_id,role,personal_scope_id) SELECT '%s',md5('target-member-'||i)::uuid,'member',md5('target-personal-'||i)::uuid FROM generate_series(1,100) i;
 INSERT INTO workspace_invitations(id,workspace_id,email,role,token_hash,expires_at) SELECT md5('invite-'||i)::uuid,CASE WHEN i<=100 THEN '%s'::uuid ELSE md5('ws-'||(1+i%%10000))::uuid END,'test-'||i||'@example.test','member',decode(md5(i::text)||md5(i::text),'hex'),now()+interval '1 hour' FROM generate_series(1,10000) i;
 INSERT INTO idempotency_keys(actor_id,request_key,request_hash,workspace_id,expires_at) SELECT md5('actor-'||i)::uuid,md5('key-'||i)::uuid,'hash',md5('ws-'||(1+i%%10000))::uuid,now()+CASE WHEN i<=100 THEN interval '-1 hour' ELSE interval '1 hour' END FROM generate_series(1,10000) i;`, id, scope, id, id)
 				seed += fmt.Sprintf(`INSERT INTO workspace_invitations(id,workspace_id,email,role,token_hash,expires_at) VALUES(md5('expired-invite')::uuid,'%s','expired@example.test','member',decode(md5('expired')||md5('expired'),'hex'),now()-interval '1 hour');`, id)
@@ -102,9 +102,9 @@ INSERT INTO files(node_id,storage_kind,inline_bytes,desired_generation,processin
 UPDATE files SET storage_kind='object',inline_bytes=NULL,object_key='fixture/object-2' WHERE node_id=md5('file-2')::uuid;
 UPDATE files SET storage_kind='object',inline_bytes=NULL,object_key='fixture/object-4' WHERE node_id=md5('file-4')::uuid;
 UPDATE nodes SET parent_id=NULL WHERE id=md5('file-3')::uuid;
-INSERT INTO trash_entries(id,scope_id,node_id,original_parent_id,original_name,actor_id) VALUES(md5('trash')::uuid,'%[2]s',md5('file-3')::uuid,md5('file-1')::uuid,'original-name',md5('actor')::uuid);
+INSERT INTO trash_entries(id,scope_id,node_id,original_parent_id,original_name,actor_id,actor_kind) VALUES(md5('trash')::uuid,'%[2]s',md5('file-3')::uuid,md5('file-1')::uuid,'original-name',md5('actor')::uuid,'user');
 INSERT INTO uploads(id,scope_id,input,transport,candidate_key,expected_size,content_md5,processing_file_id,processing_generation,relative_path,processing_stage) SELECT md5('upload-'||i)::uuid,'%[2]s','{}','single','candidate-'||i,1,'CY9rzUYh03PK3k6DJie09g==',md5('file-'||i)::uuid,1,'output','parse' FROM generate_series(1,100000) i;
-INSERT INTO uploads(id,scope_id,actor_id,input,transport,candidate_key,expected_size,part_size) VALUES(md5('multipart')::uuid,'%[2]s',md5('actor')::uuid,'{}','multipart','multipart-candidate',1,5242880);
+INSERT INTO uploads(id,scope_id,actor_id,actor_kind,input,transport,candidate_key,expected_size,part_size) VALUES(md5('multipart')::uuid,'%[2]s',md5('actor')::uuid,'user','{}','multipart','multipart-candidate',1,5242880);
 INSERT INTO object_deletions(object_key,filesystem_id) VALUES('fixture/object-2','%[1]s');
 INSERT INTO idempotency_keys(scope,operation,request_key,request_hash,result) SELECT 'actor/'||i,'process-file',i::text,'hash',jsonb_build_object('file_id',md5('file-'||i)::uuid,'generation',1) FROM generate_series(1,100000) i;
 INSERT INTO idempotency_keys(scope,operation,request_key,request_hash,result,expires_at) SELECT 'expired/'||i,'create-node',i::text,'hash','{}',now()-interval '1 hour' FROM generate_series(1,100) i;

@@ -1,3 +1,5 @@
+from uuid import UUID
+
 import grpc
 from authzed.api.v1 import (
     CheckPermissionResponse,
@@ -7,6 +9,7 @@ from authzed.api.v1 import (
 )
 
 from openlet.authz import Resource, check, client
+from openlet.rpc import Actor
 
 TOKEN = "isolated-spicedb-service-credential-123"
 
@@ -30,7 +33,7 @@ async def test_official_authzed_client_plaintext_boundary_is_bounded_and_owned()
     try:
         assert await check(
             api,
-            "019a3b66-0000-7000-8000-000000000001",
+            Actor("user", UUID("019a3b66-0000-7000-8000-000000000001")),
             "read_metadata",
             Resource("scope", "drive"),
         )

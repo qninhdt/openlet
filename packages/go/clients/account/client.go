@@ -40,13 +40,13 @@ func (c Client) Summaries(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]S
 
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	response, err := c.API.GetAccountSummaries(ctx, &accountv1.GetAccountSummariesRequest{Ids: values})
+	response, err := c.API.GetUserSummaries(ctx, &accountv1.GetUserSummariesRequest{Ids: values})
 	if err != nil {
 		return nil, rpc.DecodeError(err)
 	}
 
 	result := make(map[uuid.UUID]Summary, len(ids))
-	for _, item := range response.GetAccounts() {
+	for _, item := range response.GetUsers() {
 		id, err := uuid.Parse(item.GetId())
 		if err != nil || !requested[id] {
 			return nil, errors.New("user summary scope mismatch")
@@ -68,7 +68,7 @@ func (c Client) VerifiedEmails(ctx context.Context, id uuid.UUID) ([]string, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	response, err := c.API.GetVerifiedEmails(ctx, &accountv1.GetVerifiedEmailsRequest{AccountId: id.String()})
+	response, err := c.API.GetVerifiedEmails(ctx, &accountv1.GetVerifiedEmailsRequest{UserId: id.String()})
 	if err != nil {
 		return nil, rpc.DecodeError(err)
 	}

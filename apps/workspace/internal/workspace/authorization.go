@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"errors"
+	"github.com/qninhdt/openlet/packages/go/identity"
 	"time"
 
 	"github.com/google/uuid"
@@ -26,7 +27,7 @@ func (s *Store) Authorize(ctx context.Context, ws, actor uuid.UUID, action authz
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	allowed, err := authz.Check(ctx, s.Graph, actor.String(), action, resource)
+	allowed, err := authz.Check(ctx, s.Graph, identity.Actor{Kind: identity.User, ID: actor}, action, resource)
 	if err != nil {
 		return value, err
 	}

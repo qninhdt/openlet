@@ -5,7 +5,7 @@ import (
 	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/qninhdt/openlet/packages/go/authz"
+	"github.com/qninhdt/openlet/packages/go/identity"
 	"time"
 )
 
@@ -25,18 +25,18 @@ func usersetUpdate(op v1.RelationshipUpdate_Operation, kind, id, relation, ws, r
 
 // Joining/removal publishes/revokes the default personal grant; role-only edits preserve it.
 // Recovery leaves canonical direct scope grants intact.
-func (s *Store) WriteMemberRelationships(ctx context.Context, graph v1.PermissionsServiceClient, id uuid.UUID, defaults bool, accounts ...uuid.UUID) error {
-	if id == uuid.Nil || len(accounts) == 0 || len(accounts) > 100 {
+func (s *Store) WriteMemberRelationships(ctx context.Context, graph v1.PermissionsServiceClient, id uuid.UUID, defaults bool, users ...uuid.UUID) error {
+	if id == uuid.Nil || len(users) == 0 || len(users) > 100 {
 		return Fault{"VALIDATION"}
 	}
 	var updates []*v1.RelationshipUpdate
 	seen := map[uuid.UUID]bool{}
-	for _, account := range accounts {
-		if account == uuid.Nil || seen[account] {
+	for _, user := range users {
+		if user == uuid.Nil || seen[user] {
 			return Fault{"VALIDATION"}
 		}
-		seen[account] = true
-		member, err := s.Member(ctx, id, account)
+		seen[user] = true
+		member, err := s.Member(ctx, id, user)
 		if err != nil {
 			return err
 		}
@@ -45,14 +45,14 @@ func (s *Store) WriteMemberRelationships(ctx context.Context, graph v1.Permissio
 			if member.Status == "active" && member.Role == role {
 				op = v1.RelationshipUpdate_OPERATION_TOUCH
 			}
-			updates = append(updates, graphUpdate(op, "workspace", id.String(), role, "account", account.String()))
+			updates = append(updates, graphUpdate(op, "workspace", id.String(), role, "user", user.String()))
 		}
 		if defaults {
 			op := v1.RelationshipUpdate_OPERATION_TOUCH
 			if member.Status != "active" {
 				op = v1.RelationshipUpdate_OPERATION_DELETE
 			}
-			updates = append(updates, graphUpdate(op, "scope", member.PersonalScopeID.String(), "manager", "account", account.String()))
+			updates = append(updates, graphUpdate(op, "scope", member.PersonalScopeID.String(), "manager", "user", user.String()))
 		}
 	}
 	_, err := graph.WriteRelationships(ctx, &v1.WriteRelationshipsRequest{Updates: updates})
@@ -124,7 +124,7 @@ func (s *Store) RebuildWorkspaceRelationships(ctx context.Context, graph v1.Perm
 	}
 	after := uuid.Nil
 	for {
-		rows, err := s.DB.Query(ctx, `SELECT account_id FROM workspace_members WHERE workspace_id=$1 AND account_id>$2 ORDER BY account_id LIMIT 100`, id, after)
+		rows, err := s.DB.Query(ctx, `SELECT user_id FROM workspace_members WHERE workspace_id=$1 AND user_id>$2 ORDER BY user_id LIMIT 100`, id, after)
 		if err != nil {
 			return err
 		}
@@ -164,40 +164,5 @@ func (s *Store) RebuildRelationships(ctx context.Context, graph v1.PermissionsSe
 	}
 }
 func (s *Service) ChangeScopeAccess(ctx context.Context, ws, actor, scope, target uuid.UUID, role string, revoke bool) (Workspace, error) {
-	if role != "manager" && role != "editor" && role != "viewer" {
-		return Workspace{}, Fault{"VALIDATION"}
-	}
-	var owned bool
-	if err := s.Store.DB.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM workspaces WHERE id=$1 AND status='active' AND (shared_scope_id=$2 OR EXISTS(SELECT 1 FROM workspace_members WHERE workspace_id=$1 AND personal_scope_id=$2)))`, ws, scope).Scan(&owned); err != nil {
-		return Workspace{}, err
-	}
-	if !owned {
-		return Workspace{}, Fault{"NOT_FOUND"}
-	}
-	allowed, err := authz.Check(ctx, s.Store.Graph, actor.String(), authz.ScopeManageAccess, authz.Resource{Type: "scope", ID: scope.String()})
-	if err != nil {
-		return Workspace{}, err
-	}
-	if !allowed {
-		return Workspace{}, Fault{"FORBIDDEN"}
-	}
-	if _, err = s.Accounts.Summaries(ctx, []uuid.UUID{target}); err != nil {
-		return Workspace{}, err
-	}
-	return s.Mutate(ctx, Mutation{Kind: "scope", WorkspaceID: ws, ActorID: actor, ScopeID: scope, TargetID: target, ScopeRole: role, Revoke: revoke})
-}
-func (s *Service) UpdateScopeAccess(ctx context.Context, in Mutation) (Workspace, error) {
-	var status string
-	if err := s.Store.DB.QueryRow(ctx, `SELECT status FROM workspaces WHERE id=$1`, in.WorkspaceID).Scan(&status); err != nil {
-		return Workspace{}, err
-	}
-	if status != "active" {
-		return Workspace{}, Fault{"WORKSPACE_DELETING"}
-	}
-	op := v1.RelationshipUpdate_OPERATION_TOUCH
-	if in.Revoke {
-		op = v1.RelationshipUpdate_OPERATION_DELETE
-	}
-	_, err := s.Store.Graph.WriteRelationships(ctx, &v1.WriteRelationshipsRequest{Updates: []*v1.RelationshipUpdate{graphUpdate(op, "scope", in.ScopeID.String(), in.ScopeRole, "account", in.TargetID.String())}})
-	return Workspace{ID: in.WorkspaceID}, err
+	return s.ChangeTypedScopeAccess(ctx, Mutation{Kind: "scope", WorkspaceID: ws, ActorID: actor, ScopeID: scope, TargetID: target, TargetKind: identity.User, ScopeRole: role, Revoke: revoke})
 }

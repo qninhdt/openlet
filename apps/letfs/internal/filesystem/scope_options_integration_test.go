@@ -21,7 +21,7 @@ func TestIntegrationScopeBlobRestrictions(t *testing.T) {
 		MaxOutstanding: 10, MaxCleanupBacklog: 10, ProcessingMaxOutputs: 10, ProcessingMaxOutputBytes: 1024}
 	owner := identity.WithPrincipal(t.Context(), identity.Principal{Service: "resource-owner"})
 	actor := uuid.New()
-	ctx := identity.WithPrincipal(t.Context(), identity.Principal{Service: "gateway", Gateway: true, ActorID: actor})
+	ctx := identity.WithPrincipal(t.Context(), identity.Principal{ActorKind: identity.User, Service: "gateway", Gateway: true, ActorID: actor})
 	filesystemID, fs := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	input := CreateFilesystem{ID: filesystemID, LimitBytes: 4096}
 	key := uuid.New()
@@ -56,7 +56,7 @@ func TestIntegrationScopeBlobRestrictions(t *testing.T) {
 	copyInput, err := s.prepareCopy(ctx, unrestricted.ID, uuid.New(), CreateCopy{DestinationScopeID: fs, SourceID: binary.ID, ParentID: *created.RootID, Name: "binary-copy-checked", Revision: &binary.Revision})
 	require.NoError(t, err)
 	require.Equal(t, "BLOB_FILES_DISABLED", reason(s.copyTreeData(ctx, copyInput)))
-	_, err = db.Exec(ctx, `UPDATE files SET storage_kind='object',inline_bytes=NULL,object_key='objects/source' WHERE node_id=$1`, binary.ID)
+	_, err = db.Exec(ctx, `UPDATE files SET storage_kind='object',inline_bytes=NULL,text_content=NULL,newline_count=NULL,text_sha256=NULL,object_key='objects/source' WHERE node_id=$1`, binary.ID)
 	require.NoError(t, err)
 	_, err = s.prepareCopy(ctx, unrestricted.ID, uuid.New(), CreateCopy{DestinationScopeID: fs, SourceID: binary.ID, ParentID: *created.RootID, Name: "blob-copy", Revision: &binary.Revision})
 	require.Equal(t, "BLOB_FILES_DISABLED", reason(err), "reject before touching object storage")
@@ -93,9 +93,9 @@ func TestIntegrationScopeBlobRestrictions(t *testing.T) {
 	var saved []byte
 	var kind, format, publication string
 	var afterUsed, afterCount, revision int64
-	require.NoError(t, db.QueryRow(ctx, `SELECT f.inline_bytes,f.storage_kind,f.processing_format,f.publication_status,n.revision FROM files f JOIN nodes n ON n.id=f.node_id WHERE n.id=$1`, file.ID).Scan(&saved, &kind, &format, &publication, &revision))
+	require.NoError(t, db.QueryRow(ctx, `SELECT COALESCE(f.inline_bytes,convert_to(f.text_content,'UTF8')),f.storage_kind,f.processing_format,f.publication_status,n.revision FROM files f JOIN nodes n ON n.id=f.node_id WHERE n.id=$1`, file.ID).Scan(&saved, &kind, &format, &publication, &revision))
 	require.Equal(t, text, saved)
-	require.Equal(t, "inline", kind)
+	require.Equal(t, "text", kind)
 	require.Equal(t, "text", format, "filename cannot route text to a binary parser")
 	require.Equal(t, "parsed", publication)
 	require.Equal(t, file.Revision, revision)
@@ -115,9 +115,9 @@ func TestIntegrationScopeBlobRestrictions(t *testing.T) {
 	admission, err := s.prepareCopy(ctx, fs, uuid.New(), CreateCopy{DestinationScopeID: fs, SourceID: file.ID, ParentID: *created.RootID, Name: "copy", Revision: &file.Revision})
 	require.NoError(t, err)
 	require.NoError(t, s.copyTreeData(ctx, admission))
-	require.NoError(t, db.QueryRow(ctx, `SELECT inline_bytes,storage_kind FROM files WHERE node_id=$1`, admission.Root.Destination).Scan(&saved, &kind))
+	require.NoError(t, db.QueryRow(ctx, `SELECT COALESCE(inline_bytes,convert_to(text_content,'UTF8')),storage_kind FROM files WHERE node_id=$1`, admission.Root.Destination).Scan(&saved, &kind))
 	require.Equal(t, []byte("updated\n"), saved)
-	require.Equal(t, "inline", kind)
+	require.Equal(t, "text", kind)
 
 	source := Generation{FileID: file.ID, Generation: 2}
 	parsed, err := s.PrepareParse(ctx, source)
@@ -146,7 +146,7 @@ func TestIntegrationScopeIndexingDisabledPreservesEnrichment(t *testing.T) {
 	s := Store{DB: db, Graph: graph, MaxNodes: 100, InlineLimit: 100, MaxFileBytes: 100, ProcessingMaxOutputs: 10}
 	owner := identity.WithPrincipal(t.Context(), identity.Principal{Service: "resource-owner"})
 	actor := uuid.New()
-	ctx := identity.WithPrincipal(t.Context(), identity.Principal{Service: "gateway", Gateway: true, ActorID: actor})
+	ctx := identity.WithPrincipal(t.Context(), identity.Principal{ActorKind: identity.User, Service: "gateway", Gateway: true, ActorID: actor})
 	fs := uuid.Must(uuid.NewV7())
 	_, err := s.CreateFilesystem(owner, uuid.New(), CreateFilesystem{ID: fs, LimitBytes: 1000})
 	require.NoError(t, err)

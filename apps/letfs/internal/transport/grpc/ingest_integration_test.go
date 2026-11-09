@@ -63,7 +63,7 @@ func TestIntegrationIngestParseOverAuthenticatedRPC(t *testing.T) {
 	request := &letfsv1.PrepareParseRequest{FileId: file.String(), Generation: 1}
 	_, err = client.PrepareParse(t.Context(), request)
 	require.Equal(t, codes.Unauthenticated, status.Code(err))
-	gateway := metadata.NewOutgoingContext(t.Context(), metadata.Pairs("authorization", "Bearer "+gatewayToken, "x-openlet-account-id", uuid.NewString()))
+	gateway := metadata.NewOutgoingContext(t.Context(), metadata.Pairs("authorization", "Bearer "+gatewayToken, "x-openlet-user-id", uuid.NewString()))
 	_, err = client.PrepareParse(gateway, request)
 	require.Equal(t, codes.PermissionDenied, status.Code(err))
 	prepared, err := client.PrepareParse(ctx, request)
@@ -122,7 +122,7 @@ func TestIntegrationIngestParseOverAuthenticatedRPC(t *testing.T) {
 	_, err = client.GetOutputUpload(canceled, &letfsv1.GetOutputUploadRequest{Scope: scope})
 	require.Equal(t, codes.Canceled, status.Code(err))
 	var content []byte
-	require.NoError(t, db.QueryRow(t.Context(), `SELECT f.inline_bytes FROM uploads u JOIN files f ON f.node_id=u.result_node_id WHERE u.id=$1`, scope.UploadId).Scan(&content))
+	require.NoError(t, db.QueryRow(t.Context(), `SELECT COALESCE(f.inline_bytes,convert_to(f.text_content,'UTF8')) FROM uploads u JOIN files f ON f.node_id=u.result_node_id WHERE u.id=$1`, scope.UploadId).Scan(&content))
 	require.Equal(t, []byte{0, 255, 1}, content)
 	enriched, err := client.PrepareEnrichment(ctx, &letfsv1.PrepareEnrichmentRequest{Source: attempt})
 	require.NoError(t, err)

@@ -17,9 +17,9 @@ CREATE TABLE public.workspace_invitations (
     token_hash bytea NOT NULL,
     expires_at timestamp with time zone NOT NULL,
     status text DEFAULT 'pending'::text NOT NULL,
-    accepted_account_id uuid,
+    accepted_user_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT workspace_invitations_check CHECK (((status = 'accepted'::text) = (accepted_account_id IS NOT NULL))),
+    CONSTRAINT workspace_invitations_check CHECK (((status = 'accepted'::text) = (accepted_user_id IS NOT NULL))),
     CONSTRAINT workspace_invitations_email_check CHECK (((length(email) >= 3) AND (length(email) <= 254))),
     CONSTRAINT workspace_invitations_role_check CHECK ((role = ANY (ARRAY['admin'::text, 'member'::text]))),
     CONSTRAINT workspace_invitations_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'revoked'::text, 'accepted'::text, 'expired'::text]))),
@@ -28,7 +28,7 @@ CREATE TABLE public.workspace_invitations (
 
 CREATE TABLE public.workspace_members (
     workspace_id uuid NOT NULL,
-    account_id uuid NOT NULL,
+    user_id uuid NOT NULL,
     role text NOT NULL,
     personal_scope_id uuid NOT NULL UNIQUE,
     status text NOT NULL DEFAULT 'active' CHECK (status IN ('active','inactive')),
@@ -55,7 +55,7 @@ ALTER TABLE ONLY public.workspace_invitations
     ADD CONSTRAINT workspace_invitations_token_hash_key UNIQUE (token_hash);
 
 ALTER TABLE ONLY public.workspace_members
-    ADD CONSTRAINT workspace_members_pkey PRIMARY KEY (workspace_id, account_id);
+    ADD CONSTRAINT workspace_members_pkey PRIMARY KEY (workspace_id, user_id);
 
 ALTER TABLE ONLY public.workspaces
     ADD CONSTRAINT workspaces_pkey PRIMARY KEY (id);
@@ -65,7 +65,7 @@ CREATE UNIQUE INDEX workspace_pending_invitation ON public.workspace_invitations
 
 CREATE INDEX workspace_invitation_page ON public.workspace_invitations USING btree (workspace_id, id);
 
-CREATE INDEX workspace_members_by_account ON public.workspace_members USING btree (account_id, workspace_id);
+CREATE INDEX workspace_members_by_user ON public.workspace_members USING btree (user_id, workspace_id);
 
 CREATE UNIQUE INDEX workspace_one_owner ON public.workspace_members USING btree (workspace_id) WHERE role='owner' AND status='active';
 

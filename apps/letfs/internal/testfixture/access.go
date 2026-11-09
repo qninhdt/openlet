@@ -33,7 +33,7 @@ func Grant(t *testing.T, graph v1.PermissionsServiceClient, kind string, id, act
 	_, err := graph.WriteRelationships(t.Context(), &v1.WriteRelationshipsRequest{Updates: []*v1.RelationshipUpdate{{
 		Operation: v1.RelationshipUpdate_OPERATION_TOUCH, Relationship: &v1.Relationship{
 			Resource: &v1.ObjectReference{ObjectType: kind, ObjectId: id.String()}, Relation: relation,
-			Subject: &v1.SubjectReference{Object: &v1.ObjectReference{ObjectType: "account", ObjectId: actor.String()}},
+			Subject: &v1.SubjectReference{Object: &v1.ObjectReference{ObjectType: "user", ObjectId: actor.String()}},
 		},
 	}}})
 	require.NoError(t, err)

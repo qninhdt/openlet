@@ -3,7 +3,10 @@
 package workspace
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"github.com/qninhdt/openlet/packages/go/identity"
 	"testing"
 
 	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
@@ -39,6 +42,26 @@ func TestIntegrationRelationshipScanIncludesLifecycleTombstones(t *testing.T) {
 	last, err := store.RelationshipIDs(ctx, next[2])
 	require.NoError(t, err)
 	require.Empty(t, last)
+	var inventory bytes.Buffer
+	require.NoError(t, store.ExportResourceWorkspaces(ctx, &inventory))
+	decoder := json.NewDecoder(&inventory)
+	for index, id := range ids {
+		var item struct {
+			WorkspaceID uuid.UUID `json:"workspace_id"`
+			Status      string    `json:"status"`
+		}
+		require.NoError(t, decoder.Decode(&item))
+		require.Equal(t, id, item.WorkspaceID)
+		expected := "active"
+		if index == 0 {
+			expected = "deleting"
+		}
+		if index == 1 {
+			expected = "deleted"
+		}
+		require.Equal(t, expected, item.Status)
+	}
+	require.False(t, decoder.More())
 	for _, kind := range []string{"workspace"} {
 		_, err = store.Graph.DeleteRelationships(ctx, &v1.DeleteRelationshipsRequest{RelationshipFilter: &v1.RelationshipFilter{ResourceType: kind}})
 		require.NoError(t, err)
@@ -46,7 +69,7 @@ func TestIntegrationRelationshipScanIncludesLifecycleTombstones(t *testing.T) {
 	require.NoError(t, store.RebuildRelationships(ctx, store.Graph))
 	require.NoError(t, store.RebuildRelationships(ctx, store.Graph))
 	for _, id := range []uuid.UUID{ids[0], ids[1], ids[99], ids[102]} {
-		allowed, err := authz.Check(ctx, store.Graph, owner.String(), authz.WorkspaceRead, authz.Resource{Type: "workspace", ID: id.String()})
+		allowed, err := authz.Check(ctx, store.Graph, identity.Actor{Kind: identity.User, ID: owner}, authz.WorkspaceRead, authz.Resource{Type: "workspace", ID: id.String()})
 		require.NoError(t, err)
 		require.Equal(t, id != ids[1], allowed, "deleted workspace grants stay revoked across rebuild pages")
 	}

@@ -9,63 +9,89 @@ import (
 
 	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	authzed "github.com/authzed/authzed-go/v1"
+	"github.com/google/uuid"
+	"github.com/qninhdt/openlet/packages/go/identity"
 	"github.com/qninhdt/openlet/packages/go/testfixture"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 )
 
-func TestIntegrationFixedRolesAndIndependentAccountAccess(t *testing.T) {
+func TestIntegrationHumanRolesAndLetaResourceAccess(t *testing.T) {
 	client, address, server := graph(t)
 	independent := connect(t, address)
 	ctx := t.Context()
+	creator := identity.Actor{Kind: identity.User, ID: uuid.New()}
+	bot := identity.Actor{Kind: identity.Leta, ID: creator.ID}
+	owner := identity.Actor{Kind: identity.User, ID: uuid.New()}
+	admin := identity.Actor{Kind: identity.User, ID: uuid.New()}
+	resourceOwner := identity.Actor{Kind: identity.User, ID: uuid.New()}
 	shared := touch("scope", "shared", "editor", "workspace", "team")
 	shared.Relationship.Subject.OptionalRelation = "member"
 	write(t, client,
-		touch("account", "agent", "self", "account", "agent"),
-		touch("account", "agent", "owner", "account", "owner"),
-		touch("workspace", "team", "owner", "account", "owner"),
-		touch("workspace", "team", "admin", "account", "admin"),
-		touch("workspace", "team", "member", "account", "agent"),
+		touch("workspace", "team", "owner", "user", owner.ID.String()),
+		touch("workspace", "team", "admin", "user", admin.ID.String()),
+		touch("workspace", "team", "member", "user", creator.ID.String()),
+		touch("workspace", "team", "member", "user", resourceOwner.ID.String()),
+		touch("leta", bot.ID.String(), "workspace", "workspace", "team"),
+		touch("leta", bot.ID.String(), "creator", "user", creator.ID.String()),
+		touch("scope", "home", "home_of", "leta", bot.ID.String()),
+		touch("scope", "home", "editor", "leta", bot.ID.String()),
+		touch("scope", "shared", "editor", "leta", bot.ID.String()),
+		touch("scope", "private", "manager", "user", resourceOwner.ID.String()),
+		touch("scope", "private", "viewer", "leta", bot.ID.String()),
+		touch("filesystem", "drive", "deleter", "user", owner.ID.String()),
+		touch("filesystem", "drive", "reader", "leta", bot.ID.String()),
 		shared,
-		touch("scope", "private", "manager", "account", "agent"),
-		touch("scope", "view", "viewer", "account", "viewer"),
-		touch("filesystem", "drive", "deleter", "account", "owner"),
 	)
 	for _, test := range []struct {
-		actor    string
+		actor    identity.Actor
 		action   Action
 		resource Resource
 		want     bool
 	}{
-		{"owner", AccountUpdate, Resource{"account", "agent"}, true},
-		{"owner", ScopeReadContent, Resource{"scope", "private"}, false},
-		{"admin", ScopeReadContent, Resource{"scope", "private"}, false},
-		{"agent", ScopeManageAccess, Resource{"scope", "private"}, true},
-		{"agent", ScopeWrite, Resource{"scope", "shared"}, true},
-		{"agent", WorkspaceDelete, Resource{"workspace", "team"}, false},
-		{"admin", WorkspaceManageMembers, Resource{"workspace", "team"}, true},
-		{"admin", WorkspaceDelete, Resource{"workspace", "team"}, false},
-		{"owner", FilesystemDelete, Resource{"filesystem", "drive"}, true},
-		{"owner", ScopeWrite, Resource{"scope", "shared"}, false},
-		{"viewer", ScopeReadContent, Resource{"scope", "view"}, true},
-		{"viewer", ScopeWrite, Resource{"scope", "view"}, false},
-		{"viewer", ScopeReadMetadata, Resource{"scope", "private"}, false},
+		{creator, LetaManage, Resource{"leta", bot.ID.String()}, true},
+		{owner, LetaRead, Resource{"leta", bot.ID.String()}, false},
+		{creator, ScopeReadContent, Resource{"scope", "home"}, true},
+		{creator, ScopeReadContent, Resource{"scope", "private"}, false},
+		{bot, ScopeReadContent, Resource{"scope", "private"}, true},
+		{bot, ScopeWrite, Resource{"scope", "private"}, false},
+		{bot, ScopeManageAccess, Resource{"scope", "home"}, false},
+		{bot, ScopeWrite, Resource{"scope", "shared"}, true},
+		{bot, WorkspaceDelete, Resource{"workspace", "team"}, false},
+		{bot, WorkspaceCreateLeta, Resource{"workspace", "team"}, false},
+		{creator, WorkspaceCreateLeta, Resource{"workspace", "team"}, true},
+		{admin, WorkspaceManageMembers, Resource{"workspace", "team"}, true},
+		{admin, WorkspaceDelete, Resource{"workspace", "team"}, false},
+		{owner, FilesystemDelete, Resource{"filesystem", "drive"}, true},
+		{bot, FilesystemRead, Resource{"filesystem", "drive"}, true},
+		{bot, FilesystemDelete, Resource{"filesystem", "drive"}, false},
+		{resourceOwner, ScopeManageAccess, Resource{"scope", "private"}, true},
 	} {
 		allowed, err := Check(ctx, independent, test.actor, test.action, test.resource)
 		require.NoError(t, err)
 		require.Equal(t, test.want, allowed, "%s %s %v", test.actor, test.action, test.resource)
 	}
-	write(t, client, remove("workspace", "team", "member", "account", "agent"))
-	allowed, err := Check(ctx, independent, "agent", ScopeWrite, Resource{"scope", "shared"})
+	write(t, client, remove("scope", "private", "viewer", "leta", bot.ID.String()))
+	allowed, err := Check(ctx, independent, bot, ScopeReadContent, Resource{"scope", "private"})
 	require.NoError(t, err)
-	require.False(t, allowed, "fresh userset checks observe membership removal")
-	allowed, err = Check(ctx, independent, "agent", ScopeManageAccess, Resource{"scope", "private"})
+	require.False(t, allowed, "revocation observes the current graph")
+	write(t, client, remove("workspace", "team", "member", "user", creator.ID.String()))
+	for _, resource := range []Resource{{"leta", bot.ID.String()}, {"scope", "home"}} {
+		action := LetaRead
+		if resource.Type == "scope" {
+			action = ScopeReadContent
+		}
+		allowed, err = Check(ctx, independent, creator, action, resource)
+		require.NoError(t, err)
+		require.False(t, allowed, "creator membership gates resource/home visibility")
+	}
+	allowed, err = Check(ctx, independent, bot, ScopeWrite, Resource{"scope", "home"})
 	require.NoError(t, err)
-	require.True(t, allowed, "independent direct grants survive unrelated membership changes")
+	require.True(t, allowed, "no unrequested departure-triggered runtime revocation")
 	require.NoError(t, server.Stop(ctx, nil))
 	checkCtx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	allowed, err = Check(checkCtx, independent, "agent", ScopeManageAccess, Resource{"scope", "private"})
+	allowed, err = Check(checkCtx, independent, bot, ScopeReadContent, Resource{"scope", "home"})
 	require.Error(t, err)
 	require.False(t, allowed)
 }

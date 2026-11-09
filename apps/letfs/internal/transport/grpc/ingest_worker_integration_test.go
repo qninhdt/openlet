@@ -205,7 +205,7 @@ func TestIntegrationPythonActivitiesProcessEnrichIndexAndReplay(t *testing.T) {
 	connection, err := grpcgo.NewClient(listener.Addr().String(), grpcgo.WithTransportCredentials(insecure.NewCredentials()))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, connection.Close()) })
-	caller := metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer "+gatewayToken, "x-openlet-account-id", actor.String()))
+	caller := metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer "+gatewayToken, "x-openlet-user-id", actor.String()))
 	public := letfsv1.NewFilesystemServiceClient(connection)
 	query := &letfsv1.SemanticSearchRequest{FilesystemId: filesystemID.String(), ScopeId: fs.String(), Query: "image"}
 	page, err := public.SemanticSearch(caller, query)

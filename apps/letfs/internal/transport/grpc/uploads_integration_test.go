@@ -8,6 +8,7 @@ import (
 	"crypto/md5"
 	"encoding/base64"
 	"errors"
+	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"io"
 	"log"
 	"net"
@@ -85,7 +86,11 @@ func TestIntegrationUploadPublicationOverAuthenticatedRPC(t *testing.T) {
 		letfsv1.FilesystemService_GetUploadParts_FullMethodName, letfsv1.FilesystemService_CompleteUpload_FullMethodName,
 		letfsv1.FilesystemService_AbortUpload_FullMethodName, letfsv1.FilesystemService_GetDownload_FullMethodName,
 		letfsv1.FilesystemService_UpdateNode_FullMethodName}
-	authentication, err := rpc.NewAuthenticator([]rpc.Credential{{Service: "gateway", Token: gatewayToken, Gateway: true, Methods: methods}})
+	const letaToken = "isolated-upload-leta-token-1234567890"
+	authentication, err := rpc.NewAuthenticator([]rpc.Credential{
+		{Service: "gateway", Token: gatewayToken, Gateway: true, Methods: methods},
+		{Service: "leta", Token: letaToken, DelegateActor: true, Methods: methods, LetaMethods: methods},
+	})
 	require.NoError(t, err)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -100,7 +105,7 @@ func TestIntegrationUploadPublicationOverAuthenticatedRPC(t *testing.T) {
 	client := letfsv1.NewFilesystemServiceClient(connection)
 	actor, other := uuid.New(), uuid.New()
 	actorContext := func(id uuid.UUID) context.Context {
-		return metadata.NewOutgoingContext(t.Context(), metadata.Pairs("authorization", "Bearer "+gatewayToken, "x-openlet-account-id", id.String()))
+		return metadata.NewOutgoingContext(t.Context(), metadata.Pairs("authorization", "Bearer "+gatewayToken, "x-openlet-user-id", id.String()))
 	}
 	ctx, foreign := actorContext(actor), actorContext(other)
 
@@ -148,6 +153,18 @@ func TestIntegrationUploadPublicationOverAuthenticatedRPC(t *testing.T) {
 	created, err := client.CreateUpload(ctx, request)
 	require.NoError(t, err)
 	uploadID := created.Upload.Id
+	_, err = graph.WriteRelationships(t.Context(), &v1.WriteRelationshipsRequest{Updates: []*v1.RelationshipUpdate{{Operation: v1.RelationshipUpdate_OPERATION_TOUCH, Relationship: &v1.Relationship{
+		Resource: &v1.ObjectReference{ObjectType: "scope", ObjectId: fsID.String()}, Relation: "editor", Subject: &v1.SubjectReference{Object: &v1.ObjectReference{ObjectType: "leta", ObjectId: actor.String()}},
+	}}}})
+	require.NoError(t, err)
+	botContext := metadata.NewOutgoingContext(t.Context(), metadata.Pairs("authorization", "Bearer "+letaToken, "x-openlet-leta-id", actor.String()))
+	_, err = client.GetUpload(botContext, &letfsv1.GetUploadRequest{FilesystemId: bucketID.String(), ScopeId: fsID.String(), UploadId: uploadID})
+	require.Equal(t, codes.NotFound, status.Code(err), "same UUID in another actor kind cannot own a human upload")
+	botUpload, err := client.CreateUpload(botContext, request)
+	require.NoError(t, err)
+	require.NotEqual(t, uploadID, botUpload.Upload.Id, "idempotency scopes retain the actor kind")
+	_, err = client.AbortUpload(botContext, &letfsv1.AbortUploadRequest{FilesystemId: bucketID.String(), ScopeId: fsID.String(), UploadId: botUpload.Upload.Id})
+	require.NoError(t, err)
 	require.Equal(t, "single", created.Upload.Transport)
 	read, err := client.GetUpload(ctx, &letfsv1.GetUploadRequest{FilesystemId: bucketID.String(), ScopeId: fsID.String(), UploadId: uploadID})
 	require.NoError(t, err, "scope write covers the initiating actor's upload lifecycle")
@@ -206,7 +223,7 @@ func TestIntegrationUploadPublicationOverAuthenticatedRPC(t *testing.T) {
 	changedConfig := *store
 	changedConfig.MaxFileBytes = 1
 	changedConfig.MultipartThreshold = 1
-	trustedActor := identity.WithPrincipal(t.Context(), identity.Principal{ActorID: actor, Service: "gateway", Gateway: true})
+	trustedActor := identity.WithPrincipal(t.Context(), identity.Principal{ActorKind: identity.User, ActorID: actor, Service: "gateway", Gateway: true})
 	oldInput := filesystem.UploadCreation{SizeBytes: request.SizeBytes, MediaType: request.MediaType, ContentMD5: request.ContentMd5,
 		Destination: &filesystem.UploadDestination{Parent: filesystem.Locator{NodeID: fs.RootID}, Name: request.GetDestination().Name}}
 	oldReceipt, err := changedConfig.CreateUpload(trustedActor, fsID, uuid.MustParse(request.IdempotencyKey), oldInput)

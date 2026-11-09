@@ -76,3 +76,19 @@ func (s *Administration) DeleteFilesystem(ctx context.Context, input *letfsv1.De
 	completed, err := s.Service.DeleteFilesystem(ctx, id)
 	return &letfsv1.DeleteFilesystemResponse{Completed: completed}, err
 }
+
+func (s *Administration) ListScopes(ctx context.Context, input *letfsv1.ListScopesRequest) (*letfsv1.ListScopesResponse, error) {
+	fs, err := parseID(input.GetFilesystemId())
+	if err != nil {
+		return nil, err
+	}
+	page, err := s.Store.ListScopes(ctx, fs, input.Cursor, input.Limit)
+	if err != nil {
+		return nil, err
+	}
+	result := &letfsv1.ListScopesResponse{Scopes: make([]*letfsv1.Scope, len(page.Items)), NextCursor: page.NextCursor}
+	for i, scope := range page.Items {
+		result.Scopes[i] = &letfsv1.Scope{Id: scope.ID.String(), FilesystemId: scope.FilesystemID.String(), RootId: scope.RootID.String(), State: scope.State, AllowBlobFiles: scope.AllowBlobFiles, AllowIndexing: scope.AllowIndexing}
+	}
+	return result, nil
+}

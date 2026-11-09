@@ -116,7 +116,7 @@ func TestIntegrationEnrichmentDirectChildrenPublishAtomicallyAndPreserveSource(t
 	require.Equal(t, "enriched", publication)
 	require.NoError(t, db.QueryRow(t.Context(), `SELECT name FROM nodes WHERE id=$1`, leaf).Scan(&name))
 	require.Equal(t, "renamed.md", name)
-	require.NoError(t, db.QueryRow(t.Context(), `SELECT inline_bytes FROM files WHERE node_id=$1`, readme).Scan(&content))
+	require.NoError(t, db.QueryRow(t.Context(), `SELECT COALESCE(inline_bytes,convert_to(text_content,'UTF8')) FROM files WHERE node_id=$1`, readme).Scan(&content))
 	require.Equal(t, []byte("rewritten README.md"), content)
 	complete, err := s.PrepareEnrichment(t.Context(), a)
 	require.NoError(t, err)

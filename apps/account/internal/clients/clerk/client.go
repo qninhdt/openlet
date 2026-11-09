@@ -52,8 +52,8 @@ func (c Client) request(ctx context.Context, method, path string, body any, out 
 	}
 	return e
 }
-func (c Client) PublishAccountIdentity(ctx context.Context, subject, id string) error {
-	return c.request(ctx, http.MethodPatch, "/users/"+url.PathEscape(subject)+"/metadata", map[string]any{"public_metadata": map[string]string{"openlet_account_id": id}}, nil)
+func (c Client) PublishUserIdentity(ctx context.Context, subject, id string) error {
+	return c.request(ctx, http.MethodPatch, "/users/"+url.PathEscape(subject)+"/metadata", map[string]any{"public_metadata": map[string]string{"openlet_user_id": id}}, nil)
 }
 func (c Client) VerifiedEmails(ctx context.Context, subject string) ([]string, error) {
 	var v struct {
@@ -76,13 +76,13 @@ func (c Client) VerifiedEmails(ctx context.Context, subject string) ([]string, e
 	return out, nil
 }
 
-// AccountIdentity reads trusted metadata to recognize completed onboarding beyond history retention.
-func (c Client) AccountIdentity(ctx context.Context, subject string) (string, error) {
+// UserIdentity reads trusted metadata to recognize completed onboarding beyond history retention.
+func (c Client) UserIdentity(ctx context.Context, subject string) (string, error) {
 	var value struct {
 		Metadata struct {
-			AccountID string `json:"openlet_account_id"`
+			UserID string `json:"openlet_user_id"`
 		} `json:"public_metadata"`
 	}
 	err := c.request(ctx, http.MethodGet, "/users/"+url.PathEscape(subject), nil, &value)
-	return value.Metadata.AccountID, err
+	return value.Metadata.UserID, err
 }

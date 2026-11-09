@@ -10,7 +10,7 @@ from openlet_api.letfs.v1 import letfs_pb2_grpc as rpc
 request = json.load(sys.stdin)
 metadata = [
     ("authorization", "Bearer " + request["service_token"]),
-    ("x-openlet-account-id", request["actor_id"]),
+    ("x-openlet-user-id", request["actor_id"]),
 ]
 with grpc.insecure_channel("letfs:9090") as channel:
     client = rpc.FilesystemServiceStub(channel)
@@ -24,7 +24,7 @@ with grpc.insecure_channel("letfs:9090") as channel:
         assert result.node.id == request["node_id"]
         assert result.node.scope_id == request["scope_id"]
         # Internal listeners reject duplicate actor identity instead of choosing one.
-        forged = metadata + [("x-openlet-account-id", request["foreign_account_id"])]
+        forged = metadata + [("x-openlet-user-id", request["foreign_user_id"])]
         try:
             client.GetNode(node, metadata=forged, timeout=10)
         except grpc.RpcError as error:

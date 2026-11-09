@@ -21,7 +21,7 @@ func TestIntegrationReprocessAdmissionReplayAndCurrentState(t *testing.T) {
 	s := Store{DB: db, Graph: graph, MaxNodes: 100, InlineLimit: 64, MaxFileBytes: 64}
 	owner := identity.WithPrincipal(t.Context(), identity.Principal{Service: "resource-owner"})
 	actor := uuid.New()
-	ctx := identity.WithPrincipal(t.Context(), identity.Principal{Service: "gateway", Gateway: true, ActorID: actor})
+	ctx := identity.WithPrincipal(t.Context(), identity.Principal{ActorKind: identity.User, Service: "gateway", Gateway: true, ActorID: actor})
 	filesystemID, fs := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	_, err := s.CreateFilesystem(owner, uuid.New(), CreateFilesystem{ID: filesystemID, LimitBytes: 1000})
 	require.NoError(t, err)
@@ -32,7 +32,7 @@ func TestIntegrationReprocessAdmissionReplayAndCurrentState(t *testing.T) {
 	file, err := s.CreateNode(ctx, fs, uuid.New(), CreateNode{Parent: Locator{NodeID: created.RootID}, Name: "report.pdf", File: &InlineFile{Content: []byte("pdf"), MediaType: "application/pdf"}})
 	require.NoError(t, err)
 	key := uuid.New()
-	_, err = s.Reprocess(identity.WithPrincipal(t.Context(), identity.Principal{Service: "gateway", Gateway: true, ActorID: uuid.New()}), fs, file.ID, key)
+	_, err = s.Reprocess(identity.WithPrincipal(t.Context(), identity.Principal{ActorKind: identity.User, Service: "gateway", Gateway: true, ActorID: uuid.New()}), fs, file.ID, key)
 	require.Equal(t, apperr.Forbidden, apperr.KindOf(err))
 	testfixture.Grant(t, graph, "scope", fs, actor, authz.ScopeWrite)
 	var wg sync.WaitGroup

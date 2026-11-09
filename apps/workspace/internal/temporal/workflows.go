@@ -5,6 +5,7 @@ import (
 	"errors"
 	"github.com/google/uuid"
 	"github.com/qninhdt/openlet/apps/workspace/internal/workspace"
+	letaclient "github.com/qninhdt/openlet/packages/go/clients/leta"
 	shared "github.com/qninhdt/openlet/packages/go/temporal"
 	enums "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/client"
@@ -15,7 +16,15 @@ import (
 
 const Queue = shared.WorkspaceQueue
 
-type Activities struct{ Service *workspace.Service }
+type WorkspaceLetaResources interface {
+	ListWorkspaceLeta(context.Context, uuid.UUID, *uuid.UUID) (letaclient.WorkspacePage, error)
+	StopLetaForWorkspaceDeletion(context.Context, uuid.UUID, uuid.UUID) error
+}
+
+type Activities struct {
+	Service *workspace.Service
+	Letas   WorkspaceLetaResources
+}
 type Workflows struct{ QuotaLimit int64 }
 
 func (a *Activities) SaveWorkspace(ctx context.Context, in workspace.Creation) (workspace.Workspace, error) {

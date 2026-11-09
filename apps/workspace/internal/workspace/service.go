@@ -4,21 +4,36 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"github.com/qninhdt/openlet/packages/go/identity"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/qninhdt/openlet/packages/go/authz"
 	accountclient "github.com/qninhdt/openlet/packages/go/clients/account"
+	letaclient "github.com/qninhdt/openlet/packages/go/clients/leta"
+	letfsclient "github.com/qninhdt/openlet/packages/go/clients/letfs"
 )
 
-type AccountSummary = accountclient.Summary
-type Accounts interface {
-	Summaries(context.Context, []uuid.UUID) (map[uuid.UUID]AccountSummary, error)
+type UserSummary = accountclient.Summary
+type Users interface {
+	Summaries(context.Context, []uuid.UUID) (map[uuid.UUID]UserSummary, error)
 	VerifiedEmails(context.Context, uuid.UUID) ([]string, error)
+}
+type LetaResources interface {
+	GetBinding(context.Context, uuid.UUID) (letaclient.Binding, error)
+}
+type ScopeStorage interface {
+	ListScopes(context.Context, uuid.UUID, int32, *string) (letfsclient.ScopePage, error)
+}
+type HomeStorage interface {
+	CreateScopes(context.Context, uuid.UUID, uuid.UUID, []uuid.UUID, bool, bool) ([]letfsclient.Scope, error)
 }
 type Service struct {
 	Store       *Store
-	Accounts    Accounts
+	Users       Users
+	Letas       LetaResources
+	Storage     ScopeStorage
+	Homes       HomeStorage
 	StartCreate func(context.Context, CreateInput) (Workspace, error)
 	Mutate      func(context.Context, Mutation) (Workspace, error)
 }
@@ -37,17 +52,19 @@ type Mutation struct {
 	ScopeID         uuid.UUID
 	ScopeRole       string
 	Revoke          bool
+	TargetKind      identity.ActorKind
+	PersonalOwnerID uuid.UUID
 }
 type EnrichedMember struct {
-	Account         AccountSummary `json:"account"`
-	Role            string         `json:"role"`
-	PersonalScopeID uuid.UUID      `json:"personal_scope_id"`
+	User            UserSummary `json:"user"`
+	Role            string      `json:"role"`
+	PersonalScopeID uuid.UUID   `json:"personal_scope_id"`
 }
 type Membership struct {
-	WorkspaceID     uuid.UUID      `json:"workspace_id"`
-	Account         AccountSummary `json:"account"`
-	Role            string         `json:"role"`
-	PersonalScopeID uuid.UUID      `json:"personal_scope_id"`
+	WorkspaceID     uuid.UUID   `json:"workspace_id"`
+	User            UserSummary `json:"user"`
+	Role            string      `json:"role"`
+	PersonalScopeID uuid.UUID   `json:"personal_scope_id"`
 }
 
 func (s *Service) Create(ctx context.Context, in CreateInput) (Workspace, error) {
@@ -91,7 +108,7 @@ func (s *Service) List(ctx context.Context, actor, after uuid.UUID, limit int) (
 		}
 		check, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
-		allowed, err := authz.BulkCheck(check, s.Store.Graph, actor.String(), authz.WorkspaceRead, resources)
+		allowed, err := authz.BulkCheck(check, s.Store.Graph, identity.Actor{Kind: identity.User, ID: actor}, authz.WorkspaceRead, resources)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -114,6 +131,13 @@ func (s *Service) Members(ctx context.Context, ws, actor, after uuid.UUID, limit
 	if _, err := s.Store.Authorize(ctx, ws, actor, authz.WorkspaceRead); err != nil {
 		return nil, nil, err
 	}
+	return s.enrichedMembers(ctx, ws, after, limit)
+}
+
+func (s *Service) enrichedMembers(ctx context.Context, ws, after uuid.UUID, limit int) ([]EnrichedMember, *uuid.UUID, error) {
+	if limit < 1 || limit > 100 {
+		return nil, nil, Fault{"VALIDATION"}
+	}
 	items, err := s.Store.Members(ctx, ws, after, limit+1)
 	if err != nil {
 		return nil, nil, err
@@ -121,20 +145,27 @@ func (s *Service) Members(ctx context.Context, ws, actor, after uuid.UUID, limit
 	var next *uuid.UUID
 	if len(items) > limit {
 		items = items[:limit]
-		id := items[len(items)-1].AccountID
+		id := items[len(items)-1].UserID
 		next = &id
 	}
 	ids := make([]uuid.UUID, len(items))
 	for i, item := range items {
-		ids[i] = item.AccountID
+		ids[i] = item.UserID
 	}
-	profiles, err := s.Accounts.Summaries(ctx, ids)
+	if len(ids) == 0 {
+		return []EnrichedMember{}, next, nil
+	}
+	profiles, err := s.Users.Summaries(ctx, ids)
 	if err != nil {
 		return nil, nil, err
 	}
 	out := make([]EnrichedMember, 0, len(items))
 	for _, item := range items {
-		out = append(out, EnrichedMember{Account: profiles[item.AccountID], Role: item.Role, PersonalScopeID: item.PersonalScopeID})
+		profile, ok := profiles[item.UserID]
+		if !ok || profile.ID != item.UserID {
+			return nil, nil, unavailable()
+		}
+		out = append(out, EnrichedMember{User: profile, Role: item.Role, PersonalScopeID: item.PersonalScopeID})
 	}
 	return out, next, nil
 }
@@ -197,7 +228,7 @@ func (s *Service) Delete(ctx context.Context, ws, actor uuid.UUID) (Workspace, e
 	}
 	return s.Mutate(ctx, Mutation{Kind: "delete", WorkspaceID: ws, ActorID: actor})
 }
-func (s *Service) AddAccount(ctx context.Context, ws, actor, target uuid.UUID, role string) (Workspace, error) {
+func (s *Service) AddUser(ctx context.Context, ws, actor, target uuid.UUID, role string) (Workspace, error) {
 	if role != "admin" && role != "member" {
 		return Workspace{}, Fault{"VALIDATION"}
 	}
@@ -208,7 +239,7 @@ func (s *Service) AddAccount(ctx context.Context, ws, actor, target uuid.UUID, r
 	if err = value.checkActive(); err != nil {
 		return Workspace{}, err
 	}
-	if _, err = s.Accounts.Summaries(ctx, []uuid.UUID{target}); err != nil {
+	if _, err = s.Users.Summaries(ctx, []uuid.UUID{target}); err != nil {
 		return Workspace{}, err
 	}
 	input := Mutation{Kind: "add", WorkspaceID: ws, ActorID: actor, TargetID: target, Role: role, FilesystemID: value.FilesystemID, PersonalScopeID: uuid.Must(uuid.NewV7())}
@@ -232,7 +263,7 @@ func (s *Service) AcceptInvitation(ctx context.Context, actor uuid.UUID, token s
 		return Membership{}, Fault{"VALIDATION"}
 	}
 	hash := sha256.Sum256([]byte(token))
-	emails, err := s.Accounts.VerifiedEmails(ctx, actor)
+	emails, err := s.Users.VerifiedEmails(ctx, actor)
 	if err != nil {
 		return Membership{}, err
 	}
@@ -262,11 +293,11 @@ func (s *Service) AcceptInvitation(ctx context.Context, actor uuid.UUID, token s
 	if err != nil {
 		return Membership{}, err
 	}
-	profiles, err := s.Accounts.Summaries(ctx, []uuid.UUID{actor})
+	profiles, err := s.Users.Summaries(ctx, []uuid.UUID{actor})
 	if err != nil {
 		return Membership{}, err
 	}
-	return Membership{WorkspaceID: ws, Account: profiles[actor], Role: member.Role, PersonalScopeID: member.PersonalScopeID}, nil
+	return Membership{WorkspaceID: ws, User: profiles[actor], Role: member.Role, PersonalScopeID: member.PersonalScopeID}, nil
 }
 func (s *Service) SaveWorkspace(ctx context.Context, in Creation) (Workspace, error) {
 	value, err := s.Store.SaveWorkspace(ctx, in)

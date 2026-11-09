@@ -47,7 +47,10 @@ def audit(read, bench, sql, scope, fs, uid, lit, bind, cols):
     inventory = (
         read(base + "enrichment.go", "SELECT n.*,''::text")
         + cols
-        + read(base + "enrichment.go", ",false,n.path,f.inline_bytes,f.object_key")
+        + read(
+            base + "enrichment.go",
+            ",false,n.path,COALESCE(f.inline_bytes,convert_to(f.text_content,'UTF8')),f.object_key",
+        )
     )
     bench("processing-inventory", bind(inventory, [lit(uid(5000)), lit(scope), "1002"]))
     case(
@@ -99,17 +102,17 @@ def audit(read, bench, sql, scope, fs, uid, lit, bind, cols):
     INSERT INTO filesystems(id,limit_bytes) SELECT md5('audit-fs-'||i)::uuid,100000000 FROM generate_series(1,1000) i;
     INSERT INTO scopes(id,filesystem_id,root_id) SELECT md5('audit-scope-'||i)::uuid,md5('audit-fs-'||i)::uuid,md5('audit-root-'||i)::uuid FROM generate_series(1,1000) i;
     INSERT INTO nodes(id,scope_id,name,kind) SELECT md5('audit-root-'||i)::uuid,md5('audit-scope-'||i)::uuid,'root','directory' FROM generate_series(1,1000) i;
-    INSERT INTO uploads(id,scope_id,actor_id,input,transport,expected_size,state) SELECT md5('audit-upload-'||i)::uuid,md5('audit-scope-'||((i-1)/100+1))::uuid,md5('actor')::uuid,'{{}}','inline',1,'aborted' FROM generate_series(1,100000) i;
+    INSERT INTO uploads(id,scope_id,actor_id,actor_kind,input,transport,expected_size,state) SELECT md5('audit-upload-'||i)::uuid,md5('audit-scope-'||((i-1)/100+1))::uuid,md5('actor')::uuid,'user','{{}}','inline',1,'aborted' FROM generate_series(1,100000) i;
     INSERT INTO idempotency_keys(scope,operation,request_key,request_hash,result) SELECT 'audit/'||i,'create-upload',i::text,'hash',jsonb_build_object('id',md5('audit-upload-'||((i-1)*100+1))::uuid) FROM generate_series(1,1000) i;
     INSERT INTO object_deletions(object_key,filesystem_id,state,eligible_at) SELECT 'audit-deleted-'||i,md5('audit-fs-'||((i-1)/100+1))::uuid,'deleted',now()-interval '1 day' FROM generate_series(1,100000) i;
     INSERT INTO object_deletions(object_key,filesystem_id,state,eligible_at) SELECT 'audit-pending-'||i,'{fs}','pending',now()-interval '1 hour' FROM generate_series(1,100) i;
     INSERT INTO index_deletions(file_id,generation,eligible_at) SELECT md5('node-'||i)::uuid,1,now()-interval '1 hour' FROM generate_series(10001,100000) i;
-    INSERT INTO trash_entries(id,scope_id,node_id,original_parent_id,original_name,actor_id) SELECT md5('audit-trash-'||i)::uuid,'{scope}',md5('node-'||i)::uuid,md5('parent-'||i)::uuid,'trashed',md5('actor')::uuid FROM generate_series(2,100000) i;
+    INSERT INTO trash_entries(id,scope_id,node_id,original_parent_id,original_name,actor_id,actor_kind) SELECT md5('audit-trash-'||i)::uuid,'{scope}',md5('node-'||i)::uuid,md5('parent-'||i)::uuid,'trashed',md5('actor')::uuid,'user' FROM generate_series(2,100000) i;
     COMMIT; ANALYZE;""",
         "letfs",
     )
     sql(
-        f"INSERT INTO uploads(id,scope_id,actor_id,input,transport,expected_size) SELECT md5('audit-user-upload-'||i)::uuid,'{scope}',md5('actor')::uuid,'{{}}','inline',1 FROM generate_series(1,1000) i; ANALYZE uploads;",
+        f"INSERT INTO uploads(id,scope_id,actor_id,actor_kind,input,transport,expected_size) SELECT md5('audit-user-upload-'||i)::uuid,'{scope}',md5('actor')::uuid,'user','{{}}','inline',1 FROM generate_series(1,1000) i; ANALYZE uploads;",
         "letfs",
     )
     case(
@@ -185,7 +188,7 @@ def audit(read, bench, sql, scope, fs, uid, lit, bind, cols):
     )
     trash_columns = read(
         base + "trash.go",
-        "id,node_id,original_parent_id,original_name,actor_id,state,created_at",
+        "id,node_id,original_parent_id,original_name,actor_id,state,created_at,actor_kind",
     )
     bench(
         "trash-page",
@@ -239,7 +242,7 @@ def audit(read, bench, sql, scope, fs, uid, lit, bind, cols):
         ),
         (
             "relations.go",
-            "SELECT account_id FROM workspace_members",
+            "SELECT user_id FROM workspace_members",
             "workspace-rebuild-member-page",
             [ws, zero],
         ),
@@ -275,18 +278,11 @@ def audit(read, bench, sql, scope, fs, uid, lit, bind, cols):
         ),
     ):
         case(label, wsbase + file, needle, args, "workspace")
-    case(
-        "account-rebuild-page",
-        "apps/account/internal/account/relations.go",
-        "SELECT id FROM accounts WHERE id>",
-        [zero],
-        "account",
-    )
 
     # Capture the write cost of the cleanup indexes on the same additional fixture.
     bench(
         "insert-1000-terminal-uploads",
-        f"INSERT INTO uploads(id,scope_id,actor_id,input,transport,expected_size,state) SELECT md5('audit-write-upload-'||i)::uuid,{target_scope},md5('actor')::uuid,'{{}}','inline',1,'aborted' FROM generate_series(1,1000) i",
+        f"INSERT INTO uploads(id,scope_id,actor_id,actor_kind,input,transport,expected_size,state) SELECT md5('audit-write-upload-'||i)::uuid,{target_scope},md5('actor')::uuid,'user','{{}}','inline',1,'aborted' FROM generate_series(1,1000) i",
     )
     bench(
         "insert-1000-object-tombstones",
@@ -294,5 +290,5 @@ def audit(read, bench, sql, scope, fs, uid, lit, bind, cols):
     )
     bench(
         "insert-1000-trash",
-        f"INSERT INTO trash_entries(id,scope_id,node_id,original_parent_id,original_name,actor_id) SELECT md5('audit-write-trash-'||i)::uuid,'{scope}',md5('node-'||i)::uuid,md5('parent-'||i)::uuid,'trashed',md5('actor')::uuid FROM generate_series(100001,101000) i",
+        f"INSERT INTO trash_entries(id,scope_id,node_id,original_parent_id,original_name,actor_id,actor_kind) SELECT md5('audit-write-trash-'||i)::uuid,'{scope}',md5('node-'||i)::uuid,md5('parent-'||i)::uuid,'trashed',md5('actor')::uuid,'user' FROM generate_series(100001,101000) i",
     )

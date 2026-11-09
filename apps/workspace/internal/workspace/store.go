@@ -62,7 +62,7 @@ type Creation struct {
 	PersonalScopeID uuid.UUID
 }
 type Member struct {
-	AccountID       uuid.UUID `json:"account_id"`
+	UserID          uuid.UUID `json:"user_id"`
 	Role            string    `json:"role"`
 	PersonalScopeID uuid.UUID `json:"personal_scope_id"`
 	Status          string    `json:"status"`
@@ -103,10 +103,10 @@ func scanWorkspace(row pgx.Row) (Workspace, error) {
 	return value, err
 }
 func (s *Store) getInTransaction(ctx context.Context, tx pgx.Tx, id, actor uuid.UUID) (Workspace, error) {
-	return scanWorkspace(tx.QueryRow(ctx, `SELECT `+workspaceColumns+` FROM workspaces w JOIN workspace_members m ON m.workspace_id=w.id WHERE w.id=$1 AND m.account_id=$2 AND m.status='active'`, id, actor))
+	return scanWorkspace(tx.QueryRow(ctx, `SELECT `+workspaceColumns+` FROM workspaces w JOIN workspace_members m ON m.workspace_id=w.id WHERE w.id=$1 AND m.user_id=$2 AND m.status='active'`, id, actor))
 }
 func (s *Store) Get(ctx context.Context, id, actor uuid.UUID) (Workspace, error) {
-	return scanWorkspace(s.DB.QueryRow(ctx, `SELECT `+workspaceColumns+` FROM workspaces w JOIN workspace_members m ON m.workspace_id=w.id WHERE w.id=$1 AND m.account_id=$2 AND m.status='active'`, id, actor))
+	return scanWorkspace(s.DB.QueryRow(ctx, `SELECT `+workspaceColumns+` FROM workspaces w JOIN workspace_members m ON m.workspace_id=w.id WHERE w.id=$1 AND m.user_id=$2 AND m.status='active'`, id, actor))
 }
 func (s *Store) FindCreation(ctx context.Context, in CreateInput) (Workspace, bool, error) {
 	var id uuid.UUID
@@ -152,7 +152,7 @@ func (s *Store) SaveWorkspace(ctx context.Context, in Creation) (Workspace, erro
 	if _, err = tx.Exec(ctx, `INSERT INTO workspaces(id,name,filesystem_id,shared_scope_id) VALUES($1,$2,$3,$4)`, in.ID, in.Input.Name, in.FilesystemID, in.SharedScopeID); err != nil {
 		return Workspace{}, err
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO workspace_members(workspace_id,account_id,role,personal_scope_id) VALUES($1,$2,'owner',$3)`, in.ID, in.Input.ActorID, in.PersonalScopeID); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO workspace_members(workspace_id,user_id,role,personal_scope_id) VALUES($1,$2,'owner',$3)`, in.ID, in.Input.ActorID, in.PersonalScopeID); err != nil {
 		return Workspace{}, err
 	}
 	if err = saveMutationReceipt(ctx, tx, MutationReceipt{Key: in.Input.Key, Hash: Fingerprint(in.Input)}, in.Input.ActorID, in.ID); err != nil {
@@ -165,22 +165,22 @@ func (s *Store) SaveWorkspace(ctx context.Context, in Creation) (Workspace, erro
 	return value, tx.Commit(ctx)
 }
 func (s *Store) List(ctx context.Context, actor, after uuid.UUID, limit int) ([]Workspace, error) {
-	rows, err := s.DB.Query(ctx, `SELECT `+workspaceColumns+` FROM workspaces w JOIN workspace_members m ON m.workspace_id=w.id WHERE m.account_id=$1 AND m.status='active' AND w.status<>'deleted' AND w.id>$2 ORDER BY w.id LIMIT $3`, actor, after, limit)
+	rows, err := s.DB.Query(ctx, `SELECT `+workspaceColumns+` FROM workspaces w JOIN workspace_members m ON m.workspace_id=w.id WHERE m.user_id=$1 AND m.status='active' AND w.status<>'deleted' AND w.id>$2 ORDER BY w.id LIMIT $3`, actor, after, limit)
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (Workspace, error) { return scanWorkspace(row) })
 }
 func (s *Store) Members(ctx context.Context, id, after uuid.UUID, limit int) ([]Member, error) {
-	rows, err := s.DB.Query(ctx, `SELECT account_id,role,personal_scope_id,status FROM workspace_members WHERE workspace_id=$1 AND account_id>$2 AND status='active' ORDER BY account_id LIMIT $3`, id, after, limit)
+	rows, err := s.DB.Query(ctx, `SELECT user_id,role,personal_scope_id,status FROM workspace_members WHERE workspace_id=$1 AND user_id>$2 AND status='active' ORDER BY user_id LIMIT $3`, id, after, limit)
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, pgx.RowToStructByPos[Member])
 }
-func (s *Store) Member(ctx context.Context, id, account uuid.UUID) (Member, error) {
+func (s *Store) Member(ctx context.Context, id, user uuid.UUID) (Member, error) {
 	var value Member
-	err := s.DB.QueryRow(ctx, `SELECT account_id,role,personal_scope_id,status FROM workspace_members WHERE workspace_id=$1 AND account_id=$2`, id, account).Scan(&value.AccountID, &value.Role, &value.PersonalScopeID, &value.Status)
+	err := s.DB.QueryRow(ctx, `SELECT user_id,role,personal_scope_id,status FROM workspace_members WHERE workspace_id=$1 AND user_id=$2`, id, user).Scan(&value.UserID, &value.Role, &value.PersonalScopeID, &value.Status)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return value, Fault{"NOT_FOUND"}
 	}

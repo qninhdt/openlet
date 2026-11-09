@@ -15,6 +15,7 @@ from authzed.api.v1 import (
 
 from openlet._authz_actions import RESOURCE_ACTIONS
 from openlet.errors import AppError
+from openlet.rpc import Actor
 
 
 @dataclass(frozen=True)
@@ -47,9 +48,9 @@ def client(
     return AuthorizationClient(endpoint, token, allow_plaintext=allow_plaintext)
 
 
-def _request(actor: str, action: str, resource: Resource):
+def _request(actor: Actor, action: str, resource: Resource):
     if (
-        not actor
+        not isinstance(actor, Actor)
         or not resource.id
         or action not in RESOURCE_ACTIONS.get(resource.type, ())
     ):
@@ -58,7 +59,7 @@ def _request(actor: str, action: str, resource: Resource):
         resource=ObjectReference(object_type=resource.type, object_id=resource.id),
         permission=action,
         subject=SubjectReference(
-            object=ObjectReference(object_type="account", object_id=actor)
+            object=ObjectReference(object_type=actor.kind, object_id=str(actor.id))
         ),
     )
 
@@ -71,7 +72,7 @@ def _dependency(error: Exception) -> AppError:
     )
 
 
-async def check(api: Client, actor: str, action: str, resource: Resource) -> bool:
+async def check(api: Client, actor: Actor, action: str, resource: Resource) -> bool:
     item = _request(actor, action, resource)
     try:
         response = await api.CheckPermission(
@@ -95,7 +96,7 @@ async def check(api: Client, actor: str, action: str, resource: Resource) -> boo
 
 async def bulk_check(
     api: Client,
-    actor: str,
+    actor: Actor,
     action: str,
     resources: list[Resource],
 ) -> tuple[bool, ...]:

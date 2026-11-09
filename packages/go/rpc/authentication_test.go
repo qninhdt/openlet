@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"github.com/google/uuid"
 	"testing"
 
 	letfsv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/letfs/v1"
@@ -27,11 +28,11 @@ func TestCallerAuthenticationAndMethodScope(t *testing.T) {
 		{"missing", letfsv1.FilesystemService_GetNode_FullMethodName, nil, codes.Unauthenticated},
 		{"bad token", letfsv1.FilesystemService_GetNode_FullMethodName, metadata.Pairs("authorization", "Bearer other"), codes.Unauthenticated},
 		{"missing actor", letfsv1.FilesystemService_GetNode_FullMethodName, metadata.Pairs("authorization", "Bearer "+token), codes.Unauthenticated},
-		{"duplicate actor", letfsv1.FilesystemService_GetNode_FullMethodName, metadata.Pairs("authorization", "Bearer "+token, "x-openlet-account-id", actor, "x-openlet-account-id", actor), codes.Unauthenticated},
-		{"duplicate credential", letfsv1.FilesystemService_GetNode_FullMethodName, metadata.Pairs("authorization", "Bearer "+token, "authorization", "Bearer "+token, "x-openlet-account-id", actor), codes.Unauthenticated},
-		{"spoofed service", letfsv1.FilesystemService_GetNode_FullMethodName, metadata.Pairs("authorization", "Bearer "+token, "x-openlet-account-id", actor, "x-openlet-service", "workspace"), codes.Unauthenticated},
-		{"private method", letfsv1.StorageAdministrationService_CreateFilesystem_FullMethodName, metadata.Pairs("authorization", "Bearer "+token, "x-openlet-account-id", actor), codes.PermissionDenied},
-		{"valid", letfsv1.FilesystemService_GetNode_FullMethodName, metadata.Pairs("authorization", "Bearer "+token, "x-openlet-account-id", actor), codes.OK},
+		{"duplicate actor", letfsv1.FilesystemService_GetNode_FullMethodName, metadata.Pairs("authorization", "Bearer "+token, "x-openlet-user-id", actor, "x-openlet-user-id", actor), codes.Unauthenticated},
+		{"duplicate credential", letfsv1.FilesystemService_GetNode_FullMethodName, metadata.Pairs("authorization", "Bearer "+token, "authorization", "Bearer "+token, "x-openlet-user-id", actor), codes.Unauthenticated},
+		{"spoofed service", letfsv1.FilesystemService_GetNode_FullMethodName, metadata.Pairs("authorization", "Bearer "+token, "x-openlet-user-id", actor, "x-openlet-service", "workspace"), codes.Unauthenticated},
+		{"private method", letfsv1.StorageAdministrationService_CreateFilesystem_FullMethodName, metadata.Pairs("authorization", "Bearer "+token, "x-openlet-user-id", actor), codes.PermissionDenied},
+		{"valid", letfsv1.FilesystemService_GetNode_FullMethodName, metadata.Pairs("authorization", "Bearer "+token, "x-openlet-user-id", actor), codes.OK},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx, err := authentication.Authenticate(metadata.NewIncomingContext(context.Background(), test.md), test.method)
@@ -43,6 +44,49 @@ func TestCallerAuthenticationAndMethodScope(t *testing.T) {
 				require.Equal(t, actor, principal.ActorID.String())
 			}
 		})
+	}
+}
+
+func TestLetaDelegationRequiresExactMethodAdmission(t *testing.T) {
+	const token = "isolated-leta-service-credential-12345"
+	const method = "/openlet_api.letfs.v1.FilesystemService/GetNode"
+	const other = "/openlet_api.letfs.v1.FilesystemService/CreateNode"
+	id := uuid.NewString()
+	authentication, err := NewAuthenticator([]Credential{{Service: "leta", Token: token, Methods: []string{method, other}, DelegateActor: true, LetaMethods: []string{method}}})
+	require.NoError(t, err)
+	for _, test := range []struct {
+		name, method string
+		md           metadata.MD
+		code         codes.Code
+	}{
+		{"admitted", method, metadata.Pairs("authorization", "Bearer "+token, "x-openlet-leta-id", id), codes.OK},
+		{"unlisted", other, metadata.Pairs("authorization", "Bearer "+token, "x-openlet-leta-id", id), codes.PermissionDenied},
+		{"both", method, metadata.Pairs("authorization", "Bearer "+token, "x-openlet-user-id", id, "x-openlet-leta-id", id), codes.Unauthenticated},
+		{"duplicate leta", method, metadata.Pairs("authorization", "Bearer "+token, "x-openlet-leta-id", id, "x-openlet-leta-id", id), codes.Unauthenticated},
+		{"legacy", method, metadata.Pairs("authorization", "Bearer "+token, "x-openlet-account-id", id), codes.Unauthenticated},
+		{"invalid", method, metadata.Pairs("authorization", "Bearer "+token, "x-openlet-leta-id", "invalid"), codes.Unauthenticated},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, err := authentication.Authenticate(metadata.NewIncomingContext(t.Context(), test.md), test.method)
+			require.Equal(t, test.code, status.Code(err))
+			if err == nil {
+				p, ok := identity.FromContext(ctx)
+				require.True(t, ok)
+				require.Equal(t, identity.Leta, p.ActorKind)
+				require.Equal(t, id, p.ActorID.String())
+				require.Equal(t, "leta", p.Service)
+			}
+		})
+	}
+	for _, credential := range []Credential{
+		{Service: "gateway", Token: token, Gateway: true, Methods: []string{method}},
+		{Service: "worker", Token: token, DelegateActor: true, Methods: []string{method}},
+		{Service: "ingest", Token: token, Methods: []string{method}},
+	} {
+		a, err := NewAuthenticator([]Credential{credential})
+		require.NoError(t, err)
+		_, err = a.Authenticate(metadata.NewIncomingContext(t.Context(), metadata.Pairs("authorization", "Bearer "+token, "x-openlet-leta-id", id)), method)
+		require.Equal(t, codes.PermissionDenied, status.Code(err))
 	}
 }
 
@@ -82,7 +126,7 @@ func TestServiceCredentialsCannotImpersonateUsers(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			md := metadata.Pairs("authorization", "Bearer "+test.token)
 			if test.actor != "" {
-				md.Set("x-openlet-account-id", test.actor)
+				md.Set("x-openlet-user-id", test.actor)
 			}
 			ctx, err := authentication.Authenticate(metadata.NewIncomingContext(t.Context(), md), test.method)
 			require.Equal(t, test.code, status.Code(err))
@@ -106,7 +150,7 @@ func TestExplicitDelegationKeepsServiceIdentity(t *testing.T) {
 	for _, id := range []string{"", actor, "invalid", "00000000-0000-0000-0000-000000000000"} {
 		md := metadata.Pairs("authorization", "Bearer "+token)
 		if id != "" {
-			md.Set("x-openlet-account-id", id)
+			md.Set("x-openlet-user-id", id)
 		}
 		ctx, err := authentication.Authenticate(metadata.NewIncomingContext(t.Context(), md), method)
 		if id != "" && id != actor {

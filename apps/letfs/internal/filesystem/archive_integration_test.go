@@ -37,7 +37,7 @@ func TestIntegrationArchiveExactBytesBoundsAndOwnedCancellation(t *testing.T) {
 	s := Store{DB: db, Graph: graph, Storage: objects, MaxNodes: 100, InlineLimit: 64, MaxFileBytes: 1000000, Archive: config, ArchiveSlots: semaphore.NewWeighted(1)}
 	owner := identity.WithPrincipal(t.Context(), identity.Principal{Service: "resource-owner"})
 	actor := uuid.New()
-	ctx := identity.WithPrincipal(t.Context(), identity.Principal{Service: "gateway", Gateway: true, ActorID: actor})
+	ctx := identity.WithPrincipal(t.Context(), identity.Principal{ActorKind: identity.User, Service: "gateway", Gateway: true, ActorID: actor})
 	filesystemID, fs := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	_, err = s.CreateFilesystem(owner, uuid.New(), CreateFilesystem{ID: filesystemID, LimitBytes: 1000000})
 	require.NoError(t, err)

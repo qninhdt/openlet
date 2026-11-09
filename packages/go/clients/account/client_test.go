@@ -11,11 +11,11 @@ import (
 )
 
 type fakeAPI struct {
-	summaries func(context.Context, *accountv1.GetAccountSummariesRequest) (*accountv1.GetAccountSummariesResponse, error)
+	summaries func(context.Context, *accountv1.GetUserSummariesRequest) (*accountv1.GetUserSummariesResponse, error)
 	emails    func(context.Context, *accountv1.GetVerifiedEmailsRequest) (*accountv1.GetVerifiedEmailsResponse, error)
 }
 
-func (f fakeAPI) GetAccountSummaries(ctx context.Context, request *accountv1.GetAccountSummariesRequest, _ ...grpc.CallOption) (*accountv1.GetAccountSummariesResponse, error) {
+func (f fakeAPI) GetUserSummaries(ctx context.Context, request *accountv1.GetUserSummariesRequest, _ ...grpc.CallOption) (*accountv1.GetUserSummariesResponse, error) {
 	return f.summaries(ctx, request)
 }
 
@@ -27,19 +27,19 @@ func TestSummariesRequireExactResponseScope(t *testing.T) {
 	first, second := uuid.New(), uuid.New()
 	for _, test := range []struct {
 		name  string
-		users []*accountv1.AccountSummary
+		users []*accountv1.UserSummary
 		valid bool
 	}{
-		{"exact set", []*accountv1.AccountSummary{{Id: second.String()}, {Id: first.String(), DisplayName: "Việt"}}, true},
-		{"missing", []*accountv1.AccountSummary{{Id: first.String()}}, false},
-		{"duplicate", []*accountv1.AccountSummary{{Id: first.String()}, {Id: first.String()}}, false},
-		{"foreign", []*accountv1.AccountSummary{{Id: first.String()}, {Id: uuid.NewString()}}, false},
-		{"malformed", []*accountv1.AccountSummary{{Id: first.String()}, {Id: "invalid"}}, false},
+		{"exact set", []*accountv1.UserSummary{{Id: second.String()}, {Id: first.String(), DisplayName: "Việt"}}, true},
+		{"missing", []*accountv1.UserSummary{{Id: first.String()}}, false},
+		{"duplicate", []*accountv1.UserSummary{{Id: first.String()}, {Id: first.String()}}, false},
+		{"foreign", []*accountv1.UserSummary{{Id: first.String()}, {Id: uuid.NewString()}}, false},
+		{"malformed", []*accountv1.UserSummary{{Id: first.String()}, {Id: "invalid"}}, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			client := Client{API: fakeAPI{summaries: func(_ context.Context, request *accountv1.GetAccountSummariesRequest) (*accountv1.GetAccountSummariesResponse, error) {
+			client := Client{API: fakeAPI{summaries: func(_ context.Context, request *accountv1.GetUserSummariesRequest) (*accountv1.GetUserSummariesResponse, error) {
 				require.Equal(t, []string{first.String(), second.String()}, request.GetIds())
-				return &accountv1.GetAccountSummariesResponse{Accounts: test.users}, nil
+				return &accountv1.GetUserSummariesResponse{Users: test.users}, nil
 			}}}
 			result, err := client.Summaries(t.Context(), []uuid.UUID{first, second})
 			if !test.valid {
@@ -55,7 +55,7 @@ func TestSummariesRequireExactResponseScope(t *testing.T) {
 func TestInvalidInputsDoNotReachAccount(t *testing.T) {
 	calls := 0
 	client := Client{API: fakeAPI{
-		summaries: func(context.Context, *accountv1.GetAccountSummariesRequest) (*accountv1.GetAccountSummariesResponse, error) {
+		summaries: func(context.Context, *accountv1.GetUserSummariesRequest) (*accountv1.GetUserSummariesResponse, error) {
 			calls++
 			return nil, nil
 		},

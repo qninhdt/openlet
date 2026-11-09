@@ -57,7 +57,7 @@ func TestIntegrationStorageLifecycleOverAuthenticatedRPC(t *testing.T) {
 	input := &letfsv1.CreateFilesystemRequest{FilesystemId: fs, IdempotencyKey: uuid.NewString(), LimitBytes: 1024}
 	_, err = api.CreateFilesystem(ctx, input)
 	require.Equal(t, codes.Unauthenticated, status.Code(err))
-	public := metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer "+gateway, "x-openlet-account-id", uuid.NewString()))
+	public := metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer "+gateway, "x-openlet-user-id", uuid.NewString()))
 	_, err = api.CreateFilesystem(public, input)
 	require.Equal(t, codes.PermissionDenied, status.Code(err))
 	created, err := api.CreateFilesystem(authorized, input)

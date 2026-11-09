@@ -29,57 +29,29 @@ func (e Fault) Unwrap() error {
 
 type Store struct{ DB *pgxpool.Pool }
 type Profile struct {
-	ID          uuid.UUID  `json:"id"`
-	Type        string     `json:"type"`
-	OwnerID     *uuid.UUID `json:"owner_id,omitempty"`
-	DisplayName string     `json:"display_name"`
-	AvatarURL   string     `json:"avatar_url"`
+	ID          uuid.UUID `json:"id"`
+	DisplayName string    `json:"display_name"`
+	AvatarURL   string    `json:"avatar_url"`
 }
 type Onboarding struct {
-	AccountID      uuid.UUID `json:"account_id"`
+	UserID         uuid.UUID `json:"user_id"`
 	Status         string    `json:"status"`
 	RefreshSession bool      `json:"refresh_session"`
 }
 
-func (s *Store) EnsureAccount(ctx context.Context, subject string) (uuid.UUID, error) {
+func (s *Store) EnsureUser(ctx context.Context, subject string) (uuid.UUID, error) {
 	if subject == "" || len(subject) > 200 || strings.ContainsAny(subject, "\r\n\x00") {
 		return uuid.Nil, Fault{"VALIDATION"}
 	}
 	var id uuid.UUID
-	err := s.DB.QueryRow(ctx, `INSERT INTO accounts(id,type,clerk_id) VALUES($1,'user',$2)
+	err := s.DB.QueryRow(ctx, `INSERT INTO users(id,clerk_id) VALUES($1,$2)
       ON CONFLICT(clerk_id) DO UPDATE SET clerk_id=excluded.clerk_id RETURNING id`, uuid.Must(uuid.NewV7()), subject).Scan(&id)
 	return id, err
 }
 
-type ManagedCreation struct {
-	ID          uuid.UUID
-	OwnerID     uuid.UUID
-	DisplayName string
-	AvatarURL   string
-}
-
-func (s *Store) CreateManaged(ctx context.Context, in ManagedCreation) (Profile, error) {
-	if in.ID == uuid.Nil || in.ID.Version() != 7 || in.OwnerID == uuid.Nil || in.OwnerID == in.ID {
-		return Profile{}, Fault{"VALIDATION"}
-	}
-	if err := validateProfile(&in.DisplayName, &in.AvatarURL); err != nil {
-		return Profile{}, err
-	}
-	_, err := s.DB.Exec(ctx, `INSERT INTO accounts(id,type,owner_id,display_name,avatar_url)
-      VALUES($1,'agent',$2,$3,$4) ON CONFLICT(id) DO NOTHING`, in.ID, in.OwnerID, in.DisplayName, in.AvatarURL)
-	if err != nil {
-		return Profile{}, err
-	}
-	value, err := s.Profile(ctx, in.ID)
-	if err == nil && (value.Type != "agent" || value.OwnerID == nil || *value.OwnerID != in.OwnerID) {
-		return Profile{}, Fault{"STATE_CONFLICT"}
-	}
-	return value, err
-}
-
 func (s *Store) Profile(ctx context.Context, id uuid.UUID) (Profile, error) {
 	var p Profile
-	e := s.DB.QueryRow(ctx, `SELECT id,type,owner_id,display_name,avatar_url FROM accounts WHERE id=$1`, id).Scan(&p.ID, &p.Type, &p.OwnerID, &p.DisplayName, &p.AvatarURL)
+	e := s.DB.QueryRow(ctx, `SELECT id,display_name,avatar_url FROM users WHERE id=$1`, id).Scan(&p.ID, &p.DisplayName, &p.AvatarURL)
 	if errors.Is(e, pgx.ErrNoRows) {
 		return p, Fault{"NOT_FOUND"}
 	}
@@ -90,7 +62,7 @@ func (s *Store) UpdateProfile(ctx context.Context, id uuid.UUID, name, avatar *s
 		return Profile{}, err
 	}
 	var p Profile
-	e := s.DB.QueryRow(ctx, `UPDATE accounts SET display_name=COALESCE($2,display_name),avatar_url=COALESCE($3,avatar_url),updated_at=now() WHERE id=$1 RETURNING id,type,owner_id,display_name,avatar_url`, id, name, avatar).Scan(&p.ID, &p.Type, &p.OwnerID, &p.DisplayName, &p.AvatarURL)
+	e := s.DB.QueryRow(ctx, `UPDATE users SET display_name=COALESCE($2,display_name),avatar_url=COALESCE($3,avatar_url),updated_at=now() WHERE id=$1 RETURNING id,display_name,avatar_url`, id, name, avatar).Scan(&p.ID, &p.DisplayName, &p.AvatarURL)
 	if errors.Is(e, pgx.ErrNoRows) {
 		return p, Fault{"NOT_FOUND"}
 	}
@@ -101,7 +73,7 @@ func (s *Store) Summaries(ctx context.Context, ids []uuid.UUID) ([]Profile, erro
 	if len(ids) == 0 || len(ids) > 100 {
 		return nil, Fault{"VALIDATION"}
 	}
-	rows, e := s.DB.Query(ctx, `SELECT id,type,owner_id,display_name,avatar_url FROM accounts WHERE id=ANY($1) ORDER BY id`, ids)
+	rows, e := s.DB.Query(ctx, `SELECT id,display_name,avatar_url FROM users WHERE id=ANY($1) ORDER BY id`, ids)
 	if e != nil {
 		return nil, e
 	}
@@ -109,7 +81,7 @@ func (s *Store) Summaries(ctx context.Context, ids []uuid.UUID) ([]Profile, erro
 	items := make([]Profile, 0, len(ids))
 	for rows.Next() {
 		var p Profile
-		if e = rows.Scan(&p.ID, &p.Type, &p.OwnerID, &p.DisplayName, &p.AvatarURL); e != nil {
+		if e = rows.Scan(&p.ID, &p.DisplayName, &p.AvatarURL); e != nil {
 			return nil, e
 		}
 		items = append(items, p)
@@ -117,15 +89,15 @@ func (s *Store) Summaries(ctx context.Context, ids []uuid.UUID) ([]Profile, erro
 	return items, rows.Err()
 }
 func (s *Store) Subject(ctx context.Context, id uuid.UUID) (string, error) {
-	var subject *string
-	e := s.DB.QueryRow(ctx, `SELECT clerk_id FROM accounts WHERE id=$1`, id).Scan(&subject)
+	var subject string
+	e := s.DB.QueryRow(ctx, `SELECT clerk_id FROM users WHERE id=$1`, id).Scan(&subject)
 	if errors.Is(e, pgx.ErrNoRows) {
 		return "", Fault{"NOT_FOUND"}
 	}
-	if e != nil || subject == nil {
+	if e != nil {
 		return "", e
 	}
-	return *subject, nil
+	return subject, nil
 }
 
 func validateProfile(name, avatar *string) error {

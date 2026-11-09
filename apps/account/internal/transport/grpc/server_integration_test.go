@@ -15,12 +15,10 @@ import (
 	"github.com/qninhdt/openlet/apps/account/internal/account"
 	"github.com/qninhdt/openlet/apps/account/internal/clients/clerk"
 	"github.com/qninhdt/openlet/apps/account/internal/testfixture"
-	"github.com/qninhdt/openlet/packages/go/authz"
 	accountv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/account/v1"
 	letfsv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/letfs/v1"
 	"github.com/qninhdt/openlet/packages/go/identity"
 	sharedrpc "github.com/qninhdt/openlet/packages/go/rpc"
-	sharedfixture "github.com/qninhdt/openlet/packages/go/testfixture"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -33,12 +31,12 @@ func TestIntegrationAccountLookupsRequireWorkspaceService(t *testing.T) {
 	db := testfixture.Postgres(t)
 	store := &account.Store{DB: db}
 	ctx := t.Context()
-	active, err := store.EnsureAccount(ctx, "trusted-active-subject")
+	active, err := store.EnsureUser(ctx, "trusted-active-subject")
 	require.NoError(t, err)
 	name, avatar := "Việt Nam", "https://example.test/avatar.png"
 	_, err = store.UpdateProfile(ctx, active, &name, &avatar)
 	require.NoError(t, err)
-	pending, err := store.EnsureAccount(ctx, "pending-subject")
+	pending, err := store.EnsureUser(ctx, "pending-subject")
 	require.NoError(t, err)
 
 	var providerCalls atomic.Int32
@@ -56,15 +54,10 @@ func TestIntegrationAccountLookupsRequireWorkspaceService(t *testing.T) {
 		_, _ = w.Write([]byte(`{"email_addresses":[{"email_address":"verified@example.test","verification":{"status":"verified"}},{"email_address":"unverified@example.test","verification":{"status":"unverified"}}]}`))
 	}))
 	t.Cleanup(provider.Close)
-	schemaPath := testfixture.Path("packages", "contracts", "authz", "schema.zed")
-	graph, _, _ := sharedfixture.SpiceDB(t, schemaPath)
-	contract, err := authz.LoadContract(schemaPath)
-	require.NoError(t, err)
-	graphReady := func(ctx context.Context) error { return contract.Verify(ctx, graph) }
-	implementation := &Server{GraphReady: graphReady, Service: &account.Service{Store: store, Graph: graph, Clerk: clerk.Client{BaseURL: provider.URL, Secret: "isolated-clerk-key"}}}
+	implementation := &Server{Service: &account.Service{Store: store, Clerk: clerk.Client{BaseURL: provider.URL, Secret: "isolated-clerk-key"}}}
 	authenticator, err := sharedrpc.NewAuthenticator([]sharedrpc.Credential{
 		{Service: "workspace", Token: strings.Repeat("w", 32), Methods: []string{
-			accountv1.AccountService_GetAccountSummaries_FullMethodName,
+			accountv1.AccountService_GetUserSummaries_FullMethodName,
 			accountv1.AccountService_GetVerifiedEmails_FullMethodName,
 		}},
 		{Service: "gateway", Gateway: true, Token: strings.Repeat("g", 32), Methods: []string{letfsv1.FilesystemService_GetNode_FullMethodName}},
@@ -92,30 +85,30 @@ func TestIntegrationAccountLookupsRequireWorkspaceService(t *testing.T) {
 	health, err := healthv1.NewHealthClient(healthConnection).Check(ctx, &healthv1.HealthCheckRequest{})
 	require.NoError(t, err)
 	require.Equal(t, healthv1.HealthCheckResponse_SERVING, health.Status)
-	response, err := client.GetAccountSummaries(ctx, &accountv1.GetAccountSummariesRequest{Ids: []string{active.String()}})
+	response, err := client.GetUserSummaries(ctx, &accountv1.GetUserSummariesRequest{Ids: []string{active.String()}})
 	require.NoError(t, err)
-	require.Len(t, response.Accounts, 1, "existing account profiles are exposed")
-	require.Equal(t, active.String(), response.Accounts[0].Id)
-	require.Equal(t, name, response.Accounts[0].DisplayName)
-	require.Equal(t, avatar, response.Accounts[0].AvatarUrl)
-	both, err := client.GetAccountSummaries(ctx, &accountv1.GetAccountSummariesRequest{Ids: []string{active.String(), pending.String()}})
+	require.Len(t, response.Users, 1, "existing account profiles are exposed")
+	require.Equal(t, active.String(), response.Users[0].Id)
+	require.Equal(t, name, response.Users[0].DisplayName)
+	require.Equal(t, avatar, response.Users[0].AvatarUrl)
+	both, err := client.GetUserSummaries(ctx, &accountv1.GetUserSummariesRequest{Ids: []string{active.String(), pending.String()}})
 	require.NoError(t, err)
-	require.Len(t, both.Accounts, 2)
-	emails, err := client.GetVerifiedEmails(ctx, &accountv1.GetVerifiedEmailsRequest{AccountId: active.String()})
+	require.Len(t, both.Users, 2)
+	emails, err := client.GetVerifiedEmails(ctx, &accountv1.GetVerifiedEmailsRequest{UserId: active.String()})
 	require.NoError(t, err)
 	require.Equal(t, []string{"verified@example.test"}, emails.Emails)
 	require.Equal(t, int32(1), providerCalls.Load())
 
 	for _, ids := range [][]string{nil, {uuid.Nil.String()}, {"not-a-uuid"}, {active.String(), active.String()}, make([]string, 101)} {
-		_, err := client.GetAccountSummaries(ctx, &accountv1.GetAccountSummariesRequest{Ids: ids})
+		_, err := client.GetUserSummaries(ctx, &accountv1.GetUserSummariesRequest{Ids: ids})
 		require.Equal(t, codes.InvalidArgument, status.Code(err))
 	}
 	for _, id := range []string{"", "malformed", uuid.Nil.String()} {
-		_, err := client.GetVerifiedEmails(ctx, &accountv1.GetVerifiedEmailsRequest{AccountId: id})
+		_, err := client.GetVerifiedEmails(ctx, &accountv1.GetVerifiedEmailsRequest{UserId: id})
 		require.Equal(t, codes.InvalidArgument, status.Code(err))
 	}
 	for _, id := range []string{uuid.NewString()} {
-		_, err := client.GetVerifiedEmails(ctx, &accountv1.GetVerifiedEmailsRequest{AccountId: id})
+		_, err := client.GetVerifiedEmails(ctx, &accountv1.GetVerifiedEmailsRequest{UserId: id})
 		require.Equal(t, codes.NotFound, status.Code(err))
 	}
 	require.Equal(t, int32(1), providerCalls.Load(), "invalid or inactive identities must not reach Clerk")
@@ -126,31 +119,31 @@ func TestIntegrationAccountLookupsRequireWorkspaceService(t *testing.T) {
 		{strings.Repeat("x", 32), codes.Unauthenticated},
 		{strings.Repeat("g", 32), codes.PermissionDenied},
 	} {
-		_, err := connect(test.token).GetVerifiedEmails(ctx, &accountv1.GetVerifiedEmailsRequest{AccountId: active.String()})
+		_, err := connect(test.token).GetVerifiedEmails(ctx, &accountv1.GetVerifiedEmailsRequest{UserId: active.String()})
 		require.Equal(t, test.code, status.Code(err))
 	}
-	delegated := metadata.NewOutgoingContext(ctx, metadata.Pairs("x-openlet-account-id", active.String()))
-	_, err = client.GetVerifiedEmails(delegated, &accountv1.GetVerifiedEmailsRequest{AccountId: active.String()})
+	delegated := metadata.NewOutgoingContext(ctx, metadata.Pairs("x-openlet-user-id", active.String()))
+	_, err = client.GetVerifiedEmails(delegated, &accountv1.GetVerifiedEmailsRequest{UserId: active.String()})
 	require.Equal(t, codes.PermissionDenied, status.Code(err))
 	require.Equal(t, int32(1), providerCalls.Load())
 
 	providerUnavailable.Store(true)
-	_, err = client.GetVerifiedEmails(ctx, &accountv1.GetVerifiedEmailsRequest{AccountId: active.String()})
+	_, err = client.GetVerifiedEmails(ctx, &accountv1.GetVerifiedEmailsRequest{UserId: active.String()})
 	require.Equal(t, codes.Unavailable, status.Code(err))
 	require.NotContains(t, err.Error(), "isolated-clerk-key")
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()
-	_, err = client.GetAccountSummaries(canceled, &accountv1.GetAccountSummariesRequest{Ids: []string{active.String()}})
+	_, err = client.GetUserSummaries(canceled, &accountv1.GetUserSummariesRequest{Ids: []string{active.String()}})
 	require.Equal(t, codes.Canceled, status.Code(err))
 
-	for _, principal := range []identity.Principal{{}, {Service: "ingest"}, {Service: "workspace", Gateway: true}, {Service: "workspace", ActorID: active}} {
-		_, err := implementation.GetAccountSummaries(identity.WithPrincipal(ctx, principal), &accountv1.GetAccountSummariesRequest{Ids: []string{active.String()}})
+	for _, principal := range []identity.Principal{{}, {Service: "ingest"}, {Service: "workspace", Gateway: true}, {Service: "workspace", ActorKind: identity.User, ActorID: active}} {
+		_, err := implementation.GetUserSummaries(identity.WithPrincipal(ctx, principal), &accountv1.GetUserSummariesRequest{Ids: []string{active.String()}})
 		require.Equal(t, codes.PermissionDenied, status.Code(err), "unverified in-process calls cannot bypass the operation boundary")
 	}
 	db.Close()
 	health, err = healthv1.NewHealthClient(healthConnection).Check(ctx, &healthv1.HealthCheckRequest{})
 	require.NoError(t, err)
 	require.Equal(t, healthv1.HealthCheckResponse_NOT_SERVING, health.Status)
-	_, err = client.GetAccountSummaries(ctx, &accountv1.GetAccountSummariesRequest{Ids: []string{active.String()}})
+	_, err = client.GetUserSummaries(ctx, &accountv1.GetUserSummariesRequest{Ids: []string{active.String()}})
 	require.Equal(t, codes.Unavailable, status.Code(err))
 }

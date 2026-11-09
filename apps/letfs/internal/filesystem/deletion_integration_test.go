@@ -22,7 +22,7 @@ func TestIntegrationDeletionBatchesRetainEvidenceAndDebitOnce(t *testing.T) {
 	s := Store{DB: db, Graph: graph, MaxNodes: 200, InlineLimit: 64, MaxFileBytes: 64}
 	owner := identity.WithPrincipal(t.Context(), identity.Principal{Service: "resource-owner"})
 	actor := uuid.New()
-	ctx := identity.WithPrincipal(t.Context(), identity.Principal{Service: "gateway", Gateway: true, ActorID: actor})
+	ctx := identity.WithPrincipal(t.Context(), identity.Principal{ActorKind: identity.User, Service: "gateway", Gateway: true, ActorID: actor})
 	filesystemID, fs := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	_, err := s.CreateFilesystem(owner, uuid.New(), CreateFilesystem{ID: filesystemID, LimitBytes: 1000})
 	require.NoError(t, err)
@@ -44,7 +44,7 @@ func TestIntegrationDeletionBatchesRetainEvidenceAndDebitOnce(t *testing.T) {
 	outside := create(root, "outside.bin", &InlineFile{Content: []byte("keep"), MediaType: "application/octet-stream"})
 	folder, err = s.GetNode(ctx, fs, Locator{NodeID: &folder.ID})
 	require.NoError(t, err)
-	entry, err := s.TrashNode(ctx, fs, Locator{NodeID: &folder.ID}, &folder.Revision)
+	entry, err := s.TrashNode(ctx, fs, Locator{NodeID: &folder.ID}, &folder.Revision, false)
 	require.NoError(t, err)
 	_, err = s.PrepareTrashPurge(ctx, fs, entry.ID)
 	require.Equal(t, apperr.Forbidden, apperr.KindOf(err))
@@ -89,10 +89,10 @@ func TestIntegrationDeletionBatchesRetainEvidenceAndDebitOnce(t *testing.T) {
 
 	// Full deletion fences outstanding writes, retains cleanup and leaves a stable tombstone.
 	upload := uuid.Must(uuid.NewV7())
-	_, err = db.Exec(ctx, `INSERT INTO uploads(id,scope_id,actor_id,input,transport,candidate_key,expected_size,content_md5,transfer_deadline)
- VALUES($1,$2,$3,'{}','single','candidate/delete',4,'CY9rzUYh03PK3k6DJie09g==',now()+interval '1 hour')`, upload, fs, actor)
+	_, err = db.Exec(ctx, `INSERT INTO uploads(id,scope_id,actor_id,actor_kind,input,transport,candidate_key,expected_size,content_md5,transfer_deadline)
+ VALUES($1,$2,$3,'user','{}','single','candidate/delete',4,'CY9rzUYh03PK3k6DJie09g==',now()+interval '1 hour')`, upload, fs, actor)
 	require.NoError(t, err)
-	_, err = db.Exec(ctx, `UPDATE files SET storage_kind='object',inline_bytes=NULL,object_key='objects/delete' WHERE node_id=$1`, outside.ID)
+	_, err = db.Exec(ctx, `UPDATE files SET storage_kind='object',inline_bytes=NULL,text_content=NULL,newline_count=NULL,text_sha256=NULL,object_key='objects/delete' WHERE node_id=$1`, outside.ID)
 	require.NoError(t, err)
 	done, err = s.DeletionBatch(ctx, fs, nil)
 	require.Equal(t, "FILESYSTEM_NOT_DELETING", reason(err))

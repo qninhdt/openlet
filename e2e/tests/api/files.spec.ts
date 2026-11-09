@@ -96,7 +96,7 @@ test('trash entries preserve identity through restore and purge only debit remov
   const trashed = await session.api.delete(`${base}/nodes/${folder.id}`, { headers: { 'if-match': selected.headers().etag } });
   expect(trashed.status()).toBe(201);
   const entry = await trashed.json();
-  expect(entry).toMatchObject({ node_id: folder.id, parent_id: session.rootId, name: 'trash-resource', status: 'trashed', actor_id: session.accountId });
+  expect(entry).toMatchObject({ node_id: folder.id, parent_id: session.rootId, name: 'trash-resource', status: 'trashed', actor_id: session.userId });
   expect(trashed.headers().location).toBe(`${base}/trash-entries/${entry.id}`);
   expect((await session.api.get(`${base}/nodes/${file.id}`)).status()).toBe(404);
   expect((await (await session.api.get(`/v1/filesystems/${session.filesystemId}`)).json()).used_bytes).toBe('3');

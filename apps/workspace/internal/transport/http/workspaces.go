@@ -62,7 +62,7 @@ func failure(w http.ResponseWriter, r *http.Request, e error) {
 	}
 	Error(w, r, 503, "DEPENDENCY_UNAVAILABLE", "dependency unavailable")
 }
-func actorID(r *http.Request) uuid.UUID { return uuid.MustParse(r.Header.Get("X-Openlet-Account-ID")) }
+func actorID(r *http.Request) uuid.UUID { return uuid.MustParse(r.Header.Get("X-Openlet-User-ID")) }
 func resourceID(c *gin.Context, name string) (uuid.UUID, error) {
 	v, e := uuid.Parse(c.Param(name))
 	if e != nil || v == uuid.Nil {
