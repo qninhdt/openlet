@@ -12,6 +12,7 @@ DATABASES = (
     "account",
     "workspace",
     "letfs",
+    "leta",
     "temporal",
     "temporal_visibility",
     "spicedb",
@@ -20,9 +21,11 @@ GENERATED = (
     "postgres_password",
     "gateway_token",
     "workspace_service_token",
+    "leta_service_token",
     "ingest_service_token",
     "qdrant_api_key",
     "spicedb_key",
+    "redis_password",
 )
 PROVIDED = {
     "clerk_secret_key": "CLERK_SECRET_KEY",
@@ -117,18 +120,36 @@ def configure(state: Path, environment: dict[str, str]) -> None:
                 "existing spicedb_key must be URL-safe; explicit rotation is required"
             )
         existing[name] = value
+    catalog_path = environment.get("LETA_MODEL_CATALOG_PATH")
+    target = state / "leta-models.json"
+    if catalog_path or not target.exists():
+        source = (
+            Path(catalog_path)
+            if catalog_path
+            else ROOT / "apps/leta/models.example.json"
+        )
+        catalog = json.loads(source.read_text())
+    else:
+        catalog = None
     state.mkdir(parents=True, exist_ok=True, mode=0o700)
     state.chmod(0o700)
     (state / "secrets").mkdir(exist_ok=True, mode=0o700)
     (state / "secrets").chmod(0o700)
+    if catalog is not None:
+        private_write(target, json.dumps(catalog, indent=2) + "\n")
     for name, value in existing.items():
         private_write(state / "secrets" / name, value)
-    for app in ("account", "workspace", "letfs", "spicedb"):
+    for app in ("account", "workspace", "letfs", "leta", "spicedb"):
         password = quote(existing[f"{app}_db_password"], safe="")
+        scheme = "postgresql" if app == "leta" else "postgres"
         private_write(
             state / "secrets" / f"{app}_database_url",
-            f"postgres://openlet_{app}:{password}@postgres:5432/openlet_{app}?sslmode=disable",
+            f"{scheme}://openlet_{app}:{password}@postgres:5432/openlet_{app}?sslmode=disable",
         )
+    private_write(
+        state / "secrets" / "redis_url",
+        f"redis://:{quote(existing['redis_password'], safe='')}@redis:6379/0",
+    )
     sql = "\\set ON_ERROR_STOP on\n"
     for db in DATABASES:
         role = f"openlet_{db}"

@@ -12,13 +12,15 @@ import (
 )
 
 type Config struct {
-	Listen, DatabaseURL, TemporalAddress, TemporalNamespace string
-	GatewayToken, WorkspaceToken, AccountRPCAddress         string
-	SpiceDBAddress, SpiceDBKey                              string
-	AllowPlaintextRPC                                       bool
-	MaxMembers                                              int
-	QuotaLimit                                              int64
-	InviteTTL                                               time.Duration
+	Listen, DatabaseURL, TemporalAddress, TemporalNamespace     string
+	GatewayToken, WorkspaceToken, AccountRPCAddress             string
+	LetFSRPCAddress, LetaRPCAddress                             string
+	RPCListen, RPCCertificatePath, RPCPrivateKeyPath, LetaToken string
+	SpiceDBAddress, SpiceDBKey                                  string
+	AllowPlaintextRPC                                           bool
+	MaxMembers                                                  int
+	QuotaLimit                                                  int64
+	InviteTTL                                                   time.Duration
 }
 
 func Load() (Config, error) {
@@ -26,11 +28,36 @@ func Load() (Config, error) {
 }
 func Parse(get func(string) string) (Config, error) {
 	c := Config{Listen: get("LISTEN_ADDR"), DatabaseURL: get("DATABASE_URL"), TemporalAddress: get("TEMPORAL_ADDRESS"), TemporalNamespace: get("TEMPORAL_NAMESPACE"), GatewayToken: get("GATEWAY_TOKEN"), WorkspaceToken: get("WORKSPACE_SERVICE_TOKEN"), AccountRPCAddress: get("ACCOUNT_RPC_ADDRESS")}
+	c.LetFSRPCAddress, c.LetaRPCAddress = get("LETFS_RPC_ADDRESS"), get("LETA_RPC_ADDRESS")
+	for name, address := range map[string]string{"LETFS_RPC_ADDRESS": c.LetFSRPCAddress, "LETA_RPC_ADDRESS": c.LetaRPCAddress} {
+		host, port, err := net.SplitHostPort(address)
+		number, portErr := strconv.Atoi(port)
+		if err != nil || host == "" || portErr != nil || number < 1 || number > 65535 {
+			return c, errors.New("invalid " + name)
+		}
+	}
 	plaintext := get("ALLOW_PLAINTEXT_RPC")
 	if plaintext != "" && plaintext != "false" && plaintext != "true" {
 		return c, errors.New("ALLOW_PLAINTEXT_RPC must be true or false")
 	}
 	c.AllowPlaintextRPC = plaintext == "true"
+	c.RPCListen = get("RPC_LISTEN_ADDR")
+	if c.RPCListen == "" {
+		c.RPCListen = ":9090"
+	}
+	if _, _, err := net.SplitHostPort(c.RPCListen); err != nil {
+		return c, errors.New("invalid RPC_LISTEN_ADDR")
+	}
+	c.RPCCertificatePath, c.RPCPrivateKeyPath = get("RPC_TLS_CERT_PATH"), get("RPC_TLS_KEY_PATH")
+	if c.AllowPlaintextRPC {
+		if c.RPCCertificatePath != "" || c.RPCPrivateKeyPath != "" {
+			return c, errors.New("RPC TLS and plaintext configuration conflict")
+		}
+	} else if c.RPCCertificatePath == "" || c.RPCPrivateKeyPath == "" {
+		return c, errors.New("RPC_TLS_CERT_PATH and RPC_TLS_KEY_PATH required for verified TLS")
+	}
+	c.LetaToken = get("LETA_SERVICE_TOKEN")
+
 	c.SpiceDBAddress, c.SpiceDBKey = get("SPICEDB_ADDRESS"), get("SPICEDB_GRPC_PRESHARED_KEY")
 	if host, port, err := net.SplitHostPort(c.SpiceDBAddress); err != nil || host == "" || port == "" {
 		return c, errors.New("invalid SPICEDB_ADDRESS")
@@ -80,7 +107,7 @@ func Parse(get func(string) string) (Config, error) {
 	if _, _, e = net.SplitHostPort(c.TemporalAddress); e != nil || c.TemporalNamespace == "" {
 		return c, errors.New("invalid Temporal address or namespace")
 	}
-	for _, t := range []string{c.GatewayToken, c.WorkspaceToken, c.SpiceDBKey} {
+	for _, t := range []string{c.GatewayToken, c.WorkspaceToken, c.LetaToken, c.SpiceDBKey} {
 		if len(t) < 32 || strings.IndexFunc(t, func(r rune) bool {
 			return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_')
 		}) >= 0 {

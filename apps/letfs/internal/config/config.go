@@ -20,7 +20,7 @@ type Config struct {
 	QdrantURL, QdrantKey                                       string
 	TemporalAddress, TemporalNamespace                         string
 	Listen, RPCListen, DatabaseURL, SpiceDBAddress, SpiceDBKey string
-	GatewayToken, WorkspaceToken, IngestToken                  string
+	GatewayToken, WorkspaceToken, IngestToken, LetaToken       string
 	RPCCertificatePath, RPCPrivateKeyPath                      string
 	AllowPlaintextRPC                                          bool
 	Storage                                                    storage.Config
@@ -37,6 +37,7 @@ type Config struct {
 func Load() (Config, error) { return Parse(sharedconfig.Secret) }
 func Parse(get func(string) string) (Config, error) {
 	c := Config{Listen: get("LISTEN_ADDR"), RPCListen: get("RPC_LISTEN_ADDR"), DatabaseURL: get("DATABASE_URL"), SpiceDBAddress: get("SPICEDB_ADDRESS"), SpiceDBKey: get("SPICEDB_GRPC_PRESHARED_KEY"), GatewayToken: get("GATEWAY_TOKEN"), WorkspaceToken: get("WORKSPACE_SERVICE_TOKEN"), IngestToken: get("INGEST_SERVICE_TOKEN"), RPCCertificatePath: get("RPC_TLS_CERT_PATH"), RPCPrivateKeyPath: get("RPC_TLS_KEY_PATH"), TemporalAddress: get("TEMPORAL_ADDRESS"), TemporalNamespace: get("TEMPORAL_NAMESPACE")}
+	c.LetaToken = get("LETA_SERVICE_TOKEN")
 	boolean := func(key string) (bool, error) {
 		value := get(key)
 		if value != "" && value != "true" && value != "false" {
@@ -79,7 +80,7 @@ func Parse(get func(string) string) (Config, error) {
 		return c, errors.New("DATABASE_URL credentials required")
 	}
 	seen := map[string]bool{}
-	for _, token := range []string{c.GatewayToken, c.WorkspaceToken, c.IngestToken, c.SpiceDBKey} {
+	for _, token := range []string{c.GatewayToken, c.WorkspaceToken, c.IngestToken, c.LetaToken, c.SpiceDBKey} {
 		if len(token) < 32 || strings.IndexFunc(token, func(r rune) bool {
 			return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_')
 		}) >= 0 || seen[token] {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/exaring/otelpgx"
@@ -9,11 +10,17 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/qninhdt/openlet/apps/workspace/internal/config"
 	jobs "github.com/qninhdt/openlet/apps/workspace/internal/temporal"
+	workspaceRPC "github.com/qninhdt/openlet/apps/workspace/internal/transport/grpc"
 	api "github.com/qninhdt/openlet/apps/workspace/internal/transport/http"
 	"github.com/qninhdt/openlet/apps/workspace/internal/workspace"
 	"github.com/qninhdt/openlet/packages/go/authz"
 	accountclient "github.com/qninhdt/openlet/packages/go/clients/account"
+	letaclient "github.com/qninhdt/openlet/packages/go/clients/leta"
+	letfsclient "github.com/qninhdt/openlet/packages/go/clients/letfs"
 	accountv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/account/v1"
+	letav1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/leta/v1"
+	letfsv1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/letfs/v1"
+	workspacev1 "github.com/qninhdt/openlet/packages/go/gen/openlet_api/workspace/v1"
 	sharedrpc "github.com/qninhdt/openlet/packages/go/rpc"
 	"github.com/qninhdt/openlet/packages/go/telemetry"
 	sharedtemporal "github.com/qninhdt/openlet/packages/go/temporal"
@@ -23,6 +30,7 @@ import (
 	"google.golang.org/grpc"
 	healthv1 "google.golang.org/grpc/health/grpc_health_v1"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -85,6 +93,9 @@ func run() error {
 	if e = db.Ping(startupCtx); e != nil {
 		return errors.New("database unavailable")
 	}
+	if len(os.Args) == 2 && os.Args[1] == "--export-resource-workspaces" {
+		return (&workspace.Store{DB: db}).ExportResourceWorkspaces(ctx, os.Stdout)
+	}
 	graphConnection, e := sharedrpc.Dial(cfg.SpiceDBAddress, cfg.SpiceDBKey, sharedrpc.Transport{AllowPlaintext: cfg.AllowPlaintextRPC})
 	if e != nil {
 		return errors.New("authorization transport configuration rejected")
@@ -121,17 +132,31 @@ func run() error {
 	defer accountConnection.Close()
 	accountHealth, e := healthv1.NewHealthClient(accountConnection).Check(startupCtx, &healthv1.HealthCheckRequest{Service: accountv1.AccountService_ServiceDesc.ServiceName}, grpc.WaitForReady(true))
 	if e != nil || accountHealth.GetStatus() != healthv1.HealthCheckResponse_SERVING {
-		return errors.New("Account RPC unavailable")
+		return errors.New("User RPC unavailable")
 	}
 	accountClient := accountclient.Client{API: accountv1.NewAccountServiceClient(accountConnection)}
-	service := &workspace.Service{Store: store, Accounts: accountClient}
+	storageConnection, e := sharedrpc.Dial(cfg.LetFSRPCAddress, cfg.WorkspaceToken, sharedrpc.Transport{AllowPlaintext: cfg.AllowPlaintextRPC})
+	if e != nil {
+		return e
+	}
+	defer storageConnection.Close()
+	letaConnection, e := sharedrpc.Dial(cfg.LetaRPCAddress, cfg.WorkspaceToken, sharedrpc.Transport{AllowPlaintext: cfg.AllowPlaintextRPC})
+	if e != nil {
+		return e
+	}
+	defer letaConnection.Close()
+	letaClient := letaclient.Client{API: letav1.NewLetaServiceClient(letaConnection)}
+	service := &workspace.Service{Store: store, Users: accountClient,
+		Storage: letfsclient.Client{API: letfsv1.NewStorageAdministrationServiceClient(storageConnection)},
+		Homes:   letfsclient.Client{API: letfsv1.NewStorageAdministrationServiceClient(storageConnection)},
+		Letas:   letaClient}
 	service.StartCreate = func(ctx context.Context, in workspace.CreateInput) (workspace.Workspace, error) {
 		return jobs.StartCreate(ctx, tc, in)
 	}
 	service.Mutate = func(ctx context.Context, in workspace.Mutation) (workspace.Workspace, error) {
 		return jobs.Mutate(ctx, tc, in)
 	}
-	activities := &jobs.Activities{Service: service}
+	activities := &jobs.Activities{Service: service, Letas: letaClient}
 	owner := temporalworker.New(tc, jobs.Queue, temporalworker.Options{MaxConcurrentActivityExecutionSize: 16, WorkerStopTimeout: 20 * time.Second})
 	workflows := &jobs.Workflows{QuotaLimit: cfg.QuotaLimit}
 	owner.RegisterWorkflow(workflows.CreateWorkspace)
@@ -152,8 +177,36 @@ func run() error {
 		}
 		return graphReady(ctx)
 	}}
+
+	authentication, e := sharedrpc.NewAuthenticator([]sharedrpc.Credential{workspaceRPC.Credential(cfg.LetaToken)})
+	if e != nil {
+		return e
+	}
+	transport := sharedrpc.Transport{AllowPlaintext: cfg.AllowPlaintextRPC}
+	if !cfg.AllowPlaintextRPC {
+		certificate, err := tls.LoadX509KeyPair(cfg.RPCCertificatePath, cfg.RPCPrivateKeyPath)
+		if err != nil {
+			return errors.New("RPC TLS certificate unavailable")
+		}
+		transport.TLS = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}}
+	}
+	rpcServer, e := sharedrpc.NewServer(authentication, transport)
+	if e != nil {
+		return e
+	}
+	defer rpcServer.Stop()
+	rpcHandler := &workspaceRPC.Server{Service: service, Ready: app.Ready}
+	workspacev1.RegisterWorkspaceServiceServer(rpcServer, rpcHandler)
+	healthv1.RegisterHealthServer(rpcServer, rpcHandler)
+	rpcListener, e := net.Listen("tcp", cfg.RPCListen)
+	if e != nil {
+		return errors.New("RPC listener unavailable")
+	}
+	defer rpcListener.Close()
 	srv := &http.Server{Addr: cfg.Listen, Handler: app.Router(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 125 * time.Second, WriteTimeout: 125 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32768}
-	errch := make(chan error, 1)
+	defer srv.Close()
+	errch := make(chan error, 2)
+	go func() { slog.Info("gRPC listening", "address", cfg.RPCListen); errch <- rpcServer.Serve(rpcListener) }()
 	go func() { slog.Info("HTTP listening", "address", cfg.Listen); errch <- srv.ListenAndServe() }()
 	select {
 	case e = <-errch:
@@ -165,6 +218,13 @@ func run() error {
 	stopCtx, stop := context.WithTimeout(context.Background(), 125*time.Second)
 	defer stop()
 	e = srv.Shutdown(stopCtx)
-
+	rpcStopped := make(chan struct{})
+	go func() { rpcServer.GracefulStop(); close(rpcStopped) }()
+	select {
+	case <-rpcStopped:
+	case <-stopCtx.Done():
+		rpcServer.Stop()
+		<-rpcStopped
+	}
 	return e
 }

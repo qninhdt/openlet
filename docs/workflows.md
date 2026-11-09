@@ -1,17 +1,14 @@
 # Durable execution
 
-Workflows run in the existing private per-environment namespace. Account uses `openlet-account`, Workspace `openlet-workspace`, LetFS `openlet-letfs`; ingest activities use `openlet-letfs-cpu` and `openlet-letfs-io`. Each activity registers only on its executing owner's worker. Cross-service names/DTOs live in `packages/go/temporal`; domain code remains service-local.
+Workflows run in the existing private per-environment namespace. Account uses `openlet-account`, Workspace `openlet-workspace`, LetFS `openlet-letfs`; ingest activities use `openlet-letfs-cpu` and `openlet-letfs-io`. Leta uses `openlet-leta` for control and `openlet-leta-runtime` for inference. Each activity registers only on its executing owner's worker. Cross-service names/DTOs live in `packages/go/temporal`; domain code remains service-local.
 
 ## Workflow trees
 
 ```text
 W OnboardUser [account]
-├── A EnsureAccount [account]
+├── A EnsureUser [account]
 ├── child W CreateWorkspace [ws]
-└── A PublishAccountIdentity [account]
-
-W AccountChanges [account]
-└── A ApplyAccountChange [account]
+└── A PublishUserIdentity [account]
 
 W CreateWorkspace [ws]
 ├── A CreateFilesystem [letfs]
@@ -26,6 +23,7 @@ W WorkspaceChanges [ws, serialized per workspace]
 
 W DeleteWorkspace [ws]
 ├── A MarkWorkspaceDeleting [ws]
+├── A ListWorkspaceLeta / StopLetaForWorkspaceDeletion [ws → leta, bounded pages]
 ├── child W DeleteFilesystem [letfs]
 └── A RemoveWorkspace [ws]
 
@@ -53,17 +51,44 @@ W WorkspaceMaintenance [ws, scheduled]
 
 ## Admission and publication
 
-HTTP/gRPC admission validates input and permission before starting work; there are no permission/quota-check activities. Mutation transactions still enforce lifecycle, revision, member cap and hard filesystem accounting. Onboarding carries its trusted verified account into the initial Workspace child. Workspace allocates opaque filesystem/scope IDs once; LetFS never knows shared/personal purpose.
+### Agent inbox orchestration
+
+`apps/leta/src/leta/temporal/agent.py` implements a long-lived `AgentWorkflow` per agent on `openlet-leta`. Receive uses Update-with-Start, serializes only the short SQL inbox admission, and acknowledges the committed message ID/sequence while model work remains independent. SQL-only Local Activities bootstrap/reserve the current run, persist inbox items and save run control. Transient SQL failures use Temporal retry; validation and routing failures are nonretryable.
+
+The workflow dispatches one whole `run_agent` Activity on `openlet-leta-runtime`, retains its business run ID over retries/Continue-As-New, and remains idle without polling. Stop awaits Activity cleanup and cancels any still-unfinished reserved run before acknowledging. History guards request cooperative yield during an active invocation and rotate idle/paused executions after handlers drain; stop can break that drain to avoid a circular wait. PostgreSQL retains message bodies, run progress and checkpoints; Workflow state carries IDs, cursors and control flags.
+
+`leta.worker.agent_workers` hosts the two bounded Workers and requires a concrete runner callable. The production entrypoint supplies the checkpointed AgentRunner, native clients, required Redis publisher and all six Workflow types. Private ingress still owns authentication and source/routing admission.
+
+### Leta Workflow catalogue
+
+| Workflow | Local Activities (short owning SQL) | Regular Activities / purpose |
+| --- | --- | --- |
+| AgentWorkflow | bootstrap_agent, persist_inbox, save_run_control | run_agent on the runtime queue; receive/control remain responsive during inference |
+| LetaLifecycleWorkflow | save_leta_change | publish_leta_resource, ensure_leta_home, start_agent/control_agent; deletion also change_schedule, settle_hitl, cleanup_leta_access |
+| BoxLifecycleWorkflow | save_box_change | ensure_box_home, start_agent; deletion settles sources, stops children, then trash_box_home |
+| HumanRequestWorkflow | open_hitl_request, resolve_hitl_request, save_hitl_outcome | grant_requested_access for accepted resource requests, then deliver_agent_input to the exact requesting agent |
+| ScheduleChangesWorkflow | save_schedule_change | apply_temporal_schedule converges native schedule state with the saved definition |
+| ScheduleDeliveryWorkflow | load_schedule_occurrence | deliver_agent_input with stable nominal occurrence identity after current lifecycle validation |
+
+Control workflows also publish sparse committed-resource hints through `publish_resource_event`. Publication failure never replays a committed business effect. `change_schedule`, `settle_hitl` and `control_agent` bridge existing coordinators; they introduce no extra Workflow type.
+
+Ordinary root archive stops agent runtimes, requests cancellation of its box coordinators and retains box homes/history. Explicit box deletion instead stops its children before trashing its home. Cancellation request acknowledgement alone does not mean every box Update handler has drained; the runner stop barrier protects storage access.
+
+Human requests have pending/resolved/cancelled/expired status. An ask targets the Leta creator; a personal-scope approval targets the resource owner. Only the finite request Workflow waits or expires. Accepted access grants the root Leta subject and delivers the settled outcome to the requesting Leta/Leti. Rejection, cancellation and expiry also produce typed input. No pending request blocks the agent's unrelated work.
+
+Schedule definitions are product rows in PostgreSQL, queryable for list/calendar APIs. `at` accepts an absolute time or relative seconds; `interval` accepts arbitrary whole-second durations; `calendar` uses timezone and Temporal field ranges. Definition changes normalize relative times once. Native Temporal Schedules wake independent delivery Workflows with BUFFER_ONE; SQL occurrence checks suppress stale/deleted/inactive sources. The calendar endpoint forecasts the native rules for a bounded requested window; it does not create a second scheduler.
+
+HTTP/gRPC admission validates input and permission before starting work; there are no permission/quota-check activities. Mutation transactions still enforce lifecycle, revision, member cap and hard filesystem accounting. Onboarding carries its trusted verified human user into the initial Workspace child. Workspace allocates opaque filesystem/scope IDs once; LetFS never knows shared/personal purpose.
 
 CreateWorkspace performs generic storage creation followed by SaveWorkspace, which persists the mapping/member and publishes graph relationships. AddMember similarly commits actual membership and acknowledges its graph publication. Existing receipts reconcile lost SQL/graph acknowledgments; a committed or pre-existing resource must never be compensated. Permanent uncommitted admission failure cleans only storage created for that command through the existing deletion child. Transient failures retry.
 
-AccountChanges handles managed-account creation and graph publication; ordinary profile edits remain direct. OnboardUser ends with Clerk identity publication. Verified completion prevents recreation after workspace deletion or Temporal history expiry; Account stores no initial-workspace foreign key.
+The identity service runs human onboarding only; profile edits remain direct and managed-account workflows are removed. OnboardUser ends with Clerk identity publication. Verified completion prevents recreation after workspace deletion or Temporal history expiry; Account stores no initial-workspace foreign key.
 
 WorkspaceChanges serializes commands per workspace with a native workflow mutex and Update-With-Start. After 100 completed Updates, Continue-As-New waits for handlers. Membership/access/delete responses wait for their required effects, including graph acknowledgement. Workspace rename and invitation management stay direct.
 
 ## Deletion and maintenance
 
-DeleteWorkspace marks deleting, waits for its one DeleteFilesystem child, then removes Workspace relationships and records deletion. Accepted deletion survives caller disconnect; ABANDON children continue when a parent closes. A terminated parent can be explicitly retried without assuming its child stopped.
+DeleteWorkspace marks deleting, pages all canonical Leta roots and waits for actual producer/HITL/schedule/access cleanup, then waits for its one DeleteFilesystem child and records deletion. Cleanup callbacks use direct owning methods rather than reenter the held WorkspaceChanges mutex. Accepted deletion survives caller disconnect; ABANDON children continue when a parent closes. A terminated parent can be explicitly retried without assuming its child stopped.
 
 DeleteFilesystem fences writes and keyset-pages scopes. It starts at most four DeleteScope children concurrently, waits for them, then removes the filesystem. After 100 pages it continues with its cursor. DeleteScopeData loops bounded SQL batches internally. Request-owned trash purge uses the same local batch deletion logic. Each batch records cleanup, removes actual rows and debits only those rows atomically. Duplicate requests use independent generated child IDs and natural idempotence. Missing/deleted resources are successful cleanup retries. No per-node activities exist.
 

@@ -8,25 +8,24 @@ permissions:
 
 jobs:
   native:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.work
           cache-dependency-path: |
             apps/*/go.sum
             packages/go/go.sum
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
-          version: 0.10.7
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v6
+          version: 0.13.7
+      - uses: pnpm/action-setup@v6.1.1
+      - uses: actions/setup-node@v7.1.0
         with:
-          node-version: 24
+          node-version: 26.13.0
           cache: pnpm
-      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - run: pnpm install --frozen-lockfile
       - run: uv sync --locked --package letfs-ingest
       - run: pnpm exec turbo run build check test test:workflow test:integration --concurrency=1
@@ -38,21 +37,22 @@ jobs:
       - run: pnpm --filter @openlet/letfs test:replay
         env:
           OPENLET_HISTORY_DIR: ${{ github.workspace }}/.local/go-histories
+      - run: pnpm --filter @openlet/leta test:replay
 
   api:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v5
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v7.0.1
+      - uses: pnpm/action-setup@v6.1.1
+      - uses: actions/setup-node@v7.1.0
         with:
-          node-version: 24
+          node-version: 26.13.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: node --test --test-concurrency=1 e2e/setup/environment.test.ts e2e/setup/recovery.test.ts
       - run: pnpm --dir e2e exec playwright test --project=api
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: api-diagnostics

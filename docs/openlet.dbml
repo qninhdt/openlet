@@ -1,32 +1,23 @@
 Project Openlet {
   database_type: 'PostgreSQL'
   Note: '''
-    Monolith view of the implemented Openlet application data model, 2026-11-06.
+    Monolith view of the implemented Openlet application data model, 2026-11-09.
     Sources: apps/account/migrations/0001_initial.sql, apps/workspace/migrations/0001_initial.sql and apps/letfs/migrations/0001_initial.sql.
     Application tables share one namespace in this view. Workspace and Letfs receipt tables are named by owner.
     Blue references are logical application relationships; other references are physical foreign keys.
     Partial-index predicates are preserved in index notes because DBML cannot express PostgreSQL WHERE predicates. This diagram is not a migration script.
     Qdrant stores derived vectors with payload filesystem_id, scope_id, source_id, file_id, generation, embedding_model, vector_dimension and text. PostgreSQL owns metadata and visibility.
-    S3 stores object payloads. ZIP downloads stream over HTTP without stored archives. SpiceDB stores fixed resource relations, derived membership bindings and canonical direct scope grants. Temporal persistence and migration-runner bookkeeping are infrastructure-managed and are outside the application ERD.
+    S3 stores object payloads. ZIP downloads stream over HTTP without stored archives. SpiceDB stores fixed resource relations, derived membership bindings and canonical direct scope grants. LangGraph checkpoints live in the dedicated Leta database; Redis cache/events are disposable. Temporal persistence and migration-runner bookkeeping are infrastructure-managed and are outside the application ERD.
   '''
 }
 
-Table accounts {
+Table users {
   id uuid [pk]
-  type text [not null, check: `type IN ('user','agent')`]
-  clerk_id text [unique, check: `length(clerk_id) BETWEEN 1 AND 200`]
-  owner_id uuid
+  clerk_id text [not null, unique, check: `length(clerk_id) BETWEEN 1 AND 200`]
   display_name text [not null, default: '', check: `length(display_name)<=100`]
   avatar_url text [not null, default: '', check: `length(avatar_url)<=2048`]
   created_at timestamptz [not null, default: `now()`]
   updated_at timestamptz [not null, default: `now()`]
-  Checks {
-    `(type='user' AND clerk_id IS NOT NULL AND owner_id IS NULL) OR (type='agent' AND clerk_id IS NULL AND owner_id IS NOT NULL)`
-    `owner_id<>id`
-  }
-  Indexes {
-    owner_id [name: 'accounts_by_owner', note: 'Partial: owner_id IS NOT NULL']
-  }
 }
 
 Table workspaces {
@@ -44,15 +35,15 @@ Table workspaces {
 
 Table workspace_members {
   workspace_id uuid [not null]
-  account_id uuid [not null]
+  user_id uuid [not null]
   role text [not null, check: `role IN ('owner','admin','member')`]
   personal_scope_id uuid [unique, not null]
   status text [not null, default: 'active', check: `status IN ('active','inactive')`]
   joined_at timestamptz [not null, default: `now()`]
   Indexes {
-    (workspace_id,account_id) [pk]
+    (workspace_id,user_id) [pk]
     workspace_id [unique, name: 'workspace_one_owner', note: "Partial: role='owner' AND status='active'"]
-    (account_id,workspace_id) [name: 'workspace_members_by_account']
+    (user_id,workspace_id) [name: 'workspace_members_by_user']
   }
 }
 
@@ -95,11 +86,11 @@ Table "workspace_invitations" {
   "token_hash" bytea [unique, not null, check: `octet_length(token_hash)=32`]
   "expires_at" timestamptz [not null]
   "status" text [not null, check: `status IN ('pending','revoked','accepted','expired')`, default: 'pending']
-  "accepted_account_id" uuid
+  "accepted_user_id" uuid
   "created_at" timestamptz [not null, default: `now()`]
 
   Checks {
-    `(status='accepted')=(accepted_account_id IS NOT NULL)`
+    `(status='accepted')=(accepted_user_id IS NOT NULL)`
   }
 
   Indexes {
@@ -115,11 +106,14 @@ Table "files" {
   "semantic_type" text
   "context" text
 
-  Note: 'One payload per file node. Inline bytes and immutable S3 object keys are mutually exclusive; directories have no payload row.'
+  Note: 'Exactly one TEXT, binary inline or immutable S3 payload per file node. TEXT metrics describe exact UTF-8 bytes; directories have no payload row.'
 
   "node_id" uuid [pk, not null]
   "storage_kind" text [not null]
   "inline_bytes" bytea
+  "text_content" text
+  "newline_count" bigint
+  "text_sha256" text
   "object_key" text [unique]
 
   "desired_generation" bigint [not null, default: 0, check: `desired_generation >= 0`]
@@ -134,8 +128,7 @@ Table "files" {
 
   Checks {
     `publication_status='not_required' OR (desired_generation>0 AND processing_format IS NOT NULL)`
-    `(((storage_kind = 'inline'::text) AND (inline_bytes IS NOT NULL) AND (object_key IS NULL)) OR ((storage_kind = 'object'::text) AND (inline_bytes IS NULL) AND (object_key IS NOT NULL)))` [name: 'files_payload_check']
-    `(storage_kind = ANY (ARRAY['inline'::text, 'object'::text]))` [name: 'files_storage_kind_check']
+    `(storage_kind='text' AND text_content IS NOT NULL AND inline_bytes IS NULL AND object_key IS NULL AND newline_count IS NOT NULL AND text_sha256 IS NOT NULL AND newline_count=octet_length(text_content)-octet_length(replace(text_content,E'\n','')) AND text_sha256=encode(sha256(convert_to(text_content,'UTF8')),'hex')) OR (storage_kind='inline' AND inline_bytes IS NOT NULL AND object_key IS NULL AND text_content IS NULL AND newline_count IS NULL AND text_sha256 IS NULL) OR (storage_kind='object' AND object_key IS NOT NULL AND inline_bytes IS NULL AND text_content IS NULL AND newline_count IS NULL AND text_sha256 IS NULL)` [name: 'files_payload_check']
   }
 }
 
@@ -230,6 +223,7 @@ Table "trash_entries" {
   "original_parent_id" uuid [note: 'Historical restore location; the parent can be deleted independently.']
   "original_name" text [not null]
   "actor_id" uuid [not null]
+  "actor_kind" text [not null, check: `actor_kind IN ('user','leta')`]
   "state" text [not null, default: `'trashed'::text`]
   "created_at" timestamptz [not null, default: `now()`]
 
@@ -249,6 +243,7 @@ Table "uploads" {
   "id" uuid [pk, not null]
   "scope_id" uuid [not null]
   "actor_id" uuid
+  actor_kind text
   "input" jsonb [not null]
   "candidate_key" text [unique]
   "state" text [not null, default: `'open'::text`]
@@ -273,7 +268,7 @@ Table "uploads" {
   Checks {
     `((expected_size IS NOT NULL) AND (expected_size >= 0))` [name: 'uploads_direct_metadata']
     `(((transport = 'inline'::text) AND (candidate_key IS NULL) AND (multipart_id IS NULL) AND (part_size IS NULL) AND (content_md5 IS NULL) AND (transfer_deadline IS NULL)) OR ((transport = 'single'::text) AND (candidate_key IS NOT NULL) AND (multipart_id IS NULL) AND (part_size IS NULL) AND (content_md5 IS NOT NULL)) OR ((transport = 'multipart'::text) AND (candidate_key IS NOT NULL) AND (part_size IS NOT NULL) AND (part_size >= 5242880) AND (content_md5 IS NULL)))` [name: 'uploads_object_identity']
-    `(actor_id IS NOT NULL AND processing_file_id IS NULL AND processing_generation IS NULL AND relative_path IS NULL AND processing_stage IS NULL) OR (processing_file_id IS NOT NULL AND processing_generation IS NOT NULL AND processing_generation > 0 AND relative_path IS NOT NULL AND processing_stage IS NOT NULL AND processing_stage IN ('parse','enrichment'))` [name: 'uploads_processing_owner']
+    `(actor_id IS NOT NULL AND actor_kind IS NOT NULL AND processing_file_id IS NULL AND processing_generation IS NULL AND relative_path IS NULL AND processing_stage IS NULL) OR (actor_id IS NULL AND actor_kind IS NULL AND processing_file_id IS NOT NULL AND processing_generation IS NOT NULL AND processing_generation > 0 AND relative_path IS NOT NULL AND processing_stage IS NOT NULL AND processing_stage IN ('parse','enrichment'))` [name: 'uploads_processing_owner']
     `(state = ANY (ARRAY['open'::text, 'completing'::text, 'finalized'::text, 'aborted'::text]))` [name: 'uploads_state_check']
     `state != 'finalized' OR result IS NOT NULL` [name: 'uploads_finalized_result']
     `(transport = ANY (ARRAY['inline'::text, 'single'::text, 'multipart'::text]))` [name: 'uploads_transport']
@@ -289,7 +284,6 @@ Table "uploads" {
 }
 
 // Physical references stay within each service database.
-Ref account_owner: accounts.owner_id > accounts.id
 Ref membership_workspace: workspace_members.workspace_id > workspaces.id
 Ref workspace_receipt: workspace_idempotency_keys.workspace_id > workspaces.id
 Ref invitation_workspace: workspace_invitations.workspace_id > workspaces.id
@@ -304,21 +298,20 @@ Ref trash_node: trash_entries.(scope_id,node_id) > nodes.(scope_id,id)
 Ref trash_root: trash_entries.node_id - nodes.id
 Ref upload_scope: uploads.scope_id > scopes.id
 
+// Upload/trash actor_kind + actor_id names user or Leta; no human-only FK applies.
 // Logical references cross services or intentionally survive source deletion.
-Ref membership_account: workspace_members.account_id > accounts.id [color: #5B8FF9]
-Ref invitation_account: workspace_invitations.accepted_account_id > accounts.id [color: #5B8FF9]
-Ref workspace_initiator: workspace_idempotency_keys.actor_id > accounts.id [color: #5B8FF9]
+Ref membership_user: workspace_members.user_id > users.id [color: #5B8FF9]
+Ref invitation_user: workspace_invitations.accepted_user_id > users.id [color: #5B8FF9]
+Ref workspace_initiator: workspace_idempotency_keys.actor_id > users.id [color: #5B8FF9]
 Ref workspace_filesystem: workspaces.filesystem_id - filesystems.id [color: #5B8FF9]
 Ref shared_scope: workspaces.shared_scope_id - scopes.id [color: #5B8FF9]
 Ref personal_scope: workspace_members.personal_scope_id - scopes.id [color: #5B8FF9]
-Ref upload_actor: uploads.actor_id > accounts.id [color: #5B8FF9]
-Ref trash_actor: trash_entries.actor_id > accounts.id [color: #5B8FF9]
 Ref upload_result: uploads.result_node_id > nodes.id [color: #5B8FF9]
 Ref processing_source: uploads.processing_file_id > files.node_id [color: #5B8FF9]
 Ref restore_parent: trash_entries.original_parent_id > nodes.id [color: #5B8FF9]
 Ref index_cleanup_source: index_deletions.file_id > files.node_id [color: #5B8FF9]
 
-TableGroup Identity { accounts }
+TableGroup Identity { users }
 TableGroup Collaboration {
  workspaces
  workspace_members
@@ -338,3 +331,169 @@ TableGroup ProcessingAndRecovery {
  object_deletions
  index_deletions
 }
+
+// Leta product tables. Exact checks and partial indexes: apps/leta/migrations/*.sql.
+
+Table agents {
+  id uuid [pk]
+  leta_id uuid [not null]
+  kind text [not null]
+  workspace_id uuid
+  created_by_user_id uuid
+  home_scope_id uuid [unique]
+  box_id uuid
+  name text [not null]
+  description text [not null]
+  system_prompt text [not null]
+  model_id text
+  reasoning_effort text
+  status text [not null]
+  paused boolean [not null]
+  inbox_seq bigint [not null]
+  activity_seq bigint [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  archived_at timestamptz
+}
+
+Table boxes {
+  id uuid [pk]
+  leta_id uuid [not null]
+  name text [not null]
+  description text [not null]
+  representative_agent_id uuid [not null]
+  home_node_id uuid [not null, unique]
+  status text [not null]
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+  archived_at timestamptz
+}
+
+Table box_edges {
+  box_id uuid [not null]
+  agent_low_id uuid [not null]
+  agent_high_id uuid [not null]
+}
+
+Table messages {
+  id uuid [pk]
+  leta_id uuid [not null]
+  sender_agent_id uuid
+  recipient_agent_id uuid
+  recipient_user_id uuid
+  seq bigint
+  source_type text [not null]
+  source_id text [not null]
+  source_label text [not null]
+  conversation_key text
+  reply_to jsonb
+  in_reply_to_message_id uuid
+  content text [not null]
+  data jsonb [not null]
+  created_at timestamptz [not null]
+  read_at timestamptz
+}
+
+Table runs {
+  id uuid [pk]
+  agent_id uuid [not null]
+  status text [not null]
+  started_at timestamptz [not null]
+  finished_at timestamptz
+  attempt integer [not null]
+  inbox_cursor bigint [not null]
+  checkpoint_id text
+  checkpoint_ns text
+  continuation jsonb
+  yield_requested boolean [not null]
+  result jsonb
+  error jsonb
+}
+
+Table activity_log {
+  id uuid [pk]
+  agent_id uuid [not null]
+  run_id uuid
+  seq bigint [not null]
+  kind text [not null]
+  llm_message_id text
+  tool_call_id text
+  message_id uuid
+  dedup_key text [not null]
+  data jsonb [not null]
+  created_at timestamptz [not null]
+}
+
+Table hitl_requests {
+  id uuid [pk]
+  leta_id uuid [not null]
+  requester_agent_id uuid [not null]
+  kind text [not null]
+  status text [not null]
+  title text [not null]
+  payload jsonb [not null]
+  approver_user_id uuid [not null]
+  grantee_leta_id uuid
+  resource jsonb
+  requested_role text
+  decision jsonb
+  outcome jsonb
+  outcome_message_id uuid [not null, unique]
+  grant_key uuid [unique]
+  expires_at timestamptz
+  resolved_at timestamptz
+  created_at timestamptz [not null]
+}
+
+Table schedules {
+  id uuid [pk]
+  leta_id uuid [not null]
+  creator_agent_id uuid [not null]
+  target_agent_id uuid [not null]
+  box_id uuid
+  title text [not null]
+  content text [not null]
+  spec jsonb [not null]
+  paused boolean [not null]
+  end_at timestamptz
+  deleted_at timestamptz
+  created_at timestamptz [not null]
+  updated_at timestamptz [not null]
+}
+
+Table leta_idempotency_keys {
+  Note: 'Physical table: leta.public.idempotency_keys; ordinary HTTP keys, no effect ledger.'
+  actor_id uuid [not null]
+  request_key uuid [not null]
+  request_hash text [not null]
+  resource_id uuid [not null]
+  created_at timestamptz [not null]
+  expires_at timestamptz
+}
+
+Ref: agents.leta_id > agents.id
+Ref: agents.box_id > boxes.id
+Ref: boxes.leta_id > agents.id
+Ref: boxes.representative_agent_id > agents.id
+Ref: box_edges.box_id > boxes.id
+Ref: box_edges.agent_low_id > agents.id
+Ref: box_edges.agent_high_id > agents.id
+Ref: messages.leta_id > agents.id
+Ref: messages.sender_agent_id > agents.id
+Ref: messages.recipient_agent_id > agents.id
+Ref: messages.in_reply_to_message_id > messages.id
+Ref: runs.agent_id > agents.id
+Ref: activity_log.agent_id > agents.id
+Ref: activity_log.run_id > runs.id
+Ref: activity_log.message_id > messages.id
+Ref: hitl_requests.leta_id > agents.id
+Ref: hitl_requests.requester_agent_id > agents.id
+Ref: schedules.leta_id > agents.id
+Ref: schedules.creator_agent_id > agents.id
+Ref: schedules.target_agent_id > agents.id
+Ref: schedules.box_id > boxes.id
+Ref agents.workspace_id > workspaces.id [color: blue]
+Ref agents.created_by_user_id > users.id [color: blue]
+Ref agents.home_scope_id > scopes.id [color: blue]
+Ref messages.recipient_user_id > users.id [color: blue]
+Ref hitl_requests.approver_user_id > users.id [color: blue]

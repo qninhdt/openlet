@@ -122,15 +122,20 @@ export default async function setup() {
     await rm(join(state, 'histories'), { recursive: true, force: true });
     await chmod(state, 0o700);
     await chmod(join(state, 'secrets'), 0o700);
-    for (const name of ['postgres_password', 'account_db_password', 'workspace_db_password', 'letfs_db_password',
+    for (const name of ['postgres_password', 'account_db_password', 'workspace_db_password', 'letfs_db_password', 'leta_db_password', 'redis_password',
       'temporal_db_password', 'temporal_visibility_db_password', 'spicedb_db_password', 'spicedb_key', 'gateway_token',
-      'workspace_service_token', 'ingest_service_token', 'clerk_secret_key', 'fixture_control_token',
+      'workspace_service_token', 'leta_service_token', 'ingest_service_token', 'clerk_secret_key', 'fixture_control_token',
       'openrouter_api_key', 'qdrant_api_key', 's3_access_key_id', 's3_secret_access_key']) {
       secrets[name] = randomBytes(32).toString('base64url');
     }
-    for (const app of ['account', 'workspace', 'letfs', 'spicedb']) {
-      secrets[`${app}_database_url`] = `postgres://openlet_${app}:${secrets[`${app}_db_password`]}@postgres:5432/openlet_${app}`;
+    for (const app of ['account', 'workspace', 'letfs', 'leta', 'spicedb']) {
+      secrets[`${app}_database_url`] = `${app === 'leta' ? 'postgresql' : 'postgres'}://openlet_${app}:${secrets[`${app}_db_password`]}@postgres:5432/openlet_${app}`;
     }
+    secrets.redis_url = `redis://:${secrets.redis_password}@redis:6379/0`;
+    await writeFile(join(state, 'leta-models.json'), JSON.stringify({
+      models: [{ model_id: 'e2e-agent', reasoning_efforts: [null], context_window_tokens: 65536, max_output_tokens: 8192 }],
+      default: { model_id: 'e2e-agent', reasoning_effort: null },
+    }), { mode: 0o644 });
     for (const [name, value] of Object.entries(secrets)) {
       // Nonroot containers read bind-mounted secrets; the host parent remains private.
       const path = join(state, 'secrets', name);
@@ -138,7 +143,7 @@ export default async function setup() {
       await writeFile(path, value, { mode: 0o644 });
     }
     let sql = '\\set ON_ERROR_STOP on\n';
-    for (const app of ['account', 'workspace', 'letfs', 'temporal', 'temporal_visibility', 'spicedb']) {
+    for (const app of ['account', 'workspace', 'letfs', 'leta', 'temporal', 'temporal_visibility', 'spicedb']) {
       const role = `openlet_${app}`;
       sql += `CREATE ROLE ${role} LOGIN PASSWORD '${secrets[`${app}_db_password`]}';\n`;
       sql += `ALTER ROLE ${role} SET statement_timeout = '15s';\nALTER ROLE ${role} SET lock_timeout = '5s';\n`;
@@ -168,11 +173,11 @@ export default async function setup() {
       throw error;
     }
     ownsEnvironment = true;
-    await compose(['up', '--detach', '--wait', '--wait-timeout', '120', 'postgres', 'storage', 'qdrant', 'boundary']);
+    await compose(['up', '--detach', '--wait', '--wait-timeout', '120', 'postgres', 'storage', 'qdrant', 'boundary', 'redis']);
     await compose(['up', '--detach', '--wait', '--wait-timeout', '120', 'spicedb']);
     await compose(['run', '--rm', '--no-deps', 'authz-schema']);
     await compose(['up', '--detach', 'temporal']);
-    for (const app of ['account', 'workspace', 'letfs']) await compose(['run', '--rm', `${app}-migrate`]);
+    for (const app of ['account', 'workspace', 'letfs', 'leta']) await compose(['run', '--rm', `${app}-migrate`]);
     await waitFor('Temporal', async () => {
       try { await compose(['run', '--rm', '--no-deps', 'temporal-init', 'operator', 'cluster', 'health'], 15_000); return true; }
       catch { return false; }
@@ -181,7 +186,7 @@ export default async function setup() {
     await compose(['exec', '--no-TTY', 'storage', 'curl', '--fail', '--silent', '--show-error',
       '--aws-sigv4', 'aws:amz:us-east-1:s3', '--config', '-', '--request', 'PUT', 'http://127.0.0.1:9000/openlet-e2e'],
     30_000, `user = "${secrets.s3_access_key_id}:${secrets.s3_secret_access_key}"\n`);
-    await compose(['up', '--detach', '--wait', '--wait-timeout', '120', 'account', 'workspace', 'letfs', 'ingest-cpu', 'ingest-io', 'envoy']);
+    await compose(['up', '--detach', '--wait', '--wait-timeout', '120', 'account', 'workspace', 'letfs', 'leta-api', 'leta-worker', 'ingest-cpu', 'ingest-io', 'envoy']);
     await waitFor('External-boundary fixtures', async () => {
       try { return (await fetch(`${control}/live`, { signal: AbortSignal.timeout(3000) })).ok; }
       catch { return false; }
@@ -192,7 +197,7 @@ export default async function setup() {
     if (identityResponse.status !== 201) throw new Error('Gateway readiness identity could not be created');
     const identity = await identityResponse.json();
     const tokenResponse = await fetch(`${control}/control/token`, { method: 'POST', headers: controlHeaders,
-      body: JSON.stringify({ subject: identity.id, claims: { openlet_account_id: randomUUID() } }), signal: AbortSignal.timeout(3000) });
+      body: JSON.stringify({ subject: identity.id, claims: { openlet_user_id: randomUUID() } }), signal: AbortSignal.timeout(3000) });
     if (!tokenResponse.ok) throw new Error('Gateway readiness JWT could not be minted');
     const { token } = await tokenResponse.json();
     await waitFor('Gateway upstream routing', async () => {

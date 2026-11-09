@@ -34,13 +34,13 @@ test('operations restore real database state and S3 bytes into an isolated fence
     await send;
     const id = randomUUID();
     await execute('docker', ['compose', '--file', compose, '--project-name', project, 'exec', '-T', 'postgres', 'psql', '-X', '--set', 'ON_ERROR_STOP=1', '-U', 'openlet_admin', '-d', 'openlet_letfs', '-c', `INSERT INTO filesystems(id,limit_bytes) VALUES('${id}',12345)`], { env });
-    for (const app of ['account', 'workspace', 'letfs']) {
+    for (const app of ['account', 'workspace', 'letfs', 'leta']) {
       await execute('docker', ['compose', '--file', compose, '--project-name', project, 'run', '--rm', `${app}-migrate`], { env });
     }
     await execute('python3', [command, 'backup', '--compose', compose, '--project', project, '--state', state, '--output', snapshot], { env, timeout: 240_000 });
     const manifest = JSON.parse(await readFile(join(snapshot, 'manifest.json'), 'utf8'));
     assert.equal(manifest.version, 3);
-    assert.deepEqual(manifest.databases, ['account', 'workspace', 'letfs', 'temporal', 'temporal_visibility', 'spicedb']);
+    assert.deepEqual(manifest.databases, ['account', 'workspace', 'letfs', 'leta', 'temporal', 'temporal_visibility', 'spicedb']);
     await execute('python3', [command, 'restore', '--compose', compose, '--project', recoveredProject, '--state', restored, '--snapshot', snapshot], { env, timeout: 120_000 });
     const running = await execute('docker', ['compose', '--file', compose, '--project-name', recoveredProject, 'ps', '--status', 'running', '--services'], { env: restoredEnv });
     assert.deepEqual(running.stdout.trim().split('\n'), ['postgres']);

@@ -104,7 +104,7 @@ def test_schema_verification_failure_keeps_application_writers_stopped(tmp_path)
         assert not any(call[0] == "up" and writer in call for call in fixture.calls)
 
 
-def test_rebuild_fences_writers_then_runs_each_canonical_owner(tmp_path):
+def test_rebuild_fences_writers_then_runs_workspace_owner(tmp_path):
     fixture = recovery(tmp_path)
 
     fixture.operation.rebuild_authorization()
@@ -113,7 +113,7 @@ def test_rebuild_fences_writers_then_runs_each_canonical_owner(tmp_path):
     assert fixture.calls[1][0] == "stop"
     assert {"account", "workspace", "spicedb"}.issubset(fixture.calls[1])
     policy = fixture.calls.index(("run", "--rm", "--no-deps", "authz-schema"))
-    for owner in ("account", "workspace"):
+    for owner in ("workspace",):
         assert policy < fixture.calls.index(
             ("run", "--rm", "--no-deps", "--build", owner, "--rebuild-authorization")
         )
@@ -150,3 +150,63 @@ def test_old_provider_snapshots_are_rejected_before_side_effects(tmp_path, versi
         fixture.operation.restore()
 
     assert fixture.calls == []
+
+
+def test_leta_rebuild_reads_workspace_owner_inventory_before_reopening(tmp_path):
+    fixture = recovery(tmp_path)
+    fixture.operation.configuration["services"].update(
+        {"leta-api": {}, "leta-worker": {}, "redis": {}}
+    )
+    consumed = []
+    inventory = (
+        b'{"workspace_id":"00000000-0000-0000-0000-000000000001","status":"active"}\n'
+    )
+
+    def command(*args, **kwargs):
+        fixture.calls.append(args)
+        if args[0] == "build":
+            return b"#1 Docker build progress is not JSON\n"
+        if "--export-resource-workspaces" in args:
+            assert "--build" not in args and "-T" in args
+            return inventory
+        if "leta.rebuild" in args:
+            assert "--build" not in args and "-T" in args
+            consumed.append(kwargs["stdin"].read())
+        return b""
+
+    fixture.operation.command = command
+    fixture.operation.resume()
+    assert consumed == [inventory]
+    export = next(
+        i
+        for i, call in enumerate(fixture.calls)
+        if "--export-resource-workspaces" in call
+    )
+    rebuild = next(i for i, call in enumerate(fixture.calls) if "leta.rebuild" in call)
+    reopen = next(
+        i
+        for i, call in enumerate(fixture.calls)
+        if call[0] == "up" and "leta-worker" in call
+    )
+    assert export < rebuild < reopen
+    assert {"leta-api", "leta-worker", "redis"}.issubset(fixture.calls[1])
+
+
+def test_leta_rebuild_failure_keeps_workers_and_public_admission_stopped(tmp_path):
+    fixture = recovery(tmp_path)
+    fixture.operation.configuration["services"]["leta-api"] = {}
+
+    def command(*args, **kwargs):
+        fixture.calls.append(args)
+        if "leta.rebuild" in args:
+            raise RuntimeError("incomplete owner inventory")
+        return b""
+
+    fixture.operation.command = command
+    with pytest.raises(RuntimeError, match="incomplete owner inventory"):
+        fixture.operation.resume()
+    assert not any(
+        call[0] == "up"
+        and ("envoy" in call or "temporal" in call or "leta-api" in call)
+        for call in fixture.calls
+    )

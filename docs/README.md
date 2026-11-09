@@ -1,6 +1,6 @@
 # Openlet backend documentation
 
-Public HTTP and private gRPC adapters share native business services. Go and Python packages provide reusable clients and infrastructure. The [current implementation record](../plans/261106-1517-account-scope-temporal-redesign/plan.md) owns this round’s verification; historical checks do not establish acceptance of changed source.
+Public HTTP and private gRPC adapters share native business services. Go and Python packages provide reusable clients and infrastructure. The [current implementation record](../plans/261108-0001-leta-agent-engine/plan.md) owns this round’s verification; historical checks do not establish acceptance of changed source.
 
 - [Architecture and scope](architecture.md): stack, ownership, identity, repository layout and operation.
 - [Setup and verification](setup.md): foundation configuration, local commands and test isolation.
@@ -15,4 +15,4 @@ Public HTTP and private gRPC adapters share native business services. Go and Pyt
 - [Completed foundation migration](../plans/261102-1059-go-grpc-filesystem-authorization/plan.md): Go letfs, shared contracts, SpiceDB, direct filesystem access and recovery acceptance.
 - [Previous implementation plan](../plans/261031-1758-simplify-backend-refactor/plan.md): API E2E rewrite, schema and lifecycle simplification, Gin/OpenTelemetry, processing and final acceptance evidence.
 
-These documents supersede the discarded plan's specifications. Historical research/journals retain context, not current architecture authority. Redis, shared content/refcounts, source snapshots/epochs, custom gateway/leases and SDK experiments are not MVP requirements.
+These documents supersede the discarded plan's specifications. Historical research/journals retain context, not current architecture authority. Leta requires Redis for Mirage caching and replayable AG-UI events. Shared content/refcounts, source snapshots/epochs, custom gateway/leases and SDK experiments are outside the MVP.

@@ -17,22 +17,26 @@ DATABASES = (
     "account",
     "workspace",
     "letfs",
+    "leta",
     "temporal",
     "temporal_visibility",
     "spicedb",
 )
-POSTGRES_IMAGE = "postgres:18.6-trixie@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336"
+POSTGRES_IMAGE = "postgres:18.6-trixie@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42"
 CONFIGURATION = (
     "init.sql",
     "temporal.json",
     "envoy.json",
     "spicedb.env",
+    "leta-models.json",
 )
 WRITERS = (
     "envoy",
     "account",
     "workspace",
     "letfs",
+    "leta-api",
+    "leta-worker",
     "ingest-cpu",
     "ingest-io",
     "authz-schema",
@@ -41,6 +45,7 @@ WRITERS = (
     "boundary",
     "storage",
     "qdrant",
+    "redis",
 )
 
 
@@ -461,13 +466,45 @@ class Recovery:
         )
         self.command("up", "--detach", "--wait", "--wait-timeout", "90", "spicedb")
         self.command("run", "--rm", "--no-deps", "authz-schema")
-        for owner in ("account", "workspace"):
-            self.command(
-                "run", "--rm", "--no-deps", "--build", owner, "--rebuild-authorization"
-            )
+        self.command(
+            "run",
+            "--rm",
+            "--no-deps",
+            "--build",
+            "workspace",
+            "--rebuild-authorization",
+        )
+        self.rebuild_leta()
         print(
             "Canonical authorization rebuilt. Application/workflow writers remain stopped."
         )
+
+    def rebuild_leta(self):
+        if "leta-api" not in self.configuration["services"]:
+            return
+        # Build logs share stdout; keep them out of the JSON inventory pipe.
+        self.command("build", "workspace", "leta-api")
+        inventory = self.command(
+            "run",
+            "--rm",
+            "--no-deps",
+            "-T",
+            "workspace",
+            "--export-resource-workspaces",
+        )
+        with tempfile.TemporaryFile() as source:
+            source.write(inventory)
+            source.seek(0)
+            self.command(
+                "run",
+                "--rm",
+                "--no-deps",
+                "-T",
+                "leta-api",
+                "-m",
+                "leta.rebuild",
+                stdin=source,
+            )
 
     def resume(self):
         self.verify_owner()
@@ -499,19 +536,19 @@ class Recovery:
         if "spicedb" in self.configuration["services"]:
             self.command("up", "--detach", "--wait", "--wait-timeout", "90", "spicedb")
             self.command("run", "--rm", "--no-deps", "authz-schema", "--check")
-            for owner in ("account", "workspace"):
-                if owner in self.configuration["services"]:
-                    self.command(
-                        "run",
-                        "--rm",
-                        "--no-deps",
-                        "--build",
-                        owner,
-                        "--rebuild-authorization",
-                    )
+            if "workspace" in self.configuration["services"]:
+                self.command(
+                    "run",
+                    "--rm",
+                    "--no-deps",
+                    "--build",
+                    "workspace",
+                    "--rebuild-authorization",
+                )
+            self.rebuild_leta()
         dependencies = [
             s
-            for s in ("storage", "qdrant", "boundary")
+            for s in ("storage", "qdrant", "boundary", "redis")
             if s in self.configuration["services"]
         ]
         if dependencies:
@@ -541,6 +578,8 @@ class Recovery:
                 "account",
                 "workspace",
                 "letfs",
+                "leta-api",
+                "leta-worker",
                 "ingest-cpu",
                 "ingest-io",
                 "envoy",

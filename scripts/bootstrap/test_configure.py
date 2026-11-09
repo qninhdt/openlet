@@ -36,11 +36,36 @@ def test_bootstrap_preserves_credentials_and_private_mount_permissions(tmp_path:
     assert cluster["transport_socket"]["typed_config"]["sni"] == "identity.example.test"
     assert original["gateway_token"] in (state / "envoy.json").read_text()
     assert len(original["spicedb_key"]) >= 32
+    assert len(original["leta_service_token"]) >= 32
+    assert original["leta_service_token"] != original["workspace_service_token"]
     assert (
         "CREATE DATABASE openlet_spicedb OWNER openlet_spicedb"
         in (state / "init.sql").read_text()
     )
     assert original["spicedb_db_password"] in original["spicedb_database_url"]
+    assert (
+        "CREATE DATABASE openlet_leta OWNER openlet_leta"
+        in (state / "init.sql").read_text()
+    )
+    assert original["leta_database_url"].startswith("postgresql://openlet_leta:")
+    assert original["redis_password"] in original["redis_url"]
+    assert json.loads((state / "leta-models.json").read_text())["models"]
+
+
+def test_bootstrap_preserves_catalog_and_applies_explicit_replacement(tmp_path):
+    state = tmp_path / "development"
+    configure(state, settings())
+    path = state / "leta-models.json"
+    changed = json.loads(path.read_text())
+    changed["models"][0]["max_output_tokens"] = 1000
+    path.write_text(json.dumps(changed))
+    configure(state, settings())
+    assert json.loads(path.read_text()) == changed
+    source = tmp_path / "models.json"
+    changed["models"][0]["max_output_tokens"] = 2000
+    source.write_text(json.dumps(changed))
+    configure(state, {**settings(), "LETA_MODEL_CATALOG_PATH": str(source)})
+    assert json.loads(path.read_text()) == changed
 
 
 def test_bootstrap_rejects_unsafe_native_graph_key_before_writing(tmp_path: Path):

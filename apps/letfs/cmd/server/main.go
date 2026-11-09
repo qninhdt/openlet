@@ -104,6 +104,7 @@ func authentication(cfg config.Config) (*rpc.Authenticator, error) {
 		{Service: "gateway", Token: cfg.GatewayToken, Gateway: true, Methods: methods(letfsv1.FilesystemService_ServiceDesc)},
 		{Service: "workspace", Token: cfg.WorkspaceToken, Methods: methods(letfsv1.StorageAdministrationService_ServiceDesc)},
 		{Service: "ingest", Token: cfg.IngestToken, Methods: methods(letfsv1.IngestService_ServiceDesc)},
+		handlers.LetaCredential(cfg.LetaToken),
 	})
 }
 
@@ -180,6 +181,7 @@ func serve(ctx context.Context, cfg config.Config, contract *authz.Contract, lis
 	store.ProcessingMaxOutputs, store.ProcessingMaxOutputBytes = cfg.ProcessingMaxOutputs, cfg.ProcessingMaxOutputBytes
 	store.IndexSpace = cfg.IndexSpace
 	store.Archive, store.ArchiveSlots = cfg.Archive, semaphore.NewWeighted(cfg.ArchiveMaxConcurrent)
+	store.ImageSlots = semaphore.NewWeighted(2)
 	store.Search, err = search.New(cfg.QdrantURL, cfg.QdrantKey)
 	if err != nil {
 		return err

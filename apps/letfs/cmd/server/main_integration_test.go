@@ -33,7 +33,7 @@ func TestIntegrationCompositionChecksPolicyServesRealRPCAndDrains(t *testing.T) 
 	input := map[string]string{
 		"TEMPORAL_ADDRESS": temporalAddress, "TEMPORAL_NAMESPACE": "openlet",
 		"DATABASE_URL": db.Config().ConnString(), "SPICEDB_ADDRESS": address, "SPICEDB_GRPC_PRESHARED_KEY": sharedfixture.SpiceDBKey,
-		"GATEWAY_TOKEN": strings.Repeat("g", 32), "WORKSPACE_SERVICE_TOKEN": strings.Repeat("w", 32), "INGEST_SERVICE_TOKEN": strings.Repeat("i", 32), "ALLOW_PLAINTEXT_RPC": "true",
+		"GATEWAY_TOKEN": strings.Repeat("g", 32), "WORKSPACE_SERVICE_TOKEN": strings.Repeat("w", 32), "INGEST_SERVICE_TOKEN": strings.Repeat("i", 32), "LETA_SERVICE_TOKEN": strings.Repeat("l", 32), "ALLOW_PLAINTEXT_RPC": "true",
 		"S3_ENDPOINT": "https://storage.invalid", "S3_BUCKET": "private", "S3_REGION": "auto", "S3_ACCESS_KEY_ID": "isolated-access", "S3_SECRET_ACCESS_KEY": "isolated-secret",
 		"QDRANT_API_KEY":     "isolated-qdrant-token",
 		"OPENROUTER_API_KEY": "isolated-provider-token",
@@ -90,7 +90,7 @@ func TestIntegrationCompositionChecksPolicyServesRealRPCAndDrains(t *testing.T) 
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, browser.Close()) })
 	actor := uuid.NewString()
-	caller := metadata.AppendToOutgoingContext(t.Context(), "x-openlet-account-id", actor)
+	caller := metadata.AppendToOutgoingContext(t.Context(), "x-openlet-user-id", actor)
 	_, err = letfsv1.NewStorageAdministrationServiceClient(browser).CreateFilesystem(caller, &letfsv1.CreateFilesystemRequest{FilesystemId: uuid.Must(uuid.NewV7()).String(), IdempotencyKey: uuid.NewString()})
 	require.Equal(t, codes.PermissionDenied, status.Code(err))
 	_, err = letfsv1.NewFilesystemServiceClient(browser).GetFilesystem(caller, &letfsv1.GetFilesystemRequest{FilesystemId: fsID})
@@ -99,8 +99,8 @@ func TestIntegrationCompositionChecksPolicyServesRealRPCAndDrains(t *testing.T) 
 	touch := func(kind, id, relation, subjectKind, subject string) {
 		updates = append(updates, &v1.RelationshipUpdate{Operation: v1.RelationshipUpdate_OPERATION_TOUCH, Relationship: &v1.Relationship{Resource: &v1.ObjectReference{ObjectType: kind, ObjectId: id}, Relation: relation, Subject: &v1.SubjectReference{Object: &v1.ObjectReference{ObjectType: subjectKind, ObjectId: subject}}}})
 	}
-	touch("filesystem", fsID, "reader", "account", actor)
-	touch("scope", scopeID, "editor", "account", actor)
+	touch("filesystem", fsID, "reader", "user", actor)
+	touch("scope", scopeID, "editor", "user", actor)
 	_, err = graph.WriteRelationships(t.Context(), &v1.WriteRelationshipsRequest{Updates: updates})
 	require.NoError(t, err)
 	result, err := letfsv1.NewFilesystemServiceClient(browser).GetFilesystem(caller, &letfsv1.GetFilesystemRequest{FilesystemId: fsID})

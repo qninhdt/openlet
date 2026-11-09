@@ -4,9 +4,9 @@ The backend services implement onboarding, collaboration, generic file operation
 
 ## Requirements
 
-- Docker with Compose, Make and Python 3.10+ for the existing development setup. API E2E requires Node.js 24, pnpm 12.9.1 and the Linux `flock` utility; install its locked dependencies with `pnpm install --frozen-lockfile`.
-- Go 1.27.3 for native verification and protobuf Go tools, plus `protoc` for contract generation. Go modules and tool versions are pinned in the workspace. Put the toolchain bin directory on `PATH` so both `go` and `gofmt` are available (for this environment: `export PATH=/usr/local/go/bin:$PATH`).
-- Native ingest checks need `uv` and Python 3.12 or 3.13; the worker image supplies its own locked Python environment.
+- Docker with Compose, Make and Python 3.10+ for the existing development setup. API E2E requires Node.js 26.13.0, pnpm 12.18.0 and the Linux `flock` utility; install its locked dependencies with `pnpm install --frozen-lockfile`.
+- Go 1.27.3 for native verification and protobuf Go tools, and the locked Buf/grpcio-tools packages for contract generation. Go modules and tool versions are pinned in the workspace. Put the toolchain bin directory on `PATH` so both `go` and `gofmt` are available (for this environment: `export PATH=/usr/local/go/bin:$PATH`).
+- Python services and native ingest checks use Python 3.14.10 and uv 0.13.7. The root `.python-version`, package requirements and pinned worker image use the same runtime.
 
 ## Configure and start
 
@@ -22,13 +22,19 @@ External issuer/JWKS URLs require HTTPS. The generator renders native Envoy, Tem
 
 Only Envoy binds a host port, `127.0.0.1:8080`. Application, database, Temporal and admin-tool ports stay private. External access requires the deployment's trusted HTTPS termination. Temporal's no-authorizer setting is confined to the private backend network; do not publish its port.
 
-Workspace calls Account gRPC at `ACCOUNT_RPC_ADDRESS` with `WORKSPACE_SERVICE_TOKEN`; ingest uses `LETFS_RPC_ADDRESS` and `INGEST_SERVICE_TOKEN`. Existing secrets accept `_FILE`. Account exposes its private RPC listener; Workspace has no RPC server. Cross-service provisioning/deletion runs on explicit owner Temporal queues. RPC uses TLS by default; Compose explicitly permits plaintext only on its private backend network. Envoy exposes HTTP only.
+Workspace calls Account gRPC at `ACCOUNT_RPC_ADDRESS` with `WORKSPACE_SERVICE_TOKEN`; ingest uses `LETFS_RPC_ADDRESS` and `INGEST_SERVICE_TOKEN`. Existing secrets accept `_FILE`. Account and Workspace expose private RPC listeners at `RPC_LISTEN_ADDR` (default `:9090`). Workspace accepts `LETA_SERVICE_TOKEN` for its explicit Leta-only methods; LetFS requires the same distinct credential for its restricted native data methods. Both use `RPC_TLS_CERT_PATH`/`RPC_TLS_KEY_PATH` unless development plaintext is explicit. Cross-service provisioning/deletion runs on explicit owner Temporal queues. RPC uses TLS by default; Compose explicitly permits plaintext only on its private backend network. Envoy exposes HTTP only.
 
 All Go services start their owner Temporal workers and check required dependencies during readiness. LetFS configuration is owned by [config.go](../apps/letfs/internal/config/config.go). Clients discover filesystem/shared scope/member personal scope references through Workspace, then call LetFS directly; no Workspace filesystem proxy remains.
 
+Workspace's permission-filtered scope discovery uses `LETFS_RPC_ADDRESS` and its existing service credential. `LETA_RPC_ADDRESS` supports canonical root lookup for a creator's `?leta_id=` inspection. These clients connect on demand; Workspace startup does not wait for Leta's dependency health. Compose config supplies both private destinations and the generated `leta_service_token` secret. Rerun the existing bootstrap configuration command to generate a missing development secret while preserving existing credentials.
+
+Compose starts `leta-api` and `leta-worker` from the same nonroot image after `leta-migrate` completes. To run outside Compose, its API can be started with `uv run --locked --package leta python -m leta.api` after explicit migrations (`python -m leta.migrate` in the same package environment). Required settings are owned by [config.py](../apps/leta/src/leta/config.py). The API binds HTTP and `RPC_LISTEN_ADDR`; native TLS requires `RPC_TLS_CERT_PATH` and `RPC_TLS_KEY_PATH`, unless `ALLOW_PLAINTEXT_RPC=true` is explicitly set. `WORKSPACE_SERVICE_TOKEN` authenticates its private binding lookup. `/ready` and native health Check verify schema and required dependencies without running migrations. Run `uv run --locked --package leta python -m leta.worker` for the worker. One process owns the control and runtime queues; idle agents occupy no model execution slot. Private Redis is required, uses generated authentication, has a 256 MiB memory bound and stores no durable recovery data.
+
+The generated `.local/leta-models.json` contains the selectable `model_id`, supported `reasoning_efforts`, context window, output budget and default. Bootstrap initially copies [the model catalog example](../apps/leta/models.example.json), then preserves local edits. Set `LETA_MODEL_CATALOG_PATH` when running outside Compose. Agent creation/configuration validates against this catalog; Leti inherits omitted model/reasoning settings. API/worker startup also rejects persisted selections incompatible with the configured catalog. `OPENROUTER_REASONING_EFFORT` above configures ingest, not the per-agent selection.
+
 `make up` builds the app-owned Dockerfiles and initializes a fresh deployment using native Goose application-migration jobs and upstream Temporal schema/namespace tools. Each application owns a baseline followed by additive migrations. There is no upgrade chain for the schema predating the refactor: retain a verified backup before an intentional reset, and never apply the new baseline over that older development data. Startup does not automatically back up existing databases. LetFS’s fresh-install baseline includes scope-owned blob and indexing options, both default true; it has no compatibility migration from the former filesystem setting. Back up and stop writers first using the [operation procedure](operations.md#coordinated-backup-and-isolated-restore).
 
-The development Compose definition also starts pinned SpiceDB on the private backend network, with a dedicated `openlet_spicedb` database/user on the same PostgreSQL instance. Datastore migration must succeed before gRPC health becomes ready; the `authz-schema` job initializes a missing schema or verifies the existing expected schema. Unknown schema is rejected. Fixed resource relations and permissions live entirely in the schema. Run initialization while writers are fenced; `--check` verifies without repairing drift. Application readiness verifies the expected schema in `/contracts`. Direct scope grants are canonical SpiceDB state and must survive recovery; SQL rebuild repairs only derived account/workspace/storage usersets. See the [active plan](../plans/261106-1517-account-scope-temporal-redesign/plan.md).
+The development Compose definition also starts pinned SpiceDB on the private backend network, with a dedicated `openlet_spicedb` database/user on the same PostgreSQL instance. Datastore migration must succeed before gRPC health becomes ready; the `authz-schema` job initializes a missing schema or verifies the existing expected schema. Unknown schema is rejected. Fixed resource relations and permissions live entirely in the schema. Run initialization while writers are fenced; `--check` verifies without repairing drift. Workspace/LetFS readiness verifies the expected schema in `/contracts`; the human identity service needs no graph self/owner relation. Direct scope grants are canonical SpiceDB state and must survive recovery; SQL rebuild repairs derived Workspace/storage and Leta resource/home relationships without recreating direct editor/viewer grants. See the [active plan](../plans/261106-1517-account-scope-temporal-redesign/plan.md).
 
 
 Use `make down` to stop the stack while preserving its named volume. Do not remove volumes as routine rollback. To migrate an existing deployment, stop application/Temporal writers before applying a schema upgrade and retain the pre-change backups.
@@ -97,16 +103,16 @@ turn a business operation into a failure.
 ## Clerk onboarding
 
 Use a Clerk development instance. Set the Clerk session token custom claims to
-`{"openlet_account_id":"{{user.public_metadata.openlet_account_id}}"}` and configure its
+`{"openlet_user_id":"{{user.public_metadata.openlet_user_id}}"}` and configure its
 accepted audience to match `JWT_AUDIENCE`. The backend owns this public metadata
 field; clients cannot set it. On first login, call `PUT /v1/me/onboarding` with the
 session bearer JWT, then poll `GET /v1/me/onboarding`. No request key is needed:
-Clerk identity admits one account. Onboarding returns account_id; list workspaces after completion to discover storage. Once status is `active`, refresh the Clerk session token (Clerk SDK `getToken({skipCache:true})`)
+Clerk identity admits one human user. Onboarding returns user_id; list workspaces after completion to discover storage. Once status is `active`, refresh the Clerk session token (Clerk SDK `getToken({skipCache:true})`)
 and verify the refreshed claim before calling normal routes. Do not reuse the old
 bootstrap JWT. The backend updates only its field via Clerk's metadata merge endpoint.
 
 For a live development smoke, verify the initial bootstrap denial, successful
-onboarding, stable account identity and no duplicate workspace on retry, preservation of unrelated metadata,
+onboarding, stable user identity and no duplicate workspace on retry, preservation of unrelated metadata,
 and access with a newly minted session. Live development evidence is recorded in
 the [external configuration report](../plans/reports/implementation-261029-1822-external-configuration.md). Deterministic CI uses
 an isolated controllable Clerk HTTP boundary, real Envoy verification and real workers.

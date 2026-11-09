@@ -12,9 +12,79 @@ x-telemetry-env: &telemetry-env
   OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1}
   OTEL_RESOURCE_ATTRIBUTES: ${OTEL_RESOURCE_ATTRIBUTES:-}
   OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-false}
+x-leta: &leta
+  build: {context: ../.., dockerfile: apps/leta/Dockerfile}
+  image: openlet-leta:local
+  environment:
+    <<: *telemetry-env
+    LISTEN_ADDR: 0.0.0.0:8000
+    RPC_LISTEN_ADDR: 0.0.0.0:9090
+    DATABASE_URL_FILE: /run/secrets/leta_database_url
+    REDIS_URL_FILE: /run/secrets/redis_url
+    TEMPORAL_ADDRESS: temporal:7233
+    TEMPORAL_NAMESPACE: openlet
+    GATEWAY_TOKEN_FILE: /run/secrets/gateway_token
+    LETA_SERVICE_TOKEN_FILE: /run/secrets/leta_service_token
+    WORKSPACE_SERVICE_TOKEN_FILE: /run/secrets/workspace_service_token
+    ACCOUNT_RPC_ADDRESS: account:9090
+    WORKSPACE_RPC_ADDRESS: workspace:9090
+    LETFS_RPC_ADDRESS: letfs:9090
+    SPICEDB_ADDRESS: spicedb:50051
+    SPICEDB_GRPC_PRESHARED_KEY_FILE: /run/secrets/spicedb_key
+    ALLOW_PLAINTEXT_RPC: 'true'
+    OPENROUTER_API_KEY_FILE: /run/secrets/openrouter_api_key
+    OPENROUTER_BASE_URL: ${OPENROUTER_URL:-https://openrouter.ai/api/v1}
+    LETA_MODEL_CATALOG_PATH: /config/leta-models.json
+  secrets: [leta_database_url, redis_url, gateway_token, leta_service_token, workspace_service_token, spicedb_key, openrouter_api_key]
+  volumes: ['${OPENLET_STATE_DIR:-../../.local}/leta-models.json:/config/leta-models.json:ro']
+  healthcheck:
+    test: [CMD, /app/.venv/bin/python, -m, leta.health]
+    interval: 5s
+    timeout: 6s
+    retries: 24
+  stop_grace_period: 45s
+  networks: [backend, outbound]
+  restart: unless-stopped
+
 services:
+  redis:
+    image: redis:8.10.3-trixie@sha256:1f88291b4c57bdf249f02eb085a8669889b2d2954e91d4de5118a5da6b78dd53
+    command: [/bin/sh, -ec, 'exec redis-server --save "" --appendonly no --maxmemory 256mb --maxmemory-policy allkeys-lru --requirepass "$$(cat /run/secrets/redis_password)"']
+    secrets: [redis_password]
+    healthcheck:
+      test: [CMD-SHELL, 'REDISCLI_AUTH="$$(cat /run/secrets/redis_password)" redis-cli ping | grep -q PONG']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [backend]
+    restart: unless-stopped
+  leta-api:
+    <<: *leta
+    depends_on:
+      redis: {condition: service_healthy}
+      workspace: {condition: service_started}
+      account: {condition: service_started}
+      letfs: {condition: service_started}
+      leta-migrate: {condition: service_completed_successfully}
+      authz-schema: {condition: service_completed_successfully}
+      temporal-init: {condition: service_completed_successfully}
+  leta-worker:
+    <<: *leta
+    command: [-m, leta.worker]
+    depends_on:
+      leta-api: {condition: service_healthy}
+  leta-migrate:
+    build: {context: ../.., dockerfile: apps/leta/Dockerfile}
+    image: openlet-leta:local
+    command: [-m, leta.migrate]
+    environment:
+      DATABASE_URL_FILE: /run/secrets/leta_database_url
+    secrets: [leta_database_url]
+    depends_on:
+      postgres: {condition: service_healthy}
+    networks: [backend]
   spicedb-migrate:
-    image: &spicedb-image authzed/spicedb:v1.57.0@sha256:2e0cd20aa923ccfd96eb285756ec10a5d7bbe387e4b29c26bd6447435d2328de
+    image: &spicedb-image authzed/spicedb:v1.57.0@sha256:a170d372c9f6b921bb6849064df6ca3566dd5b174882c1a2c4300c2ae1d60efd
     working_dir: /config
     command: [datastore, migrate, head, --skip-release-check]
     volumes:
@@ -67,7 +137,7 @@ services:
     - max_connections=200
     - -c
     - log_lock_waits=on
-    image: postgres:18.6-trixie@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
+    image: postgres:18.6-trixie@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42
     environment:
       POSTGRES_USER: openlet_admin
       POSTGRES_DB: postgres
@@ -88,7 +158,7 @@ services:
     networks:
     - backend
   temporal-schema:
-    image: temporalio/admin-tools:1.32.1@sha256:9ef0dc5b063bf4ffd5c1512de72e0e73e225bd2c7006a18ce69bd592a8862a83
+    image: temporalio/admin-tools:1.32.2@sha256:4a95866efba29d7e17ab012df5232795e8b0ad0f7d5f9d1ec4df321f7792a754
     entrypoint:
     - /bin/sh
     - -ec
@@ -110,7 +180,7 @@ services:
       setup-schema -v 0.0; temporal-sql-tool update-schema -d /etc/temporal/schema/postgresql/v12/temporal/versioned
   temporal:
     restart: unless-stopped
-    image: temporalio/server:1.32.1@sha256:acecbab5b0b8ae9cf4012b508866ca97feda3709577bf157b537239f40029049
+    image: temporalio/server:1.32.2@sha256:7bf69188a6232fea14869b9cef3d94aa82a1601d99517f7e86c71f22da4e0670
     entrypoint:
     - temporal-server
     - --config-file
@@ -127,7 +197,7 @@ services:
     networks:
     - backend
   temporal-init:
-    image: temporalio/admin-tools:1.32.1@sha256:9ef0dc5b063bf4ffd5c1512de72e0e73e225bd2c7006a18ce69bd592a8862a83
+    image: temporalio/admin-tools:1.32.2@sha256:4a95866efba29d7e17ab012df5232795e8b0ad0f7d5f9d1ec4df321f7792a754
     entrypoint:
     - /bin/sh
     - -ec
@@ -155,6 +225,10 @@ services:
       WORKSPACE_SERVICE_TOKEN_FILE: /run/secrets/workspace_service_token
       DATABASE_URL_FILE: /run/secrets/workspace_database_url
       ACCOUNT_RPC_ADDRESS: account:9090
+      LETFS_RPC_ADDRESS: letfs:9090
+      LETA_RPC_ADDRESS: leta-api:9090
+      RPC_LISTEN_ADDR: 0.0.0.0:9090
+      LETA_SERVICE_TOKEN_FILE: /run/secrets/leta_service_token
       ALLOW_PLAINTEXT_RPC: 'true'
       SPICEDB_ADDRESS: spicedb:50051
       SPICEDB_GRPC_PRESHARED_KEY_FILE: /run/secrets/spicedb_key
@@ -166,6 +240,7 @@ services:
     - workspace_database_url
     - gateway_token
     - workspace_service_token
+    - leta_service_token
     depends_on:
       authz-schema:
         condition: service_completed_successfully
@@ -198,6 +273,7 @@ services:
       DATABASE_URL_FILE: /run/secrets/letfs_database_url
       WORKSPACE_SERVICE_TOKEN_FILE: /run/secrets/workspace_service_token
       TEMPORAL_ADDRESS: temporal:7233
+      LETA_SERVICE_TOKEN_FILE: /run/secrets/leta_service_token
       INGEST_SERVICE_TOKEN_FILE: /run/secrets/ingest_service_token
       OPENROUTER_URL: ${OPENROUTER_URL:-https://openrouter.ai/api/v1}
       OPENROUTER_API_KEY_FILE: /run/secrets/openrouter_api_key
@@ -237,6 +313,7 @@ services:
     - gateway_token
     - letfs_database_url
     - workspace_service_token
+    - leta_service_token
     - ingest_service_token
     - openrouter_api_key
     - qdrant_api_key
@@ -337,7 +414,7 @@ services:
 
   envoy:
     restart: unless-stopped
-    image: envoyproxy/envoy:v1.37.0@sha256:d9b4a70739d92b3e28cd407f106b0e90d55df453d7d87773efd22b4429777fe8
+    image: envoyproxy/envoy:v1.40.2@sha256:8de97e654644827d62afdbf7e1d3dc9fee01a8690d410dd1c63a30dc6b6cecbb
     command:
     - -c
     - /etc/envoy/openlet.json
@@ -366,19 +443,14 @@ services:
       WORKSPACE_SERVICE_TOKEN_FILE: /run/secrets/workspace_service_token
       DATABASE_URL_FILE: /run/secrets/account_database_url
       ALLOW_PLAINTEXT_RPC: 'true'
-      SPICEDB_ADDRESS: spicedb:50051
-      SPICEDB_GRPC_PRESHARED_KEY_FILE: /run/secrets/spicedb_key
       CLERK_SECRET_KEY_FILE: /run/secrets/clerk_secret_key
       CLERK_API_URL: ${CLERK_API_URL:-https://api.clerk.com/v1}
     secrets:
-    - spicedb_key
     - account_database_url
     - gateway_token
     - workspace_service_token
     - clerk_secret_key
     depends_on:
-      authz-schema:
-        condition: service_completed_successfully
       temporal-init:
         condition: service_completed_successfully
       account-migrate:
@@ -396,7 +468,7 @@ services:
       timeout: 5s
       retries: 20
   visibility-schema:
-    image: temporalio/admin-tools:1.32.1@sha256:9ef0dc5b063bf4ffd5c1512de72e0e73e225bd2c7006a18ce69bd592a8862a83
+    image: temporalio/admin-tools:1.32.2@sha256:4a95866efba29d7e17ab012df5232795e8b0ad0f7d5f9d1ec4df321f7792a754
     entrypoint:
     - /bin/sh
     - -ec
@@ -526,7 +598,17 @@ secrets:
     file: ${OPENLET_STATE_DIR:-../../.local}/secrets/letfs_database_url
   gateway_token:
     file: ${OPENLET_STATE_DIR:-../../.local}/secrets/gateway_token
+  leta_service_token:
+    file: ${OPENLET_STATE_DIR:-../../.local}/secrets/leta_service_token
   workspace_service_token:
     file: ${OPENLET_STATE_DIR:-../../.local}/secrets/workspace_service_token
   ingest_service_token:
     file: ${OPENLET_STATE_DIR:-../../.local}/secrets/ingest_service_token
+  leta_db_password:
+    file: ${OPENLET_STATE_DIR:-../../.local}/secrets/leta_db_password
+  leta_database_url:
+    file: ${OPENLET_STATE_DIR:-../../.local}/secrets/leta_database_url
+  redis_password:
+    file: ${OPENLET_STATE_DIR:-../../.local}/secrets/redis_password
+  redis_url:
+    file: ${OPENLET_STATE_DIR:-../../.local}/secrets/redis_url
