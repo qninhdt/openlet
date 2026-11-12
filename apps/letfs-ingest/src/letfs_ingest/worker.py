@@ -2,87 +2,85 @@ import argparse
 import asyncio
 import logging
 import signal
+from contextlib import AsyncExitStack
 from datetime import timedelta
-from importlib import import_module
 
-from openlet.clients.letfs import ProcessingClient
-from openlet.rpc import RpcClient
-from openlet.telemetry import configure
-from openlet.temporal import connect
+import httpx
+from openlet_api.letfs.v1.internal_pb2_grpc import LetFSInternalServiceStub
+from openlet_sdk.config import load
+from openlet_sdk.rpc import channel
+from openlet_sdk.telemetry import initialize
+from temporalio.client import Client
+from temporalio.contrib.opentelemetry import TracingInterceptor
+from temporalio.runtime import OpenTelemetryConfig, Runtime, TelemetryConfig
 from temporalio.worker import Worker
 
-from letfs_ingest.clients.openrouter import AISettings, OpenRouter
-from letfs_ingest.clients.qdrant import IndexSettings
-from letfs_ingest.config import WorkerConfig
-from letfs_ingest.parser.text_split import layout_limits
-from letfs_ingest.processing.processor import Processor
-from letfs_ingest.temporal.activities import Activities
 
+async def run(role):
+    config = load()
+    runtime = config["runtime"]
+    settings = config["services"]["letfs_ingest"][role]
+    if settings["activity_concurrency"] < 1:
+        raise ValueError("activity_concurrency must be positive")
+    shutdown = initialize(f"openlet-ingest-{role}", runtime, config["telemetry"])
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, stop.set)
+    temporal = config["dependencies"]["temporal"]
+    telemetry = config["telemetry"]
+    metrics = OpenTelemetryConfig(
+        url=telemetry["otlp_endpoint"], metric_periodicity=timedelta(seconds=telemetry["metrics_export_interval_seconds"]),
+    ) if telemetry["otlp_endpoint"] else None
+    native = Runtime(telemetry=TelemetryConfig(metrics=metrics, global_tags={"worker_role": role}))
+    try:
+        async with AsyncExitStack() as stack:
+            rpc = await stack.enter_async_context(channel(
+                config["services"]["letfs"]["grpc_target"], max_bytes=config["grpc"]["max_receive_bytes"],
+            ))
+            stub = LetFSInternalServiceStub(rpc)
+            http = await stack.enter_async_context(httpx.AsyncClient(timeout=120))
+            if role == "cpu":
+                from .parse import Parser, run_child
 
-async def main(role):
-    config = WorkerConfig.from_env(role)
-    models = None
-    ai = None
-    index_settings = None
-    if role == "cpu":
-        layout_limits()
-        models = config.models
-        if not models.is_dir():
-            raise ValueError("offline models are missing")
-        try:
-            import_module("onnxruntime")
-        except ImportError as error:
-            raise RuntimeError(
-                "OCR runtime unavailable; install locked processor dependencies"
-            ) from error
-    async with configure("openlet-letfs-ingest", role) as (tracing, runtime):
-        if role == "io":
-            index_settings = IndexSettings.from_env()
-            ai = OpenRouter(AISettings.from_env())
-        try:
-            processor = Processor(models, ai, index_settings)
-            client = await connect(
-                config.temporal_address,
-                config.temporal_namespace,
-                interceptor=tracing,
-                runtime=runtime,
+                if not 0 < settings["min_section_tokens"] <= settings["split_tokens"]:
+                    raise ValueError("invalid parser layout limits")
+                if await run_child(["letfs_ingest.models", "check"], config["services"]["letfs"]["processing"]["parse_timeout_seconds"]):
+                    raise RuntimeError("Docling models/runtime unavailable; prepare models before starting CPU worker")
+                activities = [Parser(stub, http, config["services"]["letfs"]).run]
+            else:
+                from openlet_sdk.config import secret
+                from qdrant_client import AsyncQdrantClient
+
+                from .process import Processor
+                from .providers import Models
+
+                if not 0 <= settings["chunk_overlap_tokens"] < settings["chunk_size_tokens"] or settings["embedding_batch_size"] < 1 or settings["model_concurrency"] < 1:
+                    raise ValueError("invalid indexing/model limits")
+                ai = Models(config)
+                stack.push_async_callback(ai.client.close)
+                vector = config["dependencies"]["qdrant"]
+                host, port = vector["address"].rsplit(":", 1)
+                qdrant = AsyncQdrantClient(host=host, grpc_port=int(port), prefer_grpc=True, https=vector["tls"], api_key=secret(vector["api_key"]))
+                stack.push_async_callback(qdrant.close)
+                activities = [Processor(stub, http, ai, qdrant, config).run]
+            client = await Client.connect(
+                temporal["address"], namespace=temporal["namespace"], tls=temporal["tls"],
+                runtime=native, interceptors=[TracingInterceptor()],
             )
-            async with RpcClient(
-                config.rpc_address,
-                config.rpc_token,
-                allow_plaintext=config.allow_plaintext,
-            ) as rpc:
-                activities = Activities(processor, ProcessingClient(rpc))
-                worker = Worker(
-                    client,
-                    task_queue=f"openlet-letfs-{role}",
-                    activities=(
-                        [activities.process_file]
-                        if role == "cpu"
-                        else [activities.enrich_file, activities.index_file]
-                    ),
-                    max_concurrent_activities=1 if role == "cpu" else 4,
-                    max_concurrent_activity_task_polls=1 if role == "cpu" else 2,
-                    graceful_shutdown_timeout=timedelta(seconds=20),
-                    max_heartbeat_throttle_interval=timedelta(seconds=5),
-                )
-                stopped = asyncio.Event()
-                loop = asyncio.get_running_loop()
-                for sig in (signal.SIGTERM, signal.SIGINT):
-                    loop.add_signal_handler(sig, stopped.set)
-                try:
-                    async with worker:
-                        logging.getLogger(__name__).info("processing worker polling")
-                        await stopped.wait()
-                finally:
-                    for sig in (signal.SIGTERM, signal.SIGINT):
-                        loop.remove_signal_handler(sig)
-        finally:
-            if ai is not None:
-                await ai.close()
+            worker = Worker(
+                client, task_queue=temporal["queues"][f"ingest_{role}"], activities=activities,
+                max_concurrent_activities=settings["activity_concurrency"],
+                graceful_shutdown_timeout=timedelta(seconds=runtime["shutdown_timeout_seconds"]),
+            )
+            async with worker:
+                logging.getLogger(__name__).info("ingest %s started", role)
+                await stop.wait()
+    finally:
+        shutdown()
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run a Letfs processing worker")
+    parser = argparse.ArgumentParser()
     parser.add_argument("role", choices=("cpu", "io"))
-    asyncio.run(main(parser.parse_args().role))
+    asyncio.run(run(parser.parse_args().role))

@@ -1,0 +1,114 @@
+name: Release
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: release-production
+  cancel-in-progress: false
+jobs:
+  build-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+    env:
+      COMPOSE_PROJECT_NAME: openlet-release-${{ github.run_id }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Require successful default-branch CI for this commit
+        run: |
+          test "$GITHUB_REF" = refs/heads/main
+          test "$(gh run list --workflow ci.yaml --commit "$GITHUB_SHA" --branch main --status success --json headSha --jq length)" -gt 0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: '0.13.7'
+          python-version: '3.14'
+          enable-cache: true
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7.5.0
+        env:
+          OPENLET_CONFIG: ${{ github.workspace }}/e2e/openlet.test.yaml
+          OPENLET_GENERATED: ${{ github.workspace }}/.local/e2e/generated
+          OPENLET_BACKUPS: ${{ github.workspace }}/.local/e2e/backups
+        with:
+          files: infra/compose.yaml
+          targets: |
+            platform
+            letfs
+            ingest-cpu
+            ingest-io
+          load: true
+          set: |
+            platform.cache-from=type=gha,scope=platform
+            platform.cache-to=type=gha,scope=platform,mode=max
+            letfs.cache-from=type=gha,scope=letfs
+            letfs.cache-to=type=gha,scope=letfs,mode=max
+            ingest-cpu.cache-from=type=gha,scope=ingest-cpu
+            ingest-cpu.cache-to=type=gha,scope=ingest-cpu,mode=max
+            ingest-io.cache-from=type=gha,scope=ingest-io
+            ingest-io.cache-to=type=gha,scope=ingest-io,mode=max
+      - name: Verify the built image set
+        run: |
+          mkdir -p .local
+          printf 'services:\n  platform: {image: "openlet/platform:local"}\n  letfs: {image: "openlet/letfs:local"}\n  ingest-cpu: {image: "openlet/ingest-cpu:local"}\n  ingest-io: {image: "openlet/ingest-io:local"}\n' > .local/test-images.yaml
+          OPENLET_IMAGE_LOCK="$PWD/.local/test-images.yaml" scripts/e2e.sh api
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Push tested images and package immutable deployment inputs
+        run: |
+          repository="ghcr.io/${GITHUB_REPOSITORY,,}"
+          printf 'services:\n' > image-lock.yaml
+          for service in platform letfs ingest-cpu ingest-io; do
+            ref="$repository/$service:$GITHUB_SHA"
+            docker tag "openlet/$service:local" "$ref"
+            docker push "$ref"
+            digest=$(docker image inspect "$ref" --format '{{index .RepoDigests 0}}')
+            printf '  %s: {image: "%s"}\n' "$service" "$digest" >> image-lock.yaml
+            case "$service" in
+              platform|letfs) printf '  %s-migrate: {image: "%s"}\n' "$service" "$digest" >> image-lock.yaml ;;
+            esac
+          done
+          tar -czf .local/release.tgz image-lock.yaml infra scripts packages/contracts/authz packages/contracts/generated pyproject.toml uv.lock .python-version apps/letfs-ingest/pyproject.toml packages/sdk-python/pyproject.toml
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-bundle
+          path: .local/release.tgz
+          retention-days: 30
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: release-e2e
+          path: .local/e2e/results/
+          retention-days: 7
+  deploy:
+    needs: build-and-verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-bundle
+          path: .local
+      - name: Transfer and activate release on the VPS
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          release="/opt/openlet/releases/$GITHUB_SHA"
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$release'"
+          scp .local/release.tgz "$DEPLOY_USER@$DEPLOY_HOST:$release/release.tgz"
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" "cd '$release' && tar -xzf release.tgz && COMPOSE_PROJECT_NAME=openlet OPENLET_BACKUPS=/opt/openlet/backups scripts/deploy.sh /opt/openlet/openlet.yaml /opt/openlet/.env '$release/image-lock.yaml'"

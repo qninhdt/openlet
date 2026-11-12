@@ -1,0 +1,304 @@
+package storage
+
+import (
+	"context"
+	"encoding/json"
+	"path"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	pb "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/letfs/v1"
+	"google.golang.org/protobuf/encoding/protojson"
+)
+
+const sourceCTE = `WITH RECURSIVE source AS (SELECT n.id,n.storage_id,n.parent_id FROM nodes n JOIN files f ON f.node_id=n.id WHERE n.id=$1 AND f.version=$2 AND f.object_key IS NOT NULL),chain AS(SELECT id,storage_id,parent_id,0 AS depth FROM source UNION ALL SELECT n.id,n.storage_id,n.parent_id,c.depth+1 FROM chain c JOIN nodes n ON n.id=c.parent_id),live AS(SELECT src.id,src.storage_id,s.workspace_id,s.allow_indexing FROM source src JOIN storages s ON s.id=src.storage_id WHERE EXISTS(SELECT 1 FROM chain c WHERE c.id=s.root_node_id) AND NOT EXISTS(SELECT 1 FROM chain c JOIN nodes n ON n.id=c.id WHERE c.depth>0 AND n.kind='file')) `
+
+func lockSource(ctx context.Context, tx pgx.Tx, id string, version int64) (string, string, bool, error) {
+	var storage, workspace string
+	var indexing bool
+	err := tx.QueryRow(ctx, sourceCTE+` SELECT l.storage_id,l.workspace_id,l.allow_indexing FROM live l JOIN files f ON f.node_id=l.id AND f.version=$2 FOR UPDATE OF f`, id, version).Scan(&storage, &workspace, &indexing)
+	return storage, workspace, indexing, err
+}
+func obsolete(err error) (*pb.ProcessingOutcome, error) {
+	if err == pgx.ErrNoRows {
+		return &pb.ProcessingOutcome{Obsolete: true}, nil
+	}
+	return nil, err
+}
+func (s *Server) GetProcessingInput(ctx context.Context, r *pb.ProcessingRequest) (*pb.ProcessingInput, error) {
+	rows, err := s.DB.Query(ctx, sourceCTE+`,tree AS(SELECT n.id,''::text AS path,0 AS depth FROM live l JOIN nodes n ON n.id=l.id UNION ALL SELECT n.id,CASE WHEN t.path='' THEN n.name ELSE t.path||'/'||n.name END,t.depth+1 FROM tree t JOIN nodes n ON n.parent_id=t.id JOIN processing src ON src.file_id=$1 WHERE src.stage IN ('parsed','enriched')) SELECT l.workspace_id,l.storage_id,l.allow_indexing,src.stage,`+headerSQL+`,t.path,f.text_content,f.object_key FROM live l JOIN processing src ON src.file_id=l.id JOIN tree t ON true JOIN nodes n ON n.id=t.id CROSS JOIN LATERAL(SELECT t.depth>0 AS readonly) v `+headerJoins+` ORDER BY t.depth,t.path`, r.FileId, r.Version)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := &pb.ProcessingInput{Outcome: &pb.ProcessingOutcome{Obsolete: true}}
+	for rows.Next() {
+		var raw []byte
+		var pth, stage string
+		var text, key *string
+		if err = rows.Scan(&out.WorkspaceId, &out.StorageId, &out.AllowIndexing, &stage, &raw, &pth, &text, &key); err != nil {
+			return nil, err
+		}
+		node := new(pb.Node)
+		if err = protojson.Unmarshal(raw, node); err != nil {
+			return nil, err
+		}
+		out.Outcome = &pb.ProcessingOutcome{Stage: stage}
+		if node.Id == r.FileId {
+			out.SourceName = node.Name
+			out.MediaType = node.File.MediaType
+			out.SourceMetadata = node.File.Metadata
+			if key != nil && (stage == "pending" || strings.HasPrefix(out.MediaType, "image/")) {
+				signed, err := s.Presign.PresignGetObject(ctx, &s3.GetObjectInput{Bucket: &s.Bucket, Key: key}, func(o *s3.PresignOptions) { o.Expires = time.Duration(s.Settings.DownloadURLTTLSeconds) * time.Second })
+				if err != nil {
+					return nil, err
+				}
+				out.DownloadUrl = signed.URL
+			}
+			continue
+		}
+		a := &pb.ProcessingArtifact{Node: node, Path: pth, TextContent: text}
+		if key != nil {
+			signed, err := s.Presign.PresignGetObject(ctx, &s3.GetObjectInput{Bucket: &s.Bucket, Key: key}, func(o *s3.PresignOptions) { o.Expires = time.Duration(s.Settings.DownloadURLTTLSeconds) * time.Second })
+			if err != nil {
+				return nil, err
+			}
+			a.DownloadUrl = signed.URL
+		}
+		out.Artifacts = append(out.Artifacts, a)
+	}
+	return out, rows.Err()
+}
+func validArtifactPath(p string) bool {
+	if p == "" || strings.HasPrefix(p, "/") || strings.ContainsRune(p, 0) || path.Clean(p) != p {
+		return false
+	}
+	for _, name := range strings.Split(p, "/") {
+		if name == ".." || name == "." || len(name) > 255 {
+			return false
+		}
+	}
+	return true
+}
+func (s *Server) PrepareArtifactUploads(ctx context.Context, r *pb.PrepareArtifactUploadsRequest) (*pb.PrepareArtifactUploadsResponse, error) {
+	if len(r.Outputs) > s.Settings.Processing.MaxArtifacts {
+		return nil, invalid("too many artifacts")
+	}
+	var storage string
+	var stage string
+	err := s.DB.QueryRow(ctx, sourceCTE+` SELECT l.storage_id,p.stage FROM live l JOIN processing p ON p.file_id=l.id`, r.FileId, r.Version).Scan(&storage, &stage)
+	if err == pgx.ErrNoRows {
+		return &pb.PrepareArtifactUploadsResponse{Outcome: &pb.ProcessingOutcome{Obsolete: true}}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	out := &pb.PrepareArtifactUploadsResponse{Outcome: &pb.ProcessingOutcome{Stage: stage}}
+	if stage != "pending" {
+		return out, nil
+	}
+	records := make([]map[string]any, 0, len(r.Outputs))
+	for _, spec := range r.Outputs {
+		if !validArtifactPath(spec.Path) || spec.SizeBytes > s.Settings.Processing.MaxArtifactBlobBytes {
+			return nil, invalid("invalid artifact path or blob size")
+		}
+		media, err := blobMediaType(spec.MediaType)
+		if err != nil {
+			return nil, err
+		}
+		id := uuid.NewString()
+		key := "objects/" + id
+		transfer, err := s.signedPut(ctx, key, media, spec.Checksum, spec.SizeBytes, time.Duration(s.Settings.UploadURLTTLSeconds)*time.Second)
+		if err != nil {
+			return nil, err
+		}
+		out.Uploads = append(out.Uploads, &pb.ArtifactUpload{Path: spec.Path, UploadId: id, PutUrl: transfer.PutUrl, Headers: transfer.Headers})
+		records = append(records, map[string]any{"id": id, "key": key, "size": spec.SizeBytes, "media": media, "checksum": spec.Checksum})
+	}
+	raw, err := json.Marshal(records)
+	if err != nil {
+		return nil, err
+	}
+	_, err = s.DB.Exec(ctx, `INSERT INTO uploads(id,storage_id,object_key,size_bytes,media_type,checksum,source_file_id,source_version,expires_at) SELECT x.id,$2,x.key,x.size,x.media,x.checksum,$3,$4,$5 FROM jsonb_to_recordset($1::jsonb) x(id uuid,key text,size bigint,media text,checksum text)`, raw, storage, r.FileId, r.Version, time.Now().Add(time.Duration(s.Settings.UploadURLTTLSeconds)*time.Second))
+	return out, err
+}
+func (s *Server) artifactRecords(source string, artifacts []*pb.Artifact) ([]byte, int, error) {
+	if len(artifacts) > s.Settings.Processing.MaxArtifacts {
+		return nil, 0, invalid("too many artifacts")
+	}
+	ids := map[string]string{"": source}
+	kinds := map[string]bool{"": true}
+	for _, a := range artifacts {
+		if !validArtifactPath(a.Path) || ids[a.Path] != "" {
+			return nil, 0, invalid("invalid or duplicate artifact path")
+		}
+		ids[a.Path] = uuid.NewString()
+		kinds[a.Path] = a.GetDirectory() != nil
+	}
+	rows := []map[string]any{}
+	handles := 0
+	var total int64
+	for _, a := range artifacts {
+		parentPath := path.Dir(a.Path)
+		if parentPath == "." {
+			parentPath = ""
+		}
+		parent := ids[parentPath]
+		if parent == "" || !kinds[parentPath] {
+			return nil, 0, invalid("artifact parent must be a declared directory")
+		}
+		v := map[string]any{"id": ids[a.Path], "parent": parent, "name": path.Base(a.Path), "kind": "directory"}
+		switch c := a.Content.(type) {
+		case *pb.Artifact_Directory:
+		case *pb.Artifact_Text:
+			if !utf8.ValidString(c.Text.Content) || strings.ContainsRune(c.Text.Content, 0) {
+				return nil, 0, invalid("artifact text must be UTF-8 without NUL")
+			}
+			total += int64(len(c.Text.Content))
+			v["kind"] = "file"
+			v["text"] = c.Text.Content
+			v["media"] = c.Text.MediaType
+			if c.Text.MediaType == "" {
+				v["media"] = "text/markdown; charset=utf-8"
+			}
+		case *pb.Artifact_UploadId:
+			v["kind"] = "file"
+			v["upload"] = c.UploadId
+			handles++
+		default:
+			return nil, 0, invalid("artifact content is required")
+		}
+		rows = append(rows, v)
+	}
+	if total > s.Settings.Processing.MaxManifestTextBytes {
+		return nil, 0, invalid("artifact text manifest exceeds limit")
+	}
+	raw, err := json.Marshal(rows)
+	return raw, handles, err
+}
+func (s *Server) CommitParse(ctx context.Context, r *pb.CommitParseRequest) (*pb.ProcessingOutcome, error) {
+	records, expected, err := s.artifactRecords(r.FileId, r.Artifacts)
+	if err != nil {
+		return nil, err
+	}
+	tx, err := s.DB.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	storage, workspace, _, err := lockSource(ctx, tx, r.FileId, r.Version)
+	if err != nil {
+		return obsolete(err)
+	}
+	var stage string
+	var bytes int64
+	var handles int
+	var admitted bool
+	err = tx.QueryRow(ctx, `WITH admitted AS(UPDATE processing SET stage='parsed',error_code=NULL WHERE file_id=$1 AND stage='pending' RETURNING stage),
+ input AS(SELECT * FROM jsonb_to_recordset($4::jsonb) x(id uuid,parent uuid,name text,kind text,text text,media text,upload uuid)),
+ handles AS(DELETE FROM uploads u USING input x WHERE EXISTS(SELECT 1 FROM admitted) AND u.id=x.upload AND u.source_file_id=$1 AND u.source_version=$2 AND u.storage_id=$3 AND u.expires_at>now() AND u.result IS NULL RETURNING u.id,u.object_key,u.size_bytes,u.media_type),
+ inserted AS(INSERT INTO nodes(id,storage_id,parent_id,name,kind) SELECT id,$3,parent,name,kind FROM input WHERE EXISTS(SELECT 1 FROM admitted) RETURNING id),
+ payload AS(INSERT INTO files(node_id,version,size_bytes,media_type,text_content,object_key) SELECT x.id,1,CASE WHEN x.text IS NOT NULL THEN octet_length(x.text) ELSE h.size_bytes END,coalesce(x.media,h.media_type),x.text,h.object_key FROM input x JOIN inserted n ON n.id=x.id LEFT JOIN handles h ON h.id=x.upload WHERE x.kind='file' AND (x.upload IS NULL OR h.id IS NOT NULL) RETURNING size_bytes)
+ SELECT coalesce((SELECT stage FROM admitted),(SELECT stage FROM processing WHERE file_id=$1)),(SELECT coalesce(sum(size_bytes),0) FROM payload),(SELECT count(*) FROM handles),EXISTS(SELECT 1 FROM admitted)`, r.FileId, r.Version, storage, records).Scan(&stage, &bytes, &handles, &admitted)
+	if err != nil {
+		return nil, err
+	}
+	if admitted && handles != expected {
+		return nil, invalid("artifact handles are expired or belong to another source/version")
+	}
+	if err = s.quota(ctx, tx, workspace, bytes); err != nil {
+		return nil, err
+	}
+	return &pb.ProcessingOutcome{Stage: stage}, tx.Commit(ctx)
+}
+func (s *Server) CommitEnrichment(ctx context.Context, r *pb.CommitEnrichmentRequest) (*pb.ProcessingOutcome, error) {
+	if len(r.Artifacts) > s.Settings.Processing.MaxArtifacts {
+		return nil, invalid("too many enriched artifacts")
+	}
+	records := []map[string]any{}
+	var total int64
+	for _, a := range r.Artifacts {
+		v := map[string]any{"id": a.NodeId}
+		if a.TextContent != nil {
+			if !utf8.ValidString(*a.TextContent) || strings.ContainsRune(*a.TextContent, 0) {
+				return nil, invalid("invalid artifact text")
+			}
+			total += int64(len(*a.TextContent))
+			v["text"] = *a.TextContent
+		}
+		if a.Metadata != nil {
+			v["metadata"] = map[string]any{"title": a.Metadata.Title, "description": a.Metadata.Description, "semantic_type": a.Metadata.SemanticType, "context": a.Metadata.Context}
+		}
+		records = append(records, v)
+	}
+	if total > s.Settings.Processing.MaxManifestTextBytes {
+		return nil, invalid("enrichment manifest exceeds limit")
+	}
+	raw, err := json.Marshal(records)
+	if err != nil {
+		return nil, err
+	}
+	tx, err := s.DB.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	_, workspace, _, err := lockSource(ctx, tx, r.FileId, r.Version)
+	if err != nil {
+		return obsolete(err)
+	}
+	var stage string
+	var bytes int64
+	var count int
+	var admitted bool
+	err = tx.QueryRow(ctx, `WITH RECURSIVE tree AS(SELECT id FROM nodes WHERE parent_id=$1 UNION ALL SELECT n.id FROM nodes n JOIN tree t ON n.parent_id=t.id),
+ admitted AS(UPDATE processing SET stage='enriched',error_code=NULL WHERE file_id=$1 AND stage='parsed' RETURNING stage),
+ input AS(SELECT x.* FROM jsonb_to_recordset($2::jsonb) x(id uuid,text text,metadata jsonb)),
+ valid AS MATERIALIZED(SELECT x.*,f.size_bytes AS old_size FROM input x JOIN tree t ON t.id=x.id JOIN files f ON f.node_id=x.id WHERE x.text IS NULL OR f.text_content IS NOT NULL),
+ changed AS(UPDATE files f SET text_content=v.text,size_bytes=octet_length(v.text),version=f.version+1 FROM valid v WHERE f.node_id=v.id AND v.text IS NOT NULL AND f.text_content IS DISTINCT FROM v.text AND EXISTS(SELECT 1 FROM admitted) RETURNING f.node_id,f.size_bytes-v.old_size AS delta),
+ touched AS(UPDATE nodes n SET updated_at=now() FROM changed c WHERE n.id=c.node_id),
+ metadata AS(INSERT INTO file_metadata(node_id,title,description,semantic_type,context) SELECT id,metadata->>'title',metadata->>'description',metadata->>'semantic_type',metadata->>'context' FROM valid WHERE metadata IS NOT NULL AND EXISTS(SELECT 1 FROM admitted) ON CONFLICT(node_id) DO UPDATE SET title=excluded.title,description=excluded.description,semantic_type=excluded.semantic_type,context=excluded.context)
+ SELECT coalesce((SELECT stage FROM admitted),(SELECT stage FROM processing WHERE file_id=$1)),(SELECT coalesce(sum(delta),0) FROM changed),(SELECT count(*) FROM valid),EXISTS(SELECT 1 FROM admitted)`, r.FileId, raw).Scan(&stage, &bytes, &count, &admitted)
+	if err != nil {
+		return nil, err
+	}
+	if admitted && count != len(r.Artifacts) {
+		return nil, invalid("enrichment contains invalid or stale artifact IDs")
+	}
+	if admitted && r.SourceMetadata != nil {
+		m := r.SourceMetadata
+		if _, err = tx.Exec(ctx, `INSERT INTO file_metadata(node_id,title,description,semantic_type,context) VALUES($1,$2,$3,$4,$5) ON CONFLICT(node_id) DO UPDATE SET title=excluded.title,description=excluded.description,semantic_type=excluded.semantic_type,context=excluded.context`, r.FileId, m.Title, m.Description, m.SemanticType, m.Context); err != nil {
+			return nil, err
+		}
+	}
+	if err = s.quota(ctx, tx, workspace, bytes); err != nil {
+		return nil, err
+	}
+	return &pb.ProcessingOutcome{Stage: stage}, tx.Commit(ctx)
+}
+func (s *Server) CompleteIndex(ctx context.Context, r *pb.ProcessingRequest) (*pb.ProcessingOutcome, error) {
+	return s.finishProcessing(ctx, r.FileId, r.Version, "")
+}
+func (s *Server) FailProcessing(ctx context.Context, r *pb.FailProcessingRequest) (*pb.ProcessingOutcome, error) {
+	return s.finishProcessing(ctx, r.FileId, r.Version, r.ErrorCode)
+}
+func (s *Server) finishProcessing(ctx context.Context, id string, version int64, code string) (*pb.ProcessingOutcome, error) {
+	tx, err := s.DB.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	if _, _, _, err = lockSource(ctx, tx, id, version); err != nil {
+		return obsolete(err)
+	}
+	var stage string
+	err = tx.QueryRow(ctx, `UPDATE processing SET stage=CASE WHEN $2='' AND stage='enriched' THEN 'ready' ELSE stage END,error_code=CASE WHEN stage='ready' OR $2='' THEN NULL ELSE $2 END WHERE file_id=$1 RETURNING stage`, id, code).Scan(&stage)
+	if err != nil {
+		return obsolete(err)
+	}
+	return &pb.ProcessingOutcome{Stage: stage}, tx.Commit(ctx)
+}

@@ -1,18 +1,13 @@
-# Openlet backend documentation
+# Openlet documentation
 
-Public HTTP and private gRPC adapters share native business services. Go and Python packages provide reusable clients and infrastructure. The [current implementation record](../plans/261108-0001-leta-agent-engine/plan.md) owns this round’s verification; historical checks do not establish acceptance of changed source.
+Executable contracts and migrations own the wire format and database schema. The [active rewrite plan](../plans/261111-1727-platform-letfs-rewrite/plan.md) records acceptance and outstanding verification.
 
-- [Architecture and scope](architecture.md): stack, ownership, identity, repository layout and operation.
-- [Setup and verification](setup.md): foundation configuration, local commands and test isolation.
-- [Operation and recovery](operations.md): limits, cleanup, coordinated backup, isolated restore and external release checks.
-- [Data model and consistency](data-model.md): tree, quota, storage publication and lifecycle invariants.
-- [Monolith database diagram](openlet.dbml): English DBML covering current application tables, constraints and physical/logical relationships.
-- [API contracts](api-contracts.md): public/internal responsibilities and authorization.
-- [Workflows](workflows.md): service-owned Temporal workflows, activities and recovery.
-- [Testing](testing.md): native unit/integration and Playwright API E2E, with concrete correctness gates.
-- [Production-pattern research](../plans/reports/research-261029-1220-production-patterns.md): upstream evidence versus Openlet adaptations.
-- [File-operation retry research](../plans/reports/research-261029-1344-file-operation-retries.md): conditional/state recovery versus stored response replay.
-- [Completed foundation migration](../plans/261102-1059-go-grpc-filesystem-authorization/plan.md): Go letfs, shared contracts, SpiceDB, direct filesystem access and recovery acceptance.
-- [Previous implementation plan](../plans/261031-1758-simplify-backend-refactor/plan.md): API E2E rewrite, schema and lifecycle simplification, Gin/OpenTelemetry, processing and final acceptance evidence.
+- [Architecture](architecture.md): service ownership, authorization and boundaries.
+- [Setup](setup.md): configuration, generation and local commands.
+- [API contracts](api-contracts.md): gRPC, HTTP/ProtoJSON, identity and errors.
+- [Data model](data-model.md): domain data, quota, versions and idempotency.
+- [Workflows](workflows.md): Temporal ownership and processing.
+- [Testing](testing.md): focused checks and API/browser E2E.
+- [Operations](operations.md): deployment, backup and empty-target restore.
 
-These documents supersede the discarded plan's specifications. Historical research/journals retain context, not current architecture authority. Leta requires Redis for Mirage caching and replayable AG-UI events. Shared content/refcounts, source snapshots/epochs, custom gateway/leases and SDK experiments are outside the MVP.
+Leta has a [separate design](../plans/261111-2010-leta-rewrite/plan.md), with its implementation deferred. Older plans and reports describe historical systems; their commands and schema are not current product contracts.

@@ -1,0 +1,169 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main, dev]
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      runtime: ${{ steps.paths.outputs.runtime }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: paths
+        with:
+          filters: |
+            go:
+              - 'apps/{platform,letfs}/**'
+              - 'packages/{contracts,sdk-go}/**'
+              - 'go.work*'
+              - 'Makefile'
+            python:
+              - 'apps/letfs-ingest/**'
+              - 'packages/{contracts,sdk-python}/**'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - '.python-version'
+              - 'scripts/*.py'
+              - 'Makefile'
+            contracts:
+              - 'packages/contracts/**'
+            e2e:
+              - 'e2e/**'
+              - 'pnpm*'
+              - 'package.json'
+            infra:
+              - 'infra/**'
+              - 'scripts/**'
+              - '.github/workflows/**'
+              - 'Makefile'
+            runtime:
+              - 'apps/{platform,letfs,letfs-ingest}/**'
+              - 'packages/**'
+              - 'e2e/**'
+              - 'infra/**'
+              - 'scripts/**'
+              - '.github/workflows/**'
+              - 'Makefile'
+              - 'go.work*'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - '.python-version'
+              - 'pnpm*'
+              - 'package.json'
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: steps.paths.outputs.go == 'true' || steps.paths.outputs.contracts == 'true' || steps.paths.outputs.infra == 'true'
+        with:
+          go-version: '1.27.4'
+          cache-dependency-path: |
+            apps/platform/go.sum
+            apps/letfs/go.sum
+            packages/sdk-go/go.sum
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        if: steps.paths.outputs.python == 'true' || steps.paths.outputs.contracts == 'true' || steps.paths.outputs.infra == 'true'
+        with:
+          version: '0.13.7'
+          python-version: '3.14'
+          enable-cache: true
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.paths.outputs.e2e == 'true'
+        with:
+          node-version: '26.13.0'
+      - if: steps.paths.outputs.go == 'true'
+        run: make check-go test-go
+      - if: steps.paths.outputs.python == 'true'
+        run: make check-python test-python
+      - if: steps.paths.outputs.contracts == 'true'
+        run: |
+          make tools generate
+          buf lint packages/contracts
+          git diff --exit-code -- packages/sdk-go/gen packages/sdk-python/src/openlet_api packages/sdk-python/src/buf packages/contracts/generated
+      - if: steps.paths.outputs.e2e == 'true'
+        run: |
+          npm install --global pnpm@12.18.0
+          pnpm install --frozen-lockfile
+          pnpm typecheck
+      - if: steps.paths.outputs.infra == 'true'
+        run: |
+          bash -n scripts/*.sh
+          shellcheck scripts/*.sh
+          uv run --no-env-file --locked ruff check scripts
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+  integration:
+    needs: checks
+    if: needs.checks.outputs.runtime == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      COMPOSE_PROJECT_NAME: openlet-ci-${{ github.run_id }}-${{ github.run_attempt }}
+    services:
+      postgres:
+        image: postgres:18-alpine@sha256:9ba53c7d41ea093baf5c1ba635ba5434c4f979880527d49bb7d9237d3193085b
+        env:
+          POSTGRES_DB: letfs
+          POSTGRES_PASSWORD: isolated-test-only
+        ports: ['127.0.0.1:15432:5432']
+        options: --health-cmd "pg_isready -U postgres -d letfs" --health-interval 2s --health-timeout 3s --health-retries 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.4'
+          cache-dependency-path: |
+            apps/platform/go.sum
+            apps/letfs/go.sum
+            packages/sdk-go/go.sum
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: '0.13.7'
+          python-version: '3.14'
+          enable-cache: true
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7.5.0
+        env:
+          OPENLET_CONFIG: ${{ github.workspace }}/e2e/openlet.test.yaml
+          OPENLET_GENERATED: ${{ github.workspace }}/.local/e2e/generated
+          OPENLET_BACKUPS: ${{ github.workspace }}/.local/e2e/backups
+        with:
+          files: infra/compose.yaml
+          targets: |
+            platform
+            letfs
+            ingest-cpu
+            ingest-io
+          load: true
+          set: |
+            platform.cache-from=type=gha,scope=platform
+            platform.cache-to=type=gha,scope=platform,mode=max
+            letfs.cache-from=type=gha,scope=letfs
+            letfs.cache-to=type=gha,scope=letfs,mode=max
+            ingest-cpu.cache-from=type=gha,scope=ingest-cpu
+            ingest-cpu.cache-to=type=gha,scope=ingest-cpu,mode=max
+            ingest-io.cache-from=type=gha,scope=ingest-io
+            ingest-io.cache-to=type=gha,scope=ingest-io,mode=max
+      - name: Verify SQL invariants on an isolated database
+        env:
+          OPENLET_TEST_DATABASE_URL: postgres://postgres:isolated-test-only@127.0.0.1:15432/letfs?sslmode=disable
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          mkdir -p .local
+          docker exec "$POSTGRES_CONTAINER" pg_dump -U postgres -d letfs > .local/pre-invariants.sql
+          docker run --rm --network host -e GOOSE_DRIVER=postgres -e GOOSE_DBSTRING="$OPENLET_TEST_DATABASE_URL" -e GOOSE_MIGRATION_DIR=/migrations --entrypoint /usr/local/bin/goose openlet/letfs:local up
+          make integration
+      - run: |
+          mkdir -p .local
+          printf 'services:\n  platform: {image: "openlet/platform:local"}\n  letfs: {image: "openlet/letfs:local"}\n  ingest-cpu: {image: "openlet/ingest-cpu:local"}\n  ingest-io: {image: "openlet/ingest-io:local"}\n' > .local/test-images.yaml
+          OPENLET_IMAGE_LOCK="$PWD/.local/test-images.yaml" scripts/e2e.sh api
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: api-e2e
+          path: .local/e2e/results/
+          retention-days: 7

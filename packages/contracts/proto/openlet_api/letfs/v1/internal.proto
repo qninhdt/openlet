@@ -1,0 +1,33 @@
+syntax = "proto3";
+package openlet.letfs.v1;
+option go_package = "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/letfs/v1;letfsv1";
+import "google/protobuf/empty.proto";
+import "openlet_api/letfs/v1/letfs.proto";
+import "buf/validate/validate.proto";
+message ProvisionWorkspaceStorageRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; int64 quota_bytes = 2 [(buf.validate.field).int64.gte = 0]; }
+message CreateStorageRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; string root_node_id = 3 [(buf.validate.field).string.uuid = true]; StorageOwnership owner = 4 [(buf.validate.field).required = true]; string name = 5 [(buf.validate.field).string.min_len = 1]; StorageVisibility visibility = 6 [(buf.validate.field).enum = {in: [1,2]}]; bool allow_blob_files = 7; bool allow_indexing = 8; }
+message ProcessingRequest { string file_id = 1 [(buf.validate.field).string.uuid = true]; int64 version = 2 [(buf.validate.field).int64.gt = 0]; }
+message ProcessingOutcome { bool obsolete = 1; string stage = 2; }
+message ProcessingArtifact { Node node = 1; string path = 2; optional string text_content = 3; string download_url = 4; }
+message ProcessingInput { ProcessingOutcome outcome = 1; string workspace_id = 2; string storage_id = 3; string source_name = 4; string media_type = 5; string download_url = 6; bool allow_indexing = 7; repeated ProcessingArtifact artifacts = 8; FileMetadata source_metadata = 9; }
+message ArtifactUploadSpec { string path = 1 [(buf.validate.field).string.min_len = 1]; int64 size_bytes = 2 [(buf.validate.field).int64.gte = 0]; string media_type = 3; string checksum = 4; }
+message PrepareArtifactUploadsRequest { string file_id = 1 [(buf.validate.field).string.uuid = true]; int64 version = 2 [(buf.validate.field).int64.gt = 0]; repeated ArtifactUploadSpec outputs = 3; }
+message ArtifactUpload { string path = 1; string upload_id = 2; string put_url = 3; map<string,string> headers = 4; }
+message PrepareArtifactUploadsResponse { ProcessingOutcome outcome = 1; repeated ArtifactUpload uploads = 2; }
+message Artifact { string path = 1 [(buf.validate.field).string.min_len = 1]; oneof content { google.protobuf.Empty directory = 2; TextContent text = 3; string upload_id = 4 [(buf.validate.field).string.uuid = true]; } }
+message CommitParseRequest { string file_id = 1 [(buf.validate.field).string.uuid = true]; int64 version = 2 [(buf.validate.field).int64.gt = 0]; repeated Artifact artifacts = 3; }
+message EnrichedArtifact { string node_id = 1 [(buf.validate.field).string.uuid = true]; optional string text_content = 2; FileMetadata metadata = 3; }
+message CommitEnrichmentRequest { string file_id = 1 [(buf.validate.field).string.uuid = true]; int64 version = 2 [(buf.validate.field).int64.gt = 0]; repeated EnrichedArtifact artifacts = 3; FileMetadata source_metadata = 4; }
+message FailProcessingRequest { string file_id = 1 [(buf.validate.field).string.uuid = true]; int64 version = 2 [(buf.validate.field).int64.gt = 0]; string error_code = 3 [(buf.validate.field).string.min_len = 1]; }
+service LetFSInternalService {
+ rpc ProvisionWorkspaceStorage(ProvisionWorkspaceStorageRequest) returns (WorkspaceStorage);
+ rpc CreateStorage(CreateStorageRequest) returns (Storage);
+ rpc DeleteStorage(StorageRequest) returns (google.protobuf.Empty);
+ rpc DeleteWorkspaceStorage(WorkspaceStorageRequest) returns (google.protobuf.Empty);
+ rpc GetProcessingInput(ProcessingRequest) returns (ProcessingInput);
+ rpc PrepareArtifactUploads(PrepareArtifactUploadsRequest) returns (PrepareArtifactUploadsResponse);
+ rpc CommitParse(CommitParseRequest) returns (ProcessingOutcome);
+ rpc CommitEnrichment(CommitEnrichmentRequest) returns (ProcessingOutcome);
+ rpc CompleteIndex(ProcessingRequest) returns (ProcessingOutcome);
+ rpc FailProcessing(FailProcessingRequest) returns (ProcessingOutcome);
+}

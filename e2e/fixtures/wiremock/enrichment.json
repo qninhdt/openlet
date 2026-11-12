@@ -1,0 +1,28 @@
+{
+  "request": {
+    "method": "POST",
+    "urlPath": "/v1/chat/completions"
+  },
+  "response": {
+    "status": 200,
+    "jsonBody": {
+      "id": "test-completion",
+      "object": "chat.completion",
+      "created": 1,
+      "model": "test-model",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "{\"title\": \"Revenue report\", \"description\": \"Quarterly revenue and regional sales\", \"semantic_type\": \"document:report\", \"context\": \"Financial report with sales evidence and tables\"}"
+          },
+          "finish_reason": "stop"
+        }
+      ]
+    },
+    "headers": {
+      "Content-Type": "application/json"
+    }
+  }
+}

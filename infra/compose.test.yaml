@@ -1,0 +1,48 @@
+services:
+  envoy:
+    ports: !reset []
+  resources:
+    depends_on:
+      s3: {condition: service_healthy}
+      wiremock: {condition: service_healthy}
+  platform:
+    depends_on:
+      wiremock: {condition: service_healthy}
+  wiremock:
+    image: wiremock/wiremock:3.13.2@sha256:0d4ecb3e4dc8213fd7a4d37d6a78f6e6b553a6d2e15bd51b0999781282ac61b3
+    command: [--global-response-templating, --disable-gzip]
+    volumes: [../e2e/fixtures/wiremock:/home/wiremock/mappings:ro]
+    healthcheck:
+      test: [CMD, curl, -fsS, http://127.0.0.1:8080/__admin/health]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  e2e:
+    profiles: [test]
+    image: openlet/e2e:local
+    build: {context: .., dockerfile: e2e/Dockerfile, target: api}
+    volumes: ['${OPENLET_ARTIFACTS:?required}:/results']
+    depends_on:
+      envoy: {condition: service_healthy}
+      ingest-cpu: {condition: service_started}
+      ingest-io: {condition: service_started}
+  s3:
+    image: rustfs/rustfs:1.0.5@sha256:b81d16a90ee25bd9511280127ca1471788c6e874cf0f0da759645f46b2dc1d74
+    command: [rustfs, /data]
+    environment:
+      RUSTFS_CONSOLE_ENABLE: 'false'
+      RUSTFS_OBS_LOG_DIRECTORY: ''
+    volumes:
+      - s3-data:/data
+    mem_limit: 512m
+    cpus: 1
+    stop_grace_period: 10s
+    healthcheck:
+      test: [CMD, curl, -fsS, -o, /dev/null, 'http://127.0.0.1:9000/health/ready']
+      interval: 2s
+      timeout: 2s
+      start_period: 10s
+      retries: 30
+
+volumes:
+  s3-data:

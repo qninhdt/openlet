@@ -1,16 +1,14 @@
 # Openlet
 
-Backend for a cloud file application with durable AI agents.
+Workspace resources with native gRPC APIs, file storage and durable document processing.
 
-Backend: Clerk onboarding, workspaces, ID/path file operations, exact inline bytes, direct S3 transfers, quota, trash/restore, Docling artifacts, semantic search and streamed ZIP downloads. File copy/purge run in requests; Temporal handles filesystem/scope deletion, processing, maintenance and independent Leta/Leti execution. The plan records verification and external-provider limits.
+Platform owns users, workspaces and invitations. LetFS owns workspace storages, files, quota and artifacts. Two Python ingest workers parse blobs and enrich/index their output through Temporal. PostgreSQL holds domain data; SpiceDB holds membership and grants. Envoy exposes the public APIs as HTTP/ProtoJSON.
 
-- [Backend documentation](docs/README.md)
-- [Setup and verification](docs/setup.md)
-- [Leta agent engine implementation](plans/261108-0001-leta-agent-engine/plan.md)
-- [Direct cross-scope file operations](plans/261107-1114-direct-cross-scope-file-operations/plan.md)
-- [Account/scope implementation plan](plans/261106-1517-account-scope-temporal-redesign/plan.md)
-- [Foundation validation history](plans/261102-1059-go-grpc-filesystem-authorization/plan.md)
+- [Architecture](docs/architecture.md)
+- [Setup and commands](docs/setup.md)
+- [API contracts](docs/api-contracts.md)
+- [Testing](docs/testing.md)
+- [Operations and recovery](docs/operations.md)
+- [Rewrite progress and acceptance](plans/261111-1727-platform-letfs-rewrite/plan.md)
 
-The backend uses Go/Gin for Account and Workspace, Go HTTP/gRPC for letfs, Python Leta API/agent and CPU/I/O ingest workers, Redis, Envoy, Clerk, PostgreSQL, SpiceDB, Temporal and configurable S3-compatible storage. All applications support OpenTelemetry. Frontend and billing are outside this round.
-
-Native apps live under `apps/`; pnpm/Turbo coordinates Go and uv. Development wiring is `infra/compose/dev.yaml`; the fresh API E2E environment is `infra/compose/e2e.yaml`. The completed refactor replaces public APIs/schema directly; external-provider and remote CI verification limits are recorded in the plan's validation evidence.
+Go services use Go 1.27.4, Python uses 3.14, and API E2E uses TypeScript/Playwright. Local and CI infrastructure use Docker Compose. Leta is archived for a separate rewrite; Computer is design-only. Core startup and tests work without either service.

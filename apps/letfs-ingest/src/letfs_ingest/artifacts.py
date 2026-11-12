@@ -1,0 +1,96 @@
+import asyncio
+import base64
+import mimetypes
+from contextlib import asynccontextmanager, suppress
+
+import google_crc32c
+from google.protobuf.empty_pb2 import Empty
+from openlet_api.letfs.v1 import internal_pb2 as internal
+from openlet_api.letfs.v1 import letfs_pb2 as pb
+from temporalio import activity
+from temporalio.exceptions import ApplicationError
+
+
+@asynccontextmanager
+async def heartbeats():
+    async def send():
+        while True:
+            activity.heartbeat()
+            await asyncio.sleep(10)
+
+    task = asyncio.create_task(send())
+    try:
+        yield
+    finally:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+
+def checksum(data):
+    return base64.b64encode(google_crc32c.Checksum(data).digest()).decode("ascii")
+
+
+def check_transfer(response):
+    if not response.is_success:
+        raise ApplicationError(f"object transfer failed (HTTP {response.status_code})", type="ObjectTransferFailed")
+
+
+async def download(http, url, target, limit):
+    size = 0
+    async with http.stream("GET", url) as response:
+        check_transfer(response)
+        with target.open("wb") as stream:
+            async for chunk in response.aiter_bytes():
+                size += len(chunk)
+                if size > limit:
+                    raise ApplicationError("source exceeds blob limit", non_retryable=True)
+                stream.write(chunk)
+                activity.heartbeat()
+
+
+async def publish(stub, http, identity, output, settings):
+    artifacts, specs, blobs = [], [], {}
+    total = 0
+    for path in sorted(output.rglob("*")):
+        relative = path.relative_to(output).as_posix()
+        if path.is_symlink():
+            raise ApplicationError("parser output contains a symlink", non_retryable=True)
+        if path.is_dir():
+            artifacts.append(internal.Artifact(path=relative, directory=Empty()))
+        elif path.suffix in {".md", ".csv", ".json", ".txt"}:
+            data = path.read_bytes()
+            if len(data) > settings["max_text_bytes"]:
+                raise ApplicationError("artifact text exceeds limit", non_retryable=True)
+            content = data.decode("utf-8")
+            if "\0" in content:
+                raise ApplicationError("artifact text contains NUL", non_retryable=True)
+            total += len(data)
+            media = mimetypes.guess_type(path.name)[0] or "text/plain"
+            artifacts.append(internal.Artifact(path=relative, text=pb.TextContent(content=content, media_type=media)))
+        else:
+            data = path.read_bytes()
+            if len(data) > settings["processing"]["max_artifact_blob_bytes"]:
+                raise ApplicationError("artifact blob exceeds limit", non_retryable=True)
+            specs.append(internal.ArtifactUploadSpec(
+                path=relative, size_bytes=len(data),
+                media_type=mimetypes.guess_type(path.name)[0] or "application/octet-stream",
+                checksum=checksum(data),
+            ))
+            blobs[relative] = path
+        if len(artifacts) + len(specs) > settings["processing"]["max_artifacts"]:
+            raise ApplicationError("artifact count exceeds limit", non_retryable=True)
+    if total > settings["processing"]["max_manifest_text_bytes"]:
+        raise ApplicationError("artifact manifest exceeds limit", non_retryable=True)
+    if specs:
+        prepared = await stub.PrepareArtifactUploads(internal.PrepareArtifactUploadsRequest(
+            **identity, outputs=specs,
+        ), timeout=30)
+        if prepared.outcome.obsolete or prepared.outcome.stage != "pending":
+            return
+        for upload in prepared.uploads:
+            response = await http.put(upload.put_url, headers=dict(upload.headers), content=blobs[upload.path].read_bytes())
+            check_transfer(response)
+            artifacts.append(internal.Artifact(path=upload.path, upload_id=upload.upload_id))
+            activity.heartbeat()
+    await stub.CommitParse(internal.CommitParseRequest(**identity, artifacts=artifacts), timeout=60)

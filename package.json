@@ -2,18 +2,5 @@
   "name": "openlet",
   "private": true,
   "packageManager": "pnpm@12.18.0",
-  "scripts": {
-    "e2e:api": "pnpm --dir e2e exec playwright test --project=api",
-    "check:e2e": "pnpm --dir e2e exec tsc",
-    "build": "turbo run build",
-    "check": "turbo run check && uv run --locked --package letfs-ingest ruff check scripts && uv run --locked --package letfs-ingest ruff format --check scripts",
-    "test": "turbo run test && uv run --locked --package letfs-ingest pytest scripts -q",
-    "test:integration": "turbo run test:integration",
-    "test:replay": "turbo run test:replay",
-    "contracts:generate": "pnpm --filter @openlet/contracts generate",
-    "contracts:check": "pnpm --filter @openlet/contracts check"
-  },
-  "devDependencies": {
-    "turbo": "2.11.10"
-  }
+  "scripts": {"typecheck": "pnpm --filter @openlet/e2e typecheck"}
 }

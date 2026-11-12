@@ -1,0 +1,20 @@
+{
+  "request": {
+    "method": "POST",
+    "urlPath": "/v1/rerank"
+  },
+  "response": {
+    "status": 200,
+    "jsonBody": {
+      "results": [
+        {
+          "index": 0,
+          "relevance_score": 0.9
+        }
+      ]
+    },
+    "headers": {
+      "Content-Type": "application/json"
+    }
+  }
+}

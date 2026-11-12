@@ -1,40 +1,40 @@
-definition filesystem {
-	relation reader: user | leta | workspace#owner | workspace#admin | workspace#member
-	relation deleter: user | workspace#owner
-	permission read = reader + deleter
-	permission delete = deleter
-}
-
-definition leta {
-	relation workspace: workspace
-	relation creator: user
-	permission read = creator & workspace->read
-	permission manage = creator & workspace->read
-}
-
-definition scope {
-	relation manager: user | workspace#owner | workspace#admin
-	relation editor: user | leta | workspace#member
-	relation viewer: user | leta
-	relation home_of: leta
-	permission read_metadata = viewer + editor + manager + home_of->read
-	permission read_content = viewer + editor + manager + home_of->read
-	permission write = editor + manager
-	permission trash = editor + manager
-	permission restore = editor + manager
-	permission purge = manager
-	permission manage_access = manager
-}
-
 definition user {}
-
 definition workspace {
-	relation owner: user
-	relation admin: user
-	relation member: user
-	permission read = owner + admin + member
-	permission update = owner + admin
-	permission manage_members = owner + admin
-	permission create_leta = owner + admin + member
-	permission delete = owner
+ relation owner: user
+ relation member: user
+ relation agent: agent
+ permission participate = owner + member
+ permission eligible_actor = participate + agent
+ permission view = participate
+ permission manage = owner
+ permission create_storage = participate
+ permission create_agent = participate
+ permission create_computer = owner
+}
+definition storage {
+ relation workspace: workspace
+ relation public_workspace: workspace
+ relation owner: user | agent | agent#owner | workspace#owner
+ relation editor: user | agent
+ relation viewer: user | agent
+ permission read = (owner + editor + viewer + public_workspace->eligible_actor) & workspace->eligible_actor
+ permission write = (owner + editor) & workspace->eligible_actor
+ permission manage_access = owner & workspace->eligible_actor
+ permission delete = (owner & workspace->eligible_actor) + workspace->manage
+}
+definition agent {
+ relation workspace: workspace
+ relation owner: user
+ relation operator: user
+ permission use = (owner + operator) & workspace->participate
+ permission manage = owner & workspace->participate
+ permission transfer_ownership = owner & workspace->participate
+ permission delete = (owner & workspace->participate) + workspace->manage
+}
+definition computer {
+ relation workspace: workspace
+ relation manager: user
+ relation operator: user | agent
+ permission manage = (manager & workspace->participate) + workspace->manage
+ permission use = (operator + manage) & workspace->eligible_actor
 }

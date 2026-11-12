@@ -1,0 +1,83 @@
+static_resources:
+  listeners:
+    - name: public
+      address:
+        socket_address: {address: @LISTEN_HOST@, port_value: @LISTEN_PORT@}
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                '@type': type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: gateway
+                codec_type: AUTO
+                route_config:
+                  name: api
+                  virtual_hosts:
+                    - name: api
+                      domains: ['*']
+                      routes:
+                        - match: {prefix: /openlet.platform.v1.PlatformService/}
+                          route: {cluster: platform, timeout: 120s}
+                        - match: {prefix: /openlet.letfs.v1.LetFSService/}
+                          route: {cluster: letfs, timeout: 120s}
+                http_filters:
+                  - name: envoy.filters.http.header_mutation
+                    typed_config:
+                      '@type': type.googleapis.com/envoy.extensions.filters.http.header_mutation.v3.HeaderMutation
+                      mutations:
+                        request_mutations:
+                          - remove: x-openlet-user-id
+                          - remove: x-openlet-agent-id
+                          - remove: x-openlet-clerk-subject
+                  - name: envoy.filters.http.jwt_authn
+                    typed_config:
+                      '@type': type.googleapis.com/envoy.extensions.filters.http.jwt_authn.v3.JwtAuthentication
+                      providers:
+                        clerk:
+                          issuer: @ISSUER@
+                          audiences: [@AUDIENCE@]
+                          remote_jwks:
+                            http_uri: {uri: @JWKS_URL@, cluster: clerk_jwks, timeout: 5s}
+                            cache_duration: {seconds: 300}
+                          claim_to_headers:
+                            - {header_name: x-openlet-clerk-subject, claim_name: sub}
+                            - {header_name: x-openlet-user-id, claim_name: public_metadata.openlet_user_id}
+                      rules:
+                        - match: {prefix: /}
+                          requires: {provider_name: clerk}
+                  - name: envoy.filters.http.grpc_json_transcoder
+                    typed_config:
+                      '@type': type.googleapis.com/envoy.extensions.filters.http.grpc_json_transcoder.v3.GrpcJsonTranscoder
+                      proto_descriptor: /etc/openlet/public.pb
+                      services: [openlet.platform.v1.PlatformService, openlet.letfs.v1.LetFSService]
+                      convert_grpc_status: true
+                      request_validation_options:
+                        reject_unknown_method: true
+                        reject_unknown_query_parameters: true
+                        reject_binding_body_field_collisions: true
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      '@type': type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+  clusters:
+    - name: platform
+      type: STRICT_DNS
+      connect_timeout: 5s
+      http2_protocol_options: {}
+      load_assignment:
+        cluster_name: platform
+        endpoints: [{lb_endpoints: [{endpoint: {address: {socket_address: {address: @PLATFORM_HOST@, port_value: @PLATFORM_PORT@}}}}]}]
+    - name: letfs
+      type: STRICT_DNS
+      connect_timeout: 5s
+      http2_protocol_options: {}
+      load_assignment:
+        cluster_name: letfs
+        endpoints: [{lb_endpoints: [{endpoint: {address: {socket_address: {address: @LETFS_HOST@, port_value: @LETFS_PORT@}}}}]}]
+    - name: clerk_jwks
+      type: STRICT_DNS
+      connect_timeout: 5s
+      load_assignment:
+        cluster_name: clerk_jwks
+        endpoints: [{lb_endpoints: [{endpoint: {address: {socket_address: {address: @JWKS_HOST@, port_value: @JWKS_PORT@}}}}]}]
+admin:
+  address: {socket_address: {address: 127.0.0.1, port_value: 9901}}

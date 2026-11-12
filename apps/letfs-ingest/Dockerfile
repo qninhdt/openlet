@@ -1,31 +1,29 @@
-FROM python:3.14.10-slim-trixie@sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916788d80f04802f AS dependencies
-RUN pip install --no-cache-dir uv==0.13.7
+FROM ghcr.io/astral-sh/uv:0.13.7-python3.14-trixie-slim@sha256:e80c05a310400cfc90af00b5b7271ef9ad24816e3265e1162af8a678e1aad099 AS base
+ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
 WORKDIR /app
-ENV UV_LINK_MODE=copy
 COPY pyproject.toml uv.lock ./
-COPY .python-version ./
-COPY apps/letfs-ingest/pyproject.toml ./apps/letfs-ingest/pyproject.toml
-COPY apps/leta/pyproject.toml ./apps/leta/pyproject.toml
-COPY packages/python/ ./packages/python/
-RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked --no-dev --package letfs-ingest --no-install-package letfs-ingest --no-install-package openlet-python
+COPY packages/sdk-python/pyproject.toml packages/sdk-python/pyproject.toml
+COPY apps/letfs-ingest/pyproject.toml apps/letfs-ingest/pyproject.toml
 
-FROM dependencies AS models
-COPY apps/letfs-ingest/src/letfs_ingest/__init__.py ./apps/letfs-ingest/src/letfs_ingest/
-COPY apps/letfs-ingest/src/letfs_ingest/parser/__init__.py apps/letfs-ingest/src/letfs_ingest/parser/models.py apps/letfs-ingest/src/letfs_ingest/parser/prefetch_models.py ./apps/letfs-ingest/src/letfs_ingest/parser/
-RUN --mount=type=cache,target=/root/.cache/huggingface HF_HUB_DISABLE_XET=1 PYTHONPATH=/app/apps/letfs-ingest/src .venv/bin/python -m letfs_ingest.parser.prefetch_models /models
+FROM base AS io-deps
+RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked --no-dev --package letfs-ingest --no-install-workspace
+FROM base AS cpu-deps
+RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked --no-dev --package letfs-ingest --extra cpu --no-install-workspace
 
-FROM dependencies AS package
-COPY apps/letfs-ingest/src/ ./apps/letfs-ingest/src/
-RUN --mount=type=cache,target=/root/.cache/uv uv build --package openlet-python --wheel --out-dir /dist && uv build --package letfs-ingest --wheel --out-dir /dist
-
-FROM python:3.14.10-slim-trixie@sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916788d80f04802f
-RUN apt-get update && apt-get install -y --no-install-recommends libglib2.0-0 libgomp1 && rm -rf /var/lib/apt/lists/*
-WORKDIR /app
-COPY --from=dependencies /app/.venv /app/.venv
-COPY --from=models /models /models
-RUN --mount=type=bind,from=dependencies,source=/usr/local/bin/uv,target=/usr/local/bin/uv \
-    --mount=type=bind,from=package,source=/dist,target=/dist \
-    uv pip install --python /app/.venv/bin/python --no-deps --no-cache /dist/*.whl
-ENV DOCLING_MODELS_PATH=/models HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONDONTWRITEBYTECODE=1
-USER 65532:65532
+FROM io-deps AS io
+COPY packages/sdk-python packages/sdk-python
+COPY apps/letfs-ingest/src apps/letfs-ingest/src
+RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked --no-dev --package letfs-ingest && useradd --uid 10001 --create-home ingest
+USER ingest
 ENTRYPOINT ["/app/.venv/bin/python", "-m", "letfs_ingest.worker"]
+CMD ["io"]
+
+FROM cpu-deps AS cpu
+COPY packages/sdk-python packages/sdk-python
+COPY apps/letfs-ingest/src apps/letfs-ingest/src
+RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked --no-dev --package letfs-ingest --extra cpu && \
+    /app/.venv/bin/python -c 'from docling.utils.model_downloader import download_models; from pathlib import Path; download_models(Path("/models/docling"), with_code_formula=False, with_picture_classifier=False, rapidocr_models=["onnxruntime:iso:en"])' && \
+    useradd --uid 10001 --create-home ingest
+USER ingest
+ENTRYPOINT ["/app/.venv/bin/python", "-m", "letfs_ingest.worker"]
+CMD ["cpu"]

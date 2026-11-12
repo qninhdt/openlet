@@ -1,0 +1,184 @@
+x-tools: &tools
+  image: ghcr.io/astral-sh/uv:0.13.7-python3.14-trixie-slim@sha256:e80c05a310400cfc90af00b5b7271ef9ad24816e3265e1162af8a678e1aad099
+  working_dir: /work
+  volumes:
+    - ../scripts:/work/scripts:ro
+    - ../pyproject.toml:/work/pyproject.toml:ro
+    - ../uv.lock:/work/uv.lock:ro
+    - ../apps/letfs-ingest/pyproject.toml:/work/apps/letfs-ingest/pyproject.toml:ro
+    - ../packages/sdk-python/pyproject.toml:/work/packages/sdk-python/pyproject.toml:ro
+    - ../packages/contracts/authz:/work/packages/contracts/authz:ro
+    - ${OPENLET_CONFIG:?required}:/etc/openlet/openlet.yaml:ro
+    - tools-venv:/work/.venv
+    - uv-cache:/root/.cache/uv
+  environment:
+    OPENLET_CONFIG: /etc/openlet/openlet.yaml
+    UV_PYTHON_DOWNLOADS: never
+    UV_LINK_MODE: copy
+  depends_on:
+    postgres: {condition: service_healthy}
+
+services:
+  postgres:
+    image: postgres:18-alpine@sha256:9ba53c7d41ea093baf5c1ba635ba5434c4f979880527d49bb7d9237d3193085b
+    volumes: [postgres-data:/var/lib/postgresql]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$$POSTGRES_USER" -d postgres']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  database-backup:
+    image: postgres:18-alpine@sha256:9ba53c7d41ea093baf5c1ba635ba5434c4f979880527d49bb7d9237d3193085b
+    entrypoint: [/bin/sh, -ec]
+    command: ['umask 077; pg_dumpall -U "$$PGUSER" > /backups/pre-migration-$$(date -u +%Y%m%dT%H%M%SZ).sql']
+    volumes: ['${OPENLET_BACKUPS:?required}:/backups']
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  databases:
+    <<: *tools
+    command: [uv, run, --no-env-file, --locked, --no-dev, --package, openlet-tooling, python, scripts/bootstrap.py, databases]
+    depends_on:
+      database-backup: {condition: service_completed_successfully}
+
+  platform-migrate:
+    image: openlet/platform:local
+    build: {context: .., dockerfile: apps/platform/Dockerfile}
+    entrypoint: [/usr/local/bin/goose]
+    command: [up]
+    depends_on:
+      databases: {condition: service_completed_successfully}
+
+  letfs-migrate:
+    image: openlet/letfs:local
+    build: {context: .., dockerfile: apps/letfs/Dockerfile}
+    entrypoint: [/usr/local/bin/goose]
+    command: [up]
+    depends_on:
+      databases: {condition: service_completed_successfully}
+
+  spicedb-migrate:
+    image: authzed/spicedb:v1.57.1@sha256:9ea6df2d3cca23ed63aa7205639cf6babaaf1dc9a264ffb1f50c6455658fd6ba
+    command: [datastore, migrate, head, --datastore-engine, postgres]
+    depends_on:
+      databases: {condition: service_completed_successfully}
+
+  spicedb:
+    image: authzed/spicedb:v1.57.1@sha256:9ea6df2d3cca23ed63aa7205639cf6babaaf1dc9a264ffb1f50c6455658fd6ba
+    command: [serve, --datastore-engine, postgres, --http-enabled=false, --skip-release-check]
+    healthcheck:
+      test: [CMD, grpc_health_probe, '-addr=127.0.0.1:50051']
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    depends_on:
+      spicedb-migrate: {condition: service_completed_successfully}
+
+  temporal-migrate:
+    image: temporalio/admin-tools:1.32.2@sha256:4a95866efba29d7e17ab012df5232795e8b0ad0f7d5f9d1ec4df321f7792a754
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - |
+        temporal-sql-tool --db "$$TEMPORAL_DATABASE" setup-schema -v 0.0
+        temporal-sql-tool --db "$$TEMPORAL_DATABASE" update-schema -d /etc/temporal/schema/postgresql/v12/temporal/versioned
+        temporal-sql-tool --db "$$TEMPORAL_VISIBILITY_DATABASE" setup-schema -v 0.0
+        temporal-sql-tool --db "$$TEMPORAL_VISIBILITY_DATABASE" update-schema -d /etc/temporal/schema/postgresql/v12/visibility/versioned
+    depends_on:
+      databases: {condition: service_completed_successfully}
+
+  temporal:
+    image: temporalio/server:1.32.2@sha256:7bf69188a6232fea14869b9cef3d94aa82a1601d99517f7e86c71f22da4e0670
+    entrypoint: [temporal-server]
+    command: [--config-file, /etc/openlet/temporal.yaml, --allow-no-auth, start]
+    volumes: ['${OPENLET_GENERATED:?required}/temporal.yaml:/etc/openlet/temporal.yaml:ro']
+    healthcheck:
+      test: [CMD, nc, -z, 127.0.0.1, '7233']
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    depends_on:
+      temporal-migrate: {condition: service_completed_successfully}
+
+  qdrant:
+    image: qdrant/qdrant:v1.20.0@sha256:9bfc89f9914fc14876a88c05270685921a55b8877b254a98bcc1cc2f0a424cd2
+    volumes: [qdrant-data:/qdrant/storage]
+    healthcheck:
+      test: [CMD, bash, -c, 'exec 3<>/dev/tcp/127.0.0.1/6334']
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  resources:
+    <<: *tools
+    command: [uv, run, --no-env-file, --locked, --no-dev, --package, openlet-tooling, python, scripts/bootstrap.py, resources]
+    depends_on:
+      spicedb: {condition: service_healthy}
+      temporal: {condition: service_healthy}
+      qdrant: {condition: service_healthy}
+      platform-migrate: {condition: service_completed_successfully}
+      letfs-migrate: {condition: service_completed_successfully}
+
+  platform:
+    image: openlet/platform:local
+    build: {context: .., dockerfile: apps/platform/Dockerfile}
+    volumes: ['${OPENLET_CONFIG:?required}:/etc/openlet/openlet.yaml:ro']
+    stop_grace_period: 190s
+    healthcheck:
+      test: [CMD, grpc-health-probe, '-addr=127.0.0.1:9090']
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    depends_on:
+      resources: {condition: service_completed_successfully}
+
+  letfs:
+    image: openlet/letfs:local
+    build: {context: .., dockerfile: apps/letfs/Dockerfile}
+    volumes: ['${OPENLET_CONFIG:?required}:/etc/openlet/openlet.yaml:ro']
+    stop_grace_period: 190s
+    healthcheck:
+      test: [CMD, grpc-health-probe, '-addr=127.0.0.1:9090']
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    depends_on:
+      resources: {condition: service_completed_successfully}
+
+  ingest-cpu:
+    image: openlet/ingest-cpu:local
+    build: {context: .., dockerfile: apps/letfs-ingest/Dockerfile, target: cpu}
+    init: true
+    volumes: ['${OPENLET_CONFIG:?required}:/etc/openlet/openlet.yaml:ro']
+    stop_grace_period: 190s
+    depends_on:
+      letfs: {condition: service_healthy}
+
+  ingest-io:
+    image: openlet/ingest-io:local
+    build: {context: .., dockerfile: apps/letfs-ingest/Dockerfile, target: io}
+    volumes: ['${OPENLET_CONFIG:?required}:/etc/openlet/openlet.yaml:ro']
+    stop_grace_period: 190s
+    depends_on:
+      letfs: {condition: service_healthy}
+
+  envoy:
+    image: envoyproxy/envoy:v1.40.2@sha256:8de97e654644827d62afdbf7e1d3dc9fee01a8690d410dd1c63a30dc6b6cecbb
+    command: [-c, /etc/openlet/envoy.yaml, --log-level, warn]
+    volumes:
+      - ${OPENLET_GENERATED:?required}/envoy.yaml:/etc/openlet/envoy.yaml:ro
+      - ../packages/contracts/generated/public.pb:/etc/openlet/public.pb:ro
+    healthcheck:
+      test: [CMD, bash, -c, 'exec 3<>/dev/tcp/127.0.0.1/8080']
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    depends_on:
+      platform: {condition: service_healthy}
+      letfs: {condition: service_healthy}
+
+volumes:
+  postgres-data:
+  qdrant-data:
+  tools-venv:
+  uv-cache:

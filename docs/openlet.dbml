@@ -1,3 +1,4 @@
+// Historical schema before the Platform/LetFS rewrite. Current DDL: apps/platform/migrations and apps/letfs/migrations.
 Project Openlet {
   database_type: 'PostgreSQL'
   Note: '''

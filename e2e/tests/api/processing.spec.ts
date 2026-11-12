@@ -1,66 +1,53 @@
 import { randomUUID } from 'node:crypto';
-import { test, expect, inline } from '../../fixtures/api-test.ts';
-import { recoveryGuide } from '../../fixtures/documents.ts';
-import { recordWorkflowHistory } from '../../fixtures/temporal-control.ts';
+import { readFileSync } from 'node:fs';
+import { crc32c } from '@aws-crypto/crc32c';
+import { test, expect } from '../../fixtures/api.js';
 
-test('real document parsing publishes README semantics and current searchable content', async ({ session }) => {
-  const base = `/v1/filesystems/${session.filesystemId}/scopes/${session.scopeId}`;
-  const bytes = recoveryGuide();
-  const source = await inline(session, 'recovery-guide.docx', bytes, session.rootId,
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-  const byName = await session.api.get(`${base}/search`, { params: { q: 'recovery-guide' } });
-  expect(byName.status()).toBe(200);
-  expect((await byName.json()).items.map((item: { node_id: string }) => item.node_id)).toContain(source.id);
+test('XLSX blob runs both workers, publishes readonly artifacts and becomes searchable', async ({ account, request }) => {
+  const { api, workspaceId, storageId, rootId } = account;
+  const base = `/v1/workspaces/${workspaceId}/storages/${storageId}`;
+  const bytes = readFileSync(new URL('../../fixtures/files/sample.xlsx', import.meta.url));
+  const checksum = Buffer.alloc(4);
+  checksum.writeUInt32BE(crc32c(bytes));
+  const preparation = {
+    create: { parent: { nodeId: rootId }, name: 'sales.xlsx' }, sizeBytes: String(bytes.length),
+    mediaType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', checksum: checksum.toString('base64'), requestId: randomUUID(),
+  };
+  const prepared = await api.post(`${base}/uploads`, { data: preparation });
+  expect(prepared.ok(), await prepared.text()).toBeTruthy();
+  const upload = await prepared.json();
+  const preparedAgain = await api.post(`${base}/uploads`, { data: preparation });
+  expect(preparedAgain.ok(), await preparedAgain.text()).toBeTruthy();
+  expect(await preparedAgain.json()).toEqual(upload);
+  const mismatched = await api.post(`${base}/uploads`, { data: { ...preparation, sizeBytes: String(bytes.length + 1) } });
+  expect(mismatched.status()).toBe(409);
+  const put = await request.put(upload.transfer.putUrl, { headers: upload.transfer.headers, data: bytes });
+  expect(put.ok(), await put.text()).toBeTruthy();
+  const committed = await api.post(`${base}/uploads/${upload.id}:complete`, { data: {} });
+  expect(committed.ok(), await committed.text()).toBeTruthy();
+  const node = await committed.json();
+  const replay = await api.post(`${base}/uploads/${upload.id}:complete`, { data: {} });
+  expect(replay.ok(), await replay.text()).toBeTruthy();
+  expect(await replay.json()).toEqual(node);
   await expect.poll(async () => {
-    const response = await session.api.get(`${base}/nodes/${source.id}/processing`);
-    expect(response.status()).toBe(200);
-    const status = await response.json();
-    if (status.publication_status === 'failed' || status.publication_status === 'index_failed') throw new Error(`Document processing failed: ${status.error_code}`);
-    return status.publication_status;
-  }, { timeout: 150_000 }).toBe('ready');
-  const state = await (await session.api.get(`${base}/nodes/${source.id}/processing`)).json();
-  expect(state).not.toHaveProperty('artifact_root_id');
-  const children = await (await session.api.get(`${base}/nodes`, { params: { parent_id: source.id } })).json();
-  expect(children.items.some((node: { name: string }) => node.name === 'artifacts')).toBe(false);
-  const readme = children.items.find((node: { name: string }) => node.name === 'README.md');
-  expect(readme).toBeDefined();
-  const readmeDetails = await (await session.api.get(`${base}/nodes/${readme.id}`)).json();
-  expect(readmeDetails.semantic_type).toMatch(/^[a-z]+:[a-z_]+$/);
-  const original = await (await session.api.get(`${base}/nodes/${source.id}`)).json();
-  for (const field of ['title', 'description', 'semantic_type', 'context']) expect(original[field]).toBe(readmeDetails[field]);
-  const content = await session.api.get(`${base}/nodes/${readme.id}/content`);
-  expect((await content.body()).toString('utf8')).toContain('ORBITAL-RECOVERY-7421');
-  expect(await (await session.api.get(`${base}/nodes/${source.id}/content`)).body()).toEqual(bytes);
-  const search = await session.api.post(`${base}/search`, { data: { query: 'ORBITAL-RECOVERY-7421' } });
-  expect(search.status()).toBe(200);
-  expect((await search.json()).items.map((item: { node_id: string }) => item.node_id)).toContain(source.id);
-  await recordWorkflowHistory('ProcessFileParsed', `process-file/${source.id}/${state.desired_generation}`);
-});
-
-test('manual reprocessing retries admit one generation and preserve filename search during model failure', async ({ session, controls }) => {
-  const base = `/v1/filesystems/${session.filesystemId}/scopes/${session.scopeId}`;
-  const source = await inline(session, 'retry-notes.txt', Buffer.from('Recovery notes describe durable publication and storage retry.'), session.rootId, 'text/plain');
-  await expect.poll(async () => (await (await session.api.get(`${base}/nodes/${source.id}/processing`)).json()).publication_status).toBe('ready');
-  const before = await (await session.api.get(`${base}/nodes/${source.id}/processing`)).json();
-  await recordWorkflowHistory('ProcessFileDirect', `process-file/${source.id}/${before.desired_generation}`);
-  expect((await controls.put('/control/failures', { data: { generation: 100 } })).status()).toBe(200);
-  try {
-    const headers = { 'idempotency-key': randomUUID() };
-    const first = await session.api.post(`${base}/nodes/${source.id}/processing-runs`, { headers, data: {} });
-    expect(first.status()).toBe(202);
-    const admission = await first.json();
-    expect(BigInt(admission.generation)).toBe(BigInt(before.desired_generation) + 1n);
-    const replay = await session.api.post(`${base}/nodes/${source.id}/processing-runs`, { headers, data: {} });
-    expect(replay.status()).toBe(202);
-    expect(await replay.json()).toEqual(admission);
-    const names = await session.api.get(`${base}/search`, { params: { q: 'retry-notes' } });
-    expect(names.status()).toBe(200);
-    expect((await names.json()).items.map((item: { node_id: string }) => item.node_id)).toContain(source.id);
-    await expect.poll(async () => (await (await session.api.get(`${base}/nodes/${source.id}/processing`)).json()).publication_status,
-      { timeout: 150_000 }).toBe('failed');
-    const failedNames = await session.api.get(`${base}/search`, { params: { q: 'retry-notes' } });
-    expect(failedNames.status()).toBe(200);
-    expect((await failedNames.json()).items.map((item: { node_id: string }) => item.node_id)).toContain(source.id);
-    await recordWorkflowHistory('ProcessFileFailed', `process-file/${source.id}/${admission.generation}`, true);
-  } finally { await controls.put('/control/failures', { data: {} }); }
+    const current = await (await api.get(`${base}/nodes/${node.id}`)).json();
+    expect(current.file.processing.errorCode).toBeUndefined();
+    return current.file.processing.stage;
+  }, { timeout: 90_000 }).toBe('ready');
+  const tree = await api.post(`${base}/nodes:readTree`, { data: { root: { nodeId: node.id }, maxDepth: 8, maxNodes: 100 } });
+  expect(tree.ok(), await tree.text()).toBeTruthy();
+  const { entries } = await tree.json();
+  const table = entries.find((entry: { node: { name: string } }) => entry.node.name === 'table-1.csv').node;
+  expect(table.readonly).toBe(true);
+  expect((await (await api.get(`${base}/nodes/${table.id}/text`)).json()).content).toContain('Europe,120');
+  expect((await api.patch(`${base}/nodes/${table.id}/text`, { data: { append: 'denied', requestId: randomUUID() } })).status()).toBeGreaterThanOrEqual(400);
+  // Embedding fixtures rank CSV evidence below the root README; BM25 must recover it.
+  const search = await api.post(`${base}/files:semanticSearch`, { data: { root: { nodeId: rootId }, query: 'csv', topK: 1 } });
+  expect(search.ok(), await search.text()).toBeTruthy();
+  const { hits } = await search.json();
+  expect(hits).toHaveLength(1);
+  expect(hits[0].snippet).toContain('table-1.csv');
+  const download = await api.get(`${base}/nodes/${node.id}:download`);
+  const original = await request.get((await download.json()).blob.url);
+  expect(await original.body()).toEqual(bytes);
 });

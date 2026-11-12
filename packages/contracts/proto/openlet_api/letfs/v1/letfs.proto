@@ -1,932 +1,122 @@
 syntax = "proto3";
-package openlet_api.letfs.v1;
-
+package openlet.letfs.v1;
+option go_package = "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/letfs/v1;letfsv1";
 import "google/api/annotations.proto";
+import "google/api/httpbody.proto";
+import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
+import "google/rpc/status.proto";
+import "buf/validate/validate.proto";
 
-option go_package = "github.com/qninhdt/openlet/packages/go/gen/openlet_api/letfs/v1;letfsv1";
-
-service FilesystemService {
-  rpc GetFilesystem(GetFilesystemRequest) returns (GetFilesystemResponse);
-  rpc CreateNode(CreateNodeRequest) returns (CreateNodeResponse);
-  rpc CreateDirectories(CreateDirectoriesRequest) returns (CreateDirectoriesResponse);
-  rpc ListNodes(ListNodesRequest) returns (ListNodesResponse);
-  rpc GetNode(GetNodeRequest) returns (GetNodeResponse) {
-    option (google.api.http) = {
-      get: "/v1/filesystems/{filesystem_id}/scopes/{scope_id}/nodes/{node_id}"
-      response_body: "node"
-    };
-  }
-  rpc ResolveNode(ResolveNodeRequest) returns (ResolveNodeResponse);
-  rpc BatchStat(BatchStatRequest) returns (BatchStatResponse);
-  rpc Stat(StatRequest) returns (StatResponse);
-  rpc ReadText(ReadTextRequest) returns (ReadTextResponse);
-  rpc TextMetrics(TextMetricsRequest) returns (TextMetricsResponse);
-  rpc ReadTree(ReadTreeRequest) returns (ReadTreeResponse);
-  rpc TextSearch(TextSearchRequest) returns (TextSearchResponse);
-  rpc ReadImage(ReadImageRequest) returns (ReadImageResponse);
-  rpc WriteText(WriteTextRequest) returns (WriteTextResponse);
-  rpc AppendText(AppendTextRequest) returns (AppendTextResponse);
-  rpc PatchText(PatchTextRequest) returns (PatchTextResponse);
-  rpc TruncateText(TruncateTextRequest) returns (TruncateTextResponse);
-  rpc UpdateNode(UpdateNodeRequest) returns (UpdateNodeResponse);
-  rpc ReplaceContent(ReplaceContentRequest) returns (ReplaceContentResponse);
-  rpc CreateCopy(CreateCopyRequest) returns (CreateCopyResponse);
-  rpc GetProcessing(GetProcessingRequest) returns (GetProcessingResponse);
-  rpc ReprocessNode(ReprocessNodeRequest) returns (ReprocessNodeResponse);
-  rpc TrashNode(TrashNodeRequest) returns (TrashNodeResponse);
-  rpc ListTrash(ListTrashRequest) returns (ListTrashResponse);
-  rpc GetTrash(GetTrashRequest) returns (GetTrashResponse);
-  rpc RestoreTrash(RestoreTrashRequest) returns (RestoreTrashResponse);
-  rpc PurgeTrash(PurgeTrashRequest) returns (PurgeTrashResponse);
-  rpc CreateUpload(CreateUploadRequest) returns (CreateUploadResponse);
-  rpc GetUpload(GetUploadRequest) returns (GetUploadResponse);
-  rpc GetUploadParts(GetUploadPartsRequest) returns (GetUploadPartsResponse);
-  rpc CompleteUpload(CompleteUploadRequest) returns (CompleteUploadResponse);
-  rpc AbortUpload(AbortUploadRequest) returns (AbortUploadResponse);
-  rpc SearchFiles(SearchFilesRequest) returns (SearchFilesResponse);
-  rpc SemanticSearch(SemanticSearchRequest) returns (SemanticSearchResponse);
-  rpc GetDownload(GetDownloadRequest) returns (GetDownloadResponse);
-  // Metadata precedes bounded byte chunks; a non-OK terminal status invalidates a partial archive.
-  rpc StreamArchive(StreamArchiveRequest) returns (stream StreamArchiveResponse);
-}
-
-// Generation authority is validated against letfs records, independently of service authentication.
-service IngestService {
-  rpc PrepareParse(PrepareParseRequest) returns (PrepareParseResponse);
-  rpc PrepareParseOutput(PrepareParseOutputRequest) returns (PrepareParseOutputResponse);
-  rpc CompleteParse(CompleteParseRequest) returns (CompleteParseResponse);
-  rpc AbortParse(AbortParseRequest) returns (AbortParseResponse);
-  rpc PrepareEnrichment(PrepareEnrichmentRequest) returns (PrepareEnrichmentResponse);
-  rpc PrepareEnrichmentOutput(PrepareEnrichmentOutputRequest) returns (PrepareEnrichmentOutputResponse);
-  rpc CompleteEnrichment(CompleteEnrichmentRequest) returns (CompleteEnrichmentResponse);
-  rpc FailEnrichment(FailEnrichmentRequest) returns (FailEnrichmentResponse);
-  rpc PrepareIndex(PrepareIndexRequest) returns (PrepareIndexResponse);
-  rpc CompleteIndex(CompleteIndexRequest) returns (CompleteIndexResponse);
-  rpc FailIndex(FailIndexRequest) returns (FailIndexResponse);
-  rpc GetOutputUpload(GetOutputUploadRequest) returns (GetOutputUploadResponse);
-  rpc GetOutputUploadParts(GetOutputUploadPartsRequest) returns (GetOutputUploadPartsResponse);
-  rpc CompleteOutputUpload(CompleteOutputUploadRequest) returns (CompleteOutputUploadResponse);
-  rpc WriteOutputBytes(WriteOutputBytesRequest) returns (WriteOutputBytesResponse);
-}
-
-// These methods require explicit service authority, never a public user JWT.
-service StorageAdministrationService {
-  rpc DeleteFilesystem(DeleteFilesystemRequest) returns (DeleteFilesystemResponse);
-  rpc CreateFilesystem(CreateFilesystemRequest) returns (CreateFilesystemResponse);
-  rpc CreateScopes(CreateScopesRequest) returns (CreateScopesResponse);
-  // Read-only candidates for Workspace's authorized accessible-scope view.
-  rpc ListScopes(ListScopesRequest) returns (ListScopesResponse);
-}
-
-message DeleteFilesystemRequest {
-  string filesystem_id = 1;
-}
-message DeleteFilesystemResponse {
-  bool completed = 1;
-}
-
-message Node {
-  string id = 1;
-  optional string parent_id = 3;
-  string name = 4;
-  string kind = 5;
-  int64 revision = 6;
-  int64 size_bytes = 7;
-  optional string media_type = 8;
-  google.protobuf.Timestamp created_at = 9;
-  google.protobuf.Timestamp updated_at = 10;
-  optional string title = 11;
-  optional string description = 12;
-  optional string semantic_type = 13;
-  // Omitted from list/search metadata; only explicitly requested detail can include context.
-  optional string context = 14;
-  string scope_id = 15;
-  bool readonly = 16;
-}
-message GetNodeRequest {
-  string filesystem_id = 1;
-  string node_id = 2;
-  string scope_id = 3;
-}
-message GetNodeResponse {
-  Node node = 1;
-}
-message GetDownloadRequest {
-  string filesystem_id = 1;
-  string node_id = 2;
-  optional int64 revision = 3;
-  string scope_id = 4;
-}
-message Download {
-  string mime = 1;
-  string filename = 2;
-  string etag = 3;
-  int64 size_bytes = 4;
-  oneof source {
-    bytes inline_content = 5;
-    string signed_url = 6;
-  }
-}
-message GetDownloadResponse {
-  Download download = 1;
-}
-message StreamArchiveRequest {
-  string filesystem_id = 1;
-  string node_id = 2;
-  string scope_id = 3;
-}
-message ArchiveMetadata {
-  string filename = 1;
-  string mime = 2;
-}
-message StreamArchiveResponse {
-  oneof frame {
-    ArchiveMetadata metadata = 1;
-    // Each chunk is at most 64 KiB. No archive bytes or signed URLs enter Temporal histories.
-    bytes data = 2;
-  }
-}
-message PrepareParseRequest {
-  string file_id = 1;
-  int64 generation = 2;
-}
-message ParseInput {
-  string source_id = 1;
-  string format = 2;
-  int64 size_bytes = 3;
-  int64 inline_limit_bytes = 4;
-  int64 multipart_threshold_bytes = 5;
-  int64 max_outputs = 6;
-  int64 max_output_bytes = 7;
-  oneof source {
-    bytes inline_content = 8;
-    string signed_url = 9;
-  }
-}
-message ParseComplete {
-  string source_id = 1;
-}
-message PrepareParseResponse {
-  oneof result {
-    ParseInput input = 1;
-    ParseComplete complete = 2;
-  }
-}
-message CreateFilesystemRequest {
-  string filesystem_id = 1;
-  string idempotency_key = 2;
-  int64 limit_bytes = 3;
-}
-message Filesystem {
-  string id = 1;
-  int64 limit_bytes = 2;
-  int64 used_bytes = 3;
-  int64 node_count = 4;
-  string state = 5;
-}
-message CreateFilesystemResponse {
-  Filesystem filesystem = 1;
-}
-
-message PathLocator {
-  string path = 1;
-  optional string cwd_id = 2;
-}
-message Locator {
-  oneof target {
-    string node_id = 1;
-    PathLocator path = 2;
-  }
-  optional string expected_node_id = 3;
-  optional string expected_parent_id = 4;
-  // Traversal boundary inside the scope; omitted uses the ordinary scope root.
-  optional string root_id = 5;
-}
-// These representations contain bounded text or blob metadata, never original blob bytes/URLs.
-message FileStat {
-  Node node = 1;
-  string storage_kind = 2;
-  string representation_kind = 3;
-  int64 readable_size = 4;
-  string fingerprint = 5;
-  optional int64 newline_count = 6;
-  optional string sha256 = 7;
-}
-message StatRequest {
-  string filesystem_id = 1;
-  string scope_id = 2;
-  Locator locator = 3;
-  bool content_check = 4;
-}
-message StatResponse {
-  FileStat stat = 1;
-}
-message ByteRange {
-  int64 offset = 1;
-  optional int64 length = 2;
-}
-message LineRange {
-  int64 start_line = 1;
-  int64 line_count = 2;
-}
-message LineCount {
-  int64 line_count = 1;
-}
-message WholeText {}
-message ReadTextRequest {
-  string filesystem_id = 1;
-  string scope_id = 2;
-  Locator locator = 3;
-  oneof selection {
-    WholeText whole = 4;
-    ByteRange bytes = 5;
-    LineRange lines = 6;
-    LineCount head = 7;
-    LineCount tail = 8;
-  }
-  optional string expected_fingerprint = 9;
-}
-message ReadTextResponse {
-  FileStat stat = 1;
-  bytes content = 2;
-  int64 offset = 3;
-  int64 length = 4;
-}
-message TextMetricsRequest {
-  string filesystem_id = 1;
-  string scope_id = 2;
-  Locator locator = 3;
-  string algorithm = 4;
-}
-message TextMetricsResponse {
-  FileStat stat = 1;
-  string algorithm = 2;
-  string digest = 3;
-  bool supported = 4;
-}
-message ReadTreeRequest {
-  string filesystem_id = 1;
-  string scope_id = 2;
-  Locator root = 3;
-  optional int32 depth = 4;
-  optional string cursor = 5;
-  optional int32 limit = 6;
-  optional int32 max_bytes = 7;
-}
-message TreeEntry {
-  string path = 1;
-  FileStat stat = 2;
-}
-message ReadTreeResponse {
-  repeated TreeEntry items = 1;
-  optional string next_cursor = 2;
-  bool complete = 3;
-}
-// Literal candidate selection. Command/regex matching belongs to the caller.
-message TextSearchRequest {
-  string filesystem_id = 1;
-  string scope_id = 2;
-  Locator locator = 3;
-  string mode = 4; // files or lines
-  string text = 5;
-  bool ignore_case = 6;
-  optional int32 max_files = 7;
-  optional int32 max_lines = 8;
-  optional int32 max_bytes = 9;
-}
-message TextSearchResponse {
-  // Incomplete means no payload; the caller may fall back to ordinary permitted reads.
-  bool complete = 1;
-  repeated TreeEntry items = 2;
-  bytes content = 3;
-  FileStat stat = 4; // present only for a complete lines result
-}
-message ReadImageRequest {
-  string filesystem_id = 1;
-  string scope_id = 2;
-  Locator locator = 3;
-  optional string expected_fingerprint = 4;
-}
-message ReadImageResponse {
-  FileStat stat = 1;
-  bytes content = 2;
-  string mime = 3;
-  int32 width = 4;
-  int32 height = 5;
-  string sha256 = 6;
-}
-message GetFilesystemRequest {
-  string filesystem_id = 1;
-}
-message GetFilesystemResponse {
-  Filesystem filesystem = 1;
-}
-// Existing writes bind the observed identity and revision. Creation binds parent/name absence.
-message ExistingText {
-  Locator locator = 1;
-  int64 revision = 2;
-  optional string expected_fingerprint = 3;
-}
-message TextCreation {
-  Locator parent = 1;
-  string name = 2;
-  string media_type = 3;
-  string idempotency_key = 4;
-  optional string node_id = 5;
-}
-message TextTarget {
-  oneof target {
-    ExistingText existing = 1;
-    TextCreation create = 2;
-  }
-}
-message WriteTextRequest {
-  string filesystem_id = 1;
-  string scope_id = 2;
-  TextTarget target = 3;
-  bytes content = 4;
-}
-message AppendTextRequest {
-  string filesystem_id = 1;
-  string scope_id = 2;
-  TextTarget target = 3;
-  bytes content = 4;
-}
-message ByteOverwrite {
-  int64 offset = 1;
-  bytes content = 2;
-}
-message LiteralReplacement {
-  string old_text = 1;
-  string new_text = 2;
-  bool replace_all = 3;
-}
-message PatchTextRequest {
-  string filesystem_id = 1;
-  string scope_id = 2;
-  TextTarget target = 3;
-  oneof patch {
-    ByteOverwrite bytes = 4;
-    LiteralReplacement literal = 5;
-  }
-}
-message TruncateTextRequest {
-  string filesystem_id = 1;
-  string scope_id = 2;
-  TextTarget target = 3;
-  int64 length = 4;
-  bool no_create = 5;
-}
-message TextMutation {
-  FileStat stat = 1;
-  // Zero/empty for a creation; otherwise the exact observation before mutation.
-  int64 before_revision = 2;
-  string before_fingerprint = 3;
-}
-message WriteTextResponse {
-  TextMutation result = 1;
-}
-message AppendTextResponse {
-  TextMutation result = 1;
-}
-message PatchTextResponse {
-  TextMutation result = 1;
-}
-message TruncateTextResponse {
-  TextMutation result = 1;
-}
-
-message DirectoryCreation {
-  Locator parent = 1;
-  string name = 2;
-}
-message CreateDirectoriesRequest {
-  string filesystem_id = 1;
-  string scope_id = 2;
-  Locator parent = 3;
-  repeated string components = 4;
-  bool parents = 5;
-}
-message CreateDirectoriesResponse {
-  Node node = 1;
-}
-message InlineFileCreation {
-  Locator parent = 1;
-  string name = 2;
-  bytes content = 3;
-  string media_type = 4;
-}
-message CreateNodeRequest {
-  string filesystem_id = 1;
-  string idempotency_key = 2;
-  oneof input {
-    DirectoryCreation directory = 4;
-    InlineFileCreation file = 5;
-  }
-  string scope_id = 6;
-  optional string node_id = 7;
-}
-message CreateNodeResponse {
-  Node node = 1;
-}
-message ListNodesRequest {
-  string filesystem_id = 1;
-  Locator parent = 2;
-  optional int32 limit = 4;
-  optional string cursor = 5;
-  string scope_id = 6;
-}
-message ListNodesResponse {
-  repeated Node items = 1;
-  optional string next_cursor = 2;
-}
-message ResolveNodeRequest {
-  string filesystem_id = 1;
-  Locator locator = 2;
-  string scope_id = 3;
-}
-message ResolveNodeResponse {
-  Node node = 1;
-}
-
-// At most 100 locators; failure is atomic rather than returning foreign/missing metadata.
-message BatchStatRequest {
-  string filesystem_id = 1;
-  repeated ScopedLocator locators = 2;
-}
-message ScopedLocator {
-  string scope_id = 1;
-  Locator locator = 2;
-}
-message BatchStatResponse {
-  repeated Node items = 1;
-}
-message UpdateNodeRequest {
-  optional string destination_scope_id = 8;
-  string filesystem_id = 1;
-  Locator locator = 2;
-  optional int64 revision = 4;
-  optional string name = 5;
-  Locator parent = 6;
-  string scope_id = 7;
-}
-message UpdateNodeResponse {
-  Node node = 1;
-}
-message ReplaceContentRequest {
-  string filesystem_id = 1;
-  Locator locator = 2;
-  optional int64 revision = 4;
-  bytes content = 5;
-  string media_type = 6;
-  string scope_id = 7;
-}
-message ReplaceContentResponse {
-  Node node = 1;
-}
-message CreateCopyRequest {
-  optional string destination_scope_id = 8;
-  optional string source_root_id = 9;
-  optional string destination_root_id = 10;
-  string filesystem_id = 1;
-  string source_id = 2;
-  string parent_id = 3;
-  string name = 4;
-  optional int64 revision = 5;
-  string idempotency_key = 6;
-  string scope_id = 7;
-}
-message CreateCopyResponse {
-  Node node = 1;
-}
-message Processing {
-  int64 desired_generation = 1;
-  reserved 4;
-  reserved "artifact_root_id";
-  string publication_status = 5;
-  optional string error_code = 7;
-  string file_id = 8;
-}
-message GetProcessingRequest {
-  string filesystem_id = 1;
-  string node_id = 2;
-  string scope_id = 3;
-}
-message GetProcessingResponse {
-  Processing processing = 1;
-}
-message ReprocessNodeRequest {
-  string filesystem_id = 1;
-  string node_id = 2;
-  string idempotency_key = 3;
-  string scope_id = 4;
-}
-message ReprocessNodeResponse {
-  string file_id = 1;
-  int64 generation = 2;
-  string workflow_id = 3;
-}
-message TrashEntry {
-  string actor_kind = 8;
-  string id = 1;
-  string node_id = 2;
-  optional string parent_id = 3;
-  string name = 4;
-  string actor_id = 5;
-  string status = 6;
-  google.protobuf.Timestamp created_at = 7;
-}
-message TrashNodeRequest {
-  string filesystem_id = 1;
-  Locator locator = 2;
-  optional int64 revision = 4;
-  string scope_id = 5;
-  // Atomically require an ordinary empty directory before moving it to trash.
-  bool empty_directory = 6;
-}
-message TrashNodeResponse {
-  TrashEntry entry = 1;
-}
-message ListTrashRequest {
-  string filesystem_id = 1;
-  optional int32 limit = 2;
-  optional string cursor = 3;
-  string scope_id = 4;
-}
-message ListTrashResponse {
-  repeated TrashEntry items = 1;
-  optional string next_cursor = 2;
-}
-message GetTrashRequest {
-  string filesystem_id = 1;
-  string entry_id = 2;
-  string scope_id = 3;
-}
-message GetTrashResponse {
-  TrashEntry entry = 1;
-}
-message RestoreTrashRequest {
-  string filesystem_id = 1;
-  string entry_id = 2;
-  string scope_id = 3;
-  optional string destination_scope_id = 4;
-  Locator parent = 5;
-  optional string name = 6;
-  optional string root_id = 7;
-}
-message RestoreTrashResponse {
-  Node node = 1;
-}
-message PurgeTrashRequest {
-  string filesystem_id = 1;
-  string entry_id = 2;
-  string scope_id = 3;
-}
-message PurgeTrashResponse {}
-
-message UploadDestination {
-  Locator parent = 1;
-  string name = 2;
-}
-message UploadReplacement {
-  Locator locator = 1;
-  optional int64 revision = 2;
-}
-message SignedUpload {
-  string url = 1;
-  map<string, string> headers = 2;
-  int64 content_length = 3;
-  google.protobuf.Timestamp expires_at = 4;
-}
-message UploadReceipt {
-  string id = 1;
-  string status = 2;
-  int64 size_bytes = 3;
-}
-message UploadPublication {
-  string node_id = 1;
-  string status = 2;
-  int64 revision = 3;
-}
-message Upload {
-  string id = 1;
-  string status = 2;
-  string transport = 3;
-  google.protobuf.Timestamp expires_at = 4;
-  optional int64 size_bytes = 5;
-  optional int64 part_size_bytes = 6;
-  optional int32 part_count = 7;
-  SignedUpload transfer = 8;
-  oneof result {
-    UploadPublication publication = 9;
-    UploadReceipt receipt = 10;
-  }
-}
-message CreateUploadRequest {
-  string filesystem_id = 1;
-  string idempotency_key = 2;
-  optional int64 size_bytes = 4;
-  string media_type = 5;
-  optional string content_md5 = 6;
-  // Public uploads are object-only; inline writes use CreateNode/ReplaceContent.
-  oneof target {
-    UploadDestination destination = 7;
-    UploadReplacement replacement = 8;
-  }
-  string scope_id = 9;
-}
-message CreateUploadResponse {
-  Upload upload = 1;
-}
-message GetUploadRequest {
-  string filesystem_id = 1;
-  string upload_id = 2;
-  string scope_id = 3;
-}
-message GetUploadResponse {
-  Upload upload = 1;
-}
-
-// At most 64 distinct part numbers, each within the admitted native multipart size.
-message GetUploadPartsRequest {
-  string filesystem_id = 1;
-  string upload_id = 2;
-  repeated int32 numbers = 3;
-  string scope_id = 4;
-}
-message UploadPart {
-  int32 part_number = 1;
-  SignedUpload transfer = 2;
-}
-message GetUploadPartsResponse {
-  repeated UploadPart items = 1;
-}
-message PartReceipt {
-  int32 part_number = 1;
-  string etag = 2;
-}
-message CompleteUploadRequest {
-  string filesystem_id = 1;
-  string upload_id = 2;
-  repeated PartReceipt parts = 3;
-  string scope_id = 4;
-}
-message CompleteUploadResponse {
-  UploadPublication publication = 1;
-}
-message AbortUploadRequest {
-  string filesystem_id = 1;
-  string upload_id = 2;
-  string scope_id = 3;
-}
-message AbortUploadResponse {}
-
-message SearchFilters {
-  Locator parent = 1;
-  optional string semantic_type = 2;
-  optional string media_type = 3;
-  google.protobuf.Timestamp created_after = 4;
-  google.protobuf.Timestamp created_before = 5;
-  google.protobuf.Timestamp updated_after = 6;
-  google.protobuf.Timestamp updated_before = 7;
-}
-message SearchFilesRequest {
-  string filesystem_id = 1;
-  string query = 2;
-  SearchFilters filters = 3;
-  optional int32 limit = 4;
-  optional string cursor = 5;
-  optional string sort = 6;
-  optional string direction = 7;
-  string scope_id = 8;
-}
-message Breadcrumb {
-  string node_id = 1;
-  string filename = 2;
-}
-message SearchMatch {
-  string file_id = 1;
-  repeated Breadcrumb breadcrumb = 2;
-  string snippet = 3;
-}
-message SearchResult {
-  Node node = 1;
-  string path = 2;
-  SearchMatch matched = 3;
-}
-message SearchFilesResponse {
-  repeated SearchResult items = 1;
-  optional string next_cursor = 2;
-  bool degraded = 3;
-  optional string degraded_reason = 4;
-}
-message SemanticSearchRequest {
-  string filesystem_id = 1;
-  string query = 2;
-  SearchFilters filters = 3;
-  optional int32 limit = 4;
-  string scope_id = 6;
-}
-message SemanticSearchResponse {
-  repeated SearchResult items = 1;
-  bool degraded = 3;
-  optional string degraded_reason = 4;
-}
-
-// Scope is checked against stored generation facts after service authentication.
-message ProcessingGeneration {
-  string file_id = 1;
-  int64 generation = 2;
-}
-message OutputDescription {
-  string path = 1;
-  string storage = 2;
-  optional int64 size_bytes = 3;
-  optional string content_md5 = 4;
-}
-message PrepareParseOutputRequest {
-  ProcessingGeneration source = 1;
-  OutputDescription output = 2;
-}
-message PrepareParseOutputResponse {
-  Upload upload = 1;
-}
-message CompleteParseRequest {
-  ProcessingGeneration source = 1;
-  repeated string uploads = 2;
-  repeated string directories = 3;
-}
-message CompleteParseResponse {
-  string source_id = 1;
-}
-message AbortParseRequest {
-  ProcessingGeneration source = 1;
-  string error_code = 2;
-}
-message AbortParseResponse {}
-message InventoryNode {
-  string id = 1;
-  optional string parent_id = 2;
-  string path = 3;
-  string name = 4;
-  string kind = 5;
-  int64 size_bytes = 6;
-  optional string media_type = 7;
-  optional string title = 8;
-  optional string description = 9;
-  optional string context = 10;
-  oneof content {
-    bytes inline_content = 11;
-    string signed_url = 12;
-  }
-}
-message PrepareEnrichmentRequest {
-  ProcessingGeneration source = 1;
-}
-message EnrichmentInput {
-  string source_id = 1;
-  repeated InventoryNode nodes = 2;
-  int64 inline_limit_bytes = 3;
-  int64 multipart_threshold_bytes = 4;
-  int64 max_output_bytes = 5;
-}
-message EnrichmentComplete {
-  string source_id = 1;
-}
-message PrepareEnrichmentResponse {
-  oneof result {
-    EnrichmentInput input = 1;
-    EnrichmentComplete complete = 2;
-  }
-}
-message PrepareEnrichmentOutputRequest {
-  ProcessingGeneration source = 1;
-  OutputDescription output = 2;
-}
-message PrepareEnrichmentOutputResponse {
-  Upload upload = 1;
-}
-message SemanticMetadata {
-  string title = 1;
-  string description = 2;
-  string semantic_type = 3;
-  string context = 4;
-}
-message EnrichmentUpdate {
-  string id = 1;
-  string path = 2;
-  SemanticMetadata metadata = 3;
-  optional string upload_id = 4;
-}
-message CompleteEnrichmentRequest {
-  ProcessingGeneration source = 1;
-  repeated EnrichmentUpdate nodes = 2;
-}
-message CompleteEnrichmentResponse {
-  string source_id = 1;
-}
-message FailEnrichmentRequest {
-  ProcessingGeneration source = 1;
-  string error_code = 2;
-}
-message FailEnrichmentResponse {}
-message VectorSpace {
-  string model = 1;
-  string collection = 2;
-  int32 dimension = 3;
-}
-message PrepareIndexRequest {
-  ProcessingGeneration source = 1;
-}
-message IndexInput {
-  string filesystem_id = 1;
-  string source_id = 2;
-  int64 generation = 3;
-  repeated InventoryNode nodes = 4;
-  VectorSpace vector_space = 5;
-  int64 max_output_bytes = 6;
-  string scope_id = 7;
-}
-message IndexComplete {
-  string source_id = 1;
-}
-message PrepareIndexResponse {
-  oneof result {
-    IndexInput input = 1;
-    IndexComplete complete = 2;
-  }
-}
-message CompleteIndexRequest {
-  ProcessingGeneration source = 1;
-}
-message CompleteIndexResponse {
-  string source_id = 1;
-}
-message FailIndexRequest {
-  ProcessingGeneration source = 1;
-  string error_code = 3;
-}
-message FailIndexResponse {}
-message OutputUploadScope {
-  ProcessingGeneration source = 1;
-  // Only parse or enrichment; index has no writable output surface.
-  string stage = 2;
-  string upload_id = 3;
-}
-message GetOutputUploadRequest {
-  OutputUploadScope scope = 1;
-}
-message GetOutputUploadResponse {
-  Upload upload = 1;
-}
-message GetOutputUploadPartsRequest {
-  OutputUploadScope scope = 1;
-  repeated int32 numbers = 2;
-}
-message GetOutputUploadPartsResponse {
-  repeated UploadPart items = 1;
-}
-message CompleteOutputUploadRequest {
-  OutputUploadScope scope = 1;
-  repeated PartReceipt parts = 2;
-}
-message CompleteOutputUploadResponse {
-  UploadReceipt receipt = 1;
-}
-message WriteOutputBytesRequest {
-  OutputUploadScope scope = 1;
-  bytes content = 2;
-}
-message WriteOutputBytesResponse {
-  // Bytes are received but publication is separate; completion saves the immutable receipt.
-  UploadReceipt receipt = 1;
-}
-
-message Scope {
-  string id = 1;
-  string filesystem_id = 2;
-  string root_id = 3;
-  string state = 4;
-  bool allow_blob_files = 5;
-  bool allow_indexing = 6;
-}
-message CreateScopesRequest {
-  string filesystem_id = 1;
-  repeated string scope_ids = 2;
-  string idempotency_key = 3;
-  optional bool allow_blob_files = 4;
-  optional bool allow_indexing = 5;
-}
-message CreateScopesResponse {
-  repeated Scope scopes = 1;
-}
-message ListScopesRequest {
-  string filesystem_id = 1;
-  optional string cursor = 2;
-  optional int32 limit = 3;
-}
-message ListScopesResponse {
-  repeated Scope scopes = 1;
-  optional string next_cursor = 2;
+enum StorageVisibility { STORAGE_VISIBILITY_UNSPECIFIED = 0; STORAGE_VISIBILITY_PRIVATE = 1; STORAGE_VISIBILITY_PUBLIC = 2; }
+enum StorageRole { STORAGE_ROLE_UNSPECIFIED = 0; STORAGE_ROLE_OWNER = 1; STORAGE_ROLE_EDITOR = 2; STORAGE_ROLE_VIEWER = 3; }
+enum NodeKind { NODE_KIND_UNSPECIFIED = 0; NODE_KIND_DIRECTORY = 1; NODE_KIND_FILE = 2; }
+enum FileType { FILE_TYPE_UNSPECIFIED = 0; FILE_TYPE_TEXT = 1; FILE_TYPE_BLOB = 2; }
+message ActorRef { oneof actor { option (buf.validate.oneof).required = true; string user_id = 1 [(buf.validate.field).string.uuid = true]; string agent_id = 2 [(buf.validate.field).string.uuid = true]; } }
+message StorageOwnership { oneof owner { string user_id = 1; string agent_id = 2; string workspace_id = 3; } }
+message StorageCapabilities { bool read = 1; bool write = 2; bool manage_access = 3; }
+message Storage { string id = 1; string workspace_id = 2; string name = 3; StorageVisibility visibility = 4; string root_node_id = 5; bool allow_blob_files = 6; bool allow_indexing = 7; StorageCapabilities capabilities = 8; }
+message WorkspaceStorage { string workspace_id = 1; int64 quota_bytes = 2; int64 used_bytes = 3; }
+message AccessGrant { ActorRef actor = 1; StorageRole role = 2; }
+message StorageAccess { StorageOwnership ownership = 1; repeated AccessGrant grants = 2; StorageVisibility visibility = 3; }
+message NodeLocator { oneof locator { option (buf.validate.oneof).required = true; string node_id = 1 [(buf.validate.field).string.uuid = true]; string path = 2; } optional string root_node_id = 3 [(buf.validate.field).string.uuid = true]; optional string cwd_node_id = 4 [(buf.validate.field).string.uuid = true]; }
+message FileMetadata { optional string title = 1; optional string description = 2; optional string semantic_type = 3; optional string context = 4; }
+message ProcessingSummary { string stage = 1; optional string error_code = 2; }
+message FileHeader { FileType type = 1; int64 version = 2; int64 size_bytes = 3; string media_type = 4; FileMetadata metadata = 5; ProcessingSummary processing = 6; }
+message Node { string id = 1; string storage_id = 2; optional string parent_id = 3; string name = 4; NodeKind kind = 5; google.protobuf.Timestamp created_at = 6; google.protobuf.Timestamp updated_at = 7; bool readonly = 8; FileHeader file = 9; }
+message WorkspaceStorageRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; }
+message UpdateStorageQuotaRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; int64 quota_bytes = 2 [(buf.validate.field).int64.gte = 0]; }
+message StorageRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; }
+message ListStoragesRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; int32 page_size = 2 [(buf.validate.field).int32 = {gte: 0, lte: 100}]; string page_token = 3; optional StorageVisibility visibility = 4; bool owned_only = 5; }
+message ListStoragesResponse { repeated Storage storages = 1; string next_page_token = 2; }
+message UpdateStorageRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; optional string name = 3 [(buf.validate.field).string.min_len = 1]; optional StorageVisibility visibility = 4 [(buf.validate.field).enum = {defined_only: true, not_in: 0}]; string request_id = 5 [(buf.validate.field).string.uuid = true]; }
+message SetStorageAccessRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; ActorRef actor = 3 [(buf.validate.field).required = true]; StorageRole role = 4 [(buf.validate.field).enum = {in: [2,3]}]; }
+message RevokeStorageAccessRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; ActorRef actor = 3 [(buf.validate.field).required = true]; }
+message NodeRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; NodeLocator target = 3 [(buf.validate.field).required = true]; }
+message BatchStatRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; repeated NodeLocator targets = 3 [(buf.validate.field).repeated = {min_items: 1, max_items: 100}]; }
+message StatResult { oneof result { Node node = 1; google.rpc.Status error = 2; } }
+message BatchStatResponse { repeated StatResult results = 1; }
+message ListNodesRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; NodeLocator parent = 3 [(buf.validate.field).required = true]; int32 page_size = 4 [(buf.validate.field).int32 = {gte: 0, lte: 100}]; string page_token = 5; }
+message ListNodesResponse { repeated Node nodes = 1; string next_page_token = 2; }
+message ReadTreeRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; NodeLocator root = 3 [(buf.validate.field).required = true]; uint32 max_depth = 4 [(buf.validate.field).uint32 = {gte: 1, lte: 32}]; uint32 max_nodes = 5 [(buf.validate.field).uint32 = {gte: 1, lte: 1000}]; }
+message TreeEntry { Node node = 1; string path = 2; uint32 depth = 3; }
+message ReadTreeResponse { repeated TreeEntry entries = 1; bool truncated = 2; }
+message TextContent { string content = 1; string media_type = 2; }
+message CreateNodeRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; NodeLocator parent = 3 [(buf.validate.field).required = true]; string name = 4 [(buf.validate.field).string = {min_len: 1, max_len: 255, not_in: [".",".."], pattern: "^[^/\\x00]+$"}]; oneof content { option (buf.validate.oneof).required = true; google.protobuf.Empty directory = 5; TextContent text = 6; } string request_id = 7 [(buf.validate.field).string.uuid = true]; }
+message CreateDirectoriesRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; NodeLocator base = 3 [(buf.validate.field).required = true]; string path = 4 [(buf.validate.field).string.min_len = 1]; string request_id = 5 [(buf.validate.field).string.uuid = true]; }
+message TransferNodeRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; NodeLocator source = 3 [(buf.validate.field).required = true]; string destination_storage_id = 4 [(buf.validate.field).string.uuid = true]; NodeLocator parent = 5 [(buf.validate.field).required = true]; string name = 6 [(buf.validate.field).string = {min_len: 1, max_len: 255, not_in: [".",".."], pattern: "^[^/\\x00]+$"}]; string request_id = 7 [(buf.validate.field).string.uuid = true]; }
+message ByteRange { int64 offset = 1 [(buf.validate.field).int64.gte = 0]; optional int64 length = 2 [(buf.validate.field).int64.gte = 0]; }
+message LineRange { uint32 first = 1 [(buf.validate.field).uint32.gte = 1]; uint32 count = 2; }
+message ReadTextRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; NodeLocator target = 3 [(buf.validate.field).required = true]; oneof selection { ByteRange bytes = 4; LineRange lines = 5; uint32 head_lines = 6; uint32 tail_lines = 7; } bool include_metrics = 8; }
+message TextMetrics { int64 bytes = 1; int64 lines = 2; }
+message ReadTextResponse { string content = 1; int64 version = 2; TextMetrics metrics = 3; }
+message TextEdit { int64 start_byte = 1 [(buf.validate.field).int64.gte = 0]; int64 end_byte = 2 [(buf.validate.field).int64.gte = 0]; string replacement = 3; }
+message TextPatch { repeated TextEdit edits = 1; }
+message TextOverwrite { int64 offset = 1 [(buf.validate.field).int64.gte = 0]; string content = 2; }
+message TextReplace { string old_text = 1 [(buf.validate.field).string.min_len = 1]; string new_text = 2; bool replace_all = 3; }
+message MutateTextRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; NodeLocator target = 3 [(buf.validate.field).required = true]; oneof mutation { option (buf.validate.oneof).required = true; string replace = 4; string append = 5; TextPatch patch = 6; int64 truncate_bytes = 7 [(buf.validate.field).int64.gte = 0]; TextOverwrite overwrite = 10; TextReplace literal_replace = 11; } optional int64 expected_version = 8 [(buf.validate.field).int64.gt = 0]; string request_id = 9 [(buf.validate.field).string.uuid = true]; }
+message ReadImageRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; NodeLocator target = 3 [(buf.validate.field).required = true]; uint32 max_width = 4 [(buf.validate.field).uint32.lte = 4096]; uint32 max_height = 5 [(buf.validate.field).uint32.lte = 4096]; }
+message SignedDownload { string url = 1; google.protobuf.Timestamp expires_at = 2; }
+message TextDownload { string filename = 1; string media_type = 2; string content = 3; }
+message GetDownloadResponse { oneof download { SignedDownload blob = 1; TextDownload text = 2; } }
+message DownloadArchiveRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; repeated NodeLocator targets = 3 [(buf.validate.field).repeated = {min_items: 1, max_items: 100}]; }
+message SearchFilesRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; NodeLocator root = 3 [(buf.validate.field).required = true]; string query = 4 [(buf.validate.field).string.min_len = 1]; int32 page_size = 5 [(buf.validate.field).int32 = {gte: 0, lte: 100}]; string page_token = 6; bool case_sensitive = 7; }
+message SearchFilesResponse { repeated Node hits = 1; string next_page_token = 2; }
+message TextSearchRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; NodeLocator root = 3 [(buf.validate.field).required = true]; string query = 4 [(buf.validate.field).string.min_len = 1]; int32 page_size = 5 [(buf.validate.field).int32 = {gte: 0, lte: 100}]; string page_token = 6; bool case_sensitive = 7; bool lines_mode = 8; }
+message TextHit { Node node = 1; string snippet = 2; uint32 line_number = 3; }
+message TextSearchResponse { repeated TextHit hits = 1; string next_page_token = 2; }
+message SemanticSearchRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; NodeLocator root = 3 [(buf.validate.field).required = true]; string query = 4 [(buf.validate.field).string.min_len = 1]; uint32 top_k = 5 [(buf.validate.field).uint32 = {gte: 1,lte: 100}]; }
+message SemanticHit { Node node = 1; string snippet = 2; double score = 3; }
+message SemanticSearchResponse { repeated SemanticHit hits = 1; }
+message TrashNodeRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; NodeLocator target = 3 [(buf.validate.field).required = true]; string request_id = 4 [(buf.validate.field).string.uuid = true]; }
+message TrashEntry { string id = 1; Node node = 2; optional string original_parent_id = 3; ActorRef trashed_by = 4; google.protobuf.Timestamp trashed_at = 5; }
+message ListTrashRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; int32 page_size = 3 [(buf.validate.field).int32 = {gte: 0, lte: 100}]; string page_token = 4; }
+message ListTrashResponse { repeated TrashEntry entries = 1; string next_page_token = 2; }
+message RestoreTrashRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; string trash_id = 3 [(buf.validate.field).string.uuid = true]; NodeLocator parent = 4; optional string name = 5 [(buf.validate.field).string = {min_len: 1, max_len: 255, not_in: [".",".."], pattern: "^[^/\\x00]+$"}]; }
+message PurgeTrashRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; string trash_id = 3 [(buf.validate.field).string.uuid = true]; }
+message UploadCreate { NodeLocator parent = 1 [(buf.validate.field).required = true]; string name = 2 [(buf.validate.field).string = {min_len: 1, max_len: 255, not_in: [".",".."], pattern: "^[^/\\x00]+$"}]; }
+message UploadReplace { NodeLocator target = 1 [(buf.validate.field).required = true]; int64 expected_version = 2 [(buf.validate.field).int64.gt = 0]; }
+message CreateUploadRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; oneof destination { option (buf.validate.oneof).required = true; UploadCreate create = 3; UploadReplace replace = 4; } int64 size_bytes = 5 [(buf.validate.field).int64.gte = 0]; string media_type = 6 [(buf.validate.field).string.min_len = 1]; string checksum = 7 [(buf.validate.field).string.min_len = 1]; string request_id = 8 [(buf.validate.field).string.uuid = true]; }
+message SignedPart { uint32 part_number = 1; string url = 2; }
+message TransferDescriptor { string put_url = 1; map<string,string> headers = 2; bool multipart = 3; int64 part_size_bytes = 4; }
+message Upload { string id = 1; google.protobuf.Timestamp expires_at = 2; TransferDescriptor transfer = 3; Node completed = 4; }
+message UploadRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; string upload_id = 3 [(buf.validate.field).string.uuid = true]; }
+message SignPartsRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; string upload_id = 3 [(buf.validate.field).string.uuid = true]; repeated uint32 part_numbers = 4 [(buf.validate.field).repeated = {min_items: 1, max_items: 1000, unique: true, items: {uint32: {gte: 1, lte: 10000}}}]; }
+message SignPartsResponse { repeated SignedPart parts = 1; }
+message CompletedPart { uint32 part_number = 1; string etag = 2; string checksum = 3; }
+message CompleteUploadRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; string upload_id = 3 [(buf.validate.field).string.uuid = true]; repeated CompletedPart parts = 4; }
+service LetFSService {
+  rpc GetWorkspaceStorage(WorkspaceStorageRequest) returns (WorkspaceStorage) { option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/storage-quota" }; }
+  rpc UpdateStorageQuota(UpdateStorageQuotaRequest) returns (WorkspaceStorage) { option (google.api.http) = { patch: "/v1/workspaces/{workspace_id}/storage-quota" body: "*" }; }
+  rpc ListStorages(ListStoragesRequest) returns (ListStoragesResponse) { option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/storages" }; }
+  rpc GetStorage(StorageRequest) returns (Storage) { option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/storages/{storage_id}" }; }
+  rpc UpdateStorage(UpdateStorageRequest) returns (Storage) { option (google.api.http) = { patch: "/v1/workspaces/{workspace_id}/storages/{storage_id}" body: "*" }; }
+  rpc ListStorageAccess(StorageRequest) returns (StorageAccess) { option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/storages/{storage_id}/access" }; }
+  rpc SetStorageAccess(SetStorageAccessRequest) returns (AccessGrant) { option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/storages/{storage_id}:setAccess" body: "*" }; }
+  rpc RevokeStorageAccess(RevokeStorageAccessRequest) returns (google.protobuf.Empty) { option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/storages/{storage_id}:revokeAccess" body: "*" }; }
+  rpc Stat(NodeRequest) returns (Node) { option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes/{target.node_id}" }; }
+  rpc BatchStat(BatchStatRequest) returns (BatchStatResponse) { option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes:batchStat" body: "*" }; }
+  rpc ListNodes(ListNodesRequest) returns (ListNodesResponse) { option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes/{parent.node_id}/children" }; }
+  rpc ReadTree(ReadTreeRequest) returns (ReadTreeResponse) { option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes:readTree" body: "*" }; }
+  rpc CreateNode(CreateNodeRequest) returns (Node) { option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes" body: "*" }; }
+  rpc CreateDirectories(CreateDirectoriesRequest) returns (Node) { option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes:createDirectories" body: "*" }; }
+  rpc MoveNode(TransferNodeRequest) returns (Node) { option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes:move" body: "*" }; }
+  rpc CopyNode(TransferNodeRequest) returns (Node) { option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes:copy" body: "*" }; }
+  rpc ReadText(ReadTextRequest) returns (ReadTextResponse) { option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes/{target.node_id}/text" }; }
+  rpc MutateText(MutateTextRequest) returns (Node) { option (google.api.http) = { patch: "/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes/{target.node_id}/text" body: "*" }; }
+  rpc ReadImage(ReadImageRequest) returns (google.api.HttpBody) { option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes/{target.node_id}/image" }; }
+  rpc GetDownload(NodeRequest) returns (GetDownloadResponse) { option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes/{target.node_id}:download" }; }
+  rpc DownloadArchive(DownloadArchiveRequest) returns (stream google.api.HttpBody) { option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes:downloadArchive" body: "*" }; }
+  rpc SearchFiles(SearchFilesRequest) returns (SearchFilesResponse) { option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/storages/{storage_id}/files:search" body: "*" }; }
+  rpc TextSearch(TextSearchRequest) returns (TextSearchResponse) { option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/storages/{storage_id}/files:textSearch" body: "*" }; }
+  rpc SemanticSearch(SemanticSearchRequest) returns (SemanticSearchResponse) { option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/storages/{storage_id}/files:semanticSearch" body: "*" }; }
+  rpc TrashNode(TrashNodeRequest) returns (TrashEntry) { option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes/{target.node_id}:trash" body: "*" }; }
+  rpc ListTrash(ListTrashRequest) returns (ListTrashResponse) { option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/storages/{storage_id}/trash" }; }
+  rpc RestoreTrash(RestoreTrashRequest) returns (Node) { option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/storages/{storage_id}/trash/{trash_id}:restore" body: "*" }; }
+  rpc PurgeTrash(PurgeTrashRequest) returns (google.protobuf.Empty) { option (google.api.http) = { delete: "/v1/workspaces/{workspace_id}/storages/{storage_id}/trash/{trash_id}" }; }
+  rpc CreateUpload(CreateUploadRequest) returns (Upload) { option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/storages/{storage_id}/uploads" body: "*" }; }
+  rpc GetUpload(UploadRequest) returns (Upload) { option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/storages/{storage_id}/uploads/{upload_id}" }; }
+  rpc SignParts(SignPartsRequest) returns (SignPartsResponse) { option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/storages/{storage_id}/uploads/{upload_id}:signParts" body: "*" }; }
+  rpc CompleteUpload(CompleteUploadRequest) returns (Node) { option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/storages/{storage_id}/uploads/{upload_id}:complete" body: "*" }; }
+  rpc AbortUpload(UploadRequest) returns (google.protobuf.Empty) { option (google.api.http) = { delete: "/v1/workspaces/{workspace_id}/storages/{storage_id}/uploads/{upload_id}" }; }
 }

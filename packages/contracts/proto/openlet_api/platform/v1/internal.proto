@@ -1,0 +1,15 @@
+syntax = "proto3";
+package openlet.platform.v1;
+option go_package = "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/platform/v1;platformv1";
+import "google/protobuf/empty.proto";
+import "openlet_api/platform/v1/platform.proto";
+import "buf/validate/validate.proto";
+message CreateWorkspaceRequest { string owner_user_id = 1 [(buf.validate.field).string.uuid = true]; string name = 2 [(buf.validate.field).string.min_len = 1]; string request_id = 3 [(buf.validate.field).string.uuid = true]; }
+message BatchGetUsersRequest { repeated string user_ids = 1 [(buf.validate.field).repeated = {max_items: 100, items: {string: {uuid: true}}}]; }
+message BatchGetUsersResponse { repeated User users = 1; }
+message CheckWorkspaceActiveRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; }
+service PlatformInternalService {
+ rpc CheckWorkspaceActive(CheckWorkspaceActiveRequest) returns (google.protobuf.Empty);
+ rpc CreateWorkspace(CreateWorkspaceRequest) returns (Workspace);
+ rpc BatchGetUsers(BatchGetUsersRequest) returns (BatchGetUsersResponse);
+}

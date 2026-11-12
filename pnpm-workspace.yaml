@@ -1,6 +1,2 @@
 packages:
-  - apps/*
-  - packages/*
   - e2e
-allowBuilds:
-  '@bufbuild/buf': true
