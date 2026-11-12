@@ -10,6 +10,7 @@ from temporalio.exceptions import ApplicationError
 
 from .artifacts import download, heartbeats, publish
 from .convert import MEDIA_SUFFIXES
+from .telemetry import stage
 
 
 async def run_child(arguments, timeout):
@@ -47,10 +48,12 @@ class Parser:
                 output = directory / "output"
                 output.mkdir()
                 await download(self.http, source.download_url, name, self.settings["max_blob_bytes"])
-                code = await run_child(
-                    ["letfs_ingest.convert", str(name), str(output), source.media_type],
-                    self.settings["processing"]["parse_timeout_seconds"],
-                )
-                if code:
-                    raise ApplicationError("document conversion failed", type="ConversionFailed", non_retryable=code == os.EX_DATAERR)
-                await publish(self.stub, self.http, identity, output, self.settings)
+                with stage("parse", identity):
+                    code = await run_child(
+                        ["letfs_ingest.convert", str(name), str(output), source.media_type],
+                        self.settings["processing"]["parse_timeout_seconds"],
+                    )
+                    if code:
+                        raise ApplicationError("document conversion failed", type="ConversionFailed", non_retryable=code == os.EX_DATAERR)
+                with stage("export", identity):
+                    await publish(self.stub, self.http, identity, output, self.settings)

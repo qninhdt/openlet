@@ -6,6 +6,7 @@ dependencies = [
   "grpcio", "protobuf", "googleapis-common-protos", "pyyaml", "temporalio",
   "opentelemetry-sdk", "opentelemetry-exporter-otlp-proto-grpc",
   "opentelemetry-instrumentation-grpc", "opentelemetry-instrumentation-httpx",
+  "opentelemetry-instrumentation-system-metrics",
 ]
 
 [build-system]

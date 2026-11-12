@@ -4,6 +4,7 @@ from temporalio import activity
 from .artifacts import heartbeats
 from .enrich import enrich
 from .index import index
+from .telemetry import stage
 
 
 class Processor:
@@ -20,14 +21,16 @@ class Processor:
             if source.outcome.obsolete or source.outcome.stage == "ready":
                 return
             if source.outcome.stage == "parsed":
-                result = await self.stub.CommitEnrichment(
-                    await enrich(source, identity, self.ai, self.http, self.config["services"]["letfs"]["max_blob_bytes"]), timeout=60,
-                )
+                with stage("enrich", identity):
+                    result = await self.stub.CommitEnrichment(
+                        await enrich(source, identity, self.ai, self.http, self.config["services"]["letfs"]["max_blob_bytes"]), timeout=60,
+                    )
                 if result.obsolete:
                     return
                 source = await self.stub.GetProcessingInput(query, timeout=30)
             if source.outcome.obsolete or source.outcome.stage != "enriched":
                 return
             if source.allow_indexing:
-                await index(source, identity, self.ai, self.qdrant, self.config)
+                with stage("index", identity):
+                    await index(source, identity, self.ai, self.qdrant, self.config)
             await self.stub.CompleteIndex(query, timeout=30)

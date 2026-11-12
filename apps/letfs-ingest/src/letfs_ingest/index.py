@@ -10,6 +10,7 @@ from qdrant_client import models
 from temporalio import activity
 
 from .readme import own_body
+from .telemetry import stage
 
 
 def points(source, identity, settings, embedding, collection):
@@ -65,7 +66,8 @@ async def index(source, identity, ai, qdrant, config):
     batch = []
 
     async def flush():
-        vectors = await ai.embed([payload["text"] for _, payload in batch])
+        with stage("embed", identity):
+            vectors = await ai.embed([payload["text"] for _, payload in batch])
         if len(vectors) != len(batch) or any(
             len(vector) != embedding["dimensions"] or not all(math.isfinite(value) for value in vector)
             for vector in vectors

@@ -43,3 +43,62 @@ def test_json_logs_preserve_activity_exception_cause():
     output = json.loads(JSONFormatter().format(record))
     assert output['message'] == 'Activity failed'
     assert 'ValueError: embedding dimensions mismatch' in output['exception']
+
+
+async def test_native_http_instrumentation_redacts_signed_url():
+    from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+
+    provider = TracerProvider()
+    exporter = InMemorySpanExporter()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    url = 'https://s3.example/file?X-Amz-Signature=do-not-export'
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200))) as client:
+        HTTPXClientInstrumentor.instrument_client(client, tracer_provider=provider, request_hook=redact_async_request)
+        assert (await client.get(url)).status_code == 200
+        HTTPXClientInstrumentor.uninstrument_client(client)
+    try:
+        spans = exporter.get_finished_spans()
+        assert len(spans) == 1
+        assert 'do-not-export' not in str(spans[0].attributes)
+    finally:
+        provider.shutdown()
+
+
+def test_processing_stage_records_bounded_metrics_and_failure(monkeypatch):
+    import json
+    import logging
+
+    from letfs_ingest import telemetry
+    from openlet_sdk.telemetry import JSONFormatter
+    from opentelemetry.sdk.metrics import MeterProvider
+    from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+
+    provider = TracerProvider()
+    exporter = InMemorySpanExporter()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    reader = InMemoryMetricReader()
+    metering = MeterProvider(metric_readers=[reader])
+    monkeypatch.setattr(telemetry, 'tracer', provider.get_tracer('test'))
+    monkeypatch.setattr(telemetry, 'duration', metering.get_meter('test').create_histogram('stage.duration', unit='s'))
+    identity = {'file_id': 'file-123', 'version': 4}
+    try:
+        with telemetry.stage('parse', identity):
+            record = logging.LogRecord('worker', logging.INFO, __file__, 1, 'stage', (), None)
+            log = json.loads(JSONFormatter({'service.name': 'cpu'}).format(record))
+        with pytest.raises(ValueError):
+            with telemetry.stage('embed', identity):
+                raise ValueError('private provider payload')
+        spans = exporter.get_finished_spans()
+        assert log['trace_id'] == f'{spans[0].context.trace_id:032x}'
+        assert log['service.name'] == 'cpu'
+        assert spans[1].status.status_code.name == 'ERROR'
+        assert spans[1].attributes['error.type'] == 'ValueError'
+        assert not spans[1].events
+        points = reader.get_metrics_data().resource_metrics[0].scope_metrics[0].metrics[0].data.data_points
+        assert {tuple(sorted(point.attributes.items())) for point in points} == {
+            (('outcome', 'success'), ('stage', 'parse')),
+            (('outcome', 'error'), ('stage', 'embed')),
+        }
+    finally:
+        provider.shutdown()
+        metering.shutdown()

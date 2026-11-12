@@ -73,6 +73,10 @@ func OpenDatabase(ctx context.Context, p Postgres, d Database) (*pgxpool.Pool, e
 		pool.Close()
 		return nil, err
 	}
+	if err = otelpgx.RecordStats(pool); err != nil {
+		pool.Close()
+		return nil, err
+	}
 	return pool, nil
 }
 func OpenSpiceDB(c SpiceDB) (*authzed.Client, error) {

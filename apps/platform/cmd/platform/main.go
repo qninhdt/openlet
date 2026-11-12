@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -19,6 +20,7 @@ import (
 	fs "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/letfs/v1"
 	pb "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/platform/v1"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/propagation"
 	"go.temporal.io/sdk/client"
 	temporalotel "go.temporal.io/sdk/contrib/opentelemetry"
@@ -108,7 +110,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	app := &platform.Server{DB: db, Graph: az, Clerk: user.NewClient(&clerk.ClientConfig{BackendConfig: clerk.BackendConfig{URL: &clerkURL, Key: &key}}), Temporal: tc, LetFS: fs.NewLetFSInternalServiceClient(connection), Storages: fs.NewLetFSServiceClient(connection), Settings: settings, Queue: temporal.Queues.Platform}
+	app := &platform.Server{DB: db, Graph: az, Clerk: user.NewClient(&clerk.ClientConfig{BackendConfig: clerk.BackendConfig{URL: &clerkURL, Key: &key, HTTPClient: &http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)}}}), Temporal: tc, LetFS: fs.NewLetFSInternalServiceClient(connection), Storages: fs.NewLetFSServiceClient(connection), Settings: settings, Queue: temporal.Queues.Platform}
 	w := worker.New(tc, temporal.Queues.Platform, worker.Options{WorkerStopTimeout: time.Duration(runtime.ShutdownTimeoutSeconds) * time.Second})
 	platform.RegisterWorker(w, app)
 	if err = w.Start(); err != nil {

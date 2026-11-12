@@ -1,6 +1,6 @@
-# Đề xuất telemetry native
+# Telemetry native
 
-Ngày 2026-11-11. Đây là đề xuất bổ sung cho kiến trúc đã chốt, chưa triển khai instrumentation hoặc monitoring backend. [Plan](plan.md), [configuration](configuration.md) và [HTTP contract](http-json.md) là các owning surfaces liên quan.
+Cập nhật 2026-11-12. Instrumentation Platform/LetFS/ingest và Envoy đã triển khai; chưa chọn hoặc dựng monitoring backend. [Plan](plan.md), [configuration](configuration.md) và [HTTP contract](http-json.md) là các owning surfaces liên quan.
 
 ## 1. Kết quả và giới hạn
 
@@ -20,7 +20,7 @@ Leta là optional integration: trace context đi qua các business RPC khi integ
 
 ## 2. Identity và propagation
 
-Resource attributes dùng semantic conventions: service.name, service.version, service.instance.id và deployment.environment.name. Version lấy build/image metadata, instance lấy runtime detector; không tạo database identity hoặc thêm field vào business schema.
+Resource attributes dùng semantic conventions: service.name, service.version, service.instance.id và deployment.environment.name. Go lấy version từ module/VCS metadata khi có, fallback `dev`; Python dùng installed SDK package version. Go/Python sinh UUID cho process instance. Standard `OTEL_RESOURCE_ATTRIBUTES` có thể cung cấp version từ release metadata, được renderer truyền vào container; Python và Go dùng cùng các resource values trong logs. Envoy có service.name/environment và native telemetry.sdk.version; environment resource detector nhận các resource attributes bổ sung khi deploy. Không tạo database identity hoặc thêm field vào business schema.
 
 | Process | service.name |
 |---|---|
@@ -45,7 +45,7 @@ Workflow replay không được phát sinh duplicate business spans/logs/metrics
 | Go gRPC server/client | otelgrpc native stats handlers, một lần tại channel/server construction |
 | Python gRPC | OpenTelemetry gRPC instrumentation, không wrapper mỗi generated RPC |
 | PostgreSQL | pgx tracer integration; statement name/type/duration, không parameter values hoặc raw content |
-| Provider HTTP/S3 | Instrument native HTTP transport/SDK; không thêm cùng một manual span chỉ để bọc lại network call |
+| Provider HTTP/S3/Qdrant | Clerk/OpenAI qua otelhttp; S3 dùng smithyoteltracing/smithyotelmetrics native adapters; Qdrant qua otelgrpc. Không dùng deprecated otelaws hoặc instrument HTTP lần hai bên dưới S3 |
 | Temporal Go | contrib/opentelemetry tracing interceptor + native metrics handler |
 | Temporal Python | contrib.opentelemetry tracing; SDK/Core metrics qua native OpenTelemetryConfig |
 | Ingest CPU/IO | Vài stage spans cho parse/export/enrich/embed/index, không span mỗi chunk/artifact |
@@ -76,7 +76,7 @@ Không chạy background SUM toàn workspace hoặc count mọi workspace để 
 
 ## 5. Logs
 
-Go dùng slog JSONHandler; Python dùng logging với JSON formatter thư viện như python-json-logger. Dùng cấu hình formatter và vài context attributes cần thiết, không viết logging framework hoặc port formatter cũ.
+Go dùng slog JSONHandler và handler nhỏ thêm current trace/span ID; Python dùng logging với JSONFormatter chung đã có. Temporal Python Core logs được native LogForwardingConfig chuyển về cùng JSON handler. OTel Go exporter errors cũng đi qua slog. Không thêm logging framework hoặc OTLP logs exporter.
 
 Operation log có timestamp, severity, message, service identity; thêm trace_id/span_id từ current span khi có. Processing logs thêm file_id/version/stage; Temporal logs dùng native workflow/run/activity context. Không tạo request-ID registry. Request không sampled vẫn có thể có trace ID để correlation nhưng backend không nhất thiết có trace tương ứng.
 
@@ -99,9 +99,9 @@ Khi bật, endpoint ví dụ http://otel-collector:4317; protocol duy nhất hi�
 
 Root traces dùng ratio sampling, child spans theo parent bằng native ParentBased sampler. Metrics không bị trace sampling. Envoy root sampling render từ cùng setting; không giả định sampling 10% giữ mọi failed trace. Warning/error logs vẫn ghi theo log level. Tail sampling chỉ xét khi có nhu cầu vận hành thực, không thêm ở MVP.
 
-Process entrypoint sở hữu một TracerProvider và MeterProvider. SDK batch processor/periodic reader dùng bounded memory/native retry/timeouts. Config sai báo startup error; Collector unavailable không làm RPC fail/readiness fail. Queue đầy có thể drop telemetry; không có durable spool, custom retry hoặc business transaction chờ exporter.
+Process entrypoint sở hữu một TracerProvider và MeterProvider. SDK batch processor/periodic reader dùng bounded memory/native retry/timeouts. Endpoint HTTP(S), sample ratio hữu hạn trong [0,1] và interval dương được kiểm khi bật export; config sai báo startup error; Collector unavailable không làm RPC fail/readiness fail. Queue đầy có thể drop telemetry; không có durable spool, custom retry hoặc business transaction chờ exporter.
 
-Shutdown: drain requests/activities trước, flush/shutdown providers trong remaining shutdown deadline. Không gọi flush trên từng request. Null endpoint không tạo outbound exporters hoặc yêu cầu Collector trong unit tests.
+Shutdown: drain requests/activities trước rồi flush/shutdown providers. Go dùng context deadline; trace/metric exporters có native timeout 3 giây. Python trace exporter timeout 3 giây, metric exporter/shutdown timeout 3 giây; không block business requests để chờ collector. Không gọi flush trên từng request. Null endpoint không tạo outbound exporters hoặc yêu cầu Collector trong unit tests.
 
 ## 7. Collector và monitoring sau này
 
@@ -115,9 +115,9 @@ Native Collector config nếu cần được render bằng bootstrap từ YAML/d
 
 packages/sdk-go/telemetry.go và sdk-python/openlet_sdk/telemetry.py chỉ init native providers/resource/propagation và shutdown. Owning apps gắn instrumentation và business spans/metrics. Không event registry hoặc decorators mirror mọi method.
 
-Giữ một smoke dùng in-memory exporter: gRPC client/server có parent-child context và log correlation; một Temporal Go/Python activity journey kiểm tra propagation. Kiểm tra null endpoint không đòi Collector, exporter unavailable không phá request/shutdown. Không dựng full monitoring stack trong mỗi CI run, không test lại từng native metric hoặc sampler branch.
+Focused Go test dùng OTLP receiver nội bộ để kiểm gRPC parent-child context, export và log correlation; kiểm null endpoint và bounded shutdown khi collector unavailable. Python tests kiểm native HTTPX signed-URL redaction, JSON correlation/exception cause và stage duration/outcome labels. Compose smoke dùng receiver tạm ngoài source để kiểm Envoy → Go → Temporal → Python → LetFS; không thêm full monitoring stack vào CI hoặc test lại từng native metric.
 
-Chưa pin/smoke SDK/Envoy versions hoặc đo overhead; không hứa giữ mọi error trace hay không bao giờ mất telemetry.
+Envoy 1.40.2 đã validate cấu hình native; versions nằm trong Go modules/uv.lock/Compose. Gateway dùng native ParentBased + ratio sampler từ cùng YAML, max_path_tag_length=0 tránh ghi query/path; access log chỉ ghi route name, method, status, duration, upstream và trace ID. Chưa đo overhead dưới production load; không hứa giữ mọi error trace hay không bao giờ mất telemetry.
 
 ## Nguồn chính thức
 

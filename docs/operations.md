@@ -4,6 +4,10 @@ Use [base Compose](../infra/compose.yaml), the generated private environment ove
 
 Go processes expose native gRPC health, not HTTP readiness endpoints. Python worker running state is not proof of pipeline readiness: API E2E verifies both activities. Inspect `docker compose ps` and native logs. JSON logs and optional OTLP traces/metrics use common YAML settings; signed URL queries are removed from transfer spans/errors.
 
+Set `telemetry.otlp_endpoint` in the shared YAML to an OTLP/gRPC collector URL, for example `http://otel-collector:4317`, then regenerate config and restart the processes. `null` disables export; no collector is needed to run the system. The same sample ratio controls Envoy and application root traces; child spans follow their parent. Metrics include native gRPC, pgx pool, Go/Python runtime, provider calls, Temporal and bounded ingest stage durations. Logs remain JSON stdout with service identity and trace/span correlation when context is available.
+
+Collector failure may drop telemetry but does not fail business requests. Exporters use bounded native queues/timeouts. Standard `OTEL_RESOURCE_ATTRIBUTES` can supply release metadata such as `service.version`; config rendering passes it into application containers and Envoy. Envoy reports its native SDK version; Go development builds without version metadata report `dev`. No collector, dashboard or backend is deployed by base Compose. See the [telemetry design and verification scope](../plans/261111-1727-platform-letfs-rewrite/telemetry.md).
+
 The six scripts in [scripts/](../scripts/) own config rendering, bootstrap, E2E, deploy, backup and restore. [Makefile](../Makefile) exposes their native entry points. Never invoke archived recovery/initialization scripts against the rewritten system.
 
 ## Deploy

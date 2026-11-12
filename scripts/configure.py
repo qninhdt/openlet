@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import math
 import os
 from pathlib import Path
 from urllib.parse import quote, urlparse
@@ -32,6 +33,48 @@ def render(name, values):
     return yaml.safe_load(text)
 
 
+def configure_tracing(envoy, settings, environment):
+    endpoint = settings["otlp_endpoint"]
+    if not endpoint:
+        return
+    url = urlparse(endpoint)
+    ratio = settings["trace_sample_ratio"]
+    if url.scheme not in ("http", "https") or not url.hostname or url.username or url.query or url.fragment or not math.isfinite(ratio) or not 0 <= ratio <= 1 or settings["metrics_export_interval_seconds"] < 1:
+        raise ValueError("invalid telemetry endpoint, sample ratio or metrics interval")
+    hcm = envoy["static_resources"]["listeners"][0]["filter_chains"][0]["filters"][0]["typed_config"]
+    hcm["tracing"] = {
+        # Do not capture request paths or query strings in gateway spans.
+        "max_path_tag_length": 0,
+        "provider": {"name": "envoy.tracers.opentelemetry", "typed_config": {
+            "@type": "type.googleapis.com/envoy.config.trace.v3.OpenTelemetryConfig",
+            "service_name": "openlet-gateway",
+            "grpc_service": {"envoy_grpc": {"cluster_name": "otel"}, "timeout": "3s"},
+            "resource_detectors": [{"name": "envoy.tracers.opentelemetry.resource_detectors.static_config", "typed_config": {
+                "@type": "type.googleapis.com/envoy.extensions.tracers.opentelemetry.resource_detectors.v3.StaticConfigResourceDetectorConfig",
+                "attributes": {"deployment.environment.name": environment}}},
+                {"name": "envoy.tracers.opentelemetry.resource_detectors.environment", "typed_config": {
+                    "@type": "type.googleapis.com/envoy.extensions.tracers.opentelemetry.resource_detectors.v3.EnvironmentResourceDetectorConfig"}}],
+            "sampler": {"name": "envoy.tracers.opentelemetry.samplers.parent_based", "typed_config": {
+                "@type": "type.googleapis.com/envoy.extensions.tracers.opentelemetry.samplers.v3.ParentBasedSamplerConfig",
+                "wrapped_sampler": {"name": "envoy.tracers.opentelemetry.samplers.trace_id_ratio_based", "typed_config": {
+                    "@type": "type.googleapis.com/envoy.extensions.tracers.opentelemetry.samplers.v3.TraceIdRatioBasedSamplerConfig",
+                    "sampling_percentage": {"numerator": round(ratio * 1_000_000), "denominator": "MILLION"}}}}},
+        }},
+    }
+    cluster = {
+        "name": "otel", "type": "STRICT_DNS", "connect_timeout": "3s", "http2_protocol_options": {},
+        "load_assignment": {"cluster_name": "otel", "endpoints": [{"lb_endpoints": [{"endpoint": {
+            "address": {"socket_address": {"address": url.hostname, "port_value": url.port or (443 if url.scheme == "https" else 80)}}}}]}]},
+    }
+    if url.scheme == "https":
+        cluster["transport_socket"] = {"name": "envoy.transport_sockets.tls", "typed_config": {
+            "@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
+            "sni": url.hostname, "common_tls_context": {"validation_context": {
+                "trusted_ca": {"filename": "/etc/ssl/certs/ca-certificates.crt"},
+                "match_typed_subject_alt_names": [{"san_type": "DNS", "matcher": {"exact": url.hostname}}]}}}}
+    envoy["static_resources"]["clusters"].append(cluster)
+
+
 def configure(output, test=False):
     c = load()
     dep, svc, deploy = c["dependencies"], c["services"], c["deployment"]
@@ -56,6 +99,7 @@ def configure(output, test=False):
                 "sni": jwks.hostname, "common_tls_context": {"validation_context": {
                     "trusted_ca": {"filename": "/etc/ssl/certs/ca-certificates.crt"},
                     "match_typed_subject_alt_names": [{"san_type": "DNS", "matcher": {"exact": jwks.hostname}}]}}}}
+    configure_tracing(envoy, c["telemetry"], c["runtime"]["environment"])
     native = render("temporal", dict(POSTGRES=f'{pg["host"]}:{pg["port"]}',
         DATABASE=temporal["database"]["name"], VISIBILITY_DATABASE=temporal["visibility_database"],
         USER=temporal["database"]["user"], PASSWORD=secret(temporal["database"]["password"])))
@@ -73,7 +117,9 @@ def configure(output, test=False):
             "TEMPORAL_DATABASE": temporal["database"]["name"], "TEMPORAL_VISIBILITY_DATABASE": temporal["visibility_database"]}},
         "qdrant": {"environment": {"QDRANT__SERVICE__API_KEY": secret(dep["qdrant"]["api_key"])}}}}
     def environment(references):
-        return {"OPENLET_CONFIG": "/etc/openlet/openlet.yaml", **{value[2:-1]: secret(value) for value in references}}
+        return {"OPENLET_CONFIG": "/etc/openlet/openlet.yaml",
+            **({"OTEL_RESOURCE_ATTRIBUTES": os.environ["OTEL_RESOURCE_ATTRIBUTES"]} if os.environ.get("OTEL_RESOURCE_ATTRIBUTES") else {}),
+            **{value[2:-1]: secret(value) for value in references}}
 
     refs = {
         "platform": [svc["platform"]["database"]["password"], dep["spicedb"]["key"], auth["secret_key"]],
@@ -96,6 +142,7 @@ def configure(output, test=False):
         runtime["services"][owner]["healthcheck"] = {"test": ["CMD", "grpc-health-probe", f'-addr=127.0.0.1:{svc[owner]["grpc_listen"].rsplit(":", 1)[1]}']}
     runtime["services"]["envoy"] = {
         "ports": [f"127.0.0.1:{port}:{port}"],
+        "environment": {"OTEL_RESOURCE_ATTRIBUTES": os.environ.get("OTEL_RESOURCE_ATTRIBUTES", "")},
         "healthcheck": {"test": ["CMD", "bash", "-c", f"exec 3<>/dev/tcp/127.0.0.1/{port}"]},
     }
     os.umask(0o077)

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
@@ -16,6 +17,8 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/smithy-go/metrics/smithyotelmetrics"
+	"github.com/aws/smithy-go/tracing/smithyoteltracing"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/qdrant/go-client/qdrant"
@@ -23,6 +26,8 @@ import (
 	sdk "github.com/qninhdt/openlet/packages/sdk-go"
 	pb "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/letfs/v1"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	"go.temporal.io/sdk/client"
 	temporalotel "go.temporal.io/sdk/contrib/opentelemetry"
@@ -120,7 +125,7 @@ func run() error {
 	if err != nil || endpoint.Host == "" {
 		return fmt.Errorf("invalid S3 endpoint")
 	}
-	s3client := s3.New(s3.Options{Region: object.Region, BaseEndpoint: &object.Endpoint, UsePathStyle: object.PathStyle, Credentials: credentials.NewStaticCredentialsProvider(key, secret, "")})
+	s3client := s3.New(s3.Options{TracerProvider: smithyoteltracing.Adapt(otel.GetTracerProvider()), MeterProvider: smithyotelmetrics.Adapt(otel.GetMeterProvider()), Region: object.Region, BaseEndpoint: &object.Endpoint, UsePathStyle: object.PathStyle, Credentials: credentials.NewStaticCredentialsProvider(key, secret, "")})
 	host, portText, err := net.SplitHostPort(vector.Address)
 	if err != nil {
 		return err
@@ -133,7 +138,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	qc, err := qdrant.NewClient(&qdrant.Config{Host: host, Port: port, APIKey: vectorKey, UseTLS: vector.TLS})
+	qc, err := qdrant.NewClient(&qdrant.Config{Host: host, Port: port, APIKey: vectorKey, UseTLS: vector.TLS, GrpcOptions: []grpc.DialOption{grpc.WithStatsHandler(otelgrpc.NewClientHandler())}})
 	if err != nil {
 		return err
 	}
@@ -142,7 +147,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	models := openai.NewClient(option.WithAPIKey(modelKey), option.WithBaseURL(providerURL))
+	models := openai.NewClient(option.WithAPIKey(modelKey), option.WithBaseURL(providerURL), option.WithHTTPClient(&http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)}))
 	tracing, err := temporalotel.NewTracingInterceptor(temporalotel.TracerOptions{DisableBaggage: true, TextMapPropagator: propagation.TraceContext{}})
 	if err != nil {
 		return err

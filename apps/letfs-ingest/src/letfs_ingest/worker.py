@@ -4,6 +4,7 @@ import logging
 import signal
 from contextlib import AsyncExitStack
 from datetime import timedelta
+from importlib.metadata import version
 
 import httpx
 from openlet_api.letfs.v1.internal_pb2_grpc import LetFSInternalServiceStub
@@ -12,7 +13,14 @@ from openlet_sdk.rpc import channel
 from openlet_sdk.telemetry import initialize
 from temporalio.client import Client
 from temporalio.contrib.opentelemetry import TracingInterceptor
-from temporalio.runtime import OpenTelemetryConfig, Runtime, TelemetryConfig
+from temporalio.runtime import (
+    LogForwardingConfig,
+    LoggingConfig,
+    OpenTelemetryConfig,
+    Runtime,
+    TelemetryConfig,
+    TelemetryFilter,
+)
 from temporalio.worker import Worker
 
 
@@ -32,7 +40,10 @@ async def run(role):
     metrics = OpenTelemetryConfig(
         url=telemetry["otlp_endpoint"], metric_periodicity=timedelta(seconds=telemetry["metrics_export_interval_seconds"]),
     ) if telemetry["otlp_endpoint"] else None
-    native = Runtime(telemetry=TelemetryConfig(metrics=metrics, global_tags={"worker_role": role}))
+    native = Runtime(telemetry=TelemetryConfig(
+        logging=LoggingConfig(TelemetryFilter(core_level="WARN", other_level="ERROR"), forwarding=LogForwardingConfig(logging.getLogger("temporalio.core"))),
+        metrics=metrics, global_tags={"worker_role": role, "service.name": f"openlet-ingest-{role}", "service.version": version("letfs-ingest"), "deployment.environment.name": runtime["environment"]},
+    ))
     try:
         async with AsyncExitStack() as stack:
             rpc = await stack.enter_async_context(channel(
