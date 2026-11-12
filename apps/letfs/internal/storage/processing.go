@@ -240,6 +240,12 @@ func (s *Server) CommitEnrichment(ctx context.Context, r *pb.CommitEnrichmentReq
 	var total int64
 	for _, a := range r.Artifacts {
 		v := map[string]any{"id": a.NodeId}
+		if a.Name != nil {
+			if !validArtifactPath(*a.Name) || strings.Contains(*a.Name, "/") {
+				return nil, invalid("invalid artifact name")
+			}
+			v["name"] = *a.Name
+		}
 		if a.TextContent != nil {
 			if !utf8.ValidString(*a.TextContent) || strings.ContainsRune(*a.TextContent, 0) {
 				return nil, invalid("invalid artifact text")
@@ -268,18 +274,22 @@ func (s *Server) CommitEnrichment(ctx context.Context, r *pb.CommitEnrichmentReq
 	if err != nil {
 		return obsolete(err)
 	}
+	// Defer only this batch: a final name can still belong to a sibling that is also being renamed.
+	if _, err = tx.Exec(ctx, `SET CONSTRAINTS nodes_sibling DEFERRED`); err != nil {
+		return nil, err
+	}
 	var stage string
 	var bytes int64
 	var count int
 	var admitted bool
 	err = tx.QueryRow(ctx, `WITH RECURSIVE tree AS(SELECT id FROM nodes WHERE parent_id=$1 UNION ALL SELECT n.id FROM nodes n JOIN tree t ON n.parent_id=t.id),
  admitted AS(UPDATE processing SET stage='enriched',error_code=NULL WHERE file_id=$1 AND stage='parsed' RETURNING stage),
- input AS(SELECT x.* FROM jsonb_to_recordset($2::jsonb) x(id uuid,text text,metadata jsonb)),
- valid AS MATERIALIZED(SELECT x.*,f.size_bytes AS old_size FROM input x JOIN tree t ON t.id=x.id JOIN files f ON f.node_id=x.id WHERE x.text IS NULL OR f.text_content IS NOT NULL),
+ input AS(SELECT x.* FROM jsonb_to_recordset($2::jsonb) x(id uuid,name text,text text,metadata jsonb)),
+ valid AS MATERIALIZED(SELECT x.*,f.size_bytes AS old_size FROM input x JOIN tree t ON t.id=x.id JOIN nodes n ON n.id=x.id LEFT JOIN files f ON f.node_id=x.id WHERE (n.kind='file' OR (x.text IS NULL AND x.metadata IS NULL)) AND (x.text IS NULL OR f.text_content IS NOT NULL)),
  changed AS(UPDATE files f SET text_content=v.text,size_bytes=octet_length(v.text),version=f.version+1 FROM valid v WHERE f.node_id=v.id AND v.text IS NOT NULL AND f.text_content IS DISTINCT FROM v.text AND EXISTS(SELECT 1 FROM admitted) RETURNING f.node_id,f.size_bytes-v.old_size AS delta),
- touched AS(UPDATE nodes n SET updated_at=now() FROM changed c WHERE n.id=c.node_id),
+ touched AS(UPDATE nodes n SET name=coalesce(v.name,n.name),updated_at=now() FROM valid v WHERE n.id=v.id AND EXISTS(SELECT 1 FROM admitted) AND (n.name IS DISTINCT FROM coalesce(v.name,n.name) OR n.id IN (SELECT node_id FROM changed))),
  metadata AS(INSERT INTO file_metadata(node_id,title,description,semantic_type,context) SELECT id,metadata->>'title',metadata->>'description',metadata->>'semantic_type',metadata->>'context' FROM valid WHERE metadata IS NOT NULL AND EXISTS(SELECT 1 FROM admitted) ON CONFLICT(node_id) DO UPDATE SET title=excluded.title,description=excluded.description,semantic_type=excluded.semantic_type,context=excluded.context)
- SELECT coalesce((SELECT stage FROM admitted),(SELECT stage FROM processing WHERE file_id=$1)),(SELECT coalesce(sum(delta),0) FROM changed),(SELECT count(*) FROM valid),EXISTS(SELECT 1 FROM admitted)`, r.FileId, raw).Scan(&stage, &bytes, &count, &admitted)
+ SELECT coalesce((SELECT stage FROM admitted),(SELECT stage FROM processing WHERE file_id=$1)),(SELECT coalesce(sum(delta),0) FROM changed),(SELECT count(DISTINCT id) FROM valid),EXISTS(SELECT 1 FROM admitted)`, r.FileId, raw).Scan(&stage, &bytes, &count, &admitted)
 	if err != nil {
 		return nil, err
 	}

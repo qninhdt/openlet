@@ -18,6 +18,10 @@ func TestStorageMutationRequests(t *testing.T) {
 		request proto.Message
 		valid   bool
 	}{
+		{"artifact name", &pb.EnrichedArtifact{NodeId: id, Name: proto.String("revenue.md")}, true},
+		{"artifact path is not a name", &pb.EnrichedArtifact{NodeId: id, Name: proto.String("folder/revenue.md")}, false},
+		{"artifact name is not empty", &pb.EnrichedArtifact{NodeId: id, Name: proto.String("")}, false},
+		{"artifact name rejects NUL", &pb.EnrichedArtifact{NodeId: id, Name: proto.String("bad\x00.md")}, false},
 		{"rename without receipt", &pb.UpdateStorageRequest{WorkspaceId: id, StorageId: id, Name: &name}, true},
 		{"empty update", &pb.UpdateStorageRequest{WorkspaceId: id, StorageId: id}, false},
 		{"visibility without identity", &pb.UpdateStorageRequest{WorkspaceId: id, StorageId: id, Visibility: &visibility}, false},

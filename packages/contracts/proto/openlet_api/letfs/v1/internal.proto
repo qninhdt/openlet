@@ -16,7 +16,7 @@ message ArtifactUpload { string path = 1; string upload_id = 2; string put_url =
 message PrepareArtifactUploadsResponse { ProcessingOutcome outcome = 1; repeated ArtifactUpload uploads = 2; }
 message Artifact { string path = 1 [(buf.validate.field).string.min_len = 1]; oneof content { google.protobuf.Empty directory = 2; TextContent text = 3; string upload_id = 4 [(buf.validate.field).string.uuid = true]; } }
 message CommitParseRequest { string file_id = 1 [(buf.validate.field).string.uuid = true]; int64 version = 2 [(buf.validate.field).int64.gt = 0]; repeated Artifact artifacts = 3; }
-message EnrichedArtifact { string node_id = 1 [(buf.validate.field).string.uuid = true]; optional string text_content = 2; FileMetadata metadata = 3; }
+message EnrichedArtifact { string node_id = 1 [(buf.validate.field).string.uuid = true]; optional string text_content = 2; FileMetadata metadata = 3; optional string name = 4 [(buf.validate.field).string = {min_len: 1, max_bytes: 255, not_in: [".",".."], pattern: "^[^/\\x00]+$"}]; }
 message CommitEnrichmentRequest { string file_id = 1 [(buf.validate.field).string.uuid = true]; int64 version = 2 [(buf.validate.field).int64.gt = 0]; repeated EnrichedArtifact artifacts = 3; FileMetadata source_metadata = 4; }
 message FailProcessingRequest { string file_id = 1 [(buf.validate.field).string.uuid = true]; int64 version = 2 [(buf.validate.field).int64.gt = 0]; string error_code = 3 [(buf.validate.field).string.min_len = 1]; }
 service LetFSInternalService {

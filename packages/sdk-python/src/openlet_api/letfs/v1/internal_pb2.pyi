@@ -159,14 +159,16 @@ class CommitParseRequest(_message.Message):
     def __init__(self, file_id: _Optional[str] = ..., version: _Optional[int] = ..., artifacts: _Optional[_Iterable[_Union[Artifact, _Mapping]]] = ...) -> None: ...
 
 class EnrichedArtifact(_message.Message):
-    __slots__ = ("node_id", "text_content", "metadata")
+    __slots__ = ("node_id", "text_content", "metadata", "name")
     NODE_ID_FIELD_NUMBER: _ClassVar[int]
     TEXT_CONTENT_FIELD_NUMBER: _ClassVar[int]
     METADATA_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
     node_id: str
     text_content: str
     metadata: _letfs_pb2.FileMetadata
-    def __init__(self, node_id: _Optional[str] = ..., text_content: _Optional[str] = ..., metadata: _Optional[_Union[_letfs_pb2.FileMetadata, _Mapping]] = ...) -> None: ...
+    name: str
+    def __init__(self, node_id: _Optional[str] = ..., text_content: _Optional[str] = ..., metadata: _Optional[_Union[_letfs_pb2.FileMetadata, _Mapping]] = ..., name: _Optional[str] = ...) -> None: ...
 
 class CommitEnrichmentRequest(_message.Message):
     __slots__ = ("file_id", "version", "artifacts", "source_metadata")

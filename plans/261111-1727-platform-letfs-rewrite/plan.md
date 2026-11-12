@@ -14,6 +14,7 @@ Cập nhật 2026-11-12. Architecture, schema, API Platform/LetFS và Temporal �
 - [Review trước push dev và LoC](../reports/readiness-loc-261112-platform-letfs-rewrite.md).
 - [Benchmark LetFS: đủ 43 RPC, query plans và các điểm cần tối ưu](../reports/benchmark-261112-1212-letfs.md).
 - [Sửa hiệu năng LetFS và audit idempotency](../reports/implementation-261112-1249-letfs-performance-idempotency.md).
+- [Khôi phục semantic artifact names và atomic link publication](../reports/implementation-261112-1451-artifact-names.md).
 - [Native OTel implementation và export/propagation verification](../reports/implementation-261112-native-telemetry.md).
 - [Role/UI research](../reports/research-261111-1834-spicedb-role-ownership.md), [consistency research](../reports/research-261111-1746-spicedb-consistency.md): historical evidence; policy hiện tại lấy từ design đã chốt.
 
@@ -89,6 +90,7 @@ Theo yêu cầu mở rộng sau đó, cả Leta src/, migrations/ và native dep
 
 - [x] Rà soát active project trước push dev, sửa upload receipt/member-limit gaps, kiểm generated drift/candidate secrets và đo LoC trước/sau; [evidence](../reports/readiness-loc-261112-platform-letfs-rewrite.md). Chưa commit/push hoặc remote CI.
 
+- [x] Khôi phục semantic artifact names: title → file/directory names, relative links/README children rewrite, một batch enrichment transaction với native deferred uniqueness; checks, SQL invariants và API E2E 4/4 pass. [Báo cáo](../reports/implementation-261112-1451-artifact-names.md).
 - [x] Áp dụng benchmark fixes/idempotency audit đã duyệt: single resolver, batch tree/processing, rename direct SQL, bỏ receipts mkdir/visibility, multipart checksums; checks/SQL/E2E 4/4 và 3.045 targeted benchmark requests không lỗi. ReadTree 1000 c32 còn tail khoảng 457 ms; [evidence và audit matrix](../reports/implementation-261112-1249-letfs-performance-idempotency.md).
 
 - [x] Hoàn thiện native OTel: Envoy tracing/access logs, outbound clients, pgx/runtime/process metrics, processing stages và JSON correlation. Kiểm chứng OTLP parent chains Go → Temporal → CPU/IO → LetFS, E2E 4/4; collector tắt vẫn pass gateway/onboarding + ingest 2/2. [Evidence và giới hạn](../reports/implementation-261112-native-telemetry.md); chưa triển khai backend hoặc đo overhead production.

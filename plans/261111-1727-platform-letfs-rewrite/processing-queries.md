@@ -9,7 +9,7 @@ Dùng [schema](schema.md), [S/I budget](query-design.md) và [LetFS RPC matrix](
 | `GetProcessingInput` | 2 | Source R + lightweight recursive IDs/path; một batch hydrate headers/text/blob keys | Read only; sign source/artifact URLs từ object keys đã có |
 | `PrepareArtifactUploads` | 2 | Source R; bulk INSERT upload handles bằng recordset | Version admission; không SQL mỗi output, không upload trong transaction |
 | `CommitParse` | 2 | R + source files row lock; bulk handles validation/consume + node/file INSERT + quota/stage DML | Current source/version + stage pending; retry parsed-or-later no-op |
-| `CommitEnrichment` | 2 | R + source files row lock; bulk artifact text/metadata UPDATE/UPSERT + quota/stage DML | Stage parsed -> enriched; retry enriched-or-later no-op |
+| `CommitEnrichment` | ≤4 business + 1 SET | Source row lock; bulk node names/text/metadata/stage; optional source metadata UPSERT; quota UPDATE nếu delta khác 0 | SET CONSTRAINTS nodes_sibling DEFERRED; stage parsed -> enriched; retry enriched-or-later no-op |
 | `CompleteIndex` | 1 | Conditional processing UPDATE FROM source/version/live-root resolver | Stage enriched -> ready; no file version bump |
 | `FailProcessing` | 1 | Conditional error UPDATE FROM source/version/live-root resolver | Không làm ready lùi lại hoặc reset last successful stage |
 
@@ -25,7 +25,7 @@ CommitParse first query khóa đúng source files row và xác minh live source/
 
 Node IDs cấp một lần và parent IDs map theo manifest trong memory; validate paths/parent structure tại boundary. INSERT all nodes/files bằng recordsets, không per-path mkdir. Text vào PostgreSQL; blob vào issued object references. Stage và quota cập nhật cùng transaction. Consume đúng upload IDs bằng DELETE trong transaction đó.
 
-CommitEnrichment chỉ cần source lock một lần. Join batch artifact IDs với current source ancestry ở SQL; UPDATE text/version/size và UPSERT file_metadata theo tập. Source metadata copy từ root README trong cùng input/DML, không fetch README qua RPC rồi SELECT source một lần nữa. Delta lấy old/new sizes của chính rows đổi. Source version không tăng.
+CommitEnrichment chỉ cần source lock một lần. Join batch artifact IDs với current source ancestry ở SQL; UPDATE nodes.name (kể cả directory), text/version/size và UPSERT file_metadata theo tập. Một UPDATE nodes gộp rename và timestamp, không hai modifying CTE cùng ghi một row. Worker gửi tên cuối và Markdown đã rewrite trong cùng batch. Defer native sibling uniqueness riêng transaction enrichment để đổi chéo tên, kiểm tra tên cuối lúc commit; không rename qua tên tạm. Thêm đúng một SET statement/round trip PostgreSQL, không thêm application RPC/model/S3 call hoặc query theo từng artifact. Source metadata copy từ root README trong cùng input/DML, không fetch README qua RPC rồi SELECT source một lần nữa. Delta lấy old/new sizes của chính rows đổi. Source version không tăng.
 
 SQL publication error rollback stage/artifacts/quota cùng nhau; source retained. Error summary ghi bằng FailProcessing sau native activity retry policy; không fail/report/abort từ nhiều wrapper layers. Không jobs/attempt/checkpoint-per-chunk tables.
 

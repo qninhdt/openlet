@@ -37,8 +37,13 @@ test('XLSX blob runs both workers, publishes readonly artifacts and becomes sear
   const tree = await api.post(`${base}/nodes:readTree`, { data: { root: { nodeId: node.id }, maxDepth: 8, maxNodes: 100 } });
   expect(tree.ok(), await tree.text()).toBeTruthy();
   const { entries } = await tree.json();
-  const table = entries.find((entry: { node: { name: string } }) => entry.node.name === 'table-1.csv').node;
+  const table = entries.find((entry: { node: { name: string } }) => entry.node.name === 'revenue-report.csv').node;
   expect(table.readonly).toBe(true);
+  expect(entries.some((entry: { path: string }) => entry.path === 'revenue-report/revenue-report.csv')).toBe(true);
+  const sheetReadme = entries.find((entry: { path: string }) => entry.path === 'revenue-report/README.md').node;
+  const sheetContent = (await (await api.get(`${base}/nodes/${sheetReadme.id}/text`)).json()).content;
+  expect(sheetContent).toContain('(revenue-report.csv)');
+  expect(sheetContent).not.toContain('table-1.csv');
   expect((await (await api.get(`${base}/nodes/${table.id}/text`)).json()).content).toContain('Europe,120');
   expect((await api.patch(`${base}/nodes/${table.id}/text`, { data: { append: 'denied', requestId: randomUUID() } })).status()).toBeGreaterThanOrEqual(400);
   // Embedding fixtures rank CSV evidence below the root README; BM25 must recover it.
@@ -46,7 +51,7 @@ test('XLSX blob runs both workers, publishes readonly artifacts and becomes sear
   expect(search.ok(), await search.text()).toBeTruthy();
   const { hits } = await search.json();
   expect(hits).toHaveLength(1);
-  expect(hits[0].snippet).toContain('table-1.csv');
+  expect(hits[0].snippet).toContain('revenue-report.csv');
   const download = await api.get(`${base}/nodes/${node.id}:download`);
   const original = await request.get((await download.json()).blob.url);
   expect(await original.body()).toEqual(bytes);

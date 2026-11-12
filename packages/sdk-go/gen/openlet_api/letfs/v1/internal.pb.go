@@ -874,6 +874,7 @@ type EnrichedArtifact struct {
 	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
 	TextContent   *string                `protobuf:"bytes,2,opt,name=text_content,json=textContent,proto3,oneof" json:"text_content,omitempty"`
 	Metadata      *FileMetadata          `protobuf:"bytes,3,opt,name=metadata,proto3" json:"metadata,omitempty"`
+	Name          *string                `protobuf:"bytes,4,opt,name=name,proto3,oneof" json:"name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -927,6 +928,13 @@ func (x *EnrichedArtifact) GetMetadata() *FileMetadata {
 		return x.Metadata
 	}
 	return nil
+}
+
+func (x *EnrichedArtifact) GetName() string {
+	if x != nil && x.Name != nil {
+		return *x.Name
+	}
+	return ""
 }
 
 type CommitEnrichmentRequest struct {
@@ -1136,12 +1144,14 @@ const file_openlet_api_letfs_v1_internal_proto_rawDesc = "" +
 	"\x12CommitParseRequest\x12!\n" +
 	"\afile_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x06fileId\x12!\n" +
 	"\aversion\x18\x02 \x01(\x03B\a\xbaH\x04\"\x02 \x00R\aversion\x128\n" +
-	"\tartifacts\x18\x03 \x03(\v2\x1a.openlet.letfs.v1.ArtifactR\tartifacts\"\xaa\x01\n" +
+	"\tartifacts\x18\x03 \x03(\v2\x1a.openlet.letfs.v1.ArtifactR\tartifacts\"\xec\x01\n" +
 	"\x10EnrichedArtifact\x12!\n" +
 	"\anode_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x06nodeId\x12&\n" +
 	"\ftext_content\x18\x02 \x01(\tH\x00R\vtextContent\x88\x01\x01\x12:\n" +
-	"\bmetadata\x18\x03 \x01(\v2\x1e.openlet.letfs.v1.FileMetadataR\bmetadataB\x0f\n" +
-	"\r_text_content\"\xea\x01\n" +
+	"\bmetadata\x18\x03 \x01(\v2\x1e.openlet.letfs.v1.FileMetadataR\bmetadata\x127\n" +
+	"\x04name\x18\x04 \x01(\tB\x1e\xbaH\x1br\x19\x10\x01(\xff\x012\v^[^/\\x00]+$Z\x01.Z\x02..H\x01R\x04name\x88\x01\x01B\x0f\n" +
+	"\r_text_contentB\a\n" +
+	"\x05_name\"\xea\x01\n" +
 	"\x17CommitEnrichmentRequest\x12!\n" +
 	"\afile_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x06fileId\x12!\n" +
 	"\aversion\x18\x02 \x01(\x03B\a\xbaH\x04\"\x02 \x00R\aversion\x12@\n" +

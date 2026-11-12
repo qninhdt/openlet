@@ -222,9 +222,10 @@ report.pdf                         blob -> S3, source version 7
 - Markdown, CSV, JSON và extracted text đều là loại text, lưu PostgreSQL.
 - Image/binary artifacts là blob, lưu S3, dù kích thước nhỏ.
 - Directory chỉ là structure; summary/semantic metadata của directory ở README của nó.
+- CommitEnrichment nhận optional name trên batch item (directory chỉ cần ID/name); validate subtree/name rồi batch UPDATE nodes cùng text/metadata/quota/stage. Unique sibling constraint DEFERRABLE INITIALLY IMMEDIATE được defer riêng trong transaction này để cho phép đổi chéo tên. Commit vẫn từ chối tên cuối trùng; ordinary creates/renames kiểm tra ngay. Không thêm lock ngoài source row lock hiện có.
 - Generated nodes readonly qua user API. Copy text artifact ra ordinary directory tạo text writable và không ingest.
 - Artifact text không được fallback lên S3 khi lớn. Parser chia document theo layout/section cần thiết; nếu output vượt text/manifest budget thì processing báo lỗi, source blob vẫn tải được, không truncate âm thầm.
-- Giữ tên/path ổn định do parser sinh từ heading, sheet hoặc ordinal. AI tạo display title/summary/type/context; đề xuất bỏ AI rename path và vòng rewrite links. Đây là thay đổi sản phẩm có chủ ý để giảm coupling giữa model output và storage structure.
+- Parser tạo paths ban đầu từ heading/sheet/ordinal. Theo quyết định khôi phục ngày 2026-11-12, enrichment dùng AI title hiện có để đổi tên artifacts và directories, giữ extension/số thứ tự section, giữ nguyên README.md và source name. Worker tính toàn bộ mapping và sửa relative Markdown links/README children trước một CommitEnrichment; không thêm model call, RPC hoặc S3 upload. Node IDs/parent IDs giữ nguyên; tên trùng được thêm suffix ổn định.
 
 SemanticSearch kết hợp dense vector và BM25 trên Qdrant payload text index bằng native RRF, rồi SQL kiểm source version/live ancestry và rerank. Hai prefetch cùng workspace filter; text index dùng native tokenizer/scoring, không sparse embedding provider hoặc tự viết fusion. Quyết định sau feature audit chỉ bổ sung hybrid; không thêm filters/sort hoặc các tùy chọn restore/mkdir/trash đã được người dùng chấp nhận cắt.
 
@@ -255,7 +256,7 @@ Yêu cầu bảo toàn chức năng, cập nhật theo quyết định người 
 - Resize/nén ảnh trước model, giới hạn concurrency bao gồm tải ảnh; validate structured output và embedding indices/count/dimensions/finite tại provider boundary.
 - Chuẩn bị model offline bằng downloader native, kiểm tra assets/runtime trước nhận job; giữ giới hạn input/output cần thiết và phân biệt invalid input với lỗi môi trường retryable. Không khôi phục supervisor polling/receipt framework.
 
-Các thay đổi đã chốt vẫn giữ: parser paths ổn định, bỏ AI rename/rewrite-link; không ingest text người dùng ở MVP; CSV dùng header/sample rows thay profiling toàn bộ; hai activities và batch publication theo contract mới. Test tập trung vào hành vi có nguy cơ mất, không phục hồi toàn bộ test harness cũ.
+Các thay đổi đã chốt vẫn giữ: không ingest text người dùng ở MVP; CSV dùng header/sample rows thay profiling toàn bộ; hai activities và batch publication theo contract mới. Test tập trung vào hành vi có nguy cơ mất, không phục hồi toàn bộ test harness cũ.
 
 1. GetProcessingInput theo file/version; stage đã parsed thì kết thúc.
 2. Download blob qua signed URL vào temporary file; convert sang tree có path ổn định.
@@ -594,7 +595,7 @@ Không archive database hoặc xóa dữ liệu chỉ vì archive source. Không
 - SpiceDB phải được backup vì giữ canonical membership/grants; không có đường rebuild quyền từ SQL.
 - SQL mutation retry cùng key/hash replay stored result trong retention window. Idempotency receipt không biến graph/provider effects thành một distributed transaction.
 - Text vượt text/manifest limit bị từ chối rõ ràng; không fallback sang S3. Blob unsupported giữ source và báo không ingest.
-- Artifact paths do parser quyết định ổn định; đề xuất bỏ AI path rename, vẫn giữ AI title/summary/taxonomy và README hierarchy.
+- Artifact paths ban đầu do parser quyết định; enrichment đổi tên theo semantic title và sửa links trong cùng publication. Public consumers dùng node IDs để tham chiếu ổn định; không tự đổi tên source.
 
 Đã archive source/tests cũ theo plan và kiểm hash; chưa viết implementation mới, chạy integration/benchmark hoặc thay dữ liệu. Active build/deployment/CI chưa được dựng lại. Telemetry native và HTTP survey được ghi riêng; không thêm HTTP server cho Platform/LetFS/ingest. Secrets lấy dotenv/ENV theo config design mới.
 

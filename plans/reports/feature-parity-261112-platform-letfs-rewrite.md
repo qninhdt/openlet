@@ -63,7 +63,8 @@ Nguồn: archived LetFS protobuf/service/search/text/processing/upload code; [im
 | Taxonomy/title/description/context, sampled evidence, image enrichment | Pydantic structured output, bounded evidence/vision inputs | Giữ; focused provider tests; public model API được WireMock tại boundary E2E |
 | Folder README metadata/own body/children summaries | render + own_body | Giữ; tránh dùng generated child listing như body evidence |
 | Full body chunks, overlap, ancestor context, stable versioned IDs | native splitter và Qdrant upsert wait | Giữ; focused index tests; ID gồm source/version/artifact/vector space; không app identity UUIDv5 |
-| CSV full profiling, AI path rename + link rewriting | Stable parser paths, CSV headers/sample | Thay đổi đã chốt trong design; không khôi phục profiling/rename framework |
+| AI path rename + link rewriting | Khôi phục theo yêu cầu 2026-11-12 | Title hiện có → tên file/directory; rewrite links/README children; một batch CommitEnrichment nguyên tử, giữ node IDs/source name |
+| CSV full profiling | CSV headers/sample | Giữ thay đổi đã chốt; không khôi phục full profiling |
 | Custom process supervisor, broker/clients/telemetry wrappers | Bounded conversion subprocess + native SDKs/OTel | Thay theo plan; không mất input limits, model checks, heartbeats hoặc exception causes |
 
 Nguồn: archived `parser/`, `processing/`, `clients/`, `temporal/`; [bản mới](../../apps/letfs-ingest/src/letfs_ingest/) và [focused tests](../../apps/letfs-ingest/tests/). BM25 thuộc LetFS search/native Qdrant bootstrap; payload text do IO ghi đã đủ, không cần đổi parser/indexer hoặc re-embed.

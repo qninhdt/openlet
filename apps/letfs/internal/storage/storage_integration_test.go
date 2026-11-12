@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	sdk "github.com/qninhdt/openlet/packages/sdk-go"
 	pb "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/letfs/v1"
@@ -102,7 +103,13 @@ func TestStorageSQLInvariants(t *testing.T) {
 	s := &Server{DB: pool, Settings: Settings{IdempotencyRetentionSeconds: 3600}}
 	s.Settings.Processing.MaxArtifacts = 10
 	s.Settings.Processing.MaxManifestTextBytes = 100
-	request := &pb.CommitParseRequest{FileId: source, Version: 1, Artifacts: []*pb.Artifact{{Path: "README.md", Content: &pb.Artifact_Text{Text: &pb.TextContent{Content: "hello", MediaType: "text/markdown"}}}}}
+	request := &pb.CommitParseRequest{FileId: source, Version: 1, Artifacts: []*pb.Artifact{
+		{Path: "README.md", Content: &pb.Artifact_Text{Text: &pb.TextContent{Content: "hello", MediaType: "text/markdown"}}},
+		{Path: "a.md", Content: &pb.Artifact_Text{Text: &pb.TextContent{Content: "A", MediaType: "text/markdown"}}},
+		{Path: "b.md", Content: &pb.Artifact_Text{Text: &pb.TextContent{Content: "B", MediaType: "text/markdown"}}},
+		{Path: "section", Content: &pb.Artifact_Directory{Directory: &emptypb.Empty{}}},
+		{Path: "section/README.md", Content: &pb.Artifact_Text{Text: &pb.TextContent{Content: "S", MediaType: "text/markdown"}}},
+	}}
 	out, err := s.CommitParse(ctx, request)
 	if err != nil || out.Stage != "parsed" {
 		t.Fatalf("parse commit: %+v %v", out, err)
@@ -116,13 +123,60 @@ func TestStorageSQLInvariants(t *testing.T) {
 		t.Fatalf("artifact writable: %+v %v", artifact, err)
 	}
 	input, err := s.GetProcessingInput(ctx, &pb.ProcessingRequest{FileId: source, Version: 1})
-	if err != nil || input.Outcome.Stage != "parsed" || input.SourceName != "source.pdf" || len(input.Artifacts) != 1 || input.Artifacts[0].GetTextContent() != "hello" || !input.Artifacts[0].Node.Readonly || input.Artifacts[0].Path != "README.md" {
+	if err != nil || input.Outcome.Stage != "parsed" || input.SourceName != "source.pdf" || len(input.Artifacts) != 5 || input.Artifacts[0].GetTextContent() != "hello" || !input.Artifacts[0].Node.Readonly || input.Artifacts[0].Path != "README.md" {
 		t.Fatalf("processing batch input: %+v %v", input, err)
 	}
+	ids := map[string]string{}
+	for _, item := range input.Artifacts {
+		ids[item.Path] = item.Node.Id
+	}
+	// Ordinary creates still enforce sibling uniqueness immediately.
+	if _, err = pool.Exec(ctx, `INSERT INTO nodes(id,storage_id,parent_id,name,kind) VALUES($1,$2,$3,'a.md','directory')`, uuid.NewString(), storage, source); err == nil {
+		t.Fatal("ordinary duplicate name admitted")
+	}
 	enriched := "hello world"
-	out, err = s.CommitEnrichment(ctx, &pb.CommitEnrichmentRequest{FileId: source, Version: 1, Artifacts: []*pb.EnrichedArtifact{{NodeId: artifact.Node.Id, TextContent: &enriched}}})
+	collision := "same.md"
+	bad := &pb.CommitEnrichmentRequest{FileId: source, Version: 1, Artifacts: []*pb.EnrichedArtifact{
+		{NodeId: artifact.Node.Id, TextContent: &enriched},
+		{NodeId: ids["a.md"], Name: &collision}, {NodeId: ids["b.md"], Name: &collision},
+	}}
+	if _, err = s.CommitEnrichment(ctx, bad); err == nil {
+		t.Fatal("duplicate final names committed")
+	} else if db, ok := err.(*pgconn.PgError); !ok || db.Code != "23505" {
+		t.Fatalf("expected uniqueness violation: %v", err)
+	}
+	input, err = s.GetProcessingInput(ctx, &pb.ProcessingRequest{FileId: source, Version: 1})
+	if err != nil || input.Outcome.Stage != "parsed" || input.Artifacts[0].GetTextContent() != "hello" {
+		t.Fatalf("failed rename changed stage/content: %+v %v", input, err)
+	}
+	var before int64
+	if err = pool.QueryRow(ctx, `SELECT used_bytes FROM workspace_storage WHERE workspace_id=$1`, workspace).Scan(&before); err != nil || before != 13 {
+		t.Fatalf("failed rename changed quota: %d %v", before, err)
+	}
+	aName, bName, directoryName := "b.md", "a.md", "renamed"
+	rename := &pb.CommitEnrichmentRequest{FileId: source, Version: 1, Artifacts: []*pb.EnrichedArtifact{
+		{NodeId: artifact.Node.Id, TextContent: &enriched},
+		{NodeId: ids["a.md"], Name: &aName}, {NodeId: ids["b.md"], Name: &bName},
+		{NodeId: ids["section"], Name: &directoryName},
+	}}
+	out, err = s.CommitEnrichment(ctx, rename)
 	if err != nil || out.Stage != "enriched" {
 		t.Fatalf("enrichment: %+v %v", out, err)
+	}
+	out, err = s.CommitEnrichment(ctx, rename)
+	if err != nil || out.Stage != "enriched" {
+		t.Fatalf("rename retry: %+v %v", out, err)
+	}
+	input, err = s.GetProcessingInput(ctx, &pb.ProcessingRequest{FileId: source, Version: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual := map[string]string{}
+	for _, item := range input.Artifacts {
+		actual[item.Path] = item.Node.Id
+	}
+	if actual["b.md"] != ids["a.md"] || actual["a.md"] != ids["b.md"] || actual["renamed/README.md"] != ids["section/README.md"] {
+		t.Fatalf("names/descendant IDs changed incorrectly: %+v", actual)
 	}
 	if _, err = s.CompleteIndex(ctx, &pb.ProcessingRequest{FileId: source, Version: 1}); err != nil {
 		t.Fatal(err)
@@ -136,7 +190,7 @@ func TestStorageSQLInvariants(t *testing.T) {
 		t.Fatalf("stale version admitted: %+v %v", out, err)
 	}
 	var used int64
-	if err = pool.QueryRow(ctx, `SELECT used_bytes FROM workspace_storage WHERE workspace_id=$1`, workspace).Scan(&used); err != nil || used != 16 {
+	if err = pool.QueryRow(ctx, `SELECT used_bytes FROM workspace_storage WHERE workspace_id=$1`, workspace).Scan(&used); err != nil || used != 19 {
 		t.Fatalf("logical quota=%d error=%v", used, err)
 	}
 	tx, err = pool.Begin(ctx)

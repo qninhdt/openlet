@@ -8,6 +8,7 @@ from openlet_api.letfs.v1 import letfs_pb2 as pb
 from temporalio import activity
 
 from .artifacts import check_transfer
+from .naming import artifact_paths, rewrite_artifact_links
 from .readme import own_body, render
 
 
@@ -46,7 +47,6 @@ async def enrich(source, identity, ai, http, max_blob_bytes):
         for path in files:
             if PurePosixPath(path).name != "README.md":
                 group.create_task(describe(path))
-    rendered = {}
     for path in readmes:
         parent = PurePosixPath(path).parent
         summaries = {
@@ -56,14 +56,28 @@ async def enrich(source, identity, ai, http, max_blob_bytes):
             for child in children[parent]
         }
         await describe(path, json.dumps(summaries, ensure_ascii=False))
-        rendered[path] = render(metadata[path], files[path].text_content, summaries)
+    paths = artifact_paths(source.artifacts, metadata)
     updates = []
-    for path, result in metadata.items():
-        update = internal.EnrichedArtifact(
-            node_id=files[path].node.id, metadata=pb.FileMetadata(**result.model_dump()),
-        )
-        if path in rendered:
-            update.text_content = rendered[path]
+    for item in source.artifacts:
+        path = item.path
+        update = internal.EnrichedArtifact(node_id=item.node.id)
+        if PurePosixPath(paths[path]).name != PurePosixPath(path).name:
+            update.name = PurePosixPath(paths[path]).name
+        if item.node.HasField("file"):
+            update.metadata.CopyFrom(pb.FileMetadata(**metadata[path].model_dump()))
+            if PurePosixPath(path).suffix == ".md":
+                is_readme = PurePosixPath(path).name == "README.md"
+                body = rewrite_artifact_links(own_body(item.text_content) if is_readme else item.text_content, path, paths)
+                if is_readme:
+                    parent = PurePosixPath(paths[path]).parent
+                    summaries = {
+                        PurePosixPath(paths[child]).relative_to(parent).as_posix(): {
+                            key: metadata[child].model_dump()[key] for key in ("title", "description", "semantic_type")
+                        }
+                        for child in children[PurePosixPath(path).parent]
+                    }
+                    body = render(metadata[path], body, summaries)
+                update.text_content = body
         updates.append(update)
     root = metadata.get("README.md")
     if root is None:

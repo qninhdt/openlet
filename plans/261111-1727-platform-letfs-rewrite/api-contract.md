@@ -212,7 +212,7 @@ Không binary/base64 upload body qua application JSON. Signed S3 request dùng n
 | GetProcessingInput | file_id/version → source+artifact input cần stage hiện tại; LetFS resolve actual storage/workspace |
 | PrepareArtifactUploads | source/version + batch outputs → handles/signed URLs |
 | CommitParse | source/version + typed manifest/handles → stage outcome |
-| CommitEnrichment | source/version + batch artifacts/metadata → stage outcome |
+| CommitEnrichment | source/version + batch node_id, optional name/text_content/metadata → stage outcome; directory dùng ID/name, không metadata. Đổi tên và sửa Markdown được commit nguyên tử; README/source giữ tên |
 | CompleteIndex | source/version → stage outcome |
 | FailProcessing | source/version/error_code → stage outcome |
 
