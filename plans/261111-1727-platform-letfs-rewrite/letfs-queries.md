@@ -68,7 +68,7 @@ LEFT JOIN files f ON f.node_id=c.id;
 
 Sibling name unique nên `(name,id)` stable tie-break; index cover name order. First page bỏ cursor predicate. Empty directory vẫn có resolved_parent row nhờ LEFT LATERAL, phân biệt empty và invalid locator mà không query nữa. Không recursive size/count cho từng item; response không có embedded artifact trees mặc định.
 
-ReadTree dựng relative paths và readonly từ traversal đã có. Nếu response có limit, báo truncated/continuation theo contract; outer LIMIT không đủ để hứa sort/recursive work là O(page_size). Không xây tree toàn workspace cho Stat/ListNodes.
+ReadTree dựng relative paths và readonly từ traversal nhẹ chỉ ID/kind/path/depth. ORDER BY/LIMIT max_nodes+1 trước, rồi hydrate headers của tối đa max_nodes bằng một SELECT batch. Hai statements cố định, không N+1. Nếu response có limit, báo truncated/continuation theo contract; outer LIMIT không đủ để hứa sort/recursive work là O(page_size). Không xây tree toàn workspace cho Stat/ListNodes.
 
 ## 4. Content mutation
 
@@ -94,7 +94,7 @@ Blob replace lock cùng files row với processing commit. Trong write phase: x�
 
 ## 5. CreateDirectories, MoveNode, CopyNode
 
-CreateDirectories resolve longest existing prefix bằng một recursive indexed query. Tạo UUIDs cho missing suffix, bulk INSERT toàn chain bằng unnest/recordset với parent mapping. Existing final directory thì trả ngay. Unique conflict do concurrent mkdir làm rollback; retry ordinary operation sẽ resolve prefix mới. Không per-component round trip hoặc no-op UPSERT toàn existing chain.
+CreateDirectories không request_id/receipt: mkdir-p tự lặp được. Resolve longest existing prefix bằng một recursive indexed query. Tạo UUIDs cho missing suffix, bulk INSERT toàn chain bằng unnest/recordset với parent mapping. Existing final directory thì trả ngay. Unique conflict do concurrent mkdir làm rollback; retry ordinary operation sẽ resolve prefix mới. Không per-component round trip hoặc no-op UPSERT toàn existing chain.
 
 MoveNode batch-resolve source/destination trong một R. Cycle check dùng destination ancestor chain đã đọc, không một query DFS source subtree chỉ để tìm destination. Same-storage move chỉ UPDATE root parent/name. Cross-storage move recursive UPDATE storage_id của subtree, giữ IDs/bytes; deferred composite parent FK kiểm tra cuối transaction. File version/quota/processing không đổi. Native SERIALIZABLE chỉ cho transaction này; serialization failure trả conflict.
 

@@ -29,7 +29,14 @@ message UpdateStorageQuotaRequest { string workspace_id = 1 [(buf.validate.field
 message StorageRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; }
 message ListStoragesRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; int32 page_size = 2 [(buf.validate.field).int32 = {gte: 0, lte: 100}]; string page_token = 3; optional StorageVisibility visibility = 4; bool owned_only = 5; }
 message ListStoragesResponse { repeated Storage storages = 1; string next_page_token = 2; }
-message UpdateStorageRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; optional string name = 3 [(buf.validate.field).string.min_len = 1]; optional StorageVisibility visibility = 4 [(buf.validate.field).enum = {defined_only: true, not_in: 0}]; string request_id = 5 [(buf.validate.field).string.uuid = true]; }
+message UpdateStorageRequest {
+  option (buf.validate.message).cel = {id: "storage.update", message: "name or visibility is required; visibility requires request_id", expression: "(has(this.name) || has(this.visibility)) && (!has(this.visibility) || this.request_id != '')"};
+  string workspace_id = 1 [(buf.validate.field).string.uuid = true];
+  string storage_id = 2 [(buf.validate.field).string.uuid = true];
+  optional string name = 3 [(buf.validate.field).string.min_len = 1];
+  optional StorageVisibility visibility = 4 [(buf.validate.field).enum = {defined_only: true, not_in: 0}];
+  string request_id = 5 [(buf.validate.field) = {ignore: IGNORE_IF_ZERO_VALUE, string: {uuid: true}}];
+}
 message SetStorageAccessRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; ActorRef actor = 3 [(buf.validate.field).required = true]; StorageRole role = 4 [(buf.validate.field).enum = {in: [2,3]}]; }
 message RevokeStorageAccessRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; ActorRef actor = 3 [(buf.validate.field).required = true]; }
 message NodeRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; NodeLocator target = 3 [(buf.validate.field).required = true]; }
@@ -43,7 +50,7 @@ message TreeEntry { Node node = 1; string path = 2; uint32 depth = 3; }
 message ReadTreeResponse { repeated TreeEntry entries = 1; bool truncated = 2; }
 message TextContent { string content = 1; string media_type = 2; }
 message CreateNodeRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; NodeLocator parent = 3 [(buf.validate.field).required = true]; string name = 4 [(buf.validate.field).string = {min_len: 1, max_len: 255, not_in: [".",".."], pattern: "^[^/\\x00]+$"}]; oneof content { option (buf.validate.oneof).required = true; google.protobuf.Empty directory = 5; TextContent text = 6; } string request_id = 7 [(buf.validate.field).string.uuid = true]; }
-message CreateDirectoriesRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; NodeLocator base = 3 [(buf.validate.field).required = true]; string path = 4 [(buf.validate.field).string.min_len = 1]; string request_id = 5 [(buf.validate.field).string.uuid = true]; }
+message CreateDirectoriesRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; NodeLocator base = 3 [(buf.validate.field).required = true]; string path = 4 [(buf.validate.field).string.min_len = 1]; reserved 5; reserved "request_id"; }
 message TransferNodeRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; NodeLocator source = 3 [(buf.validate.field).required = true]; string destination_storage_id = 4 [(buf.validate.field).string.uuid = true]; NodeLocator parent = 5 [(buf.validate.field).required = true]; string name = 6 [(buf.validate.field).string = {min_len: 1, max_len: 255, not_in: [".",".."], pattern: "^[^/\\x00]+$"}]; string request_id = 7 [(buf.validate.field).string.uuid = true]; }
 message ByteRange { int64 offset = 1 [(buf.validate.field).int64.gte = 0]; optional int64 length = 2 [(buf.validate.field).int64.gte = 0]; }
 message LineRange { uint32 first = 1 [(buf.validate.field).uint32.gte = 1]; uint32 count = 2; }
@@ -77,11 +84,19 @@ message PurgeTrashRequest { string workspace_id = 1 [(buf.validate.field).string
 message UploadCreate { NodeLocator parent = 1 [(buf.validate.field).required = true]; string name = 2 [(buf.validate.field).string = {min_len: 1, max_len: 255, not_in: [".",".."], pattern: "^[^/\\x00]+$"}]; }
 message UploadReplace { NodeLocator target = 1 [(buf.validate.field).required = true]; int64 expected_version = 2 [(buf.validate.field).int64.gt = 0]; }
 message CreateUploadRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; oneof destination { option (buf.validate.oneof).required = true; UploadCreate create = 3; UploadReplace replace = 4; } int64 size_bytes = 5 [(buf.validate.field).int64.gte = 0]; string media_type = 6 [(buf.validate.field).string.min_len = 1]; string checksum = 7 [(buf.validate.field).string.min_len = 1]; string request_id = 8 [(buf.validate.field).string.uuid = true]; }
-message SignedPart { uint32 part_number = 1; string url = 2; }
+message SignedPart { uint32 part_number = 1; string url = 2; map<string,string> headers = 3; }
+message UploadPart { uint32 part_number = 1 [(buf.validate.field).uint32 = {gte: 1, lte: 10000}]; string checksum = 2 [(buf.validate.field).string.min_len = 1]; }
 message TransferDescriptor { string put_url = 1; map<string,string> headers = 2; bool multipart = 3; int64 part_size_bytes = 4; }
 message Upload { string id = 1; google.protobuf.Timestamp expires_at = 2; TransferDescriptor transfer = 3; Node completed = 4; }
 message UploadRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; string upload_id = 3 [(buf.validate.field).string.uuid = true]; }
-message SignPartsRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; string upload_id = 3 [(buf.validate.field).string.uuid = true]; repeated uint32 part_numbers = 4 [(buf.validate.field).repeated = {min_items: 1, max_items: 1000, unique: true, items: {uint32: {gte: 1, lte: 10000}}}]; }
+message SignPartsRequest {
+  option (buf.validate.message).cel = {id: "parts.unique", message: "part numbers must be unique", expression: "this.parts.map(p, p.part_number).unique()"};
+  string workspace_id = 1 [(buf.validate.field).string.uuid = true];
+  string storage_id = 2 [(buf.validate.field).string.uuid = true];
+  string upload_id = 3 [(buf.validate.field).string.uuid = true];
+  reserved 4; reserved "part_numbers";
+  repeated UploadPart parts = 5 [(buf.validate.field).repeated = {min_items: 1, max_items: 1000}];
+}
 message SignPartsResponse { repeated SignedPart parts = 1; }
 message CompletedPart { uint32 part_number = 1; string etag = 2; string checksum = 3; }
 message CompleteUploadRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; string upload_id = 3 [(buf.validate.field).string.uuid = true]; repeated CompletedPart parts = 4; }

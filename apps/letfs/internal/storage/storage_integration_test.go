@@ -115,6 +115,10 @@ func TestStorageSQLInvariants(t *testing.T) {
 	if err != nil || !artifact.Node.Readonly {
 		t.Fatalf("artifact writable: %+v %v", artifact, err)
 	}
+	input, err := s.GetProcessingInput(ctx, &pb.ProcessingRequest{FileId: source, Version: 1})
+	if err != nil || input.Outcome.Stage != "parsed" || input.SourceName != "source.pdf" || len(input.Artifacts) != 1 || input.Artifacts[0].GetTextContent() != "hello" || !input.Artifacts[0].Node.Readonly || input.Artifacts[0].Path != "README.md" {
+		t.Fatalf("processing batch input: %+v %v", input, err)
+	}
 	enriched := "hello world"
 	out, err = s.CommitEnrichment(ctx, &pb.CommitEnrichmentRequest{FileId: source, Version: 1, Artifacts: []*pb.EnrichedArtifact{{NodeId: artifact.Node.Id, TextContent: &enriched}}})
 	if err != nil || out.Stage != "enriched" {

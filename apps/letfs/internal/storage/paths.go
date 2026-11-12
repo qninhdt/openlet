@@ -22,7 +22,7 @@ const headerSQL = `jsonb_strip_nulls(jsonb_build_object(
 const headerJoins = ` LEFT JOIN files f ON f.node_id=n.id LEFT JOIN file_metadata m ON m.node_id=n.id LEFT JOIN processing p ON p.file_id=n.id `
 const resolverCTE = `WITH RECURSIVE
  storage AS (SELECT s.* FROM storages s WHERE s.id=$2 AND s.workspace_id=$1),
- inputs AS (SELECT x.ord,x.id,x.path,coalesce(x.root,s.root_node_id) AS root,coalesce(x.cwd,x.root,s.root_node_id) AS cwd,s.root_node_id AS live_root FROM jsonb_to_recordset($3::jsonb) AS x(ord int,id uuid,path text,root uuid,cwd uuid) CROSS JOIN storage s),
+ inputs AS (SELECT x.ord,x.id,x.path,coalesce(x.root,s.root_node_id) AS root,coalesce(x.cwd,x.root,s.root_node_id) AS cwd,s.root_node_id AS live_root FROM jsonb_to_record(($3::jsonb)->0) AS x(ord int,id uuid,path text,root uuid,cwd uuid) CROSS JOIN storage s),
  bases AS (SELECT i.ord,n.id,n.parent_id,n.kind,0 AS depth FROM inputs i JOIN nodes n ON n.id=i.cwd AND n.storage_id=$2
  UNION ALL SELECT b.ord,n.id,n.parent_id,n.kind,b.depth+1 FROM bases b JOIN nodes n ON n.id=b.parent_id AND n.storage_id=$2),
  valid_bases AS (SELECT i.ord,bool_or(b.id=i.root) AND bool_or(b.id=i.live_root) AS valid FROM inputs i JOIN bases b ON b.ord=i.ord GROUP BY i.ord),
@@ -37,6 +37,8 @@ const resolverCTE = `WITH RECURSIVE
  valid AS (SELECT a.ord,bool_or(a.id=i.root) AND bool_or(a.id=i.live_root) AS live, bool_or(a.depth>0 AND a.kind='file') AS readonly,array_agg(a.id ORDER BY a.depth) AS chain FROM ancestors a JOIN inputs i ON i.ord=a.ord GROUP BY a.ord),
  resolved AS (SELECT t.ord,t.id,v.readonly,v.chain,i.root FROM targets t JOIN valid v ON v.ord=t.ord AND v.live JOIN inputs i ON i.ord=t.ord)
 `
+
+var batchResolverCTE = strings.Replace(resolverCTE, "jsonb_to_record(($3::jsonb)->0)", "jsonb_to_recordset($3::jsonb)", 1)
 
 type resolved struct {
 	Node       *pb.Node
@@ -93,7 +95,11 @@ func resolve(ctx context.Context, q queryer, workspace, storage string, targets 
 	if lock {
 		joins = strings.Replace(joins, "LEFT JOIN files f", "LEFT JOIN locked f", 1)
 	}
-	sql := resolverCTE + lockCTE + ` SELECT r.ord,` + headerSQL + `,r.root,r.chain,` + columns + `,s.allow_blob_files,s.allow_indexing FROM resolved r JOIN nodes n ON n.id=r.id CROSS JOIN storage s CROSS JOIN LATERAL(SELECT r.readonly) v ` + joins + ` ORDER BY r.ord`
+	cte := resolverCTE
+	if len(targets) > 1 {
+		cte = batchResolverCTE
+	}
+	sql := cte + lockCTE + ` SELECT r.ord,` + headerSQL + `,r.root,r.chain,` + columns + `,s.allow_blob_files,s.allow_indexing FROM resolved r JOIN nodes n ON n.id=r.id CROSS JOIN storage s CROSS JOIN LATERAL(SELECT r.readonly) v ` + joins + ` ORDER BY r.ord`
 	rows, err := q.Query(ctx, sql, workspace, storage, input)
 	if err != nil {
 		return nil, err
@@ -124,4 +130,29 @@ func oneResolved(ctx context.Context, q queryer, workspace, storage string, targ
 		return resolved{}, notFound()
 	}
 	return r[0], nil
+}
+
+func readNodes(ctx context.Context, q queryer, ids []string, readonly []bool, payload bool) ([]resolved, error) {
+	columns := "NULL::text,NULL::text"
+	if payload {
+		columns = "f.text_content,f.object_key"
+	}
+	rows, err := q.Query(ctx, `SELECT `+headerSQL+`,`+columns+` FROM unnest($1::uuid[],$2::boolean[]) WITH ORDINALITY v(id,readonly,ord) JOIN nodes n ON n.id=v.id `+headerJoins+` ORDER BY v.ord`, ids, readonly)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]resolved, 0, len(ids))
+	for rows.Next() {
+		var raw []byte
+		v := resolved{Node: new(pb.Node)}
+		if err = rows.Scan(&raw, &v.Text, &v.ObjectKey); err != nil {
+			return nil, err
+		}
+		if err = protojson.Unmarshal(raw, v.Node); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
 }

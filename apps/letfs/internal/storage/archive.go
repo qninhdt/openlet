@@ -77,7 +77,7 @@ func (s *Server) DownloadArchive(r *pb.DownloadArchiveRequest, stream grpc.Serve
 	if err != nil {
 		return err
 	}
-	rows, err := s.DB.Query(ctx, resolverCTE+`,tree AS(SELECT n.id,n.kind,n.name AS path FROM resolved r JOIN nodes n ON n.id=r.id UNION ALL SELECT n.id,n.kind,CASE WHEN t.path='' THEN n.name ELSE t.path||'/'||n.name END FROM tree t JOIN nodes n ON n.parent_id=t.id WHERE t.kind='directory') SELECT DISTINCT ON(t.id) (SELECT count(*) FROM resolved),t.path,t.kind,f.text_content,f.object_key FROM tree t LEFT JOIN files f ON f.node_id=t.id ORDER BY t.id,t.path`, r.WorkspaceId, r.StorageId, input)
+	rows, err := s.DB.Query(ctx, batchResolverCTE+`,tree AS(SELECT n.id,n.kind,n.name AS path FROM resolved r JOIN nodes n ON n.id=r.id UNION ALL SELECT n.id,n.kind,CASE WHEN t.path='' THEN n.name ELSE t.path||'/'||n.name END FROM tree t JOIN nodes n ON n.parent_id=t.id WHERE t.kind='directory') SELECT DISTINCT ON(t.id) (SELECT count(*) FROM resolved),t.path,t.kind,f.text_content,f.object_key FROM tree t LEFT JOIN files f ON f.node_id=t.id ORDER BY t.id,t.path`, r.WorkspaceId, r.StorageId, input)
 	if err != nil {
 		return err
 	}

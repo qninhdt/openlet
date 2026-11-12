@@ -107,9 +107,12 @@ func (s *Server) RevokeStorageAccess(ctx context.Context, r *pb.RevokeStorageAcc
 	return &emptypb.Empty{}, err
 }
 func (s *Server) UpdateStorage(ctx context.Context, r *pb.UpdateStorageRequest) (*pb.Storage, error) {
-	a, err := s.check(ctx, "storage", r.StorageId, "manage_access")
+	_, err := s.check(ctx, "storage", r.StorageId, "manage_access")
 	if err != nil {
 		return nil, err
+	}
+	if r.Visibility == nil {
+		return scanStorage(s.DB.QueryRow(ctx, `UPDATE storages SET name=$3 WHERE id=$1 AND workspace_id=$2 RETURNING `+storageColumns, r.StorageId, r.WorkspaceId, r.Name))
 	}
 	if err = s.storageParent(ctx, r.WorkspaceId, r.StorageId); err != nil {
 		return nil, err
@@ -119,7 +122,7 @@ func (s *Server) UpdateStorage(ctx context.Context, r *pb.UpdateStorageRequest) 
 		return nil, err
 	}
 	h := sha256.Sum256(raw)
-	run, err := s.Temporal.ExecuteWorkflow(ctx, client.StartWorkflowOptions{ID: "storage-visibility/" + r.RequestId + "/" + hex.EncodeToString(h[:]), TaskQueue: s.Queues.LetFS, WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY, WorkflowIDConflictPolicy: enums.WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING}, UpdateStorageVisibility, VisibilityInput{Caller: a.String(), Request: r})
+	run, err := s.Temporal.ExecuteWorkflow(ctx, client.StartWorkflowOptions{ID: "storage-visibility/" + r.RequestId + "/" + hex.EncodeToString(h[:]), TaskQueue: s.Queues.LetFS, WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY, WorkflowIDConflictPolicy: enums.WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING}, UpdateStorageVisibility, VisibilityInput{Request: r})
 	if err != nil {
 		return nil, err
 	}

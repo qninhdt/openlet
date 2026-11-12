@@ -12,6 +12,8 @@ Cập nhật 2026-11-12. Architecture, schema, API Platform/LetFS và Temporal �
 - [Configuration](configuration.md), [YAML mẫu](openlet.example.yaml), [telemetry](telemetry.md), [HTTP JSON](http-json.md).
 - [Infra/E2E/CI/CD](infra-testing-ci-cd.md), [archive report](../reports/implementation-261111-1948-archive.md), [đối chiếu chức năng](../reports/feature-parity-261112-platform-letfs-rewrite.md).
 - [Review trước push dev và LoC](../reports/readiness-loc-261112-platform-letfs-rewrite.md).
+- [Benchmark LetFS: đủ 43 RPC, query plans và các điểm cần tối ưu](../reports/benchmark-261112-1212-letfs.md).
+- [Sửa hiệu năng LetFS và audit idempotency](../reports/implementation-261112-1249-letfs-performance-idempotency.md).
 - [Role/UI research](../reports/research-261111-1834-spicedb-role-ownership.md), [consistency research](../reports/research-261111-1746-spicedb-consistency.md): historical evidence; policy hiện tại lấy từ design đã chốt.
 
 ## Kết quả và giới hạn
@@ -86,6 +88,8 @@ Theo yêu cầu mở rộng sau đó, cả Leta src/, migrations/ và native dep
 
 - [x] Rà soát active project trước push dev, sửa upload receipt/member-limit gaps, kiểm generated drift/candidate secrets và đo LoC trước/sau; [evidence](../reports/readiness-loc-261112-platform-letfs-rewrite.md). Chưa commit/push hoặc remote CI.
 
+- [x] Áp dụng benchmark fixes/idempotency audit đã duyệt: single resolver, batch tree/processing, rename direct SQL, bỏ receipts mkdir/visibility, multipart checksums; checks/SQL/E2E 4/4 và 3.045 targeted benchmark requests không lỗi. ReadTree 1000 c32 còn tail khoảng 457 ms; [evidence và audit matrix](../reports/implementation-261112-1249-letfs-performance-idempotency.md).
+
 ## Sẵn sàng implementation và làm song song với Leta
 
 Phạm vi implementation đã chốt đã có local proof. Đối chiếu archive đã có quyết định: chỉ bổ sung hybrid search, không thêm search filters/sort, cross-storage restore hoặc mkdir/empty-trash options. Hybrid không đổi public API; đã kiểm chứng, xem báo cáo chức năng và review trước push dev. API/Temporal nội dung đã được chấp thuận; protobuf field numbers, pinned dependency versions, native SDK options và chi tiết SQL là công việc implementation, không mở thêm vòng brainstorm. Nếu bằng chứng thực thi buộc đổi public semantics/schema/permission/boundary hoặc thêm cơ chế ngoài plan thì hỏi user trước khi đổi. Không hỏi lại routine coding choices đã nằm trong thiết kế.
@@ -102,7 +106,7 @@ Quyết định boundary cùng ngày, đã triển khai phía core: xóa Platfor
 
 Không reset/ghi đè code user, không import archived handwritten implementation/tests, không đọc/sửa dotenv thật hoặc database cũ; kiểm chứng chỉ dùng databases mới tách biệt. Database cũ giữ nguyên đến cutover riêng; backup trước schema/data change. Chưa push/deploy/cutover production.
 
-Không validate lại Zed theo yêu cầu. Native bootstrap áp dụng schema vào test datastore mới; không khôi phục Zed validation suite. Local Envoy/Compose/E2E đã pass; chưa benchmark hoặc chứng minh môi trường production.
+Không validate lại Zed theo yêu cầu. Native bootstrap áp dụng schema vào test datastore mới; không khôi phục Zed validation suite. Local Envoy/Compose/E2E đã pass; benchmark LetFS local đã có báo cáo riêng, chưa chứng minh môi trường production.
 
 ## Tiến độ implementation 2026-11-12
 

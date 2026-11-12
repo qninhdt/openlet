@@ -6,7 +6,7 @@ Dùng [schema](schema.md), [S/I budget](query-design.md) và [LetFS RPC matrix](
 
 | RPC | S business SQL | Set-based query | Lock/atomicity |
 |---|---:|---|---|
-| `GetProcessingInput` | 1 | Source R + current stage/version + recursive artifact text/blob inventory | Read only; sign source/artifact URLs từ object keys đã có |
+| `GetProcessingInput` | 2 | Source R + lightweight recursive IDs/path; một batch hydrate headers/text/blob keys | Read only; sign source/artifact URLs từ object keys đã có |
 | `PrepareArtifactUploads` | 2 | Source R; bulk INSERT upload handles bằng recordset | Version admission; không SQL mỗi output, không upload trong transaction |
 | `CommitParse` | 2 | R + source files row lock; bulk handles validation/consume + node/file INSERT + quota/stage DML | Current source/version + stage pending; retry parsed-or-later no-op |
 | `CommitEnrichment` | 2 | R + source files row lock; bulk artifact text/metadata UPDATE/UPSERT + quota/stage DML | Stage parsed -> enriched; retry enriched-or-later no-op |
@@ -17,7 +17,7 @@ Rows/bytes xử lý tăng theo số artifacts, số statements không tăng. DML
 
 ## 2. Input/publication
 
-GetProcessingInput dùng source current version và stage để chỉ trả dữ liệu activity cần: pending cần source descriptor; parsed/enriched cần current artifact inventory để enrich/index. Stage ready trả done, không serialize toàn tree. Chỉ lấy text_content khi CPU/IO cần bytes, không mỗi node một GET/ReadText.
+GetProcessingInput dùng hai SELECT cố định, không query mỗi artifact và không join payload vào recursive estimate lớn. Dùng source current version và stage để chỉ trả dữ liệu activity cần: pending cần source descriptor; parsed/enriched cần current artifact inventory để enrich/index. Stage ready trả done, không serialize toàn tree. Chỉ lấy text_content khi CPU/IO cần bytes, không mỗi node một GET/ReadText.
 
 PrepareArtifactUploads nhận batch expected bytes/media/checksum. INSERT SELECT từ một source/version admission; object keys do LetFS cấp. Source thay đổi sau admission thì old handles hết admissible ở CommitParse; chúng expire/GC, không lease giữ source trong lúc worker upload.
 
@@ -53,7 +53,7 @@ CompleteUpload first SELECT đúng upload ID kiểm tra actor/storage/expiry; n�
 
 result là receipt thật; hoàn thành upload rồi node bị edit/delete vẫn trả publication identity đã lưu. `expires_at` khi open là admission deadline, sau complete là receipt retention deadline. Không completed node ID/status/complete timestamp trùng trong bảng. Completed row không phải active GC reference; files.object_key mới là reference lâu dài.
 
-SignParts đọc transfer một lần rồi native presign list parts trong memory. Không transaction, HTTP S3 request hoặc DB row cho từng part. Parts receipts do CompleteUpload gửi một batch cho native multipart complete.
+SignParts đọc transfer một lần rồi native presign list parts/checksums trong memory, trả signed headers của SDK. Không transaction, HTTP S3 request hoặc DB row cho từng part. Parts receipts do CompleteUpload gửi một batch cho native multipart complete.
 
 ## 5. Maintenance queries
 

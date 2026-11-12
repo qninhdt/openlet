@@ -50,4 +50,38 @@ test('XLSX blob runs both workers, publishes readonly artifacts and becomes sear
   const download = await api.get(`${base}/nodes/${node.id}:download`);
   const original = await request.get((await download.json()).blob.url);
   expect(await original.body()).toEqual(bytes);
+
+  const payload = Buffer.alloc(20 * 1024 * 1024, 0x61);
+  function crc(value: Buffer): string {
+    const checksum = Buffer.alloc(4);
+    checksum.writeUInt32BE(crc32c(value));
+    return checksum.toString('base64');
+  }
+  const multipart = await api.post(`${base}/uploads`, { data: {
+    create: { parent: { nodeId: rootId }, name: 'payload.bin' }, sizeBytes: String(payload.length),
+    mediaType: 'application/octet-stream', checksum: crc(payload), requestId: randomUUID(),
+  } });
+  expect(multipart.ok(), await multipart.text()).toBeTruthy();
+  const transfer = await multipart.json();
+  expect(transfer.transfer.multipart).toBe(true);
+  const partSize = Number(transfer.transfer.partSizeBytes);
+  const chunks: Buffer[] = [];
+  for (let offset = 0; offset < payload.length; offset += partSize) chunks.push(payload.subarray(offset, offset + partSize));
+  const parts = chunks.map((chunk, index) => ({ partNumber: index + 1, checksum: crc(chunk) }));
+  const signing = await api.post(`${base}/uploads/${transfer.id}:signParts`, { data: { parts } });
+  expect(signing.ok(), await signing.text()).toBeTruthy();
+  const signed = (await signing.json()).parts;
+  const completed = [];
+  for (const part of signed) {
+    const put = await request.put(part.url, { headers: part.headers, data: chunks[part.partNumber - 1] });
+    expect(put.ok(), await put.text()).toBeTruthy();
+    completed.push({ ...parts[part.partNumber - 1], etag: put.headers().etag });
+  }
+  const publication = await api.post(`${base}/uploads/${transfer.id}:complete`, { data: { parts: completed } });
+  expect(publication.ok(), await publication.text()).toBeTruthy();
+  const published = await publication.json();
+  const multipartDownload = await api.get(`${base}/nodes/${published.id}:download`);
+  const downloaded = await request.get((await multipartDownload.json()).blob.url);
+  expect(downloaded.ok(), await downloaded.text()).toBeTruthy();
+  expect(await downloaded.body()).toEqual(payload);
 });

@@ -50,38 +50,52 @@ func (s *Server) ReadTree(ctx context.Context, r *pb.ReadTreeRequest) (*pb.ReadT
 		return nil, err
 	}
 	rows, err := s.DB.Query(ctx, resolverCTE+`, tree AS (
- SELECT n.*,0 AS depth,''::text AS path,r.readonly FROM resolved r JOIN nodes n ON n.id=r.id
- UNION ALL SELECT c.*,t.depth+1,CASE WHEN t.path='' THEN c.name ELSE t.path||'/'||c.name END,t.readonly OR t.kind='file' FROM tree t JOIN nodes c ON c.parent_id=t.id AND c.storage_id=$2 WHERE t.depth<$4
- ) SELECT `+headerSQL+`,n.path,n.depth FROM tree n CROSS JOIN LATERAL(SELECT n.readonly) v `+headerJoins+` ORDER BY n.path LIMIT $5`, r.WorkspaceId, r.StorageId, input, r.MaxDepth, r.MaxNodes+1)
+ SELECT n.id,n.name,0 AS depth,''::text AS path,r.readonly,n.kind FROM resolved r JOIN nodes n ON n.id=r.id
+ UNION ALL SELECT c.id,c.name,t.depth+1,CASE WHEN t.path='' THEN c.name ELSE t.path||'/'||c.name END,t.readonly OR t.kind='file',c.kind FROM tree t JOIN nodes c ON c.parent_id=t.id AND c.storage_id=$2 WHERE t.depth<$4
+ ) SELECT id,path,depth,readonly FROM tree ORDER BY path LIMIT $5`, r.WorkspaceId, r.StorageId, input, r.MaxDepth, r.MaxNodes+1)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := new(pb.ReadTreeResponse)
+	ids := []string{}
+	readonly := []bool{}
+	entries := map[string]*pb.TreeEntry{}
 	for rows.Next() {
-		var raw []byte
+		var id string
+		var ro bool
 		entry := new(pb.TreeEntry)
-		if err = rows.Scan(&raw, &entry.Path, &entry.Depth); err != nil {
+		if err = rows.Scan(&id, &entry.Path, &entry.Depth, &ro); err != nil {
+			rows.Close()
 			return nil, err
 		}
-		entry.Node = new(pb.Node)
-		if err = protojson.Unmarshal(raw, entry.Node); err != nil {
-			return nil, err
-		}
-		out.Entries = append(out.Entries, entry)
+		ids = append(ids, id)
+		readonly = append(readonly, ro)
+		entries[id] = entry
 	}
-	if err = rows.Err(); err != nil {
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
 		return nil, err
 	}
-	if len(out.Entries) == 0 {
+	if len(ids) == 0 {
 		return nil, notFound()
 	}
-	if len(out.Entries) > int(r.MaxNodes) {
-		out.Entries = out.Entries[:r.MaxNodes]
-		out.Truncated = true
+	out := &pb.ReadTreeResponse{Truncated: len(ids) > int(r.MaxNodes)}
+	if out.Truncated {
+		ids = ids[:r.MaxNodes]
+		readonly = readonly[:r.MaxNodes]
+	}
+	nodes, err := readNodes(ctx, s.DB, ids, readonly, false)
+	if err != nil {
+		return nil, err
+	}
+	for _, v := range nodes {
+		entry := entries[v.Node.Id]
+		entry.Node = v.Node
+		out.Entries = append(out.Entries, entry)
 	}
 	return out, nil
 }
+
 func (s *Server) transferChecks(ctx context.Context, r *pb.TransferNodeRequest, move bool) (sdk.Actor, error) {
 	a, err := sdk.ActorFromContext(ctx)
 	if err != nil {

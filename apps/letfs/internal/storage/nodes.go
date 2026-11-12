@@ -155,7 +155,7 @@ func (s *Server) CreateNode(ctx context.Context, r *pb.CreateNodeRequest) (*pb.N
 	return out, tx.Commit(ctx)
 }
 func (s *Server) CreateDirectories(ctx context.Context, r *pb.CreateDirectoriesRequest) (*pb.Node, error) {
-	a, err := s.check(ctx, "storage", r.StorageId, "write")
+	_, err := s.check(ctx, "storage", r.StorageId, "write")
 	if err != nil {
 		return nil, err
 	}
@@ -171,13 +171,6 @@ func (s *Server) CreateDirectories(ctx context.Context, r *pb.CreateDirectoriesR
 	}
 	defer tx.Rollback(ctx)
 	out := new(pb.Node)
-	duplicate, err := sdk.Claim(ctx, tx, a.String(), "CreateDirectories", r.RequestId, r, out, s.ttl())
-	if err != nil {
-		return nil, err
-	}
-	if duplicate {
-		return out, tx.Commit(ctx)
-	}
 	base, err := oneResolved(ctx, tx, r.WorkspaceId, r.StorageId, r.Base, false, false)
 	if err != nil {
 		return nil, err
@@ -195,9 +188,6 @@ func (s *Server) CreateDirectories(ctx context.Context, r *pb.CreateDirectoriesR
 		return nil, err
 	}
 	if err = protojson.Unmarshal(raw, out); err != nil {
-		return nil, err
-	}
-	if err = sdk.Finish(ctx, tx, a.String(), "CreateDirectories", r.RequestId, out); err != nil {
 		return nil, err
 	}
 	return out, tx.Commit(ctx)

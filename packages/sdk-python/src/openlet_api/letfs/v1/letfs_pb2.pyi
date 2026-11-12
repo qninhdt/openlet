@@ -394,18 +394,16 @@ class CreateNodeRequest(_message.Message):
     def __init__(self, workspace_id: _Optional[str] = ..., storage_id: _Optional[str] = ..., parent: _Optional[_Union[NodeLocator, _Mapping]] = ..., name: _Optional[str] = ..., directory: _Optional[_Union[_empty_pb2.Empty, _Mapping]] = ..., text: _Optional[_Union[TextContent, _Mapping]] = ..., request_id: _Optional[str] = ...) -> None: ...
 
 class CreateDirectoriesRequest(_message.Message):
-    __slots__ = ("workspace_id", "storage_id", "base", "path", "request_id")
+    __slots__ = ("workspace_id", "storage_id", "base", "path")
     WORKSPACE_ID_FIELD_NUMBER: _ClassVar[int]
     STORAGE_ID_FIELD_NUMBER: _ClassVar[int]
     BASE_FIELD_NUMBER: _ClassVar[int]
     PATH_FIELD_NUMBER: _ClassVar[int]
-    REQUEST_ID_FIELD_NUMBER: _ClassVar[int]
     workspace_id: str
     storage_id: str
     base: NodeLocator
     path: str
-    request_id: str
-    def __init__(self, workspace_id: _Optional[str] = ..., storage_id: _Optional[str] = ..., base: _Optional[_Union[NodeLocator, _Mapping]] = ..., path: _Optional[str] = ..., request_id: _Optional[str] = ...) -> None: ...
+    def __init__(self, workspace_id: _Optional[str] = ..., storage_id: _Optional[str] = ..., base: _Optional[_Union[NodeLocator, _Mapping]] = ..., path: _Optional[str] = ...) -> None: ...
 
 class TransferNodeRequest(_message.Message):
     __slots__ = ("workspace_id", "storage_id", "source", "destination_storage_id", "parent", "name", "request_id")
@@ -790,12 +788,29 @@ class CreateUploadRequest(_message.Message):
     def __init__(self, workspace_id: _Optional[str] = ..., storage_id: _Optional[str] = ..., create: _Optional[_Union[UploadCreate, _Mapping]] = ..., replace: _Optional[_Union[UploadReplace, _Mapping]] = ..., size_bytes: _Optional[int] = ..., media_type: _Optional[str] = ..., checksum: _Optional[str] = ..., request_id: _Optional[str] = ...) -> None: ...
 
 class SignedPart(_message.Message):
-    __slots__ = ("part_number", "url")
+    __slots__ = ("part_number", "url", "headers")
+    class HeadersEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: str
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[str] = ...) -> None: ...
     PART_NUMBER_FIELD_NUMBER: _ClassVar[int]
     URL_FIELD_NUMBER: _ClassVar[int]
+    HEADERS_FIELD_NUMBER: _ClassVar[int]
     part_number: int
     url: str
-    def __init__(self, part_number: _Optional[int] = ..., url: _Optional[str] = ...) -> None: ...
+    headers: _containers.ScalarMap[str, str]
+    def __init__(self, part_number: _Optional[int] = ..., url: _Optional[str] = ..., headers: _Optional[_Mapping[str, str]] = ...) -> None: ...
+
+class UploadPart(_message.Message):
+    __slots__ = ("part_number", "checksum")
+    PART_NUMBER_FIELD_NUMBER: _ClassVar[int]
+    CHECKSUM_FIELD_NUMBER: _ClassVar[int]
+    part_number: int
+    checksum: str
+    def __init__(self, part_number: _Optional[int] = ..., checksum: _Optional[str] = ...) -> None: ...
 
 class TransferDescriptor(_message.Message):
     __slots__ = ("put_url", "headers", "multipart", "part_size_bytes")
@@ -839,16 +854,16 @@ class UploadRequest(_message.Message):
     def __init__(self, workspace_id: _Optional[str] = ..., storage_id: _Optional[str] = ..., upload_id: _Optional[str] = ...) -> None: ...
 
 class SignPartsRequest(_message.Message):
-    __slots__ = ("workspace_id", "storage_id", "upload_id", "part_numbers")
+    __slots__ = ("workspace_id", "storage_id", "upload_id", "parts")
     WORKSPACE_ID_FIELD_NUMBER: _ClassVar[int]
     STORAGE_ID_FIELD_NUMBER: _ClassVar[int]
     UPLOAD_ID_FIELD_NUMBER: _ClassVar[int]
-    PART_NUMBERS_FIELD_NUMBER: _ClassVar[int]
+    PARTS_FIELD_NUMBER: _ClassVar[int]
     workspace_id: str
     storage_id: str
     upload_id: str
-    part_numbers: _containers.RepeatedScalarFieldContainer[int]
-    def __init__(self, workspace_id: _Optional[str] = ..., storage_id: _Optional[str] = ..., upload_id: _Optional[str] = ..., part_numbers: _Optional[_Iterable[int]] = ...) -> None: ...
+    parts: _containers.RepeatedCompositeFieldContainer[UploadPart]
+    def __init__(self, workspace_id: _Optional[str] = ..., storage_id: _Optional[str] = ..., upload_id: _Optional[str] = ..., parts: _Optional[_Iterable[_Union[UploadPart, _Mapping]]] = ...) -> None: ...
 
 class SignPartsResponse(_message.Message):
     __slots__ = ("parts",)

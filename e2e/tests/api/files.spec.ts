@@ -5,6 +5,27 @@ import { test, expect } from '../../fixtures/api.js';
 test('text editing, quota, copy, trash, restore and ZIP keep content intact', async ({ account }) => {
   const { api, workspaceId, storageId, rootId } = account;
   const base = `/v1/workspaces/${workspaceId}/storages/${storageId}`;
+  const rename = { name: 'Renamed storage' };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const response = await api.patch(base, { data: rename });
+    expect(response.ok(), await response.text()).toBeTruthy();
+    expect((await response.json()).name).toBe(rename.name);
+  }
+  const visibility = { visibility: 'STORAGE_VISIBILITY_PUBLIC', requestId: randomUUID() };
+  const changed = await api.patch(base, { data: visibility });
+  expect(changed.ok(), await changed.text()).toBeTruthy();
+  expect((await changed.json()).visibility).toBe(visibility.visibility);
+  const replayed = await api.patch(base, { data: visibility });
+  expect(replayed.ok(), await replayed.text()).toBeTruthy();
+  expect(await replayed.json()).toEqual(await changed.json());
+  const privateAgain = await api.patch(base, { data: { visibility: 'STORAGE_VISIBILITY_PRIVATE', requestId: randomUUID() } });
+  expect(privateAgain.ok(), await privateAgain.text()).toBeTruthy();
+  const directories = { base: { nodeId: rootId }, path: 'docs/drafts' };
+  const first = await api.post(`${base}/nodes:createDirectories`, { data: directories });
+  expect(first.ok(), await first.text()).toBeTruthy();
+  const again = await api.post(`${base}/nodes:createDirectories`, { data: directories });
+  expect(again.ok(), await again.text()).toBeTruthy();
+  expect((await again.json()).id).toBe((await first.json()).id);
   const content = 'Xin chào\r\nSecond line\n';
   const created = await api.post(`${base}/nodes`, { data: { parent: { nodeId: rootId }, name: 'notes.txt', text: { content, mediaType: 'text/plain' }, requestId: randomUUID() } });
   expect(created.ok(), await created.text()).toBeTruthy();
@@ -31,11 +52,12 @@ test('text editing, quota, copy, trash, restore and ZIP keep content intact', as
   const copy = await api.post(`${base}/nodes:copy`, { data: { source: { nodeId: node.id }, destinationStorageId: storageId, parent: { nodeId: rootId }, name: 'copy.txt', requestId: randomUUID() } });
   expect(copy.ok(), await copy.text()).toBeTruthy();
   const copied = await copy.json();
-  const archived = await api.post(`${base}/nodes:downloadArchive`, { data: { targets: [{ nodeId: copied.id }] } });
+  const archived = await api.post(`${base}/nodes:downloadArchive`, { data: { targets: [{ nodeId: copied.id }, { nodeId: node.id }] } });
   expect(archived.ok(), await archived.text()).toBeTruthy();
   expect(archived.headers()['content-type']).toContain('application/zip');
   const zip = unzipSync(await archived.body());
   expect(strFromU8(zip['copy.txt'])).toBe(content + edit.append);
+  expect(strFromU8(zip['notes.txt'])).toBe(content + edit.append);
   const trashed = await api.post(`${base}/nodes/${copied.id}:trash`, { data: { requestId: randomUUID() } });
   expect(trashed.ok(), await trashed.text()).toBeTruthy();
   const entry = await trashed.json();

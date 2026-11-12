@@ -139,7 +139,7 @@ S là /v1/workspaces/{workspace_id}/storages/{storage_id}.
 | UpdateStorageQuota | PATCH /v1/workspaces/{workspace_id}/storage-quota | quota_bytes; workspace.manage | WorkspaceStorage |
 | ListStorages | GET /v1/workspaces/{workspace_id}/storages | page_size/page_token, optional visibility, owned_only | storages, next_page_token |
 | GetStorage | GET S | IDs; storage.read | Storage |
-| UpdateStorage | PATCH S | optional name/visibility, request_id; storage.manage_access | Storage |
+| UpdateStorage | PATCH S | optional name/visibility; request_id chỉ khi đổi visibility; storage.manage_access | Storage |
 | ListStorageAccess | GET S/access | IDs; storage.manage_access | owner summary, direct viewer/editor grants, visibility/public inheritance |
 | SetStorageAccess | POST S:setAccess | target ActorRef, EDITOR/VIEWER | AccessGrant |
 | RevokeStorageAccess | POST S:revokeAccess | target ActorRef | Empty |
@@ -147,6 +147,8 @@ S là /v1/workspaces/{workspace_id}/storages/{storage_id}.
 Public defaults viewer for human owner/member and agents thuộc W qua workspace.agent. Explicit editor can grant write. owned_only uses effective ownership/manage_access permission; private/public filter SQL applied with actual workspace. Lists batch capabilities, không ReadRelationships owner riêng từng storage. Owner/grants detail chỉ khi access screen cần; không enumerate tất cả members cho public access UI.
 
 Update visibility là SQL + graph relation update. Dùng native durable retry cho operation cụ thể; success sau khi desired visibility và graph effect đã được acknowledge. Không giữ SQL transaction qua graph call, không tạo status/outbox/permission sync table. Không hứa distributed atomicity; request_id giữ identity để retry timeout.
+
+Rename-only chỉ permission check + một UPDATE RETURNING, không request_id/receipt/Temporal. CreateDirectories là mkdir-p: chỉ tạo thư mục còn thiếu, retry trả directory hiện tại; không request_id/receipt. Visibility activity SET desired values và native TOUCH/DELETE graph relation, không PostgreSQL receipt; workflow ID giữ dedup cho cùng command. Không phát hiện cùng request_id khác payload ở visibility bằng SQL.
 
 CreateStorage/DeleteStorage là lifecycle nội bộ ở MVP. Không expose public create/delete hoặc API switch storage của agent trước feature đó.
 
@@ -161,7 +163,7 @@ HTTP fields {target.node_id}/{parent.node_id} là nested protobuf field bindings
 | ListNodes | GET S/nodes/{parent.node_id}/children | parent locator, pagination → nodes/page; read |
 | ReadTree | POST S/nodes:readTree | root locator, traversal options → tree entries/truncation; read |
 | CreateNode | POST S/nodes | parent/name, directory hoặc inline text, request_id → Node; write |
-| CreateDirectories | POST S/nodes:createDirectories | base/path, request_id → final directory Node; write |
+| CreateDirectories | POST S/nodes:createDirectories | base/path → final directory Node; write |
 | MoveNode | POST S/nodes:move | source, destination_storage_id/parent/name, request_id → Node; write hai endpoints |
 | CopyNode | POST S/nodes:copy | source/destination, request_id → copied root Node; read source/write destination |
 | ReadText | GET S/nodes/{target.node_id}/text | selector/read options → text + version/metrics cần dùng; read |
@@ -189,11 +191,13 @@ GetDownload trả protobuf oneof: blob SignedDownload(url, expires_at) hoặc Te
 |---|---|---|
 | CreateUpload | POST S/uploads | create-parent/name hoặc replace-target, blob size/media/checksum, expected_version, request_id → upload ID/signed transfer descriptor |
 | GetUpload | GET S/uploads/{upload_id} | owner/expiry/result state projection; không provider HEAD |
-| SignParts | POST S/uploads/{upload_id}:signParts | part_numbers batch → signed URLs |
+| SignParts | POST S/uploads/{upload_id}:signParts | parts:{part_number,checksum CRC32C base64} batch → signed URLs + signed headers |
 | CompleteUpload | POST S/uploads/{upload_id}:complete | multipart parts/checksums → published Node; replay bằng upload receipt |
 | AbortUpload | DELETE S/uploads/{upload_id} | abort → Empty |
 
 All require storage.write; target/actor/root bound khi tạo upload và rechecked khi publish. Source user uploads verify native S3 completion/metadata trước write transaction. Quota debit tại publication, không reserve lúc ký URL.
+
+SignParts yêu cầu checksum CRC32C từng part (base64 của 4 byte), part numbers hợp lệ và không trùng. Caller gửi đúng URL/headers SDK trả về; CompleteUpload vẫn gửi ETag/checksum từng part và kiểm whole-object checksum. Không thêm checksum middleware hoặc bỏ integrity checks để chiều provider.
 
 Không binary/base64 upload body qua application JSON. Signed S3 request dùng native HTTP riêng. Text dùng CreateNode/MutateText; không text-on-S3 fallback.
 

@@ -178,7 +178,7 @@ Restore gắn lại root vào parent cũ hoặc destination được chọn và 
 ### Upload và download
 
 - Text được tạo/upload/replace trực tiếp vào PostgreSQL. Blob, kể cả binary nhỏ, dùng CreateUpload, SignParts khi multipart, CompleteUpload và AbortUpload.
-- Upload ID là identity của transfer, không thêm idempotency key song song. Complete lặp lại trả publication response đã lưu của đúng upload, không đọc lại trạng thái node hiện tại.
+- CreateUpload dùng request_id/receipt cho admission tạo transfer mới. Sau đó upload ID là identity; CompleteUpload không thêm key song song. Complete lặp lại trả publication response đã lưu của đúng upload, không đọc lại trạng thái node hiện tại.
 - Single PUT dùng checksum đã ký và native conditional create để key không bị ghi đè. Multipart complete do service gọi; không cho client quyền PUT tự do lên published objects.
 - Complete kiểm tra thực tế object bytes/checksum bằng S3 metadata theo primitive provider; publish node + quota trong một SQL transaction. Key do LetFS cấp, caller không được đăng ký arbitrary object key.
 - Abort/expiry chỉ làm transfer không còn admissible. Bucket lifecycle abort incomplete multipart. Unreferenced completed objects do GC xử lý.
@@ -334,6 +334,8 @@ Expected_version là concurrency precondition độc lập: hai request khác ke
 | Thao tác | Identity và retry semantics |
 |---|---|
 | Onboard | Unique Clerk subject; workspace chỉ INSERT từ user mới RETURNING, retry user cũ không tạo workspace khác |
+| Rename storage / CreateDirectories | Desired-state UPDATE / mkdir-p, không request_id hoặc PostgreSQL receipt |
+| Update visibility | request_id + native Temporal workflow identity; activity SET + TOUCH/DELETE tự lặp được, không PostgreSQL receipt |
 | SQL node create/copy/text edit/move/trash cần retry | Persist key/hash/result cùng mutation; replay result, không apply lại |
 | Create workspace | Persist admission/resource identity cùng provisioning row; workflow ID ổn định; retry không tạo provisioning khác |
 | Internal storage provisioning | Ordinary UUID cấp một lần trong workflow input; PK/local receipt cho effect identity, không owner-derived ID |

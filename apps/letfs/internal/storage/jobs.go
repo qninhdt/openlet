@@ -20,7 +20,6 @@ import (
 )
 
 type VisibilityInput struct {
-	Caller  string
 	Request *pb.UpdateStorageRequest
 }
 type ProcessInput struct {
@@ -49,41 +48,13 @@ func UpdateStorageVisibility(ctx workflow.Context, in VisibilityInput) (*pb.Stor
 }
 func (s *Server) updateVisibility(ctx context.Context, in VisibilityInput) (*pb.Storage, error) {
 	r := in.Request
-	tx, err := s.DB.Begin(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback(ctx)
-	out := new(pb.Storage)
-	duplicate, err := sdk.Claim(ctx, tx, in.Caller, "UpdateStorage", r.RequestId, r, out, s.ttl())
-	if err != nil {
-		return nil, err
-	}
-	if !duplicate {
-		var visibility any
-		if r.Visibility != nil {
-			visibility = visibilityName(*r.Visibility)
-		}
-		out, err = scanStorage(tx.QueryRow(ctx, `UPDATE storages SET name=coalesce($3,name),visibility=coalesce($4,visibility) WHERE id=$1 AND workspace_id=$2 RETURNING `+storageColumns, r.StorageId, r.WorkspaceId, r.Name, visibility))
-		if err != nil {
-			return nil, err
-		}
-		if err = sdk.Finish(ctx, tx, in.Caller, "UpdateStorage", r.RequestId, out); err != nil {
-			return nil, err
-		}
-	}
-	if err = tx.Commit(ctx); err != nil {
-		return nil, err
-	}
-	// Project current SQL visibility, including when retrying an older request.
-	var current string
-	err = s.DB.QueryRow(ctx, `SELECT visibility FROM storages WHERE id=$1 AND workspace_id=$2`, r.StorageId, r.WorkspaceId).Scan(&current)
+	out, err := scanStorage(s.DB.QueryRow(ctx, `UPDATE storages SET name=coalesce($3,name),visibility=$4 WHERE id=$1 AND workspace_id=$2 RETURNING `+storageColumns, r.StorageId, r.WorkspaceId, r.Name, visibilityName(*r.Visibility)))
 	if err != nil {
 		return nil, err
 	}
 	rel := sdk.Relation("storage", r.StorageId, "public_workspace", "workspace", r.WorkspaceId, "")
 	update := sdk.Delete(rel)
-	if current == "public" {
+	if out.Visibility == pb.StorageVisibility_STORAGE_VISIBILITY_PUBLIC {
 		update = sdk.Touch(rel)
 	}
 	_, err = s.Graph.WriteRelationships(ctx, &az.WriteRelationshipsRequest{Updates: []*az.RelationshipUpdate{update}})

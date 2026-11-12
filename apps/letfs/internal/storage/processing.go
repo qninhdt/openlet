@@ -12,7 +12,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	pb "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/letfs/v1"
-	"google.golang.org/protobuf/encoding/protojson"
 )
 
 const sourceCTE = `WITH RECURSIVE source AS (SELECT n.id,n.storage_id,n.parent_id FROM nodes n JOIN files f ON f.node_id=n.id WHERE n.id=$1 AND f.version=$2 AND f.object_key IS NOT NULL),chain AS(SELECT id,storage_id,parent_id,0 AS depth FROM source UNION ALL SELECT n.id,n.storage_id,n.parent_id,c.depth+1 FROM chain c JOIN nodes n ON n.id=c.parent_id),live AS(SELECT src.id,src.storage_id,s.workspace_id,s.allow_indexing FROM source src JOIN storages s ON s.id=src.storage_id WHERE EXISTS(SELECT 1 FROM chain c WHERE c.id=s.root_node_id) AND NOT EXISTS(SELECT 1 FROM chain c JOIN nodes n ON n.id=c.id WHERE c.depth>0 AND n.kind='file')) `
@@ -30,24 +29,42 @@ func obsolete(err error) (*pb.ProcessingOutcome, error) {
 	return nil, err
 }
 func (s *Server) GetProcessingInput(ctx context.Context, r *pb.ProcessingRequest) (*pb.ProcessingInput, error) {
-	rows, err := s.DB.Query(ctx, sourceCTE+`,tree AS(SELECT n.id,''::text AS path,0 AS depth FROM live l JOIN nodes n ON n.id=l.id UNION ALL SELECT n.id,CASE WHEN t.path='' THEN n.name ELSE t.path||'/'||n.name END,t.depth+1 FROM tree t JOIN nodes n ON n.parent_id=t.id JOIN processing src ON src.file_id=$1 WHERE src.stage IN ('parsed','enriched')) SELECT l.workspace_id,l.storage_id,l.allow_indexing,src.stage,`+headerSQL+`,t.path,f.text_content,f.object_key FROM live l JOIN processing src ON src.file_id=l.id JOIN tree t ON true JOIN nodes n ON n.id=t.id CROSS JOIN LATERAL(SELECT t.depth>0 AS readonly) v `+headerJoins+` ORDER BY t.depth,t.path`, r.FileId, r.Version)
+	rows, err := s.DB.Query(ctx, sourceCTE+`,tree AS(SELECT n.id,n.storage_id,''::text AS path,0 AS depth FROM live l JOIN nodes n ON n.id=l.id UNION ALL SELECT n.id,n.storage_id,CASE WHEN t.path='' THEN n.name ELSE t.path||'/'||n.name END,t.depth+1 FROM tree t JOIN nodes n ON n.storage_id=t.storage_id AND n.parent_id=t.id JOIN processing src ON src.file_id=$1 WHERE src.stage IN ('parsed','enriched')) SELECT l.workspace_id,l.storage_id,l.allow_indexing,src.stage,t.id,t.path,t.depth>0 FROM live l JOIN processing src ON src.file_id=l.id JOIN tree t ON true ORDER BY t.depth,t.path`, r.FileId, r.Version)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := &pb.ProcessingInput{Outcome: &pb.ProcessingOutcome{Obsolete: true}}
+	ids := []string{}
+	readonly := []bool{}
+	paths := map[string]string{}
 	for rows.Next() {
-		var raw []byte
-		var pth, stage string
-		var text, key *string
-		if err = rows.Scan(&out.WorkspaceId, &out.StorageId, &out.AllowIndexing, &stage, &raw, &pth, &text, &key); err != nil {
-			return nil, err
-		}
-		node := new(pb.Node)
-		if err = protojson.Unmarshal(raw, node); err != nil {
+		var id, pth, stage string
+		var ro bool
+		if err = rows.Scan(&out.WorkspaceId, &out.StorageId, &out.AllowIndexing, &stage, &id, &pth, &ro); err != nil {
+			rows.Close()
 			return nil, err
 		}
 		out.Outcome = &pb.ProcessingOutcome{Stage: stage}
+		ids = append(ids, id)
+		readonly = append(readonly, ro)
+		paths[id] = pth
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	nodes, err := readNodes(ctx, s.DB, ids, readonly, true)
+	if err != nil {
+		return nil, err
+	}
+	for _, v := range nodes {
+		node, text, key := v.Node, v.Text, v.ObjectKey
+		pth, stage := paths[node.Id], out.Outcome.Stage
+
 		if node.Id == r.FileId {
 			out.SourceName = node.Name
 			out.MediaType = node.File.MediaType
@@ -71,7 +88,7 @@ func (s *Server) GetProcessingInput(ctx context.Context, r *pb.ProcessingRequest
 		}
 		out.Artifacts = append(out.Artifacts, a)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 func validArtifactPath(p string) bool {
 	if p == "" || strings.HasPrefix(p, "/") || strings.ContainsRune(p, 0) || path.Clean(p) != p {

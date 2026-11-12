@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"mime"
+	"net/http"
 	"strings"
 	"time"
 
@@ -59,13 +60,16 @@ func (s *Server) signedPut(ctx context.Context, key, media, checksum string, siz
 	if err != nil {
 		return nil, err
 	}
+	return &pb.TransferDescriptor{PutUrl: signed.URL, Headers: signedHeaders(signed.SignedHeader)}, nil
+}
+func signedHeaders(signed http.Header) map[string]string {
 	headers := map[string]string{}
-	for k, v := range signed.SignedHeader {
+	for k, v := range signed {
 		if len(v) > 0 && k != "Host" {
 			headers[k] = v[0]
 		}
 	}
-	return &pb.TransferDescriptor{PutUrl: signed.URL, Headers: headers}, nil
+	return headers
 }
 func (s *Server) uploadView(ctx context.Context, u upload) (*pb.Upload, error) {
 	out := &pb.Upload{Id: u.ID, ExpiresAt: timestamppb.New(u.Expires)}
@@ -197,17 +201,21 @@ func (s *Server) SignParts(ctx context.Context, r *pb.SignPartsRequest) (*pb.Sig
 		return nil, invalid("upload is not an open multipart transfer")
 	}
 	out := new(pb.SignPartsResponse)
-	for _, part := range r.PartNumbers {
-		if int64(part) > max(int64(1), (u.Size+s.Settings.MultipartPartBytes-1)/s.Settings.MultipartPartBytes) {
+	for _, part := range r.Parts {
+		checksum, err := base64.StdEncoding.DecodeString(part.Checksum)
+		if err != nil || len(checksum) != 4 {
+			return nil, invalid("part checksum must be base64 CRC32C")
+		}
+		if int64(part.PartNumber) > max(int64(1), (u.Size+s.Settings.MultipartPartBytes-1)/s.Settings.MultipartPartBytes) {
 			return nil, invalid("part number exceeds object size")
 		}
-		signed, err := s.Presign.PresignUploadPart(ctx, &s3.UploadPartInput{Bucket: &s.Bucket, Key: &u.Key, UploadId: u.Multipart, PartNumber: aws.Int32(int32(part))}, func(o *s3.PresignOptions) {
+		signed, err := s.Presign.PresignUploadPart(ctx, &s3.UploadPartInput{Bucket: &s.Bucket, Key: &u.Key, UploadId: u.Multipart, PartNumber: aws.Int32(int32(part.PartNumber)), ChecksumCRC32C: &part.Checksum}, func(o *s3.PresignOptions) {
 			o.Expires = min(time.Until(u.Expires), time.Duration(s.Settings.UploadURLTTLSeconds)*time.Second)
 		})
 		if err != nil {
 			return nil, err
 		}
-		out.Parts = append(out.Parts, &pb.SignedPart{PartNumber: part, Url: signed.URL})
+		out.Parts = append(out.Parts, &pb.SignedPart{PartNumber: part.PartNumber, Url: signed.URL, Headers: signedHeaders(signed.SignedHeader)})
 	}
 	return out, nil
 }
