@@ -13,6 +13,8 @@ import (
 	pb "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/platform/v1"
 	enums "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/client"
+	"google.golang.org/grpc"
+	grpcmetadata "google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -128,6 +130,11 @@ func (s *Server) CreateWorkspace(ctx context.Context, r *pb.CreateWorkspaceReque
 	var result ProvisionResult
 	if err = run.Get(ctx, &result); err != nil {
 		return nil, err
+	}
+	if result.ZedToken != "" {
+		if err = grpc.SetHeader(ctx, grpcmetadata.Pairs("x-openlet-zed-token", result.ZedToken)); err != nil {
+			return nil, err
+		}
 	}
 	return result.Workspace, nil
 }

@@ -228,3 +228,13 @@ full UI browser journey, production alert delivery, multi-replica/load benchmark
 hoặc evaluation. Cold Langfuse prompt-cache miss vẫn cần Cloud theo accepted
 MVP limit. Known invalid-only tool-call LangChain issue33504 chỉ TODO/link như
 đã chốt. Không thay bằng custom retry/repair middleware.
+
+## Golden-journey follow-up: workspace read-after-create
+
+Real preparation phát hiện `CreateWorkspace` bỏ mất final storage ZedToken mà
+workflow đã trả về. Đọc ngay workspace/storage có thể bị permission denied hoặc
+thiếu storage vì caller chỉ có revision cũ. RPC nay trả header
+`x-openlet-zed-token` giống `Onboard`; không thêm retry hoặc consistency layer.
+Native caller truyền header đó sang `ListStorages`: workspace mới đọc ngay đủ
+Shared/Personal và upload R2 thành công, không polling quyền. Go platform tests
+và vet pass. Golden scripts/materials nằm ngoài source tại `/tmp`.
