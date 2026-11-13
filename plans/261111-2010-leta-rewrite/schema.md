@@ -57,7 +57,7 @@ Index workspace/id phục vụ list rồi bulk-filter quyền. Không UNIQUE sto
 | reasoning_effort | text NULL | Override độc lập; root NULL dùng catalog default |
 | inbox_seq | bigint, default 0 | Cấp committed recipient order cùng INSERT |
 | history_seq | bigint, default 0 | Cấp committed public append order |
-| created_at | timestamptz | Resource metadata, không đổi theo slice |
+| created_at | timestamptz | Resource metadata, không đổi theo activity attempt |
 
 UNIQUE box/name; UNIQUE leta/id và box/id hỗ trợ composite FK. FK (leta_id,box_id) bảo đảm child đúng root. Không root-only bindings/state/pause, resolved model hoặc execution cursor.
 
@@ -71,12 +71,12 @@ UNIQUE box/name; UNIQUE leta/id và box/id hỗ trợ composite FK. FK (leta_id,
 | description | text, default empty | Nhiệm vụ toàn box |
 | representative_agent_id | uuid | Immutable endpoint giao tiếp root |
 | home_node_id | uuid UNIQUE | Stable directory locator/mount/trash target |
-| state | text | provisioning/active/deleting/archived độc lập root |
+| state | text | active/deleting/archived độc lập root; pending create ở Temporal |
 | created_at | timestamptz | Resource metadata |
 
 Composite representative FK tới agents(box_id,id) deferred đến commit. Insert box trước children; child-to-box FK không cần deferred. Không child state/provision step/graph count/version mirrors.
 
-**Boundary chưa khớp:** giữ home_node_id NOT NULL đúng schema được duyệt. LetFS CreateNode/CreateDirectories hiện không nhận caller-supplied node ID; prepare_box cấp trước ID chưa thực thi được bằng API hiện tại. Không âm thầm đổi nullability hoặc core proto. [Boundary review](boundaries.md) ghi hai lựa chọn cần chốt trước implementation.
+**Home-first đã chốt:** provision_box gọi native LetFS CreateDirectories với stable .boxes/<box_id> path trước; prepare_box dùng home_node_id thật để ghi active box + children + edges + finalized receipt atomically. Giữ home_node_id NOT NULL, không preallocated directory ID hoặc sửa core proto. Pending create thuộc Temporal, không boxes.provisioning row. [Box/Leti](boxes.md#4-home-first-provisioning) và [boundary](boundaries.md#81-box-directory-id--home-first-đã-chốt) sở hữu ordering.
 
 ## 6. box_edges
 
@@ -102,7 +102,7 @@ PK ba fields, CHECK low < high, hai same-box endpoint FKs. Không edge ID/revers
 | scheduled_at | timestamptz NULL | Native nominal occurrence time, chỉ schedule |
 | content | text | Bounded immutable delivery body |
 | created_at | timestamptz | Actual delivery time |
-| read_at | timestamptz NULL | Đã đọc chi tiết/digest, không processed cursor |
+| read_at | timestamptz NULL | Đã đọc chi tiết/notification, không processed cursor |
 
 Mọi row có agent recipient + seq, không XOR. Sender nguồn agent là source_id; nguồn box suy từ representative bất biến, không sender_agent_id thứ hai. Không copy root ID/current source labels; hydrate theo batch, labels không authorize.
 
@@ -134,7 +134,7 @@ Sender luôn root, Leti không human chat. Index leta/time/id; không inbox seq/
 | agent_id | uuid FK agents | Owner và unfinished-run scope |
 | status | text | running/paused/completed/failed/cancelled cho UI |
 | started_at | timestamptz | Logical start, không technical attempt |
-| finished_at | timestamptz NULL | Terminal time, không slice/CAN time |
+| finished_at | timestamptz NULL | Terminal time, không activity-attempt/CAN time |
 | error_code | text NULL | Terminal machine-readable failure; details ở logs |
 
 Partial UNIQUE một running/paused run/agent; terminal iff finished_at, failed iff error_code. UNIQUE agent/id hỗ trợ history FK; timeline agent/time/id. Không run rỗng, checkpoint/cursor/attempt/continuation/result mirror.
@@ -170,7 +170,7 @@ Input bodies hydrate từ immutable messages. Không kind lặp trong JSON/raw p
 | requester_agent_id | uuid FK agents | Exact result recipient/root scope |
 | recipient_user_id | uuid | Addressed human, incoming list/exact response recipient |
 | type | text | ask/approval, ngoài JSON |
-| title | text | UI/digest card label |
+| title | text | Nhãn thẻ UI/notification |
 | payload | jsonb | Immutable form hoặc storage/role/reason |
 | status | text, default pending | Authority pending/answered/accepted/denied/cancelled/expired |
 | response | jsonb NULL | Actor/answers/cancel reason, không lặp status/action |
@@ -192,9 +192,11 @@ outcome: {"status":"skipped","reason":"permission_revoked"}
 
 Questions text/single_choice/multiple_choice; choice options id/label. Answers text / nullable option_id + note / option_ids + note; empty answers hợp lệ. Cancel actor có thể authorized human/agent. Không question/options tables hoặc required/default/answered flags.
 
+Đây là canonical stored payload, không agent tool schema. Model gửi text/options labels/multiple; system cấp IDs và suy type. expires_at là trusted product policy, không timeout argument của model. Xem [tool ownership audit](tools.md#hitl); không đổi SQL fields/constraints.
+
 CHECK pending iff resolved_at NULL; outcome chỉ accepted approval. CAS WHERE status='pending' chọn một winner answer/expiry/cancel. Accepted + outcome NULL là pending effect; rights chưa được suy là granted. Native workflow clock quyết định expiry.
 
-Recipient là event fact, không permanent authority. Ask kiểm current agent.use; approval gọi LetFS SetStorageAccess theo current accepting-human storage.manage_access, target root suy qua requester. Lost rights/resource → skipped; transient → retry. Grant không mount/switch storage. Index recipient/time/id và requester/time/id. Không root/grantee/result-message/grant-key/phase/attempt/delivery_sent mirrors.
+Recipient là event fact, không permanent authority. Ask nhận explicit recipient_user_id là bất kỳ human owner/member hiện tại cùng workspace; open/read/answer kiểm current workspace.participate và exact recipient, không agent.use hoặc agent owner. Approval chỉ rõ storage_id/recipient_user_id rồi kiểm current accepting-human storage.manage_access, target root suy qua requester. Lost rights/resource → skipped; transient → retry. Outcome granted dẫn tới native dynamic mount refresh tại safe boundary, không đổi home storage_id hoặc giữ mount registry. Index recipient/time/id và requester/time/id. Không root/grantee/result-message/grant-key/phase/attempt/delivery_sent mirrors. [HITL detail](hitl.md) mô tả form, quyền và workflow; schema/DDL không đổi.
 
 ## 12. schedules
 
@@ -219,6 +221,10 @@ type=calendar {"timezone":"Asia/Ho_Chi_Minh","calendar":{"hour":[{"start":9}],"m
 
 Native ScheduleCalendarSpec/ScheduleRange; interval/calendar optional end_at UTC. Relative after_seconds normalize một lần bằng accepted workflow time. Không JSON type key/CHECK validator, end_at column thứ hai, cron engine hoặc occurrence table.
 
+Model tool chọn flat timing intent và calendar values; system dựng type/spec/ranges/defaults theo [tool audit](tools.md#scheduler). Các canonical examples trên không bị bind nguyên dạng làm input của model; DDL không đổi.
+
+Thiết kế execution/commands/preview và so sánh với archive tại [scheduler](scheduler.md). Type/spec edit thay timing của cùng schedule, không đổi creator/target; native exact-calendar one-shot không cần action counter trong SQL hoặc native limited-actions state.
+
 Creator/target immutable, same-root/allowed routing kiểm tại create; Leti schedule chính nó, root schedule root/representative. Target box suy agents.box_id. Index creator/id và target/id gồm tombstones cho cleanup. Metadata-only edit không rearm; nominal time + schedule ID dedupe delivery. Không copied root/native IDs/next-last tick/counters/version/progress.
 
 ## 13. idempotency_keys
@@ -232,7 +238,7 @@ Creator/target immutable, same-root/allowed routing kiểm tại create; Leti sc
 | result | bytea NULL | Small serialized response; NULL chỉ trong transaction chưa commit |
 | expires_at | timestamptz | Receipt retention/cleanup theo owning contract |
 
-Đúng sáu fields/types/nullability/PK của migrations Platform/LetFS hiện tại; index expires_at. Transport Leta chưa chốt, serialization theo contract review sau, không tự thêm public envelope.
+Đúng sáu fields/types/nullability/PK của migrations Platform/LetFS hiện tại; index expires_at. Transport HTTP JSON + SSE đã chốt tại [streaming](streaming.md); receipt result serialization theo complete DTO/error contract còn review, không tự thêm public envelope.
 
 Pure-SQL mutation và finalized receipt commit cùng transaction. Create lifecycle có thể receipt admitted identity vì method ACK admission. Schedule method ACK applied outcome: canonical pending command ở native Temporal history; SQL definition → native ACK → finalized receipt trước khi nhả ordering. Không result pending-intent bag/completed_at hoặc SQL transaction qua RPC.
 
@@ -252,4 +258,4 @@ DDL là syntax/structural artifact. Native PostgreSQL concurrency/constraints/EX
 
 Validation tĩnh lượt này: field audit khớp 11 bảng/86 cột; 15 FK đều có declared PK/UNIQUE đích. Receipt signature khớp fields/types/nullability/PK với cả hai active migrations Platform/LetFS. Doc links/fences/whitespace/line limits và inventory 6 workflows/21 activities/3 queues đã kiểm; đây không phải PostgreSQL execution hoặc integration proof.
 
-Không apply DDL, sửa runtime/tests hoặc khởi động process. Database cũ nguyên vẹn; backup trước schema/data change thật. Home-directory contract còn mở nên chưa claim provisioning/schema chạy end-to-end.
+Không apply DDL, sửa runtime/tests hoặc khởi động process. Database cũ nguyên vẹn; backup trước schema/data change thật. Home-first contract đã chốt và DDL design bỏ boxes.provisioning; chưa claim provisioning/schema chạy end-to-end.

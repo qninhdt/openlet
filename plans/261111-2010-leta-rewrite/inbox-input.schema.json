@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Leta inbox input",
+  "type": "object",
+  "properties": {
+    "messages": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/InboxMessage" }
+    },
+    "notifications": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/InboxNotification" }
+    }
+  },
+  "oneOf": [
+    { "required": ["messages"] },
+    { "required": ["notifications"] }
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "InboxSource": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["user", "agent", "box", "hitl", "schedule"]
+        },
+        "id": { "type": "string", "format": "uuid" },
+        "name": { "type": "string" }
+      },
+      "required": ["kind", "id"],
+      "additionalProperties": false
+    },
+    "InboxMessage": {
+      "type": "object",
+      "properties": {
+        "message_id": { "type": "string", "format": "uuid" },
+        "in_reply_to": { "type": "string", "format": "uuid" },
+        "source": { "$ref": "#/$defs/InboxSource" },
+        "content": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "scheduled_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["message_id", "source", "content", "created_at"],
+      "additionalProperties": false
+    },
+    "InboxNotification": {
+      "type": "object",
+      "properties": {
+        "conversation_id": { "type": "string", "format": "uuid" },
+        "source": { "$ref": "#/$defs/InboxSource" },
+        "preview": { "type": "string" }
+      },
+      "required": ["conversation_id", "source", "preview"],
+      "additionalProperties": false
+    }
+  }
+}

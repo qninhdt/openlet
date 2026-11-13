@@ -8,7 +8,7 @@ Workspace là tenant chứa nhiều storage/agent/Computer. Platform sở hữu 
 
 SpiceDB canonical membership/ownership/grants. Workspace owner/member, agent owner/operator, storage owner/editor/viewer, Computer manager/operator. Agent là subject độc lập, không human member hoặc impersonation. Không owner/role/grant SQL mirrors, personal mapping hoặc generic registry.
 
-Storages dùng visibility private/public, public mặc định viewer cho mọi actor hợp lệ của workspace; ghi cần owner/editor. Personal/shared là FE grouping. Nhiều storage/workspace/owner; UUID thông thường, không UUIDv5 hoặc unique owner→storage. MVP chỉ system provision workspace/storage. Root Leta giữ workspace_id/storage_id; multiple storage/switch hoãn.
+Storages dùng visibility private/public, public mặc định viewer cho mọi actor hợp lệ của workspace; ghi cần owner/editor. Visibility được chọn lúc provision và cố định sau create; đã chốt cắt API/workflow đổi visibility, UpdateStorage chỉ rename, direct grants vẫn giữ. Personal/shared là FE grouping. Nhiều storage/workspace/owner; UUID thông thường, không UUIDv5 hoặc unique owner→storage. MVP chỉ system provision workspace/storage. Root Leta giữ workspace_id/storage_id; multiple storage/switch hoãn.
 
 Quota/usage canonical ở LetFS workspace_storage(workspace_id PK, quota_bytes, used_bytes). Platform không giữ storage IDs/list/quota mirror. [Schema](schema.md) giữ full file/transfer/processing design và boundary mới.
 
@@ -18,7 +18,7 @@ Quota/usage canonical ở LetFS workspace_storage(workspace_id PK, quota_bytes, 
 
 Platform/LetFS chỉ application gRPC + standard health; Envoy JSON/HttpBody; S3 signed transfers. Không Gin/grpc-gateway/app HTTP listener. ProtoJSON success và google.rpc.Status/ErrorInfo application errors; không RFC9457 mapper/common envelope. Empty thường HTTP200 {}. [HTTP details](http-json.md).
 
-Leta public HTTP/SSE và concrete cleanup RPC review sau; không thêm listener/proto/config bắt buộc trong lượt này. Được phép async business cleanup khi xóa resource/workspace; RemoveMember chỉ thu hồi human membership, không dọn/dừng agent. Không stop-ACK barrier, readiness hoặc authorization hot-path dependency.
+Leta public HTTP/SSE thuộc owning plan Leta. [Workspace cleanup đã chốt](workspace-cleanup.md): Platform trực tiếp schedule owning LetFS/Leta activities, storage ACK rồi xóa Platform SQL, workflow vẫn chờ Leta; cần backend/config changes, không cleanup RPC proxy/listener mới. RemoveMember chỉ thu hồi human membership, không dọn/dừng agent. Không stop-ACK barrier trước storage deletion, readiness hoặc authorization hot-path dependency.
 
 ## Data, lifecycle và query giữ đúng boundary
 

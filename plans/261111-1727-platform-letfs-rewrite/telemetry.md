@@ -2,6 +2,8 @@
 
 Cập nhật 2026-11-12. Instrumentation Platform/LetFS/ingest và Envoy đã triển khai; chưa chọn hoặc dựng monitoring backend. [Plan](plan.md), [configuration](configuration.md) và [HTTP contract](http-json.md) là các owning surfaces liên quan.
 
+Cập nhật research 2026-11-13: stack OTel/Alloy + Grafana Cloud Free Mimir/Tempo/Loki/Grafana và Langfuse Cloud Free/demo 1–10 testers; local chỉ Alloy. [Thiết kế đã chốt](../261113-1335-system-observability/plan.md) giữ native core/provider/exporter; LF default exporter trực tiếp Cloud, graph callback chuẩn, native prompts. Evaluation hoãn; chưa sửa baseline source/config hoặc deploy backend. Nội dung bên dưới vẫn là implementation baseline.
+
 ## 1. Kết quả và giới hạn
 
 Instrumentation dùng OpenTelemetry API/SDK và integration native, xuất được dữ liệu sang monitoring backend sau này mà không sửa business handlers. Không tạo telemetry service, event bus, exporter/retry framework hoặc database telemetry của Openlet. Chưa triển khai Grafana/Prometheus/Tempo/Loki, dashboard, alert rules hoặc vendor SDK.
@@ -105,11 +107,11 @@ Shutdown: drain requests/activities trước rồi flush/shutdown providers. Go 
 
 ## 7. Collector và monitoring sau này
 
-Khi cần backend, thêm một Collector deployment với OTLP receiver, memory_limiter, batch và exporters native. Backend giữ retention/auth/dashboard/alerts; application code giữ nguyên. Traces có thể tới Tempo/Jaeger/SaaS, metrics tới backend hỗ trợ OTLP hoặc Prometheus qua Collector, logs tới log backend được chọn. Chưa chọn hoặc dựng tất cả các hệ này.
+Khi cần backend, thêm một Collector deployment với OTLP receiver, memory_limiter, batch và exporters native. Backend giữ retention/auth/dashboard/alerts; application code giữ nguyên. Traces có thể tới Tempo/Jaeger/SaaS, metrics tới backend hỗ trợ OTLP hoặc Prometheus qua Collector, logs tới log backend được chọn. Target đã chốt là Alloy + Grafana Cloud Free/Langfuse Cloud Free theo owning observability plan; baseline này chưa deploy.
 
 Envoy/Temporal/SpiceDB/Qdrant dùng metrics endpoints native trong mạng private; Collector có thể scrape bằng Prometheus receiver. Envoy admin /stats/prometheus không public. PostgreSQL dùng native operational views hoặc exporter khi bổ sung monitoring; không mở app HTTP listener chỉ để xuất metrics.
 
-Native Collector config nếu cần được render bằng bootstrap từ YAML/deployment settings đã chọn, giống Envoy/Temporal. Chưa thêm exporter/vendor credentials, retention knobs hoặc hand-maintained config thứ hai trước khi chọn backend.
+Native Collector config nếu cần được render bằng bootstrap từ YAML/deployment settings đã chọn, giống Envoy/Temporal. Backend Cloud đã chọn; implementation điền endpoints/secret refs thực vào owning YAML route, không thêm hand-maintained config thứ hai.
 
 ## 8. Ownership và verification
 

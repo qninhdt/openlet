@@ -33,7 +33,7 @@ Workspace tenant ở Platform chứa nhiều storage (LetFS), agent (Leta), Comp
 
 SpiceDB canonical membership/ownership/grants; PostgreSQL owning service giữ domain metadata. Root agent là subject độc lập, không human member; Computer giữ subject của invocation khi đọc/ghi file. Ingest CPU/IO là processing workers không ACL database.
 
-Platform/LetFS startup/readiness và permission hot path không phụ thuộc Leta. Resource cleanup business calls bất đồng bộ được phép, không chờ Leta stop ACK trước storage deletion. Concrete Leta API/transport vẫn hoãn; không scaffold listener/config/Computer runtime trong lượt này.
+Platform/LetFS startup/readiness và permission hot path không phụ thuộc Leta. [Workspace cleanup](workspace-cleanup.md) dispatch owning activities song song, không chờ Leta stop ACK trước storage/Platform SQL deletion; workflow vẫn observe Leta completion. Public Leta API/transport thuộc plan Leta; không scaffold cleanup listener hoặc Computer runtime.
 
 Redis/agent runtime nội bộ Leta không thành dependency của Platform/LetFS. Parent workspace_id là metadata, không biểu diễn chiều bắt buộc gọi API.
 
@@ -77,7 +77,7 @@ Workspace có owner/member, owner chuyển được bằng graph mutation; invit
 
 API inventory hiện tại lấy từ [API contract](api-contract.md), không từ matrix cũ. Resource listing/access ở LetFS; Platform chỉ identity/workspace/members/invitations và generic CheckWorkspaceActive. Bỏ RegisterAgent/UnregisterAgent; Leta tự quản lý agent.workspace/workspace.agent. Add/accept member có thể provision storage qua owning service, không cấp deterministic owner-derived ID hoặc giữ personal mapping.
 
-Create/delete workspace dùng native lifecycle state/workflow đã có. Revoke quyền trước cleanup. Async Leta/Computer cleanup không chặn storage deletion hoặc hot path; API Leta vẫn hoãn.
+Create/delete workspace dùng native lifecycle state/workflow đã có. Revoke quyền trước cleanup. Owning LetFS/Leta activities theo workspace-cleanup.md không đợi Leta ACK trước khi xóa storage/Platform SQL; public Leta API thuộc owning plan, Computer chưa triển khai.
 
 ## 6. SpiceDB
 
@@ -336,7 +336,6 @@ Expected_version là concurrency precondition độc lập: hai request khác ke
 |---|---|
 | Onboard | Unique Clerk subject; workspace chỉ INSERT từ user mới RETURNING, retry user cũ không tạo workspace khác |
 | Rename storage / CreateDirectories | Desired-state UPDATE / mkdir-p, không request_id hoặc PostgreSQL receipt |
-| Update visibility | request_id + native Temporal workflow identity; activity SET + TOUCH/DELETE tự lặp được, không PostgreSQL receipt |
 | SQL node create/copy/text edit/move/trash cần retry | Persist key/hash/result cùng mutation; replay result, không apply lại |
 | Create workspace | Persist admission/resource identity cùng provisioning row; workflow ID ổn định; retry không tạo provisioning khác |
 | Internal storage provisioning | Ordinary UUID cấp một lần trong workflow input; PK/local receipt cho effect identity, không owner-derived ID |
@@ -355,35 +354,44 @@ Receipt guarantee chỉ trong retention window và owning SQL transaction. Khôn
 
 ## 10. Temporal tối thiểu
 
-Đã chốt qua trao đổi ngày 2026-11-12. Temporal chỉ điều phối durable lifecycle, blob processing và maintenance; không là permission authority hoặc database của domain. [API](api-contract.md), [schema](schema.md) và [processing queries](processing-queries.md) giữ owning contracts. Không thêm Temporal framework dùng chung.
+Đã chốt qua trao đổi ngày 2026-11-12; bổ sung [workspace cleanup trực tiếp qua owning activities](workspace-cleanup.md), cần sửa backend hiện có. Temporal chỉ điều phối durable lifecycle, blob processing và maintenance; không là permission authority hoặc database của domain. [API](api-contract.md), [schema](schema.md) và [processing queries](processing-queries.md) giữ owning contracts. Không thêm Temporal framework dùng chung.
 
 ### Inventory và ownership
 
 | Workflow/flow | Owner | Công việc và input identity |
 |---|---|---|
-| ProvisionWorkspace | Platform | Workspace/owner admission, gọi LetFS provision budget và public/private storage ban đầu; workspace ID và các storage UUID được cấp một lần trong admission/workflow input |
-| ProvisionMemberStorage | Platform | Sau membership admission, provision private storage khi cần qua LetFS; workspace/user và storage UUID ổn định, rejoin discover storages hiện có, không unique owner→storage |
-| DeleteWorkspace | Platform | Workspace deleting, revoke authorization rồi gọi owning cleanup API; LetFS dọn storage/budget, không chờ Leta stop ACK |
-| UpdateStorageVisibility | LetFS | Desired visibility và request identity; SQL metadata + public_workspace projection được retry tới ACK, không transaction xuyên SQL/SpiceDB |
+| ProvisionWorkspace | Platform workflow, owning activities Platform/LetFS | Platform admission/owner graph → một LetFS activity provision budget + public/private storages → Platform activation; IDs cấp một lần trong input |
+| ProvisionMemberStorage | Platform workflow, LetFS activity | Sau membership admission, LetFS kiểm current participation/discover/create storage bằng functions trong process; IDs ổn định, không unique owner→storage |
+| DeleteWorkspace | Platform | Revoke graph, schedule LetFS/Leta owning activities song song; storage ACK → xóa Platform SQL, workflow vẫn chờ Leta cleanup |
 | ProcessBlob | LetFS | file_id/version, parse_required và native activity options cần thiết; CPU ParseBlob khi cần rồi IO EnrichAndIndex |
-| Maintenance qua native Schedules | Owning service | Platform recover workspace provisioning/deletion và expire local receipts/invites; LetFS recover dispatch, expire uploads/receipts, S3 GC và Qdrant cleanup |
+| Maintenance qua native Schedules | Owning service | Platform dispatch lại deleting workspaces và expire receipts/invites; failed provisioning cần native operator recovery. LetFS recover dispatch, expire uploads/receipts, S3 GC và Qdrant cleanup |
 
 Tên trên là contract triển khai. Platform/LetFS đã có workflow registrations trong source; runtime verification hiện được ghi tại [plan](plan.md). Không bắt buộc tạo wrapper workflow riêng cho từng CreateStorage/DeleteStorage internal RPC khi lifecycle caller đã chịu trách nhiệm retry owning gRPC operation đó.
 
 ### Giao tiếp, queues và retry
 
-Platform workflow gọi local activity; activity dùng generated gRPC client gọi LetFS internal API. Platform không gọi workflow/activity private hoặc queue LetFS để thực hiện business operation; LetFS không đọc SQL Platform. Ingest là workers của chính processing boundary LetFS nên ProcessBlob schedule trực tiếp hai Python activities đã chốt.
+Đã chốt chuyển cả ba lifecycle sites Platform → LetFS sang owning activities. DeleteWorkspace theo [shared cleanup contract](workspace-cleanup.md). ProvisionWorkspace/ProvisionMemberStorage theo contract ngay bên dưới; source hiện tại vẫn mixed graph + RPC, backend chưa sửa. LetFS không đọc SQL Platform. ProcessBlob schedule trực tiếp hai Python activities thuộc processing boundary. Activity cùng process không đồng nghĩa native Local Activity; các Go activities hiện tại đều là regular activities.
+
+ProvisionWorkspace giữ workflow Platform: AdmitWorkspace → ProvisionWorkspaceAccess (Platform graph) → ProvisionInitialStorages (LetFS budget + shared/private storages) → ActivateWorkspace. Activity graph thay mixed ProvisionWorkspaceResources cũ; storage batch là một activity, không activity từng RPC. ProvisionMemberStorage cũng giữ workflow Platform nhưng dispatch chính ProvisionMemberStorageResources sang LetFS worker, gồm current participation check, discover và conditional create.
+
+Hai storage activities đăng ký trên queue letfs, nhận typed JSON input tối thiểu chứa stable IDs/business settings và consistency token khi cần; không toàn config hoặc caller-chosen IDs mới trong retry. Platform lấy queue trước start, truyền routing vào deterministic workflow input. Giữ semantics rejoin, grants và read-after-write hiện tại.
+
+**Activity đã nằm trong owning service gọi trực tiếp concrete business functions trong process; không gRPC/HTTP vào chính service đó.** Internal RPC chỉ giữ nếu còn external callers thực sự, dùng chung function khi cần; xóa dead callers/RPC/generated surface nếu không còn dùng. Không forwarding wrapper, repository interface hoặc compatibility shim để giữ test cũ. Feature function vẫn giữ authorization/liveness/receipt/SQL transaction cần thiết.
+
+Người dùng đã chốt cắt đổi storage visibility: public/private chỉ được chọn khi provision, không mutable sau create. UpdateStorage chỉ rename; bỏ request fields visibility/request_id riêng operation này, CEL liên quan, workflow UpdateStorageVisibility, activity UpdateStorageVisibilityResources và registration/callers/tests chỉ phục vụ tính năng bị cắt. Giữ enum/SQL visibility, ListStorages filter và public_workspace graph projection lúc provision; direct access grants vẫn hoạt động. Không thay bằng actor/lock/revision hoặc compatibility wrapper.
+
+Sau cleanup, provisioning owner moves và cắt visibility update, target core có **6 workflow definitions/13 regular activities** (Platform 6, LetFS Go 5, ingest Python 2), vẫn 4 queues. Leta giữ 6 workflows/22 activities/3 queues. Không còn quyết định Temporal nào cần duyệt thêm trước implementation; source hiện tại chưa được sửa theo target này.
 
 | Queue trong YAML | Trách nhiệm |
 |---|---|
 | openlet-platform | Platform lifecycle và maintenance |
-| openlet-letfs | LetFS workflow/orchestration và local maintenance activities |
+| openlet-letfs | LetFS workflow/orchestration, maintenance và ba owning storage activities: ProvisionInitialStorages, ProvisionMemberStorageResources, DeleteWorkspaceStorage |
 | openlet-ingest-cpu | Python ParseBlob |
 | openlet-ingest-io | Python EnrichAndIndex |
 
-Các queue Leta độc lập và tiếp tục hoãn thiết kế; không leta_bridge hoặc callback queue mới. Worker có thể cùng process với owning API theo app layout; queue không đồng nghĩa cần service/container mới.
+Leta đã chốt ba queues ở [Temporal Leta](../261111-2010-leta-rewrite/temporal.md); Platform route DeleteWorkspaceAgents tới openlet-leta-bridge qua shared leta_bridge mapping. Đây là contract được công bố, không quyền gọi private activities tùy ý. Worker có thể cùng process với owning API theo app layout; queue không đồng nghĩa service/container mới.
 
-Dùng native workflow IDs, conflict/reuse policies, activity retry/backoff/timeouts và heartbeat khi có công việc dài. Resource UUID cấp một lần và giữ trong admission/receipt/workflow input; retry tiếp tục cùng resource identity, không UUIDv5 hoặc owner-derived ID. Activity results nhỏ; dùng domain PK/receipt/stage cho idempotency ở datastore. Native retries không làm SQL+graph atomic hoặc hứa global exactly-once. Không custom retry loop, application lease/renewer/fencing hoặc jobs/attempts database.
+Cleanup dùng native transient retries không giới hạn attempts/total lifetime timeout; workflow vẫn pending nếu Leta offline. Không dùng chung MaximumAttempts=10 cho cleanup rồi trông maintenance REJECT_DUPLICATE mở lại failed execution. Các flows còn lại dùng native workflow IDs, conflict/reuse policies, activity retry/backoff/timeouts và heartbeat khi có công việc dài. Resource UUID cấp một lần và giữ trong admission/receipt/workflow input; retry tiếp tục cùng resource identity, không UUIDv5 hoặc owner-derived ID. Activity results nhỏ; dùng domain PK/receipt/stage cho idempotency ở datastore. Native retries không làm SQL+graph atomic hoặc hứa global exactly-once. Không custom retry loop, application lease/renewer/fencing hoặc jobs/attempts database.
 
 Add/remove membership, grant/revoke và owner transfer dùng native SpiceDB writes/batch/preconditions. RemoveMember chỉ xóa human membership với owner-protection precondition; không liệt kê agent/resource, sửa workspace.agent hoặc stop/cleanup fanout. Agent có identity/grants độc lập membership của human owner; eligible_actor = participate + agent. Leta ghi/dọn hai chiều agent.workspace/workspace.agent cùng batch theo agent lifecycle, không owned_agent hoặc registration state mới. Temporal chỉ provision/cleanup sau authorization admission; recover member storage không regrant membership đã thu hồi. Public storage kế thừa workspace graph nên không fan-out cập nhật từng storage khi member đổi.
 
@@ -399,7 +407,7 @@ Workflow không đọc YAML/ENV hoặc gọi SQL/network trực tiếp. Settings
 
 Ordinary file CRUD/copy/move/trash/restore/purge, quota accounting và upload publication vẫn local SQL/provider operations; không per-node workflows hoặc lifetime membership coordinator. Text và artifacts không tự dispatch ingest. Storage roots không có workflow giữ khóa suốt vòng đời.
 
-Delete workspace/storage không chờ Leta runtime dừng trước storage deletion. Async cleanup business API được phép khi contract Leta được chốt; core không dispatch queue/workflow hoặc đọc thread/box/history nội bộ Leta. Core build/test/startup và hot path độc lập với Leta. Chưa đổi Leta runtime/API hoặc tạo Computer service trong phần này.
+Delete workspace/storage không chờ Leta runtime dừng trước storage deletion. Platform dispatch duy nhất shared DeleteWorkspaceAgents activity, không đọc thread/box/history hoặc gọi private workflows Leta. Storage/Platform SQL hoàn tất độc lập Leta; DeleteWorkspace workflow hoàn tất sau cả cleanup futures. Core build/test/startup và hot path độc lập với Leta. Backend changes ở workspace-cleanup.md chưa implementation; không tạo Computer service.
 
 Go/Python Temporal interoperability, deterministic payload encoding và native OTel propagation được smoke trên pinned SDKs khi implementation. Đây là verification công cụ, không decision sản phẩm còn mở. Nếu capability native không đáp ứng contract buộc đổi semantics/schema thì đưa evidence và hỏi user trước khi thay thiết kế.
 
@@ -533,7 +541,7 @@ Platform: user/workspace/membership/invitation và generic workspace-active chec
 
 Leta root giữ workspace_id/storage_id, native calls dùng agent subject. Root owner/operator ở shared authorization graph; không dùng creator làm current owner hoặc lấy human rights thay agent. Agent personal storage owner@agent và owner@agent#owner; chỉ trên storage đó.
 
-Agent API/transport/multiple storage và switch hoãn; không đổi single thread/domain/checkpoints/box/Leti. HITL request đổi locator storage_id, actual grant đi LetFS. Concrete cleanup gRPC của Leta chờ owning review, không thêm ngay.
+Agent API/transport/runtime ở owning plan Leta, multiple storage/switch hoãn. HITL request dùng storage_id, actual grant đi LetFS. Workspace cleanup theo shared activities đã chốt, không cleanup gRPC/listener mới.
 
 Computer chỉ design actor forwarding/manager/operator; chưa code/schema runtime. Ingest giữ sáu typed processing RPC, file_id/version/stage, batch publication. Generated clients và native SDK; không compatibility wrappers.
 
@@ -655,7 +663,7 @@ Chọn knee point: hoàn thành đủ hành vi đã yêu cầu và các invarian
 27. CI chạy affected owners/consumers, reuse fixtures và một full E2E stack. Không coverage quota, test-count target, matrix mọi transport/layer/OS hoặc boot stack mỗi test; không giấu failure bằng skip/retry/compatibility. Cache dependencies/build layers, không cache correctness results.
 28. Infra theo VPS/Compose đã chốt: hai Compose files viết tay, sáu script responsibilities, native Make/pnpm/Go/uv/Buf và hai workflows. Không thêm plan/phase scripts, environment manager, test/control/deploy framework, Kubernetes hoặc cloud variants chưa dùng.
 29. Deploy cùng image digests đã được test, giữ persistent volumes và backup/restore native. Database mới không import dữ liệu cũ; không converter/dual-write. Database cũ và dirty work giữ nguyên; backup trước schema/data change, không reset/xóa ngầm hoặc commit secrets.
-30. Workspace resource ownership theo workspace-service-redesign.md. Core không cần Leta running cho startup/readiness/hot-path hoặc storage deletion; async owning cleanup được phép. Concrete Leta API/runtime/multiple storage hoãn; không đọc SQL/queue/thread nội bộ hoặc tự thêm callback/transport.
+30. Workspace resource ownership theo workspace-service-redesign.md, cleanup theo workspace-cleanup.md. Core không cần Leta running cho startup/readiness/hot-path hoặc storage/Platform SQL deletion; workflow tiếp tục chờ shared cleanup activity. Không đọc SQL/thread hoặc gọi private workflows/activities Leta; không callback/transport mới.
 31. Tất cả nằm trong plan hiện tại; cập nhật owning document thay vì tạo plan/report/framework mới mỗi phát sinh. Theo yêu cầu của người dùng, không dùng skill trong đợt này.
 32. Kiểm chứng sớm native capabilities trên pinned versions, nhất là Envoy ZIP/status, Go/Python Temporal và signed S3. Nếu thất bại buộc đổi semantics/schema/architecture, đưa bằng chứng và các lựa chọn nhỏ nhất rồi thảo luận; không âm thầm tự chế thay thế. Routine SQL/file layout/native SDK options tự thực hiện trong phạm vi đã chốt, không mở vòng hỏi lại.
 33. Hoàn thành gồm callers, generated contracts, manifests, config, tests và CI bị ảnh hưởng. Không dừng ở producer compile/test hẹp; không báo toàn hệ thống pass khi chưa chạy. Báo rõ validation/số đo thật và phần chưa kiểm chứng.

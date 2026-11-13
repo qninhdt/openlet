@@ -1,6 +1,6 @@
 -- Design for a fresh Leta database; not an active migration.
 -- Native LangGraph owns its checkpoint schema and migrations.
--- Box directory provisioning needs the contract decision in boundaries.md.
+-- Box homes are created through LetFS before the active graph is inserted.
 
 CREATE TABLE letas (
     id uuid PRIMARY KEY,
@@ -35,7 +35,7 @@ CREATE TABLE boxes (
     description text NOT NULL DEFAULT '',
     representative_agent_id uuid NOT NULL,
     home_node_id uuid NOT NULL UNIQUE,
-    state text NOT NULL CHECK (state IN ('provisioning', 'active', 'deleting', 'archived')),
+    state text NOT NULL CHECK (state IN ('active', 'deleting', 'archived')),
     created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (leta_id, id),
     FOREIGN KEY (id, representative_agent_id) REFERENCES agents(box_id, id)

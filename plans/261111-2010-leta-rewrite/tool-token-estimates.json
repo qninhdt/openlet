@@ -1,0 +1,1405 @@
+{
+  "method": "Compact UTF-8 JSON token counts, including concise tool descriptions and selected parameter descriptions from tool-contracts.ts; proposed payload, not provider-billed usage. No output schemas, system prompt, messages, provider framing, or images included.",
+  "root_total": {
+    "cl100k_base": 2661,
+    "o200k_base": 2708
+  },
+  "leti_total": {
+    "cl100k_base": 2064,
+    "o200k_base": 2095
+  },
+  "per_tool": [
+    {
+      "name": "inbox_send",
+      "root": {
+        "cl100k_base": 97,
+        "o200k_base": 100
+      },
+      "leti": {
+        "cl100k_base": 97,
+        "o200k_base": 100
+      },
+      "example_args": {
+        "to": "cf2010bc-7a37-5e78-9e75-5990b472783b",
+        "content": "Please compare the two options."
+      },
+      "example_result": {
+        "message_id": "0c048848-6cbc-534d-b234-acf3ca40cd61",
+        "status": "sent"
+      },
+      "example_argument_tokens": {
+        "o200k_base": 36,
+        "cl100k_base": 36
+      },
+      "example_result_tokens": {
+        "o200k_base": 28,
+        "cl100k_base": 28
+      }
+    },
+    {
+      "name": "workspace_get",
+      "root": {
+        "cl100k_base": 47,
+        "o200k_base": 48
+      },
+      "leti": {
+        "cl100k_base": 47,
+        "o200k_base": 48
+      },
+      "example_args": {},
+      "example_result": {
+        "workspace_id": "f9a7d2bd-dca6-57da-8c7f-6aa7e2492a04",
+        "leta_id": "b515ae50-7fd5-575c-971a-a9da4d3289f0",
+        "agent_id": "b515ae50-7fd5-575c-971a-a9da4d3289f0",
+        "box_id": null,
+        "home": "~",
+        "model_id": "example-model",
+        "recipients": [
+          {
+            "id": "cf2010bc-7a37-5e78-9e75-5990b472783b",
+            "type": "box",
+            "name": "research"
+          }
+        ],
+        "next_cursor": null
+      },
+      "example_argument_tokens": {
+        "o200k_base": 1,
+        "cl100k_base": 1
+      },
+      "example_result_tokens": {
+        "o200k_base": 145,
+        "cl100k_base": 144
+      }
+    },
+    {
+      "name": "workspace_member_list",
+      "root": {
+        "cl100k_base": 49,
+        "o200k_base": 50
+      },
+      "leti": {
+        "cl100k_base": 49,
+        "o200k_base": 50
+      },
+      "example_args": {},
+      "example_result": {
+        "items": [
+          {
+            "user_id": "a2768036-c3ea-57cf-8814-230826e47e3e",
+            "name": "Member 1",
+            "role": "member"
+          },
+          {
+            "user_id": "44a2daf9-db6c-583c-ad17-1d31c481df81",
+            "name": "Member 2",
+            "role": "member"
+          },
+          {
+            "user_id": "56f35026-be2d-54ab-8862-94651b98f414",
+            "name": "Member 3",
+            "role": "member"
+          }
+        ],
+        "next_cursor": null
+      },
+      "example_argument_tokens": {
+        "o200k_base": 1,
+        "cl100k_base": 1
+      },
+      "example_result_tokens": {
+        "o200k_base": 114,
+        "cl100k_base": 113
+      }
+    },
+    {
+      "name": "inbox_list",
+      "root": {
+        "cl100k_base": 66,
+        "o200k_base": 70
+      },
+      "leti": null,
+      "example_args": {},
+      "example_result": {
+        "items": [
+          {
+            "conversation_id": "021c2435-91b2-5171-ab72-cb2c2dec2637",
+            "source": {
+              "kind": "box",
+              "id": "1dcf486a-c053-56fd-8408-7cb866e2ed5c",
+              "name": "Team 1"
+            },
+            "preview": "The comparison is ready."
+          },
+          {
+            "conversation_id": "523b5539-46c2-59c3-9eba-767536b10317",
+            "source": {
+              "kind": "box",
+              "id": "96488af2-b035-5998-a299-c65c2aa7aced",
+              "name": "Team 2"
+            },
+            "preview": "The comparison is ready."
+          },
+          {
+            "conversation_id": "fe0ca63b-5cbe-50c4-a6a7-9083bad64aca",
+            "source": {
+              "kind": "box",
+              "id": "6a0120f1-c991-5cd7-a558-36798f73e0f7",
+              "name": "Team 3"
+            },
+            "preview": "The comparison is ready."
+          }
+        ],
+        "next_cursor": null
+      },
+      "example_argument_tokens": {
+        "o200k_base": 1,
+        "cl100k_base": 1
+      },
+      "example_result_tokens": {
+        "o200k_base": 222,
+        "cl100k_base": 218
+      }
+    },
+    {
+      "name": "inbox_read",
+      "root": {
+        "cl100k_base": 77,
+        "o200k_base": 82
+      },
+      "leti": null,
+      "example_args": {
+        "conversation_id": "da781d03-90f0-58ab-8d6c-b90855ff6122"
+      },
+      "example_result": {
+        "items": [
+          {
+            "message_id": "ee029327-2970-5e2d-9fa2-630a6adf75e6",
+            "source": {
+              "kind": "box",
+              "id": "cf2010bc-7a37-5e78-9e75-5990b472783b"
+            },
+            "content": "The report compares latency and cost. The first option is faster. The second option is cheaper. Review the measurements before choosing a provider.",
+            "created_at": "2026-11-12T09:00:00Z"
+          },
+          {
+            "message_id": "cbca1923-bc69-54d0-bbd3-c1ad9c61e753",
+            "source": {
+              "kind": "box",
+              "id": "cf2010bc-7a37-5e78-9e75-5990b472783b"
+            },
+            "content": "The report compares latency and cost. The first option is faster. The second option is cheaper. Review the measurements before choosing a provider.",
+            "created_at": "2026-11-12T09:00:00Z"
+          },
+          {
+            "message_id": "286f0fda-3cba-5458-bf24-bd01f66c0cc2",
+            "source": {
+              "kind": "box",
+              "id": "cf2010bc-7a37-5e78-9e75-5990b472783b"
+            },
+            "content": "The report compares latency and cost. The first option is faster. The second option is cheaper. Review the measurements before choosing a provider.",
+            "created_at": "2026-11-12T09:00:00Z"
+          }
+        ],
+        "next_cursor": null
+      },
+      "example_argument_tokens": {
+        "o200k_base": 27,
+        "cl100k_base": 27
+      },
+      "example_result_tokens": {
+        "o200k_base": 329,
+        "cl100k_base": 323
+      }
+    },
+    {
+      "name": "box_create",
+      "root": {
+        "cl100k_base": 212,
+        "o200k_base": 218
+      },
+      "leti": null,
+      "example_args": {
+        "name": "research",
+        "letis": [
+          {
+            "name": "analyst",
+            "system_prompt": "Compare options using evidence."
+          },
+          {
+            "name": "reviewer",
+            "system_prompt": "Check the proposed comparison."
+          }
+        ],
+        "edges": [
+          [
+            "analyst",
+            "reviewer"
+          ]
+        ],
+        "representative": "analyst"
+      },
+      "example_result": {
+        "box_id": "cf2010bc-7a37-5e78-9e75-5990b472783b",
+        "state": "active",
+        "home": "~/.boxes/cf2010bc-7a37-5e78-9e75-5990b472783b",
+        "representative_agent_id": "17973f76-468a-5a44-b34d-2b3f32dbeef5",
+        "letis": [
+          {
+            "id": "17973f76-468a-5a44-b34d-2b3f32dbeef5",
+            "name": "analyst"
+          },
+          {
+            "id": "1375132d-7256-535f-a40a-ce5c870b4705",
+            "name": "reviewer"
+          }
+        ]
+      },
+      "example_argument_tokens": {
+        "o200k_base": 54,
+        "cl100k_base": 53
+      },
+      "example_result_tokens": {
+        "o200k_base": 157,
+        "cl100k_base": 154
+      }
+    },
+    {
+      "name": "box_list",
+      "root": {
+        "cl100k_base": 43,
+        "o200k_base": 44
+      },
+      "leti": null,
+      "example_args": {},
+      "example_result": {
+        "items": [
+          {
+            "id": "f067c394-c0bc-5dc6-8843-92da904402a1",
+            "name": "Team 1",
+            "description": "Compare available options.",
+            "state": "active",
+            "agent_count": 2,
+            "pending_request_count": 1,
+            "schedule_count": 1
+          },
+          {
+            "id": "80dec751-50c7-5279-8d65-484b443e7c55",
+            "name": "Team 2",
+            "description": "Compare available options.",
+            "state": "active",
+            "agent_count": 2,
+            "pending_request_count": 1,
+            "schedule_count": 1
+          },
+          {
+            "id": "793fb3a2-52d5-5e7c-be02-abbd4e80768a",
+            "name": "Team 3",
+            "description": "Compare available options.",
+            "state": "active",
+            "agent_count": 2,
+            "pending_request_count": 1,
+            "schedule_count": 1
+          }
+        ],
+        "next_cursor": null
+      },
+      "example_argument_tokens": {
+        "o200k_base": 1,
+        "cl100k_base": 1
+      },
+      "example_result_tokens": {
+        "o200k_base": 181,
+        "cl100k_base": 180
+      }
+    },
+    {
+      "name": "box_get",
+      "root": {
+        "cl100k_base": 77,
+        "o200k_base": 79
+      },
+      "leti": null,
+      "example_args": {
+        "box": "cf2010bc-7a37-5e78-9e75-5990b472783b"
+      },
+      "example_result": {
+        "id": "cf2010bc-7a37-5e78-9e75-5990b472783b",
+        "name": "research",
+        "description": "Compare options.",
+        "state": "active",
+        "home": "~/.boxes/cf2010bc-7a37-5e78-9e75-5990b472783b",
+        "representative_agent_id": "17973f76-468a-5a44-b34d-2b3f32dbeef5",
+        "letis": [
+          {
+            "id": "17973f76-468a-5a44-b34d-2b3f32dbeef5",
+            "name": "analyst",
+            "description": "Compare options."
+          },
+          {
+            "id": "1375132d-7256-535f-a40a-ce5c870b4705",
+            "name": "reviewer",
+            "description": "Review evidence."
+          }
+        ],
+        "edges": [
+          [
+            "17973f76-468a-5a44-b34d-2b3f32dbeef5",
+            "1375132d-7256-535f-a40a-ce5c870b4705"
+          ]
+        ],
+        "pending_request_count": 1,
+        "schedule_count": 1,
+        "running_agent_count": 1
+      },
+      "example_argument_tokens": {
+        "o200k_base": 27,
+        "cl100k_base": 27
+      },
+      "example_result_tokens": {
+        "o200k_base": 244,
+        "cl100k_base": 240
+      }
+    },
+    {
+      "name": "box_delete",
+      "root": {
+        "cl100k_base": 64,
+        "o200k_base": 66
+      },
+      "leti": null,
+      "example_args": {
+        "box_id": "cf2010bc-7a37-5e78-9e75-5990b472783b"
+      },
+      "example_result": {
+        "box_id": "cf2010bc-7a37-5e78-9e75-5990b472783b",
+        "state": "archived"
+      },
+      "example_argument_tokens": {
+        "o200k_base": 28,
+        "cl100k_base": 28
+      },
+      "example_result_tokens": {
+        "o200k_base": 33,
+        "cl100k_base": 33
+      }
+    },
+    {
+      "name": "hitl_ask",
+      "root": {
+        "cl100k_base": 167,
+        "o200k_base": 172
+      },
+      "leti": {
+        "cl100k_base": 167,
+        "o200k_base": 172
+      },
+      "example_args": {
+        "recipient_user_id": "b0a20f25-7834-5ae8-a6db-168d161563f6",
+        "title": "Choose priorities",
+        "questions": [
+          {
+            "text": "Which matters more?",
+            "options": [
+              "Latency",
+              "Cost"
+            ]
+          },
+          {
+            "text": "Add context if needed."
+          }
+        ]
+      },
+      "example_result": {
+        "request_id": "778dbfb8-12f0-57ed-9dc0-9c4591c92fdf",
+        "status": "pending",
+        "expires_at": null
+      },
+      "example_argument_tokens": {
+        "o200k_base": 60,
+        "cl100k_base": 60
+      },
+      "example_result_tokens": {
+        "o200k_base": 38,
+        "cl100k_base": 37
+      }
+    },
+    {
+      "name": "hitl_request",
+      "root": {
+        "cl100k_base": 104,
+        "o200k_base": 111
+      },
+      "leti": {
+        "cl100k_base": 104,
+        "o200k_base": 111
+      },
+      "example_args": {
+        "storage_id": "53c8f790-d19f-5924-b208-2e236b9531e7",
+        "recipient_user_id": "b0a20f25-7834-5ae8-a6db-168d161563f6",
+        "reason": "Read the report."
+      },
+      "example_result": {
+        "request_id": "778dbfb8-12f0-57ed-9dc0-9c4591c92fdf",
+        "status": "pending",
+        "expires_at": null
+      },
+      "example_argument_tokens": {
+        "o200k_base": 62,
+        "cl100k_base": 62
+      },
+      "example_result_tokens": {
+        "o200k_base": 38,
+        "cl100k_base": 37
+      }
+    },
+    {
+      "name": "hitl_list",
+      "root": {
+        "cl100k_base": 86,
+        "o200k_base": 89
+      },
+      "leti": {
+        "cl100k_base": 72,
+        "o200k_base": 74
+      },
+      "example_args": {
+        "status": "pending"
+      },
+      "example_result": {
+        "items": [
+          {
+            "id": "0cf761ed-39eb-5c67-8ea4-79270944ed55",
+            "title": "Review 1",
+            "status": "pending",
+            "type": "ask",
+            "requester_agent_id": "b515ae50-7fd5-575c-971a-a9da4d3289f0",
+            "recipient_user_id": "b0a20f25-7834-5ae8-a6db-168d161563f6"
+          },
+          {
+            "id": "d64ab690-4e70-5251-b1cc-b0ffee656721",
+            "title": "Review 2",
+            "status": "pending",
+            "type": "ask",
+            "requester_agent_id": "b515ae50-7fd5-575c-971a-a9da4d3289f0",
+            "recipient_user_id": "b0a20f25-7834-5ae8-a6db-168d161563f6"
+          },
+          {
+            "id": "88d6e143-4721-5f97-a3a7-4eda7906457a",
+            "title": "Review 3",
+            "status": "pending",
+            "type": "ask",
+            "requester_agent_id": "b515ae50-7fd5-575c-971a-a9da4d3289f0",
+            "recipient_user_id": "b0a20f25-7834-5ae8-a6db-168d161563f6"
+          }
+        ],
+        "next_cursor": null
+      },
+      "example_argument_tokens": {
+        "o200k_base": 5,
+        "cl100k_base": 5
+      },
+      "example_result_tokens": {
+        "o200k_base": 295,
+        "cl100k_base": 294
+      }
+    },
+    {
+      "name": "hitl_get",
+      "root": {
+        "cl100k_base": 58,
+        "o200k_base": 60
+      },
+      "leti": {
+        "cl100k_base": 58,
+        "o200k_base": 60
+      },
+      "example_args": {
+        "request_id": "778dbfb8-12f0-57ed-9dc0-9c4591c92fdf"
+      },
+      "example_result": {
+        "id": "778dbfb8-12f0-57ed-9dc0-9c4591c92fdf",
+        "requester_agent_id": "b515ae50-7fd5-575c-971a-a9da4d3289f0",
+        "recipient_user_id": "b0a20f25-7834-5ae8-a6db-168d161563f6",
+        "type": "ask",
+        "title": "Choose priorities",
+        "payload": {
+          "questions": [
+            {
+              "id": "q1",
+              "type": "single_choice",
+              "text": "Which matters more?",
+              "options": [
+                {
+                  "id": "o1",
+                  "label": "Latency"
+                },
+                {
+                  "id": "o2",
+                  "label": "Cost"
+                }
+              ]
+            },
+            {
+              "id": "q2",
+              "type": "text",
+              "text": "Add context if needed."
+            }
+          ]
+        },
+        "status": "pending",
+        "response": null,
+        "outcome": null,
+        "expires_at": null,
+        "created_at": "2026-11-12T09:00:00Z",
+        "resolved_at": null
+      },
+      "example_argument_tokens": {
+        "o200k_base": 29,
+        "cl100k_base": 28
+      },
+      "example_result_tokens": {
+        "o200k_base": 198,
+        "cl100k_base": 195
+      }
+    },
+    {
+      "name": "hitl_cancel",
+      "root": {
+        "cl100k_base": 66,
+        "o200k_base": 70
+      },
+      "leti": {
+        "cl100k_base": 66,
+        "o200k_base": 70
+      },
+      "example_args": {
+        "request_id": "778dbfb8-12f0-57ed-9dc0-9c4591c92fdf"
+      },
+      "example_result": {
+        "request_id": "778dbfb8-12f0-57ed-9dc0-9c4591c92fdf",
+        "status": "cancelled"
+      },
+      "example_argument_tokens": {
+        "o200k_base": 29,
+        "cl100k_base": 28
+      },
+      "example_result_tokens": {
+        "o200k_base": 34,
+        "cl100k_base": 32
+      }
+    },
+    {
+      "name": "schedule_create",
+      "root": {
+        "cl100k_base": 296,
+        "o200k_base": 297
+      },
+      "leti": {
+        "cl100k_base": 272,
+        "o200k_base": 273
+      },
+      "example_args": {
+        "title": "Check report",
+        "content": "Review the new measurements.",
+        "every_seconds": 3600
+      },
+      "example_result": {
+        "schedule_id": "abd28094-2231-5dcc-8fc1-9d5c3c51d15b",
+        "paused": false
+      },
+      "example_argument_tokens": {
+        "o200k_base": 19,
+        "cl100k_base": 19
+      },
+      "example_result_tokens": {
+        "o200k_base": 33,
+        "cl100k_base": 33
+      }
+    },
+    {
+      "name": "schedule_list",
+      "root": {
+        "cl100k_base": 61,
+        "o200k_base": 63
+      },
+      "leti": {
+        "cl100k_base": 41,
+        "o200k_base": 42
+      },
+      "example_args": {},
+      "example_result": {
+        "items": [
+          {
+            "id": "be3ac41b-defa-5c1c-8e73-5b7cd59d3477",
+            "title": "Review 1",
+            "type": "interval",
+            "target_agent_id": "b515ae50-7fd5-575c-971a-a9da4d3289f0",
+            "paused": false
+          },
+          {
+            "id": "aec6e7c3-511d-51e4-8ead-daaa75648306",
+            "title": "Review 2",
+            "type": "interval",
+            "target_agent_id": "b515ae50-7fd5-575c-971a-a9da4d3289f0",
+            "paused": false
+          },
+          {
+            "id": "21024adc-1bfc-534c-a84b-945e76780aef",
+            "title": "Review 3",
+            "type": "interval",
+            "target_agent_id": "b515ae50-7fd5-575c-971a-a9da4d3289f0",
+            "paused": false
+          }
+        ],
+        "next_cursor": null
+      },
+      "example_argument_tokens": {
+        "o200k_base": 1,
+        "cl100k_base": 1
+      },
+      "example_result_tokens": {
+        "o200k_base": 211,
+        "cl100k_base": 210
+      }
+    },
+    {
+      "name": "schedule_get",
+      "root": {
+        "cl100k_base": 54,
+        "o200k_base": 56
+      },
+      "leti": {
+        "cl100k_base": 54,
+        "o200k_base": 56
+      },
+      "example_args": {
+        "schedule_id": "abd28094-2231-5dcc-8fc1-9d5c3c51d15b"
+      },
+      "example_result": {
+        "id": "abd28094-2231-5dcc-8fc1-9d5c3c51d15b",
+        "target_agent_id": "b515ae50-7fd5-575c-971a-a9da4d3289f0",
+        "title": "Check report",
+        "content": "Review the new measurements.",
+        "every_seconds": 3600,
+        "starts_at": "2026-11-12T09:00:00Z",
+        "paused": false,
+        "deleted_at": null,
+        "created_at": "2026-11-12T09:00:00Z",
+        "upcoming": [
+          "2026-11-12T10:00:00Z",
+          "2026-11-12T11:00:00Z"
+        ],
+        "forecast_status": "available"
+      },
+      "example_argument_tokens": {
+        "o200k_base": 29,
+        "cl100k_base": 29
+      },
+      "example_result_tokens": {
+        "o200k_base": 154,
+        "cl100k_base": 153
+      }
+    },
+    {
+      "name": "schedule_update",
+      "root": {
+        "cl100k_base": 284,
+        "o200k_base": 286
+      },
+      "leti": {
+        "cl100k_base": 284,
+        "o200k_base": 286
+      },
+      "example_args": {
+        "schedule_id": "abd28094-2231-5dcc-8fc1-9d5c3c51d15b",
+        "paused": true
+      },
+      "example_result": {
+        "schedule_id": "abd28094-2231-5dcc-8fc1-9d5c3c51d15b",
+        "paused": true
+      },
+      "example_argument_tokens": {
+        "o200k_base": 33,
+        "cl100k_base": 33
+      },
+      "example_result_tokens": {
+        "o200k_base": 33,
+        "cl100k_base": 33
+      }
+    },
+    {
+      "name": "schedule_delete",
+      "root": {
+        "cl100k_base": 55,
+        "o200k_base": 57
+      },
+      "leti": {
+        "cl100k_base": 55,
+        "o200k_base": 57
+      },
+      "example_args": {
+        "schedule_id": "abd28094-2231-5dcc-8fc1-9d5c3c51d15b"
+      },
+      "example_result": {
+        "schedule_id": "abd28094-2231-5dcc-8fc1-9d5c3c51d15b",
+        "deleted": true
+      },
+      "example_argument_tokens": {
+        "o200k_base": 29,
+        "cl100k_base": 29
+      },
+      "example_result_tokens": {
+        "o200k_base": 33,
+        "cl100k_base": 33
+      }
+    },
+    {
+      "name": "history_search",
+      "root": {
+        "cl100k_base": 61,
+        "o200k_base": 62
+      },
+      "leti": {
+        "cl100k_base": 61,
+        "o200k_base": 62
+      },
+      "example_args": {
+        "query": "latency cost"
+      },
+      "example_result": {
+        "items": [
+          {
+            "id": "eeabe06c-8610-5339-aa2a-1ad7a9d4d518",
+            "seq": 1,
+            "kind": "assistant",
+            "created_at": "2026-11-12T09:00:00Z",
+            "preview": "The comparison is ready."
+          },
+          {
+            "id": "f6afedff-44dd-59d8-be86-047948406b55",
+            "seq": 2,
+            "kind": "assistant",
+            "created_at": "2026-11-12T09:00:00Z",
+            "preview": "The comparison is ready."
+          },
+          {
+            "id": "f1dd45b6-0cf6-5997-aeaa-c65927012f21",
+            "seq": 3,
+            "kind": "assistant",
+            "created_at": "2026-11-12T09:00:00Z",
+            "preview": "The comparison is ready."
+          }
+        ],
+        "next_cursor": null
+      },
+      "example_argument_tokens": {
+        "o200k_base": 7,
+        "cl100k_base": 7
+      },
+      "example_result_tokens": {
+        "o200k_base": 183,
+        "cl100k_base": 183
+      }
+    },
+    {
+      "name": "history_read",
+      "root": {
+        "cl100k_base": 71,
+        "o200k_base": 74
+      },
+      "leti": {
+        "cl100k_base": 71,
+        "o200k_base": 74
+      },
+      "example_args": {
+        "entry_id": "a6fb84d8-0fc4-569f-be6f-f66dfaa84c8a"
+      },
+      "example_result": {
+        "entry": {
+          "id": "a6fb84d8-0fc4-569f-be6f-f66dfaa84c8a",
+          "seq": 7,
+          "kind": "assistant",
+          "created_at": "2026-11-12T09:00:00Z"
+        },
+        "content": "The report compares latency and cost. The first option is faster. The second option is cheaper. Review the measurements before choosing a provider.",
+        "start_line": 1,
+        "total_lines": 1,
+        "truncated": false,
+        "next_start_line": null
+      },
+      "example_argument_tokens": {
+        "o200k_base": 29,
+        "cl100k_base": 29
+      },
+      "example_result_tokens": {
+        "o200k_base": 106,
+        "cl100k_base": 105
+      }
+    },
+    {
+      "name": "file_list",
+      "root": {
+        "cl100k_base": 94,
+        "o200k_base": 96
+      },
+      "leti": {
+        "cl100k_base": 94,
+        "o200k_base": 96
+      },
+      "example_args": {},
+      "example_result": {
+        "items": [
+          {
+            "path": "~/report-1.md",
+            "kind": "text",
+            "size_bytes": 1200
+          },
+          {
+            "path": "~/report-2.md",
+            "kind": "text",
+            "size_bytes": 1200
+          },
+          {
+            "path": "~/report-3.md",
+            "kind": "text",
+            "size_bytes": 1200
+          }
+        ],
+        "next_cursor": null,
+        "truncated": false
+      },
+      "example_argument_tokens": {
+        "o200k_base": 1,
+        "cl100k_base": 1
+      },
+      "example_result_tokens": {
+        "o200k_base": 69,
+        "cl100k_base": 68
+      }
+    },
+    {
+      "name": "file_read",
+      "root": {
+        "cl100k_base": 75,
+        "o200k_base": 77
+      },
+      "leti": {
+        "cl100k_base": 75,
+        "o200k_base": 77
+      },
+      "example_args": {
+        "path": "~/report.md"
+      },
+      "example_result": {
+        "type": "text",
+        "path": "~/report.md",
+        "text": "The report compares latency and cost. The first option is faster. The second option is cheaper. Review the measurements before choosing a provider.",
+        "start_line": 1,
+        "total_lines": 1,
+        "truncated": false,
+        "next_start_line": null
+      },
+      "example_argument_tokens": {
+        "o200k_base": 7,
+        "cl100k_base": 7
+      },
+      "example_result_tokens": {
+        "o200k_base": 61,
+        "cl100k_base": 61
+      }
+    },
+    {
+      "name": "file_write",
+      "root": {
+        "cl100k_base": 78,
+        "o200k_base": 81
+      },
+      "leti": {
+        "cl100k_base": 78,
+        "o200k_base": 81
+      },
+      "example_args": {
+        "path": "~/notes.md",
+        "content": "The report compares latency and cost. The first option is faster. The second option is cheaper. Review the measurements before choosing a provider."
+      },
+      "example_result": {
+        "path": "~/notes.md"
+      },
+      "example_argument_tokens": {
+        "o200k_base": 37,
+        "cl100k_base": 37
+      },
+      "example_result_tokens": {
+        "o200k_base": 7,
+        "cl100k_base": 7
+      }
+    },
+    {
+      "name": "file_edit",
+      "root": {
+        "cl100k_base": 98,
+        "o200k_base": 101
+      },
+      "leti": {
+        "cl100k_base": 98,
+        "o200k_base": 101
+      },
+      "example_args": {
+        "path": "~/notes.md",
+        "old_text": "faster",
+        "new_text": "lower latency"
+      },
+      "example_result": {
+        "path": "~/notes.md"
+      },
+      "example_argument_tokens": {
+        "o200k_base": 19,
+        "cl100k_base": 19
+      },
+      "example_result_tokens": {
+        "o200k_base": 7,
+        "cl100k_base": 7
+      }
+    },
+    {
+      "name": "exec_shell",
+      "root": {
+        "cl100k_base": 69,
+        "o200k_base": 71
+      },
+      "leti": {
+        "cl100k_base": 69,
+        "o200k_base": 71
+      },
+      "example_args": {
+        "command": "wc -l ~/report.md"
+      },
+      "example_result": {
+        "exit_code": 0,
+        "stdout": "12 ~/report.md\n",
+        "stderr": "",
+        "truncated": false
+      },
+      "example_argument_tokens": {
+        "o200k_base": 10,
+        "cl100k_base": 10
+      },
+      "example_result_tokens": {
+        "o200k_base": 21,
+        "cl100k_base": 21
+      }
+    },
+    {
+      "name": "exec_python",
+      "root": {
+        "cl100k_base": 59,
+        "o200k_base": 61
+      },
+      "leti": {
+        "cl100k_base": 59,
+        "o200k_base": 61
+      },
+      "example_args": {
+        "code": "print(sum([3, 5, 8]))"
+      },
+      "example_result": {
+        "exit_code": 0,
+        "stdout": "16\n",
+        "stderr": "",
+        "truncated": false
+      },
+      "example_argument_tokens": {
+        "o200k_base": 15,
+        "cl100k_base": 15
+      },
+      "example_result_tokens": {
+        "o200k_base": 18,
+        "cl100k_base": 18
+      }
+    },
+    {
+      "name": "file_semantic_search",
+      "root": {
+        "cl100k_base": 91,
+        "o200k_base": 93
+      },
+      "leti": {
+        "cl100k_base": 91,
+        "o200k_base": 93
+      },
+      "example_args": {
+        "query": "latency and cost",
+        "paths": [
+          "~"
+        ]
+      },
+      "example_result": {
+        "results": [
+          {
+            "path": "~",
+            "hits": [
+              {
+                "path": "~/report-1.md",
+                "text": "The report compares latency and cost. The first option is faster. The second option is cheaper. Review the measurements before choosing a provider."
+              },
+              {
+                "path": "~/report-2.md",
+                "text": "The report compares latency and cost. The first option is faster. The second option is cheaper. Review the measurements before choosing a provider."
+              },
+              {
+                "path": "~/report-3.md",
+                "text": "The report compares latency and cost. The first option is faster. The second option is cheaper. Review the measurements before choosing a provider."
+              }
+            ]
+          }
+        ]
+      },
+      "example_argument_tokens": {
+        "o200k_base": 13,
+        "cl100k_base": 12
+      },
+      "example_result_tokens": {
+        "o200k_base": 127,
+        "cl100k_base": 125
+      }
+    }
+  ],
+  "example_assumptions": "Synthetic examples, not production samples: list tools return 3 rows; text tools return one 23-word paragraph; create_box has 2 short prompts; get_hitl has 2 questions. Actual result sizes are variable, not bounded by these counts.",
+  "previous_proposal": {
+    "root_total": {
+      "o200k_base": 3397,
+      "cl100k_base": 3320
+    },
+    "leti_total": {
+      "o200k_base": 2801,
+      "cl100k_base": 2738
+    },
+    "per_tool": [
+      {
+        "name": "send_message",
+        "root": {
+          "o200k_base": 83,
+          "cl100k_base": 80
+        },
+        "leti": {
+          "o200k_base": 83,
+          "cl100k_base": 80
+        }
+      },
+      {
+        "name": "get_workspace",
+        "root": {
+          "o200k_base": 72,
+          "cl100k_base": 71
+        },
+        "leti": {
+          "o200k_base": 72,
+          "cl100k_base": 71
+        }
+      },
+      {
+        "name": "list_workspace_members",
+        "root": {
+          "o200k_base": 67,
+          "cl100k_base": 66
+        },
+        "leti": {
+          "o200k_base": 67,
+          "cl100k_base": 66
+        }
+      },
+      {
+        "name": "list_inbox",
+        "root": {
+          "o200k_base": 90,
+          "cl100k_base": 87
+        },
+        "leti": null
+      },
+      {
+        "name": "read_inbox",
+        "root": {
+          "o200k_base": 94,
+          "cl100k_base": 90
+        },
+        "leti": null
+      },
+      {
+        "name": "create_box",
+        "root": {
+          "o200k_base": 181,
+          "cl100k_base": 175
+        },
+        "leti": null
+      },
+      {
+        "name": "list_boxes",
+        "root": {
+          "o200k_base": 66,
+          "cl100k_base": 65
+        },
+        "leti": null
+      },
+      {
+        "name": "get_box",
+        "root": {
+          "o200k_base": 70,
+          "cl100k_base": 68
+        },
+        "leti": null
+      },
+      {
+        "name": "delete_box",
+        "root": {
+          "o200k_base": 59,
+          "cl100k_base": 57
+        },
+        "leti": null
+      },
+      {
+        "name": "ask_user",
+        "root": {
+          "o200k_base": 381,
+          "cl100k_base": 369
+        },
+        "leti": {
+          "o200k_base": 381,
+          "cl100k_base": 369
+        }
+      },
+      {
+        "name": "request_access",
+        "root": {
+          "o200k_base": 117,
+          "cl100k_base": 110
+        },
+        "leti": {
+          "o200k_base": 117,
+          "cl100k_base": 110
+        }
+      },
+      {
+        "name": "list_hitl",
+        "root": {
+          "o200k_base": 100,
+          "cl100k_base": 97
+        },
+        "leti": {
+          "o200k_base": 88,
+          "cl100k_base": 86
+        }
+      },
+      {
+        "name": "get_hitl",
+        "root": {
+          "o200k_base": 58,
+          "cl100k_base": 56
+        },
+        "leti": {
+          "o200k_base": 58,
+          "cl100k_base": 56
+        }
+      },
+      {
+        "name": "cancel_hitl",
+        "root": {
+          "o200k_base": 70,
+          "cl100k_base": 66
+        },
+        "leti": {
+          "o200k_base": 70,
+          "cl100k_base": 66
+        }
+      },
+      {
+        "name": "create_schedule",
+        "root": {
+          "o200k_base": 452,
+          "cl100k_base": 439
+        },
+        "leti": {
+          "o200k_base": 434,
+          "cl100k_base": 421
+        }
+      },
+      {
+        "name": "list_schedules",
+        "root": {
+          "o200k_base": 77,
+          "cl100k_base": 75
+        },
+        "leti": {
+          "o200k_base": 65,
+          "cl100k_base": 64
+        }
+      },
+      {
+        "name": "get_schedule",
+        "root": {
+          "o200k_base": 57,
+          "cl100k_base": 55
+        },
+        "leti": {
+          "o200k_base": 57,
+          "cl100k_base": 55
+        }
+      },
+      {
+        "name": "update_schedule",
+        "root": {
+          "o200k_base": 453,
+          "cl100k_base": 439
+        },
+        "leti": {
+          "o200k_base": 453,
+          "cl100k_base": 439
+        }
+      },
+      {
+        "name": "delete_schedule",
+        "root": {
+          "o200k_base": 55,
+          "cl100k_base": 53
+        },
+        "leti": {
+          "o200k_base": 55,
+          "cl100k_base": 53
+        }
+      },
+      {
+        "name": "search_history",
+        "root": {
+          "o200k_base": 80,
+          "cl100k_base": 79
+        },
+        "leti": {
+          "o200k_base": 80,
+          "cl100k_base": 79
+        }
+      },
+      {
+        "name": "read_history",
+        "root": {
+          "o200k_base": 91,
+          "cl100k_base": 88
+        },
+        "leti": {
+          "o200k_base": 91,
+          "cl100k_base": 88
+        }
+      },
+      {
+        "name": "list_files",
+        "root": {
+          "o200k_base": 100,
+          "cl100k_base": 98
+        },
+        "leti": {
+          "o200k_base": 100,
+          "cl100k_base": 98
+        }
+      },
+      {
+        "name": "read_file",
+        "root": {
+          "o200k_base": 93,
+          "cl100k_base": 91
+        },
+        "leti": {
+          "o200k_base": 93,
+          "cl100k_base": 91
+        }
+      },
+      {
+        "name": "write_file",
+        "root": {
+          "o200k_base": 89,
+          "cl100k_base": 86
+        },
+        "leti": {
+          "o200k_base": 89,
+          "cl100k_base": 86
+        }
+      },
+      {
+        "name": "edit_file",
+        "root": {
+          "o200k_base": 103,
+          "cl100k_base": 100
+        },
+        "leti": {
+          "o200k_base": 103,
+          "cl100k_base": 100
+        }
+      },
+      {
+        "name": "run_shell",
+        "root": {
+          "o200k_base": 88,
+          "cl100k_base": 85
+        },
+        "leti": {
+          "o200k_base": 88,
+          "cl100k_base": 85
+        }
+      },
+      {
+        "name": "run_python",
+        "root": {
+          "o200k_base": 77,
+          "cl100k_base": 75
+        },
+        "leti": {
+          "o200k_base": 77,
+          "cl100k_base": 75
+        }
+      },
+      {
+        "name": "semantic_search",
+        "root": {
+          "o200k_base": 100,
+          "cl100k_base": 98
+        },
+        "leti": {
+          "o200k_base": 100,
+          "cl100k_base": 98
+        }
+      }
+    ]
+  },
+  "changed_contract": "System owns file versions/timeouts/page sizes/form IDs and normalization; agent expresses intent. Timing is flat and inferred; calendar arrays contain selected values, not native range objects.",
+  "before_namespace_rename": {
+    "root_total": {
+      "o200k_base": 2413,
+      "cl100k_base": 2361
+    },
+    "leti_total": {
+      "o200k_base": 1877,
+      "cl100k_base": 1839
+    }
+  },
+  "naming": "Current model-visible tool names use <resource_or_namespace>_<action>, including inbox_send, hitl_request, file_semantic_search and exec_shell/exec_python; previous_proposal retains original historical names/counts, not aliases.",
+  "before_description_draft": {
+    "root_total": {
+      "o200k_base": 2418,
+      "cl100k_base": 2362
+    },
+    "leti_total": {
+      "o200k_base": 1882,
+      "cl100k_base": 1842
+    },
+    "note": "Before the TypeScript description draft; tool names, parameter shapes, and behavior are unchanged."
+  },
+  "before_description_compaction": {
+    "root_total": {
+      "o200k_base": 5086,
+      "cl100k_base": 5063
+    },
+    "leti_total": {
+      "o200k_base": 3991,
+      "cl100k_base": 3975
+    },
+    "note": "Verbose descriptions rejected; same tools and parameter shapes."
+  }
+}

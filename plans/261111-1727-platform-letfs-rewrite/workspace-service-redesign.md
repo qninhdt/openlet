@@ -28,7 +28,7 @@ LetFS quản lý nhiều storages trong một workspace ngay từ schema. Mỗi 
 - Public: mọi actor hợp lệ của cùng workspace, gồm human owner/member và agent thuộc workspace qua workspace.agent, mặc định được đọc. Ghi vẫn cần owner/editor.
 - Public chỉ trong workspace, không public Internet.
 - Personal/shared là cách FE hiển thị: private mà mình có role owner là “của tôi”; public là “chung workspace”. Private được chia sẻ trực tiếp vẫn xuất hiện trong danh sách truy cập được.
-- Visibility không quyết định owner và không đổi ownership khi thay đổi visibility.
+- Visibility không quyết định owner; private/public được chọn khi provision và cố định sau create. Không API/workflow đổi visibility; direct grants vẫn có thể cấp/thu hồi.
 - Không bảng personal_storages/member_scopes, không UUIDv5/deterministic actor-derived ID, không UNIQUE owner→storage. IDs là UUID thông thường, được cấp một lần và giữ trong provisioning input/receipt để retry cùng effect.
 - MVP chỉ hệ thống provision workspace/storage. Chưa public CreateWorkspace/CreateStorage hoặc UI tạo thêm storage; model đã hỗ trợ nhiều storage để thêm feature sau.
 - Leta giữ workspace_id và một storage_id trên root agent. Multiple storage/switch storage của agent hoãn; không tạo workspace thứ hai cho agent trong thay đổi này.
@@ -52,7 +52,7 @@ Quota accounting giữ contract đã chốt: logical bytes text/blob/artifacts/t
 | Computer manager/operator | SpiceDB, Computer quản lý writes |
 | Role→permission expressions | schema.zed trong contracts, triển khai vào SpiceDB |
 
-Resource→workspace là relation được owning service ghi vào graph từ workspace_id. Visibility canonical ở SQL; public_workspace là authorization projection tương ứng. Đây là cross-store write thực sự, không atomic SQL+graph. Dùng native durable retries cho provisioning/visibility/deletion, không giữ SQL transaction qua network và không dựng outbox/permission-replication framework.
+Resource→workspace là relation được owning service ghi vào graph từ workspace_id. Visibility canonical ở SQL và cố định sau create; public_workspace là authorization projection được ghi lúc provisioning. Đây là cross-store write thực sự, không atomic SQL+graph. Dùng native durable retries cho provisioning/deletion, không giữ SQL transaction qua network và không dựng outbox/permission-replication framework. Đã chốt cắt visibility update thay vì thêm workflow serialization.
 
 Leta ghi agent:A#workspace@workspace:W và workspace:W#agent@agent:A trong cùng WriteRelationships batch với owner/operators. Chiều workspace.agent cho eligible_actor xác định agent có thuộc đúng workspace; không dựa vào membership human owner. Khi xóa agent, Leta xóa hai chiều trong cùng batch; workspace teardown cũng thu hồi workspace.agent. Transfer owner không đổi hai chiều này. Đổi tên registered_agent → agent trong active Zed/readers/writers khi implementation, không compatibility alias, RegisterAgent/UnregisterAgent RPC, registration workflow hoặc SQL status mới.
 
@@ -151,11 +151,11 @@ Theo yêu cầu người dùng, không validate lại bản Zed mới. Các asse
 - Transfer workspace/agent owner là graph mutation của owning service. Owner cũ không giữ quyền owner qua creator metadata.
 - RemoveMember/self-leave kiểm quyền human và workspace active, chặn remove workspace owner bằng native graph precondition, rồi chỉ xóa workspace.member. Không scan agent.owner, sửa workspace.agent, dừng/xóa/transfer agent hoặc gọi từng resource service. Agent tiếp tục với identity/grants riêng dù human owner không còn trong workspace.
 - Remove membership giữ dữ liệu/direct grants của human, bị vô hiệu bởi workspace gate. Rejoin kích hoạt lại quyền human từ grants còn giữ; agent không cần regrant/resume vì không bị remove tác động. Xóa dữ liệu/thu hồi vĩnh viễn là thao tác riêng.
-- Delete workspace thu hồi workspace authorization rồi dọn resource theo owning service. Có thể gọi cleanup business API Leta/Computer bất đồng bộ; không stop-ACK barrier trước storage deletion, không readiness/hot-path dependency.
-- API/lifecycle RPC cụ thể của Leta vẫn hoãn. Không thêm listener/proto/queue/config bắt buộc cho Leta trong đợt thiết kế API Platform/LetFS. Physical cleanup hoàn chỉnh phần Leta chờ boundary review đó.
+- Delete workspace theo [cleanup đã chốt](workspace-cleanup.md): Platform revoke workspace graph rồi dispatch DeleteWorkspaceStorage trên LetFS queue và DeleteWorkspaceAgents trên Leta bridge queue song song. Storage ACK → DELETE Platform SQL; workflow vẫn chờ Leta, không stop-ACK barrier trước storage deletion hoặc readiness/hot-path dependency.
+- Shared JSON activity input/queue mapping là contract liên service mới cần triển khai ở backend hiện có; không application cleanup RPC/listener, resource registry hoặc workspace polling. Archive Leta không đồng nghĩa physical purge history/checkpoints; retention vẫn review riêng.
 - Ingest dùng sáu internal processing RPC LetFS và source version; không direct SQL hoặc graph authority.
 
-RemoveMember không đọc ownership của resource service khác; thêm resource service không thêm nhánh vào handler này. Không thêm user.owned_agent hoặc expression owner-membership gate cho agent. Human agent owner/operator vẫn cần workspace participation khi điều khiển agent; quyền administrative delete của workspace owner giữ nguyên, không tự mở thêm quyền use/manage/transfer private agent. Generated service clients và native SpiceDB clients là boundary; không generic resource registry, SQL/thread/box/queue Leta hoặc SDK SQL.
+RemoveMember không đọc ownership của resource service khác; thêm resource service không thêm nhánh vào handler này. Không thêm user.owned_agent hoặc expression owner-membership gate cho agent. Human agent owner/operator vẫn cần workspace participation khi điều khiển agent; quyền administrative delete của workspace owner giữ nguyên, không tự mở thêm quyền use/manage/transfer private agent. Generated service/native SpiceDB clients và shared workspace-cleanup activity là boundaries; không generic resource registry, direct SQL/thread/box/private workflows Leta hoặc SDK SQL.
 
 Đây là quyết định đã duyệt thay policy cũ; [boundary Leta](../261111-2010-leta-rewrite/boundaries.md#71-removemember-và-agent-độc-lập) ghi rõ. Core Zed/RemoveMember/proto/fixtures đã đồng bộ rename relation, bỏ hai RPC và owned-agent scan/revocation; native Leta batch thuộc implementation Leta hoãn; không khôi phục policy cũ chỉ để cứu test.
 

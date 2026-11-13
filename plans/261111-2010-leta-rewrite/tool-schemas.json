@@ -1,0 +1,1583 @@
+{
+  "root": [
+    {
+      "type": "function",
+      "function": {
+        "name": "inbox_send",
+        "description": "Send a message to an allowed recipient; final activity text does not deliver.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "to": {
+              "type": "string",
+              "format": "uuid",
+              "description": "ID from workspace_get; a box routes to its representative."
+            },
+            "content": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in_reply_to": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "required": [
+            "to",
+            "content"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "workspace_get",
+        "description": "Get your identity, home and allowed messaging recipients.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "cursor": {
+              "type": "string"
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "workspace_member_list",
+        "description": "Find current workspace members and user IDs for HITL.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "cursor": {
+              "type": "string"
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "inbox_list",
+        "description": "List inbox notifications grouped by conversation.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "source_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "unread_only": {
+              "type": "boolean",
+              "default": true
+            },
+            "cursor": {
+              "type": "string"
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "inbox_read",
+        "description": "Read messages and mark returned items read; unread_only=false includes previously read messages.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "conversation_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "unread_only": {
+              "type": "boolean",
+              "default": true
+            },
+            "cursor": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "conversation_id"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "box_create",
+        "description": "Create a fixed team with shared home. Send tasks separately with inbox_send.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": {
+              "type": "string",
+              "default": ""
+            },
+            "letis": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "description": {
+                    "type": "string",
+                    "default": ""
+                  },
+                  "system_prompt": {
+                    "type": "string",
+                    "description": "Specialist responsibility, deliverables and quality criteria."
+                  }
+                },
+                "required": [
+                  "name",
+                  "system_prompt"
+                ],
+                "additionalProperties": false
+              },
+              "minItems": 1
+            },
+            "edges": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 2,
+                "maxItems": 2
+              },
+              "description": "Two-way pairs of Leti names."
+            },
+            "representative": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Name of the Leti that communicates with root."
+            }
+          },
+          "required": [
+            "name",
+            "letis",
+            "edges",
+            "representative"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "box_list",
+        "description": "List boxes and work counts.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "cursor": {
+              "type": "string"
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "box_get",
+        "description": "Get box members, links and representative; prompts are opt-in.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "box": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Box ID or active name."
+            },
+            "include_prompts": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          "required": [
+            "box"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "box_delete",
+        "description": "Stop Leti, remove affected schedules/pending requests and trash shared home. Root storage grants remain.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "box_id": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "required": [
+            "box_id"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "hitl_ask",
+        "description": "Ask any current workspace member; the answer arrives later in your inbox.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "recipient_user_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1
+            },
+            "questions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "options": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "minItems": 1,
+                    "description": "Omit for a free-text answer."
+                  },
+                  "multiple": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Allow several choices; requires options."
+                  }
+                },
+                "required": [
+                  "text"
+                ],
+                "additionalProperties": false
+              },
+              "minItems": 1
+            }
+          },
+          "required": [
+            "recipient_user_id",
+            "questions"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "hitl_request",
+        "description": "Request storage access for root and its Leti. Pending or accepted is not yet granted.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "storage_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "recipient_user_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "role": {
+              "type": "string",
+              "enum": [
+                "viewer",
+                "editor"
+              ],
+              "default": "viewer"
+            },
+            "reason": {
+              "type": "string",
+              "default": ""
+            }
+          },
+          "required": [
+            "storage_id",
+            "recipient_user_id"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "hitl_list",
+        "description": "List human requests across root and boxes; box_id filters by requester box.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "answered",
+                "accepted",
+                "denied",
+                "cancelled",
+                "expired"
+              ]
+            },
+            "box_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "cursor": {
+              "type": "string"
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "hitl_get",
+        "description": "Get a human request, its form, decision and grant outcome.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "required": [
+            "request_id"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "hitl_cancel",
+        "description": "Cancel a pending human request; does not revoke granted access.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "reason": {
+              "type": "string",
+              "default": ""
+            }
+          },
+          "required": [
+            "request_id"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "schedule_create",
+        "description": "Schedule an inbox instruction for yourself or a box. Choose exactly one: at, after_seconds, every_seconds, calendar.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string",
+              "minLength": 1
+            },
+            "content": {
+              "type": "string",
+              "minLength": 1
+            },
+            "at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "after_seconds": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "every_seconds": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "calendar": {
+              "type": "object",
+              "propertyNames": {
+                "enum": [
+                  "second",
+                  "minute",
+                  "hour",
+                  "day_of_month",
+                  "month",
+                  "year",
+                  "day_of_week"
+                ]
+              },
+              "additionalProperties": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "minItems": 1
+              },
+              "minProperties": 1,
+              "description": "All fields must match; Sunday=0. Omitted second/minute/hour=0; other fields unrestricted."
+            },
+            "starts_at": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Recurring start; also anchors an interval."
+            },
+            "ends_at": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Recurring cutoff; null clears it."
+            },
+            "timezone": {
+              "type": "string",
+              "minLength": 1,
+              "description": "IANA name; defaults to task timezone, otherwise UTC."
+            },
+            "target_box_id": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Omit to target yourself."
+            }
+          },
+          "required": [
+            "content"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "schedule_list",
+        "description": "List root and box schedules; box_id filters by target box.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "box_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "cursor": {
+              "type": "string"
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "schedule_get",
+        "description": "Get a schedule instruction, timing and upcoming forecasts.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "schedule_id": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "required": [
+            "schedule_id"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "schedule_update",
+        "description": "Update only supplied fields. At most one timing selector; recipient stays fixed.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "schedule_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1
+            },
+            "content": {
+              "type": "string",
+              "minLength": 1
+            },
+            "at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "after_seconds": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "every_seconds": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "calendar": {
+              "type": "object",
+              "propertyNames": {
+                "enum": [
+                  "second",
+                  "minute",
+                  "hour",
+                  "day_of_month",
+                  "month",
+                  "year",
+                  "day_of_week"
+                ]
+              },
+              "additionalProperties": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "minItems": 1
+              },
+              "minProperties": 1,
+              "description": "All fields must match; Sunday=0. Omitted second/minute/hour=0; other fields unrestricted."
+            },
+            "starts_at": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Recurring start; also anchors an interval."
+            },
+            "ends_at": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Recurring cutoff; null clears it."
+            },
+            "timezone": {
+              "type": "string",
+              "minLength": 1,
+              "description": "IANA name; defaults to task timezone, otherwise UTC."
+            },
+            "paused": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "schedule_id"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "schedule_delete",
+        "description": "Stop future scheduled instructions; already-delivered work remains.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "schedule_id": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "required": [
+            "schedule_id"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "history_search",
+        "description": "Search your activity history by words; omit query for recent previews.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "minLength": 1
+            },
+            "cursor": {
+              "type": "string"
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "history_read",
+        "description": "Read a history entry; follow next_start_line for more.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "entry_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "start_line": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          "required": [
+            "entry_id"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "file_list",
+        "description": "List files and directories; /mnt lists accessible storages.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "default": "~"
+            },
+            "depth": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 128,
+              "default": 1,
+              "description": "1: paged children; greater than 1: bounded tree."
+            },
+            "cursor": {
+              "type": "string"
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "file_read",
+        "description": "Read a text window, image preview or uploaded-document artifacts; follow returned continuations.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "start_line": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "file_write",
+        "description": "Create text; overwrite=true replaces the entire file. Use file_edit for partial changes.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "content": {
+              "type": "string"
+            },
+            "overwrite": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          "required": [
+            "path",
+            "content"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "file_edit",
+        "description": "Replace literal text; exactly one match unless replace_all=true. Empty new_text deletes the match.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "old_text": {
+              "type": "string",
+              "minLength": 1
+            },
+            "new_text": {
+              "type": "string"
+            },
+            "replace_all": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          "required": [
+            "path",
+            "old_text",
+            "new_text"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "exec_shell",
+        "description": "Run supported shell commands and pipelines over workspace files; no host programs or network.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "command": {
+              "type": "string",
+              "minLength": 1
+            },
+            "cwd": {
+              "type": "string",
+              "default": "~"
+            }
+          },
+          "required": [
+            "command"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "exec_python",
+        "description": "Run Python calculations and file transformations; no packages, network or state across calls.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "file_semantic_search",
+        "description": "Find passages by meaning; use shell search for exact text.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "minLength": 1
+            },
+            "paths": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 1,
+              "description": "File/directory scopes; defaults to home."
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "additionalProperties": false
+        }
+      }
+    }
+  ],
+  "leti": [
+    {
+      "type": "function",
+      "function": {
+        "name": "inbox_send",
+        "description": "Send a message to an allowed recipient; final activity text does not deliver.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "to": {
+              "type": "string",
+              "format": "uuid",
+              "description": "ID from workspace_get; a box routes to its representative."
+            },
+            "content": {
+              "type": "string",
+              "minLength": 1
+            },
+            "in_reply_to": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "required": [
+            "to",
+            "content"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "workspace_get",
+        "description": "Get your identity, home and allowed messaging recipients.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "cursor": {
+              "type": "string"
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "workspace_member_list",
+        "description": "Find current workspace members and user IDs for HITL.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "cursor": {
+              "type": "string"
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "hitl_ask",
+        "description": "Ask any current workspace member; the answer arrives later in your inbox.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "recipient_user_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1
+            },
+            "questions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "options": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "minItems": 1,
+                    "description": "Omit for a free-text answer."
+                  },
+                  "multiple": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Allow several choices; requires options."
+                  }
+                },
+                "required": [
+                  "text"
+                ],
+                "additionalProperties": false
+              },
+              "minItems": 1
+            }
+          },
+          "required": [
+            "recipient_user_id",
+            "questions"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "hitl_request",
+        "description": "Request storage access for root and its Leti. Pending or accepted is not yet granted.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "storage_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "recipient_user_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "role": {
+              "type": "string",
+              "enum": [
+                "viewer",
+                "editor"
+              ],
+              "default": "viewer"
+            },
+            "reason": {
+              "type": "string",
+              "default": ""
+            }
+          },
+          "required": [
+            "storage_id",
+            "recipient_user_id"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "hitl_list",
+        "description": "List your human requests; use hitl_get for details.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "answered",
+                "accepted",
+                "denied",
+                "cancelled",
+                "expired"
+              ]
+            },
+            "cursor": {
+              "type": "string"
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "hitl_get",
+        "description": "Get a human request, its form, decision and grant outcome.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "required": [
+            "request_id"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "hitl_cancel",
+        "description": "Cancel a pending human request; does not revoke granted access.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "reason": {
+              "type": "string",
+              "default": ""
+            }
+          },
+          "required": [
+            "request_id"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "schedule_create",
+        "description": "Schedule an inbox instruction for yourself. Choose exactly one: at, after_seconds, every_seconds, calendar.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string",
+              "minLength": 1
+            },
+            "content": {
+              "type": "string",
+              "minLength": 1
+            },
+            "at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "after_seconds": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "every_seconds": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "calendar": {
+              "type": "object",
+              "propertyNames": {
+                "enum": [
+                  "second",
+                  "minute",
+                  "hour",
+                  "day_of_month",
+                  "month",
+                  "year",
+                  "day_of_week"
+                ]
+              },
+              "additionalProperties": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "minItems": 1
+              },
+              "minProperties": 1,
+              "description": "All fields must match; Sunday=0. Omitted second/minute/hour=0; other fields unrestricted."
+            },
+            "starts_at": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Recurring start; also anchors an interval."
+            },
+            "ends_at": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Recurring cutoff; null clears it."
+            },
+            "timezone": {
+              "type": "string",
+              "minLength": 1,
+              "description": "IANA name; defaults to task timezone, otherwise UTC."
+            }
+          },
+          "required": [
+            "content"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "schedule_list",
+        "description": "List your schedules.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "cursor": {
+              "type": "string"
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "schedule_get",
+        "description": "Get a schedule instruction, timing and upcoming forecasts.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "schedule_id": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "required": [
+            "schedule_id"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "schedule_update",
+        "description": "Update only supplied fields. At most one timing selector; recipient stays fixed.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "schedule_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1
+            },
+            "content": {
+              "type": "string",
+              "minLength": 1
+            },
+            "at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "after_seconds": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "every_seconds": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "calendar": {
+              "type": "object",
+              "propertyNames": {
+                "enum": [
+                  "second",
+                  "minute",
+                  "hour",
+                  "day_of_month",
+                  "month",
+                  "year",
+                  "day_of_week"
+                ]
+              },
+              "additionalProperties": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "minItems": 1
+              },
+              "minProperties": 1,
+              "description": "All fields must match; Sunday=0. Omitted second/minute/hour=0; other fields unrestricted."
+            },
+            "starts_at": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Recurring start; also anchors an interval."
+            },
+            "ends_at": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Recurring cutoff; null clears it."
+            },
+            "timezone": {
+              "type": "string",
+              "minLength": 1,
+              "description": "IANA name; defaults to task timezone, otherwise UTC."
+            },
+            "paused": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "schedule_id"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "schedule_delete",
+        "description": "Stop future scheduled instructions; already-delivered work remains.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "schedule_id": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "required": [
+            "schedule_id"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "history_search",
+        "description": "Search your activity history by words; omit query for recent previews.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "minLength": 1
+            },
+            "cursor": {
+              "type": "string"
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "history_read",
+        "description": "Read a history entry; follow next_start_line for more.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "entry_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "start_line": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          "required": [
+            "entry_id"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "file_list",
+        "description": "List files and directories; /mnt lists accessible storages.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "default": "~"
+            },
+            "depth": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 128,
+              "default": 1,
+              "description": "1: paged children; greater than 1: bounded tree."
+            },
+            "cursor": {
+              "type": "string"
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "file_read",
+        "description": "Read a text window, image preview or uploaded-document artifacts; follow returned continuations.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "start_line": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "file_write",
+        "description": "Create text; overwrite=true replaces the entire file. Use file_edit for partial changes.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "content": {
+              "type": "string"
+            },
+            "overwrite": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          "required": [
+            "path",
+            "content"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "file_edit",
+        "description": "Replace literal text; exactly one match unless replace_all=true. Empty new_text deletes the match.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "old_text": {
+              "type": "string",
+              "minLength": 1
+            },
+            "new_text": {
+              "type": "string"
+            },
+            "replace_all": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          "required": [
+            "path",
+            "old_text",
+            "new_text"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "exec_shell",
+        "description": "Run supported shell commands and pipelines over workspace files; no host programs or network.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "command": {
+              "type": "string",
+              "minLength": 1
+            },
+            "cwd": {
+              "type": "string",
+              "default": "~"
+            }
+          },
+          "required": [
+            "command"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "exec_python",
+        "description": "Run Python calculations and file transformations; no packages, network or state across calls.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "code"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "file_semantic_search",
+        "description": "Find passages by meaning; use shell search for exact text.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "minLength": 1
+            },
+            "paths": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 1,
+              "description": "File/directory scopes; defaults to home."
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "additionalProperties": false
+        }
+      }
+    }
+  ]
+}

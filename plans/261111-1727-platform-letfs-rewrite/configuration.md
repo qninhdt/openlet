@@ -6,7 +6,7 @@ Trạng thái: non-secret ở YAML, secret ở dotenv, tham chiếu bằng ${ENV
 
 Mỗi deployment có đúng một `openlet.yaml`, được mount readonly vào Platform, LetFS, Leta API/worker và ingest CPU/IO. Tất cả đọc đường dẫn từ `OPENLET_CONFIG`; không dò nhiều đường dẫn hoặc trộn nhiều nguồn cấu hình.
 
-Chung YAML không có nghĩa chung runtime dependency: Platform/LetFS/ingest không đọc/validate `services.leta`, `models.leta`, Redis hoặc các queue Leta, và không cần credentials của chúng. Các section đó chỉ được owning process/deployment đọc khi bật tích hợp Leta. Core phải khởi động và chạy được khi Leta không được triển khai. Concrete Leta API/cleanup transport tiếp tục hoãn; không thêm callback target hoặc `leta_bridge` vào required settings của core trong đợt API Platform/LetFS.
+Chung YAML không có nghĩa chung runtime dependency: Platform/LetFS/ingest không đọc/validate services.leta, models.leta hoặc Redis và không cần credentials của chúng. Platform chỉ cần non-secret queue routing leta_bridge để dispatch shared DeleteWorkspaceAgents theo [cleanup đã chốt](workspace-cleanup.md); đồng bộ field này trong Go Queues/Python/YAML mẫu/test/deploy trước implementation. Core khởi động được khi Leta không deploy; deletion workflow có thể pending sau khi storage/Platform SQL đã xóa. Không callback target hoặc application cleanup listener mới.
 
 [Mẫu đầy đủ](openlet.example.yaml) chia thành tám section. Mẫu được giữ tại plan sau archive infra cũ; vị trí active khi implement là infra/config/openlet.example.yaml theo [infra design](infra-testing-ci-cd.md).
 
@@ -21,7 +21,7 @@ Chung YAML không có nghĩa chung runtime dependency: Platform/LetFS/ingest kh�
 | `services` | Listen/target, database riêng, policy và worker options của từng service |
 | `deployment` | Bootstrap-only settings và secret references cho native datastore/admin tools |
 
-`grpc_listen` là socket process bind; `grpc_target` là địa chỉ các caller kết nối, có thể khác do DNS/proxy/port mapping. Platform/LetFS không có HTTP listener. Leta dùng native gRPC clients của hai service; concrete owning cleanup API/transport review sau, chưa thêm inbound listener/config. Async cleanup không là dependency startup/readiness. Leta HTTP/SSE phục vụ consumer của Leta; `services.leta.http_target` chỉ dùng cho optional gateway route, không được Platform/LetFS/ingest load. Gateway có HTTP listener riêng.
+`grpc_listen` là socket process bind; `grpc_target` là địa chỉ các caller kết nối, có thể khác do DNS/proxy/port mapping. Platform/LetFS không có HTTP listener. Leta dùng native gRPC clients của hai service; workspace cleanup dùng native Temporal owning activities đã chốt, không thêm inbound cleanup listener. Async cleanup không là dependency startup/readiness. Leta HTTP/SSE phục vụ consumer của Leta; `services.leta.http_target` chỉ dùng cho optional gateway route, không được Platform/LetFS/ingest load. Gateway có HTTP listener riêng.
 
 Các giá trị trong mẫu là điểm xuất phát implementation, chưa phải thông số đã benchmark. Endpoint `.invalid` phải thay trước khi chạy. MVP application gRPC chỉ dùng mạng private giữa trusted processes, không service Bearer credentials. Production mTLS được bổ sung bằng native gRPC/Envoy khi triển khai; chưa thêm certificate/CA fields trước. TLS/auth của dependencies vẫn theo native client, độc lập với application gRPC.
 
@@ -78,7 +78,7 @@ CI kiểm tra mẫu qua settings validation của từng owner để bao phủ c
 
 Chỉ có một lần đọc lúc khởi động, không watcher/hot reload, remote config hay merge `base + dev + prod + local`. Development/CI/production dùng một file hoàn chỉnh riêng ở từng deployment. Test dùng file tạm, không chỉnh config development.
 
-Temporal workflow không đọc file hoặc environment. Queue/timeouts cần thiết được lấy trước khi start rồi truyền qua workflow input tối thiểu hoặc native activity options có tính deterministic. Không đưa toàn YAML/secrets vào workflow history. Leta giữ tên workflow và semantics hiện tại; thay đường lấy settings ở boundary.
+Temporal workflow không đọc file hoặc environment. Queue/timeouts cần thiết, gồm LetFS/Leta bridge routing của DeleteWorkspace, được lấy trước khi start rồi truyền qua workflow input tối thiểu hoặc native activity options có tính deterministic. Không đưa toàn YAML/secrets vào workflow history. Leta giữ tên workflow và semantics hiện tại; thay đường lấy settings ở boundary.
 
 ## 4. Những gì là cấu hình
 

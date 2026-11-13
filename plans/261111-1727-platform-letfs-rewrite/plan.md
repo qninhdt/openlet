@@ -1,6 +1,6 @@
 # Platform, LetFS và ingest: rewrite
 
-Cập nhật 2026-11-12. Architecture, schema, API Platform/LetFS và Temporal đã được người dùng chấp thuận; Core và hybrid search đã kiểm chứng local; đối chiếu chức năng và review trước push dev đã hoàn tất. API/transport và multiple storage của Leta hoãn; Computer chỉ thiết kế boundary.
+Cập nhật 2026-11-12. Bổ sung [workspace cleanup đã chốt](workspace-cleanup.md) và [audit Temporal](../reports/audit-261112-temporal-workflows-activities.md); backend changes mới chưa implementation. Architecture, schema, API Platform/LetFS và Temporal đã được người dùng chấp thuận; Core và hybrid search đã kiểm chứng local; đối chiếu chức năng và review trước push dev đã hoàn tất. API/transport và multiple storage của Leta ở owning plan; Computer chỉ thiết kế boundary.
 
 - [Tổng hợp hiện tại](final-proposal.md).
 - [Workspace resources và SpiceDB đã chốt](workspace-service-redesign.md).
@@ -9,6 +9,7 @@ Cập nhật 2026-11-12. Architecture, schema, API Platform/LetFS và Temporal �
 - [Leta schema đã reconcile](../261111-2010-leta-rewrite/schema.md), [DDL review](../261111-2010-leta-rewrite/schema.sql): schema 11 bảng đã được duyệt; [boundary review Leta](../261111-2010-leta-rewrite/boundaries.md) ghi integration gaps, không tự đổi SQL/API core.
 - [Query principles](query-design.md), [Platform](platform-queries.md), [LetFS](letfs-queries.md), [processing](processing-queries.md).
 - [File/ingest design và implementation rules](design.md).
+- [Workspace cleanup liên service đã chốt và backend todos](workspace-cleanup.md); [audit toàn bộ Temporal](../reports/audit-261112-temporal-workflows-activities.md).
 - [Configuration](configuration.md), [YAML mẫu](openlet.example.yaml), [telemetry](telemetry.md), [HTTP JSON](http-json.md).
 - [Infra/E2E/CI/CD](infra-testing-ci-cd.md), [archive report](../reports/implementation-261111-1948-archive.md), [đối chiếu chức năng](../reports/feature-parity-261112-platform-letfs-rewrite.md).
 - [Review trước push dev và LoC](../reports/readiness-loc-261112-platform-letfs-rewrite.md).
@@ -16,6 +17,7 @@ Cập nhật 2026-11-12. Architecture, schema, API Platform/LetFS và Temporal �
 - [Sửa hiệu năng LetFS và audit idempotency](../reports/implementation-261112-1249-letfs-performance-idempotency.md).
 - [Khôi phục semantic artifact names và atomic link publication](../reports/implementation-261112-1451-artifact-names.md).
 - [Native OTel implementation và export/propagation verification](../reports/implementation-261112-native-telemetry.md).
+- [Observability toàn hệ thống: thiết kế đã chốt](../261113-1335-system-observability/plan.md): giữ native instrumentation, local chỉ Alloy; Grafana Cloud Free Mimir/Tempo/Loki/Grafana và Langfuse Cloud Free cho demo 1–10 testers; native tracing/prompt management, evaluation deferred, chưa implementation.
 - [Role/UI research](../reports/research-261111-1834-spicedb-role-ownership.md), [consistency research](../reports/research-261111-1746-spicedb-consistency.md): historical evidence; policy hiện tại lấy từ design đã chốt.
 
 ## Kết quả và giới hạn
@@ -30,11 +32,12 @@ Leta chỉ boundary/config/client changes trong plan này; API/runtime và multi
 - PostgreSQL domain metadata; SpiceDB canonical membership/ownership/grants. Không SQL membership/grant/owner mirror.
 - Workspace owner/member, agent owner/operator, storage owner/editor/viewer; Computer manager/operator tương lai.
 - Nhiều storages/workspace/owner, visibility private/public. Public mặc định viewer cho actor hợp lệ trong workspace; editor/owner mới ghi.
+- Cắt API/workflow đổi visibility: private/public cố định từ provisioning; UpdateStorage chỉ rename. Giữ storage field/enum/filter/public projection và direct grants; không thêm actor/lock/revision để hỗ trợ tính năng bị cắt.
 - Không filesystem/scope/drive entity, personal mapping table, unique owner→storage hoặc UUIDv5.
 - Quota/usage LetFS workspace_storage dùng workspace_id PK; Platform không giữ quota/storage IDs/list.
 - MVP chỉ system provision workspace/storage. Agent một storage_id, multiple/switch hoãn; FE personal/shared grouping.
 - Native SpiceDB checks/bulk + SQL; không Platform membership RPC/N+1. minimize_latency, optional ZedToken; không forced fully_consistent mọi mutation.
-- Async cleanup owning business API được phép; không Leta stop-ACK barrier/readiness/hot-path dependency. Concrete Leta API hoãn.
+- Workspace cleanup đã chốt: owning LetFS/Leta activities chạy song song; storage ACK → xóa Platform SQL, workflow chờ Leta cleanup. Không Leta stop-ACK barrier trước storage deletion/readiness/hot-path dependency; chưa triển khai backend changes.
 - Text PostgreSQL/blob S3; blob-only ingest CPU ParseBlob/IO EnrichAndIndex, files.version duy nhất, readonly artifacts.
 - Platform/LetFS gRPC; Envoy ProtoJSON/HttpBody; signed S3. Không app HTTP/Gin/grpc-gateway hoặc RFC9457 mapper.
 - Một YAML, secrets dotenv/ENV references, native outbound telemetry; VPS/Compose và TypeScript Playwright api/browser.
@@ -72,6 +75,14 @@ Theo yêu cầu mở rộng sau đó, cả Leta src/, migrations/ và native dep
 
 ## Todo hiện tại
 
+- [ ] Triển khai hai provisioning owner moves đã duyệt tại [design mục 10](design.md#10-temporal-tối-thiểu): Platform workflow dispatch LetFS ProvisionInitialStorages/ProvisionMemberStorageResources; functions trong LetFS gọi trực tiếp nhau, không gRPC chính nó. Rà caller/RPC/config/registration/affected tests; target core sau cắt visibility là 6 workflow definitions/13 activities/4 queues.
+- [ ] Xóa visibility update trong backend/contracts/generated/callers: UpdateStorage chỉ rename; xóa workflow/activity/registrations và tests chỉ cho tính năng bị cắt. Giữ tests public/private provisioning và direct grants. Không sửa schema storage hoặc native graph policy chỉ vì bỏ mutation API.
+- [ ] Triển khai [workspace-cleanup.md](workspace-cleanup.md): Platform split/parallel futures, LetFS owning activity, Leta bridge activity, shared JSON/queue config và affected tests; proof cũ không bao phủ contract mới.
+- [ ] Sửa cleanup retry/recovery mismatch và kiểm rollout với open histories bằng native versioning/replay khi cần.
+- [ ] Hoàn thiện maintenance timeout/heartbeat và core native activity slots theo [audit](../reports/audit-261112-temporal-workflows-activities.md). Visibility ordering được đóng bằng quyết định cắt feature; không implement native Update actor hoặc schema revision. Timeout/slot values là implementation/tuning, không architecture approval mới.
+
+Lượt cắt visibility/readiness chỉ thay tài liệu: target core 6 workflow definitions/13 activities/4 queues, Leta 6/22/3. Kiểm 28 Markdown files/385 local links/anchors, fences/whitespace/800-line limits, scope/inventory assertions và git diff --check pass. Chưa xóa backend/contracts/tests, runtime-reproduce race/outage hoặc chạy shared cleanup/replay/benchmark; các local proofs bên dưới có trước contract mới và trước khi cắt feature.
+
 - [x] Archive source/packages/tests/E2E/infra/scripts/CI legacy, bảo toàn dirty tree và hashes.
 - [x] Chốt config YAML + dotenv ENV refs, native telemetry và HTTP status contract.
 - [x] Chốt fresh DB, VPS/Compose, Playwright TypeScript api/browser và knee-point rules.
@@ -101,9 +112,9 @@ Phạm vi implementation đã chốt đã có local proof. Đối chiếu archiv
 
 Phần core triển khai apps/platform, apps/letfs, apps/letfs-ingest, shared contracts/SDKs, core infra/E2E/CI. User và Codex khác thảo luận Leta trong apps/leta và plan Leta riêng; core không sửa hai vùng đó khi chưa đồng bộ. Shared contracts/authz/YAML/infra do core quản lý để tránh sửa chồng; thay đổi từ thiết kế Leta ảnh hưởng những contract này phải được đồng bộ trước khi code, không tự mở callback/queue hoặc dependency core mới.
 
-Agent subject, một workspace_id/storage_id, owner/operator và core resource contracts là điểm tích hợp đã chốt. Concrete Leta APIs/runtime/multiple storage/switch và physical cleanup Leta vẫn hoãn, không chặn implementation hoặc validation core. Computer runtime chưa triển khai. Domain/TLS/VPS credentials và provider thật được cấu hình lúc deploy; không chặn local/CI bằng cấu hình test đã thiết kế.
+Agent subject, một workspace_id/storage_id, owner/operator và core resource contracts là điểm tích hợp đã chốt. Leta APIs/runtime/multiple storage/switch ở owning plan; workspace cleanup đã chốt thành shared activities cần sửa core theo workspace-cleanup.md. Product-data purge Leta vẫn review riêng. Những proof core trước đây không xác nhận contract cleanup mới. Computer runtime chưa triển khai. Domain/TLS/VPS credentials và provider thật được cấu hình lúc deploy; không chặn local/CI bằng cấu hình test đã thiết kế.
 
-Đã đối chiếu schema Leta ngày 2026-11-12: root giữ workspace_id/storage_id, bỏ created_by_user_id và unique storage binding; Leta quản lý agent relations và hai chiều agent.workspace/workspace.agent, Platform workspace/membership, LetFS storage/grants. Pending human recipient là event fact, không current owner authority; accepted storage approval gọi LetFS theo current human manage_access. Quota/visibility/membership không mirror sang Leta. Physical cleanup/API/transport và multiple storage của Leta vẫn cần review riêng trước implementation boundary.
+Đã đối chiếu schema Leta ngày 2026-11-12: root giữ workspace_id/storage_id, bỏ created_by_user_id và unique storage binding; Leta quản lý agent relations và hai chiều agent.workspace/workspace.agent, Platform workspace/membership, LetFS storage/grants. Pending human recipient là event fact, không current owner authority; accepted storage approval gọi LetFS theo current human manage_access. Quota/visibility/membership không mirror sang Leta. Workspace cleanup theo workspace-cleanup.md; complete HTTP DTO/errors, product-data purge và multiple storage của Leta ngoài contract cleanup này.
 
 Quyết định boundary cùng ngày, đã triển khai phía core: xóa Platform RegisterAgent/UnregisterAgent và AgentRegistrationRequest, thêm generic CheckWorkspaceActive(workspace_id); Leta tự ghi/dọn agent.workspace và workspace.agent trong cùng native SpiceDB batch với owner/operators. Đổi registered_agent → agent trong Zed/readers/writers/fixtures/bootstrap; eligible_actor = participate + agent. Không registration step/state riêng, owned_agent hoặc runtime gate phụ thuộc membership owner. RemoveMember chỉ thu hồi human membership với owner guard, bỏ agent-owner scan/loop và mọi resource/stop fanout; agent tiếp tục bằng identity/grants riêng. [Boundary đã chốt](../261111-2010-leta-rewrite/boundaries.md#71-removemember-và-agent-độc-lập) thay proposal cũ; rejoin không ảnh hưởng agent. Đồng bộ [API contract](api-contract.md), handlers, generated clients/descriptor và Leta consumer cùng đợt; không wrapper/backward compatibility hoặc Register<Resource> mới. Không thay SQL schema hoặc sáu workflow types Leta vì quyết định này; core Zed/runtime/generated đã đồng bộ; Leta implementation vẫn hoãn.
 

@@ -139,16 +139,16 @@ S là /v1/workspaces/{workspace_id}/storages/{storage_id}.
 | UpdateStorageQuota | PATCH /v1/workspaces/{workspace_id}/storage-quota | quota_bytes; workspace.manage | WorkspaceStorage |
 | ListStorages | GET /v1/workspaces/{workspace_id}/storages | page_size/page_token, optional visibility, owned_only | storages, next_page_token |
 | GetStorage | GET S | IDs; storage.read | Storage |
-| UpdateStorage | PATCH S | optional name/visibility; request_id chỉ khi đổi visibility; storage.manage_access | Storage |
+| UpdateStorage | PATCH S | name không rỗng; storage.manage_access; chỉ rename, không nhận visibility/request_id | Storage |
 | ListStorageAccess | GET S/access | IDs; storage.manage_access | owner summary, direct viewer/editor grants, visibility/public inheritance |
 | SetStorageAccess | POST S:setAccess | target ActorRef, EDITOR/VIEWER | AccessGrant |
 | RevokeStorageAccess | POST S:revokeAccess | target ActorRef | Empty |
 
 Public defaults viewer for human owner/member and agents thuộc W qua workspace.agent. Explicit editor can grant write. owned_only uses effective ownership/manage_access permission; private/public filter SQL applied with actual workspace. Lists batch capabilities, không ReadRelationships owner riêng từng storage. Owner/grants detail chỉ khi access screen cần; không enumerate tất cả members cho public access UI.
 
-Update visibility là SQL + graph relation update. Dùng native durable retry cho operation cụ thể; success sau khi desired visibility và graph effect đã được acknowledge. Không giữ SQL transaction qua graph call, không tạo status/outbox/permission sync table. Không hứa distributed atomicity; request_id giữ identity để retry timeout.
+Đã chốt cắt API đổi visibility. Private/public được chọn khi provisioning và cố định sau create. Giữ field/enum/filter visibility và public_workspace graph relation được ghi bởi provisioning; cấp/thu hồi direct editor/viewer vẫn giữ. UpdateStorageRequest chỉ còn workspace_id/storage_id/name; implementation phải xóa visibility/request_id và CEL tương ứng trong message này, đồng bộ generated clients/descriptor/callers và bỏ tests của tính năng đã cắt. Không giữ deprecated branch hoặc runtime wrapper.
 
-Rename-only chỉ permission check + một UPDATE RETURNING, không request_id/receipt/Temporal. CreateDirectories là mkdir-p: chỉ tạo thư mục còn thiếu, retry trả directory hiện tại; không request_id/receipt. Visibility activity SET desired values và native TOUCH/DELETE graph relation, không PostgreSQL receipt; workflow ID giữ dedup cho cùng command. Không phát hiện cùng request_id khác payload ở visibility bằng SQL.
+Rename chỉ permission check + một UPDATE RETURNING, không request_id/receipt/Temporal. CreateDirectories là mkdir-p: chỉ tạo thư mục còn thiếu, retry trả directory hiện tại; không request_id/receipt. Xóa workflow/activity đổi visibility, không thay bằng cơ chế serialization khác.
 
 CreateStorage/DeleteStorage là lifecycle nội bộ ở MVP. Không expose public create/delete hoặc API switch storage của agent trước feature đó.
 
@@ -208,13 +208,15 @@ Không binary/base64 upload body qua application JSON. Signed S3 request dùng n
 | ProvisionWorkspaceStorage | workspace_id/quota; idempotent budget provisioning |
 | CreateStorage | workspace_id, ordinary storage_id được cấp một lần, owner, visibility/name/policy → Storage; native IDs giữ trong provisioning input/receipt |
 | DeleteStorage | IDs; lifecycle cleanup, graph+local SQL, không public standalone delete |
-| DeleteWorkspaceStorage | workspace_id; graph/storage/budget cleanup; không Leta stop barrier |
+| DeleteWorkspaceStorage | Current internal RPC: workspace_id; graph/storage/budget cleanup. Workspace workflow sẽ gọi owning activity theo workspace-cleanup.md, rà callers rồi xóa RPC nếu không còn dùng; không forwarding wrapper |
 | GetProcessingInput | file_id/version → source+artifact input cần stage hiện tại; LetFS resolve actual storage/workspace |
 | PrepareArtifactUploads | source/version + batch outputs → handles/signed URLs |
 | CommitParse | source/version + typed manifest/handles → stage outcome |
 | CommitEnrichment | source/version + batch node_id, optional name/text_content/metadata → stage outcome; directory dùng ID/name, không metadata. Đổi tên và sửa Markdown được commit nguyên tử; README/source giữ tên |
 | CompleteIndex | source/version → stage outcome |
 | FailProcessing | source/version/error_code → stage outcome |
+
+[Workspace cleanup mới đã chốt](workspace-cleanup.md) là Temporal shared activity contract, không RPC bổ sung. Cần sửa backend hiện có; public DeleteWorkspace vẫn trả admitted lifecycle, storage/Platform SQL không đợi Leta còn workflow vẫn observe cleanup future.
 
 Processing giữ source version/stage guards, native retries và set-based SQL. Không expose internal worker API qua HTTP hoặc dùng caller-chosen public actor để gọi processing. Maintenance native activities/schedules không phải public REST resources.
 
@@ -298,7 +300,7 @@ Content-Type: application/json
 PATCH /v1/workspaces/W/storages/S
 Content-Type: application/json
 
-{"visibility":"STORAGE_VISIBILITY_PUBLIC","requestId":"<uuid>"}
+{"name":"Tài liệu nhóm"}
 ~~~
 
 Unary success thường HTTP 200, Empty thành {}; không mapper để ép 201/202/204. DeleteWorkspace trả admitted lifecycle, physical cleanup không được suy từ HTTP 200.
