@@ -1,6 +1,6 @@
 # API contracts
 
-[Protobuf sources](../packages/contracts/proto/openlet_api/) own public/internal gRPC contracts and HTTP annotations. `make generate` produces Go/Python clients and the public descriptor consumed by Envoy. No handwritten transport DTOs, REST wrapper, compatibility adapter or separate OpenAPI authority is maintained.
+Core [Protobuf sources](../packages/contracts/proto/openlet_api/) own public/internal gRPC contracts and HTTP annotations. `make generate` produces Go/Python clients and the public descriptor consumed by Envoy. Core services use these contracts directly, without a REST wrapper or compatibility adapter.
 
 Public Platform routes cover `/v1/me:onboard`, profile, workspaces, members and invitations. LetFS routes are nested under `/v1/workspaces/{workspace_id}/storages/{storage_id}`; workspace quota uses `/v1/workspaces/{workspace_id}/storage-quota`. Envoy routes them directly to their owning service. Tenant IDs are checked against owning SQL metadata.
 
@@ -12,4 +12,8 @@ Envoy verifies Clerk JWT/JWKS and strips caller-provided actor/subject headers b
 
 Mutations use requestId where declared, with service-owned PostgreSQL receipts. Text operations use strings and optional expectedVersion. Signed S3 URLs transfer blob bodies directly; text downloads return their PostgreSQL content. ZIP download is a gRPC stream of `google.api.HttpBody`, transcoded as raw ZIP bytes. It is not buffered as a whole archive or wrapped in JSON.
 
-Leta API/runtime remains deferred to its separate rewrite; no legacy Leta HTTP route is a replacement contract.
+Leta uses direct HTTP JSON and SSE. Its [FastAPI declarations](../apps/leta/src/leta/api.py) own the transport schema; native `/openapi.json` is available on its private HTTP listener. Envoy forwards the approved `/v1/workspaces/{workspace_id}/letas` and `/v1/hitl-requests` routes without transcoding. Leta JSON fields use snake_case; UUIDs and timestamps are strings, and HTTP errors use FastAPI `detail`.
+
+Under a Leta resource, routes cover configuration, messages, boxes, operators, HITL requests and schedules. Agent routes provide history previews/entry content, run state and cancel. Incoming HITL cards/answers use `/v1/hitl-requests` and require the exact addressed user. There is no separate chat transport: posting to `messages` admits work; `events` streams native AG-UI events plus namespaced Openlet state notifications.
+
+A fresh event connection returns a bounded snapshot, history previews/references and the Redis cursor. A valid reconnect cursor reads the retained suffix; an expired cursor requests canonical refresh. Full tool output is read by history entry. Token chunks are provisional Redis events, not PostgreSQL writes. Stable request/message IDs preserve durable admission; request IDs cannot be reused for different input. See the [streaming contract](../plans/261111-2010-leta-rewrite/streaming.md) and [execution status](../plans/261111-2010-leta-rewrite/execution.md).

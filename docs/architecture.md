@@ -6,8 +6,10 @@ Each service owns its database. Services communicate through generated gRPC cont
 |---|---|
 | Platform | Human identity, Clerk onboarding, workspace metadata, invitations and membership commands |
 | LetFS | Workspace storages, access commands, quota/usage, nodes, text/blob content, uploads, trash and processing publication |
+| Leta | Root/Leti configuration, boxes, inbox, runs, canonical history, HITL and schedules |
 | Ingest CPU | Offline Docling/Office conversion and parse manifests |
 | Ingest IO | Model enrichment and Qdrant indexing |
+| Redis | Disposable Leta event suffixes and native Mirage content/index cache |
 | SpiceDB | Canonical membership, ownership and grants |
 | Temporal | Durable provisioning, workspace deletion, blob processing and maintenance |
 | Envoy | JWT/JWKS validation, trusted actor headers, routing and public gRPC JSON transcoding |
@@ -23,3 +25,5 @@ Text is UTF-8 in PostgreSQL. Blobs use immutable S3 objects and direct signed tr
 Semantic search combines dense vectors and native BM25 over Qdrant text payloads using RRF, validates current file versions and ancestry in SQL, then reranks. Both retrieval branches use the workspace filter. Bootstrap creates the BM25 text index; no second embedding model is needed.
 
 Go services expose gRPC only. Envoy serves ProtoJSON and raw streamed ZIP responses; blob bytes bypass applications through signed S3 URLs. Native OpenTelemetry instruments gRPC, PostgreSQL, Temporal and outbound provider calls. Optional OTLP export adds no application HTTP metrics server.
+
+Leta exposes FastAPI HTTP/JSON and AG-UI SSE behind Envoy. One image supplies API and worker processes; the worker serves orchestration, runtime and bridge queues. Each agent has a native LangGraph checkpoint thread and Langfuse session. Model/tools use the native agent loop; Temporal sees orchestration events, not individual model/tool steps. PostgreSQL stores canonical history and native checkpoints; Redis contains bounded provisional events and filesystem caches. See [observability](observability.md) and the [approved Leta design](../plans/261111-2010-leta-rewrite/design.md).

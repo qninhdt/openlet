@@ -6,7 +6,7 @@ Go processes expose native gRPC health, not HTTP readiness endpoints. Python wor
 
 Set `telemetry.otlp_endpoint` in the shared YAML to an OTLP/gRPC collector URL, for example `http://otel-collector:4317`, then regenerate config and restart the processes. `null` disables export; no collector is needed to run the system. The same sample ratio controls Envoy and application root traces; child spans follow their parent. Metrics include native gRPC, pgx pool, Go/Python runtime, provider calls, Temporal and bounded ingest stage durations. Logs remain JSON stdout with service identity and trace/span correlation when context is available.
 
-Collector failure may drop telemetry but does not fail business requests. Exporters use bounded native queues/timeouts. Standard `OTEL_RESOURCE_ATTRIBUTES` can supply release metadata such as `service.version`; config rendering passes it into application containers and Envoy. Envoy reports its native SDK version; Go development builds without version metadata report `dev`. No collector, dashboard or backend is deployed by base Compose. See the [telemetry design and verification scope](../plans/261111-1727-platform-letfs-rewrite/telemetry.md).
+Collector failure may drop telemetry but does not fail business requests. Exporters use bounded native queues/timeouts. Standard `OTEL_RESOURCE_ATTRIBUTES` can supply release metadata such as `service.version`; config rendering passes it into application containers and Envoy. Envoy reports its native SDK version; Go development builds without version metadata report `dev`. The optional `observability` profile runs Alloy; Grafana Cloud supplies metrics, traces, logs and dashboards. See [Cloud observability and prompt operations](observability.md). See the [telemetry design and verification scope](../plans/261111-1727-platform-letfs-rewrite/telemetry.md).
 
 The six scripts in [scripts/](../scripts/) own config rendering, bootstrap, E2E, deploy, backup and restore. [Makefile](../Makefile) exposes their native entry points. Never invoke archived recovery/initialization scripts against the rewritten system.
 
@@ -25,7 +25,7 @@ scripts/backup.sh /private/backups/new-snapshot
 scripts/restore.sh /private/backups/new-snapshot
 ```
 
-Backup stops ingress, apps/workers, Temporal and SpiceDB, catalogs non-template domain databases and owners, then writes native custom-format dumps and checksums. Writers remain stopped. Canonical SpiceDB data is included; there is no graph reconstruction from SQL grants.
+Backup stops ingress, enabled apps/workers (including Leta), Temporal and SpiceDB, catalogs non-template domain databases and owners, then writes native custom-format dumps and checksums. Writers remain stopped. The Leta database includes its domain and native LangGraph checkpoint tables; Redis is disposable cache/events and is not backed up. Canonical SpiceDB data is included; there is no graph reconstruction from SQL grants.
 
 Restore requires target databases/roles already initialized from matching configuration, with no application tables. Initialize that new target with `docker compose run --rm databases` and wait for its successful exit; do not run migration jobs. Restore refuses a nonempty target, takes a pre-restore backup, uses pg_restore with original roles and repairs native SpiceDB transaction IDs. Keep writers stopped until data/config/image compatibility has been checked, then start the matching deployment.
 
