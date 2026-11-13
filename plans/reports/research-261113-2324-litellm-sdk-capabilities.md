@@ -1,5 +1,11 @@
 # LiteLLM metadata, SDKs and cost integration
 
+Follow-up: [production configuration ownership](research-261113-2345-inference-configuration-ownership.md)
+records the user's withdrawal of the suffix-format constraint, verifies native
+gateway aliases/shared Vilao credentials/streaming cost, and proposes Langfuse
+Prompt Config for task tuning. It supersedes the suffix/default_for proposals
+below; the SDK and per-call cost evidence remains applicable.
+
 ## Status
 
 Research/proposal only. No application, dependencies, accepted implementation
