@@ -119,10 +119,11 @@ giữa side effect và checkpoint. Sau đó workspace cleanup vẫn hoàn tất.
    lại trong system tại mỗi boundary. Cần sửa request theo owning design và
    kiểm actual wire prefix/cache usage; các proof checkpoint/pruning trước đó
    không xác nhận phần này.
-4. Provider-owned catalog, một model reference có effort suffix, manual pricing,
-   model-list API và ba output modes là scope tiếp theo, chưa có implementation.
-   [Source review và đề xuất retry](../reports/design-261113-2202-provider-catalog-compaction-retries.md)
-   phân biệt phần người dùng đã chốt với retry policy còn đề xuất.
+4. [LiteLLM/inference đã chốt](inference.md) thay provider-owned catalog và
+   effort-suffix proposal: shared model groups, metadata-backed Leta listing,
+   Langfuse task config, gateway pricing/retries, Instructor mode/correction và
+   explicit per-request cost. Chưa implementation migration; giữ research cũ
+   làm bằng chứng, không giữ parser/catalog cũ để tương thích.
 
 ## Ranh giới vận hành
 

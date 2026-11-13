@@ -25,15 +25,15 @@ Giữ native Temporal tracing/metrics/history. Existing workflow/run/attempt IDs
 
 ### Session và metadata
 
-| Field | Mapping | Dùng để |
-|---|---|---|
-| `session_id` | Existing agent ID, cùng identity với graph thread | Gom các lượt làm việc/resume |
-| Name | `leta.agent` hoặc `leti.agent` | Phân biệt vai trò |
-| `workspace_id`, `agent_id`, `run_id` | Existing domain IDs | Tìm đúng resource/lượt làm việc |
-| `root_id`, `box_id` | Khi có context đó | Liên hệ root, Leti và Box |
-| Temporal workflow/run/attempt | Existing activity context | Đối chiếu execution/retry, không SQL field mới |
-| `environment`, `release` | Deployment environment/application commit | Phân biệt deployments |
-| `user_id` | Chỉ khi xác định đúng một human actor | Không tự gán owner cho autonomous/mixed inbox |
+| Field                                | Mapping                                           | Dùng để                                        |
+| ------------------------------------ | ------------------------------------------------- | ---------------------------------------------- |
+| `session_id`                         | Existing agent ID, cùng identity với graph thread | Gom các lượt làm việc/resume                   |
+| Name                                 | `leta.agent` hoặc `leti.agent`                    | Phân biệt vai trò                              |
+| `workspace_id`, `agent_id`, `run_id` | Existing domain IDs                               | Tìm đúng resource/lượt làm việc                |
+| `root_id`, `box_id`                  | Khi có context đó                                 | Liên hệ root, Leti và Box                      |
+| Temporal workflow/run/attempt        | Existing activity context                         | Đối chiếu execution/retry, không SQL field mới |
+| `environment`, `release`             | Deployment environment/application commit         | Phân biệt deployments                          |
+| `user_id`                            | Chỉ khi xác định đúng một human actor             | Không tự gán owner cho autonomous/mixed inbox  |
 
 Root/Leti có traces/sessions riêng, lọc root/box metadata để xem liên quan. Không session theo ngày hoặc async multi-agent DAG. Message/tool-call IDs đã ở payload; không copy mọi ID vào mọi span.
 
@@ -84,15 +84,15 @@ Native exporter batch background; flush theo shutdown lifecycle, không mỗi to
 
 ## 3. Theo docs và phần riêng Openlet
 
-| Phần | Chuẩn theo docs | Mapping/điều chỉnh Openlet |
-|---|---|---|
-| Graph/model/tool tracing | CallbackHandler + RunnableConfig | Callback mới mỗi invocation, native trace_context tách Temporal parent |
-| Sessions/metadata | `propagate_attributes` | Agent ID làm session, existing workspace/root/box/run IDs |
-| Stream/usage/errors | Native LangChain integration | Bật provider stream usage khi cần; giữ tool outcome semantics |
-| OTel coexistence | Shared provider/native processors/exporters | Existing OTLP đi Alloy/Grafana Cloud Tempo, LF SDK trực tiếp Langfuse Cloud |
-| Prompts | Fetch/compile/labels/version/cache/link | Business instructions và danh mục Openlet |
-| Ingest Python | Official OpenAI wrapper | Enrichment prompt/file/version/stage |
-| LetFS Go RAG | Official OTel/OTLP ingestion và observation types | SemanticSearch server span làm retriever; embedding/rerank boundaries; chọn đúng RPC nối cây |
+| Phần                     | Chuẩn theo docs                                                   | Mapping/điều chỉnh Openlet                                                                   |
+| ------------------------ | ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Graph/model/tool tracing | CallbackHandler + RunnableConfig                                  | Callback mới mỗi invocation, native trace_context tách Temporal parent                       |
+| Sessions/metadata        | `propagate_attributes`                                            | Agent ID làm session, existing workspace/root/box/run IDs                                    |
+| Stream/usage/errors      | Native LangChain integration                                      | Bật provider stream usage khi cần; giữ tool outcome semantics                                |
+| OTel coexistence         | Shared provider/native processors/exporters                       | Existing OTLP đi Alloy/Grafana Cloud Tempo, LF SDK trực tiếp Langfuse Cloud                  |
+| Prompts                  | Fetch/compile/labels/version/cache/link                           | Business instructions và danh mục Openlet                                                    |
+| Ingest Python            | Public native Langfuse observations trên Instructor/LiteLLM calls | Từng paid attempt có prompt/file/version/stage/cost, không duplicate                         |
+| LetFS Go RAG             | Official OTel/OTLP ingestion và observation types                 | SemanticSearch server span làm retriever; embedding/rerank boundaries; chọn đúng RPC nối cây |
 
 Không tracing framework, prompt registry/cache service, telemetry SQL/outbox hoặc evaluation hooks.
 
@@ -112,9 +112,9 @@ Native batch/timeout/retry; upload telemetry lỗi không rollback business effe
 
 Capture bình thường model messages/output, tool arguments/results, errors, usage và timings để debug đúng context. **Không observation/HTTP request LF mỗi token**: callback nhận chunks để theo dõi timing, generation hoàn tất có final output/usage và export theo native batch. Không Postgres writes từ tracing; browser vẫn SSE/Redis/history đã chốt.
 
-Usage lấy native provider/LangChain metadata; bật stream usage theo adapter. Không estimate bằng tokenizer, cộng cached/reasoning tokens hai lần hoặc gọi missing usage là zero. Model alias cần native custom pricing nếu chưa nhận giá. [Token/cost](https://langfuse.com/docs/observability/features/token-and-cost-tracking).
+Usage lấy native provider/LangChain metadata; bật stream usage theo adapter. Không estimate bằng tokenizer, cộng cached/reasoning tokens hai lần hoặc gọi missing usage là zero. [Token/cost](https://langfuse.com/docs/observability/features/token-and-cost-tracking).
 
-Theo cập nhật model configuration, giá LLM/embedding nhập trong từng model của provider, đơn vị dollar cho mỗi triệu token; không fetch giá OpenRouter hoặc lưu pricing-model mapping. Reranker chỉ thêm đơn vị giá khi có model/endpoint thực được bật. Dùng native model definitions/pricing tiers, đưa selected provider/model reference vào observation metadata để phân biệt giá khi nhiều provider trả cùng tên model. Pricing tiers hỗ trợ điều kiện top-level metadata; cần export/cost proof khi implementation. Không fork callback, đổi inference model name hoặc thêm billing service. Chi tiết [provider catalog và prices](../reports/design-261113-2202-provider-catalog-compaction-retries.md#7-structured-output-and-manual-prices).
+Theo [LiteLLM/inference đã chốt 2026-11-14](../261111-2010-leta-rewrite/inference.md), LiteLLM tính giá mỗi deployment bằng native pricing/overrides, đơn vị USD/token; Langfuse nhận explicit request cost rồi aggregate. Một public model group có thể route qua Vilao/OpenAI/OpenRouter với giá khác nhau. Không price calculator/catalog trong backend hoặc sao chép price definitions sang LF. Streaming lấy final usage cost; nonstreaming/embedding lấy response-cost header. Ghi từng paid Instructor attempt trước khi response usage bị aggregate; không bật gateway→LF AI export lần hai. Reranker optional, không suy token/cost khi response không có dữ liệu. Migration này chưa implementation.
 
 Không credentials/auth headers/checkpoint trong metadata. Model/file/tool content xuất hiện trong Cloud theo native capture, kể cả media integration hỗ trợ; demo dùng dữ liệu thử phù hợp. Keys server-side, dashboard operators; không tự uploader toàn storage. Tempo bỏ AI content.
 
@@ -122,15 +122,15 @@ Expected conflict/denied/not_found giữ domain results; không tạo exceptions
 
 ## 6. AI calls ngoài agent graph
 
-| Owner | Tích hợp | Giữ đúng |
-|---|---|---|
-| Ingest enrichment | Official `langfuse.openai.AsyncOpenAI` thay direct import | Parse/schema/timeouts/concurrency; `langfuse_prompt` đúng version |
-| Ingest embeddings | Official wrapper cho `embeddings.create` | Một observation/provider batch; native output count/dimensions, không vectors |
-| LetFS Go query embedding | Native OTel embedding span → Alloy filter riêng → official Cloud OTLP | Model/actual usage/batch size, không vectors hoặc Go wrapper tự chế |
-| LetFS Go retrieval/rerank | Existing SemanticSearch server span + provider rerank span → Alloy → official Cloud OTLP | Retriever output chỉ gồm final authorized hits; rerank không giả generation hoặc usage |
-| Leta compaction | Existing LangChain callback + scoped `propagate_attributes(prompt=compaction_prompt)` | Link compaction prompt, không kế thừa nhầm role prompt |
+| Owner                     | Tích hợp                                                                                 | Giữ đúng                                                                                      |
+| ------------------------- | ---------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Ingest enrichment         | `instructor.from_litellm` + public native LF generation APIs                             | Instructor validate/correction; từng paid attempt có usage/cost và đúng prompt version        |
+| Ingest embeddings         | `litellm.aembedding` + public native LF embedding observation                            | Một observation/provider batch; explicit gateway cost, output count/dimensions, không vectors |
+| LetFS Go query embedding  | Native OTel embedding span → Alloy filter riêng → official Cloud OTLP                    | Model/actual usage/batch size, không vectors hoặc Go wrapper tự chế                           |
+| LetFS Go retrieval/rerank | Existing SemanticSearch server span + provider rerank span → Alloy → official Cloud OTLP | Retriever output chỉ gồm final authorized hits; rerank không giả generation hoặc usage        |
+| Leta compaction           | Existing LangChain callback + scoped `propagate_attributes(prompt=compaction_prompt)`    | Link compaction prompt, không kế thừa nhầm role prompt                                        |
 
-Python upload trực tiếp Cloud. Go dùng [official OTLP route](https://langfuse.com/integrations/native/opentelemetry), chọn đúng service và SemanticSearch retriever/query embedding/rerank spans; rerank dùng type span nên không lọc bằng embedding/generation type đơn thuần. Không forward Python LF spans lần nữa. [OpenAI wrapper](https://langfuse.com/integrations/model-providers/openai-py). Đã kiểm SDK 5.2.0: embedding capture input batch và output count/dimensions.
+Python upload trực tiếp Cloud. Go dùng [official OTLP route](https://langfuse.com/integrations/native/opentelemetry), chọn đúng service và SemanticSearch retriever/query embedding/rerank spans; rerank dùng type span nên không lọc bằng embedding/generation type đơn thuần. Không forward Python LF spans lần nữa. Public SDK 5.2.0 embedding observation và per-attempt cost đã có [focused proof](../reports/research-261113-2324-litellm-sdk-capabilities.md); full migration chưa implementation.
 
 Enrichment có AI trace riêng tại describe call khi cần tách Temporal parent bằng native trace_context; embeddings theo provider request. Không trace kéo dài suốt ingest nhiều file hoặc observation mỗi chunk.
 
@@ -151,13 +151,13 @@ Agent invocation
 
 Sơ đồ bỏ các graph/node/chain observations trung gian. Tận dụng server span bằng `langfuse.observation.type="retriever"`; thêm provider spans ngay tại query embedding/rerank calls, dùng context trả về để native downstream HTTP spans vẫn nối đúng ở Tempo. Không instrument provider hai lần.
 
-| Observation | Input/output và metadata cần |
-|---|---|
-| Native tool | Query/paths và output đúng như agent nhận |
+| Observation              | Input/output và metadata cần                                                                                                                                           |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Native tool              | Query/paths và output đúng như agent nhận                                                                                                                              |
 | SemanticSearch retriever | Query, storage/root, top_k; output là final hits thực trả gồm file ID/snippet/score theo thứ tự; metadata đếm Qdrant candidates, SQL-valid candidates và returned hits |
-| Query embedding | Model/query/actual provider usage/dimensions, không vectors |
-| Rerank | Query, model trong metadata, candidate count; output selected indices/scores, native latency/status/error; không lặp toàn bộ candidate text |
-| Model sau search | Messages thực gửi provider, output/usage; không dựng thêm bản sao RAG answer riêng |
+| Query embedding          | Model/query/actual provider usage/dimensions, không vectors                                                                                                            |
+| Rerank                   | Query, model trong metadata, candidate count; output selected indices/scores, native latency/status/error; không lặp toàn bộ candidate text                            |
+| Model sau search         | Messages thực gửi provider, output/usage; không dựng thêm bản sao RAG answer riêng                                                                                     |
 
 Không capture nội dung Qdrant candidates bị SQL loại, không observation từng hit/chunk. Mỗi RPC tìm trong một scope có retrieval observation tương ứng; tool nhiều paths giữ thứ tự/ranking từng scope đã chốt, không cross-mount fusion mới. Kết quả rỗng hợp lệ không là exception. Rerank relevance score là output xếp hạng, không phải Langfuse evaluation score. Current response struct chưa đọc rerank usage, nên chưa ghi token/cost hoặc suy từ document count.
 
@@ -167,27 +167,29 @@ W3C context đi qua native gRPC instrumentation. Callback dùng thuộc tính na
 
 Grafana theo dõi toàn bộ pipeline; Langfuse đi sâu vào AI calls. Cùng một model call được instrument một lần rồi export hai nhánh theo owning integration, không gọi provider hai lần.
 
-| Processing step | Grafana/Tempo/Mimir/Loki | Langfuse |
-|---|---|---|
-| Chờ worker, Temporal activities/retries/failures | Native queue/execution metrics, spans/logs; chi tiết history ở Temporal UI | Không mirror orchestration |
-| Parse/export text/artifacts | Stage duration/errors, CPU/RAM, subprocess failure | Không |
-| Enrichment | Duration/status/errors, không AI content | Prompt/version/input/output/model/actual usage/cost |
-| Batch embedding | Duration/status/errors, không AI content | Input batch/model/actual usage/cost, output count/dimensions; không vectors |
-| Qdrant upsert, commit processing status | Stage duration/errors, dependency spans/logs | Không |
+| Processing step                                  | Grafana/Tempo/Mimir/Loki                                                   | Langfuse                                                                    |
+| ------------------------------------------------ | -------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Chờ worker, Temporal activities/retries/failures | Native queue/execution metrics, spans/logs; chi tiết history ở Temporal UI | Không mirror orchestration                                                  |
+| Parse/export text/artifacts                      | Stage duration/errors, CPU/RAM, subprocess failure                         | Không                                                                       |
+| Enrichment                                       | Duration/status/errors, không AI content                                   | Prompt/version/input/output/model/actual usage/cost                         |
+| Batch embedding                                  | Duration/status/errors, không AI content                                   | Input batch/model/actual usage/cost, output count/dimensions; không vectors |
+| Qdrant upsert, commit processing status          | Stage duration/errors, dependency spans/logs                               | Không                                                                       |
 
 Đối chiếu bằng existing file_id/source_version trong selected spans/logs/LF metadata và TraceID khi cùng trace; không thêm IDs vào metric/Loki labels hoặc ép các Temporal activities thành một immortal trace. LetFS processing state vẫn là nguồn trạng thái file trong product API/UI. Parse/upsert không thành LF observations chỉ để thấy toàn pipeline ở cả hai backends.
 
 ## 7. Prompt management
 
-| Nội dung | Authority |
-|---|---|
-| Common concepts/business rules | LF text prompt `leta/common` |
-| Root/Leti instructions | `leta/root`, `leta/leti` |
-| Compaction/enrichment | `leta/compaction`, `letfs/enrichment` |
-| Agent mission/user instructions | Existing SQL/profile |
-| Tool names/descriptions/schemas, response schemas | Owning code |
-| Models/selection/limits/timeouts | Existing config/agent settings |
-| Summary/tail/inbox | Existing checkpoint/domain runtime |
+| Nội dung                                                  | Authority                                                                  |
+| --------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Common concepts/business rules                            | LF text prompt `leta/common`                                               |
+| Root/Leti instructions                                    | `leta/root`, `leta/leti`                                                   |
+| Compaction/enrichment                                     | `leta/compaction`, `letfs/enrichment`                                      |
+| Agent mission/user instructions                           | Existing SQL/profile                                                       |
+| Tool names/descriptions/schemas, response schemas         | Owning code                                                                |
+| Task model/effort/temperature/top_p/top_k/output defaults | LF Prompt Config, version cùng prompt; chỉ fields cần dùng                 |
+| Model groups/deployments/capabilities/prices/retry        | LiteLLM theo [inference đã chốt](../261111-2010-leta-rewrite/inference.md) |
+| Explicit agent selection/inheritance và hard limits       | Existing product state/application budgets                                 |
+| Summary/tail/inbox                                        | Existing checkpoint/domain runtime                                         |
 
 [System drafts](../261111-2010-leta-rewrite/prompting.md) vẫn cần review, chưa publish production. Không prompt mỗi user/agent.
 
@@ -199,7 +201,7 @@ Grafana theo dõi toàn bộ pipeline; Langfuse đi sâu vào AI calls. Cùng m�
 
 **Version/rollback:** edit tạo immutable version → thử thủ công Playground/staging → chuyển production label → runtime nhận qua cache. Root/Leti native composition pin common numeric version, ví dụ `@@@langfusePrompt:name=leta/common|version=7@@@`; common đổi thì outer role version mới. Không fetch/nối common lần nữa. Rollback chuyển label về version trước, không reset checkpoint/Temporal.
 
-Folders/labels/composition/cache/Playground/link đều native. Chưa A/B assignment, GitHub sync, protected-label workflow, webhooks hoặc model/tool config overrides trong LF. Không evaluation gate cho prompt release ở scope này.
+Folders/labels/composition/cache/Playground/link/config đều native. Task model/parameter config đã chốt; không đưa tool/output contracts vào LF. Chưa A/B assignment, GitHub sync, protected-label workflow hoặc webhooks. Không evaluation gate cho prompt release ở scope này.
 
 ## 8. Free và features dùng ngay
 

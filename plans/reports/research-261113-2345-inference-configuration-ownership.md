@@ -2,6 +2,12 @@
 
 ## Status
 
+Accepted follow-up 2026-11-14: [owning inference design](../261111-2010-leta-rewrite/inference.md)
+records Langfuse task defaults, LiteLLM ownership and one public model group
+routed across Vilao/OpenAI/OpenRouter, with per-deployment prices. It supersedes
+the separate public provider aliases in the examples below. This report retains
+the original proposal and probe evidence; application migration is still pending.
+
 Research and proposal, not application implementation or a newly accepted
 architecture. The user explicitly withdrew the old model-reference naming
 constraint. Do not preserve the `<provider>/<model>:effort` parser or the
