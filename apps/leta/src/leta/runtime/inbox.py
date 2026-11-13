@@ -36,7 +36,9 @@ class Inbox(AgentMiddleware[State, "Context"]):
     async def abefore_model(
         self, state: State, runtime: Runtime[Context]
     ) -> dict[str, object] | None:
-        rows = await pending(self.db, self.agent, state.get("inbox_cursor", 0))
+        rows = await pending(
+            self.db, self.agent, state.get("inbox_cursor", 0), root=self.root
+        )
         if not rows:
             return None
         if any(row["source_kind"] == "hitl" for row in rows):

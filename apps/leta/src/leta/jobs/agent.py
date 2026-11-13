@@ -18,11 +18,19 @@ with workflow.unsafe.imports_passed_through():
 class AgentInput(BaseModel):
     agent_id: UUID
     runtime_queue: str
+    inbox_cursor: int = 0
+    admitted_seq: int = 0
+    suppressed_through: int = 0
 
 
 class RunInput(BaseModel):
     agent_id: UUID
     run_id: UUID
+
+
+class RunResult(BaseModel):
+    status: str
+    inbox_cursor: int
 
 
 @workflow.defn
@@ -31,11 +39,14 @@ class Agent:
     def __init__(self, input: AgentInput) -> None:
         self.input = input
         self.wake = True
+        self.inbox_cursor = input.inbox_cursor
+        self.admitted_seq = input.admitted_seq
+        self.suppressed_through = input.suppressed_through
         self.paused = False
         self.stopping = False
         self.stopped = False
         self.rotating = False
-        self.active: workflow.ActivityHandle[str] | None = None
+        self.active: workflow.ActivityHandle[RunResult] | None = None
         self.run_id: UUID | None = None
         self.control = asyncio.Lock()
 
@@ -51,7 +62,9 @@ class Agent:
             start_to_close_timeout=timedelta(seconds=15),
             result_type=dict[str, JSON],
         )
-        self.wake = True
+        seq = result.get("seq")
+        if isinstance(seq, int):
+            self.admitted_seq = max(self.admitted_seq, seq)
         self.rotate()
         return result
 
@@ -78,6 +91,7 @@ class Agent:
     async def cancel_current(self, run_id: UUID) -> None:
         if self.run_id == run_id and self.active is not None:
             self.wake = False
+            self.suppressed_through = max(self.suppressed_through, self.admitted_seq)
             handle = self.active
             handle.cancel()
             await workflow.wait_condition(lambda: self.active is not handle)
@@ -109,7 +123,16 @@ class Agent:
         while not self.stopping:
             await workflow.wait_condition(
                 lambda: (
-                    self.stopping or self.rotating or (self.wake and not self.paused)
+                    self.stopping
+                    or self.rotating
+                    or (
+                        (
+                            self.wake
+                            or self.admitted_seq
+                            > max(self.inbox_cursor, self.suppressed_through)
+                        )
+                        and not self.paused
+                    )
                 )
             )
             if self.stopping or self.rotating:
@@ -136,11 +159,11 @@ class Agent:
                 start_to_close_timeout=timedelta(days=365),
                 heartbeat_timeout=timedelta(seconds=10),
                 cancellation_type=workflow.ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
-                result_type=str,
+                result_type=RunResult,
             )
             await workflow.wait_condition(
                 lambda: (
-                    cast(workflow.ActivityHandle[str], self.active).done()
+                    cast(workflow.ActivityHandle[RunResult], self.active).done()
                     or self.stopping
                     or self.rotating
                 )
@@ -151,7 +174,8 @@ class Agent:
             error: str | None = None
             try:
                 result = await self.active
-                if result == "paused":
+                self.inbox_cursor = max(self.inbox_cursor, result.inbox_cursor)
+                if result.status == "paused":
                     self.paused = True
                     status = "paused"
             except CancelledError, asyncio.CancelledError:
@@ -161,6 +185,11 @@ class Agent:
                     status = "cancelled"
                 else:
                     status, error = "failed", "runtime_error"
+            if status == "failed":
+                # A permanent failure must not repeatedly restart the same backlog.
+                self.suppressed_through = max(
+                    self.suppressed_through, self.admitted_seq
+                )
             if not self.rotating:
                 await workflow.execute_local_activity(
                     "finish_run",
@@ -172,6 +201,14 @@ class Agent:
             self.rotate()
         if self.rotating and not self.stopping:
             await workflow.wait_condition(workflow.all_handlers_finished)
-            workflow.continue_as_new(input)
+            workflow.continue_as_new(
+                input.model_copy(
+                    update={
+                        "inbox_cursor": self.inbox_cursor,
+                        "admitted_seq": self.admitted_seq,
+                        "suppressed_through": self.suppressed_through,
+                    }
+                )
+            )
         self.stopped = True
         await workflow.wait_condition(workflow.all_handlers_finished)

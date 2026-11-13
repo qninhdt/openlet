@@ -3,6 +3,7 @@ from typing import Literal, cast
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from openlet_sdk.config import JSON, ReasoningEffort
+from psycopg import sql
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -149,37 +150,66 @@ async def finish_run(
     run_id: UUID,
     status: Literal["completed", "paused", "failed", "cancelled"],
     error: str | None = None,
-) -> None:
+) -> Row | None:
     async with db.connection() as conn:
-        await conn.execute(
-            """UPDATE runs SET status=%s, finished_at=CASE WHEN %s='paused' THEN NULL ELSE now() END,
-            error_code=%s WHERE id=%s AND status IN ('running','paused')""",
-            (status, status, error, run_id),
-        )
+        return await (
+            await conn.execute(
+                """UPDATE runs r SET status=%s,
+                finished_at=CASE WHEN %s='paused' THEN NULL ELSE now() END,error_code=%s
+                FROM agents a WHERE r.id=%s AND a.id=r.agent_id
+                AND (r.status IN ('running','paused') OR r.status=%s) RETURNING r.agent_id,a.leta_id""",
+                (status, status, error, run_id, status),
+            )
+        ).fetchone()
 
 
-async def record(
-    db: Pool, agent_id: UUID, run_id: UUID, identity: str, kind: str, payload: JSON
-) -> UUID:
-    id = uuid5(NAMESPACE_URL, f"{agent_id}/{identity}")
+def history_id(agent: UUID, identity: str) -> UUID:
+    return uuid5(NAMESPACE_URL, f"{agent}/{identity}")
+
+
+async def record_batch(
+    db: Pool, agent_id: UUID, run_id: UUID, entries: list[tuple[str, str, JSON]]
+) -> list[tuple[UUID, str, JSON]]:
+    ordered = {
+        history_id(agent_id, identity): (kind, body) for identity, kind, body in entries
+    }
+    if not ordered:
+        return []
     async with db.connection() as conn, conn.transaction():
         await conn.execute("SELECT id FROM agents WHERE id=%s FOR UPDATE", (agent_id,))
         found = await (
-            await conn.execute("SELECT id FROM history WHERE id=%s", (id,))
-        ).fetchone()
-        if found is None:
-            seq = await (
+            await conn.execute(
+                "SELECT id FROM history WHERE id=ANY(%s)", (list(ordered),)
+            )
+        ).fetchall()
+        existing = {row["id"] for row in found}
+        new = [
+            (id, kind, body)
+            for id, (kind, body) in ordered.items()
+            if id not in existing
+        ]
+        if new:
+            counter = await (
                 await conn.execute(
-                    "UPDATE agents SET history_seq=history_seq+1 WHERE id=%s RETURNING history_seq",
-                    (agent_id,),
+                    "UPDATE agents SET history_seq=history_seq+%s WHERE id=%s RETURNING history_seq",
+                    (len(new), agent_id),
                 )
             ).fetchone()
-            assert seq is not None
+            assert counter is not None
+            start = cast(int, counter["history_seq"]) - len(new)
+            values = [
+                (id, agent_id, run_id, start + index, kind, Jsonb(body))
+                for index, (id, kind, body) in enumerate(new, 1)
+            ]
             await conn.execute(
-                "INSERT INTO history(id,agent_id,run_id,seq,kind,payload) VALUES(%s,%s,%s,%s,%s,%s)",
-                (id, agent_id, run_id, seq["history_seq"], kind, Jsonb(payload)),
+                sql.SQL(
+                    "INSERT INTO history(id,agent_id,run_id,seq,kind,payload) VALUES {} "
+                ).format(
+                    sql.SQL(",").join(sql.SQL("(%s,%s,%s,%s,%s,%s)") for _ in values)
+                ),
+                tuple(value for row in values for value in row),
             )
-    return id
+    return [(id, kind, body) for id, (kind, body) in ordered.items()]
 
 
 def json_row(row: Row) -> dict[str, JSON]:

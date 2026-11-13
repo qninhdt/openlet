@@ -7,7 +7,7 @@ from typing import cast
 from uuid import UUID
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from openlet_sdk.config import JSON, load, secret
+from openlet_sdk.config import JSON, Config, load, secret
 from psycopg import AsyncConnection
 from psycopg.conninfo import make_conninfo
 from psycopg.rows import dict_row
@@ -19,8 +19,7 @@ type Connection = AsyncConnection[Row]
 type Pool = AsyncConnectionPool[Connection]
 
 
-def dsn() -> str:
-    config = load()
+def dsn(config: Config) -> str:
     postgres = config["dependencies"]["postgres"]
     database = config["services"]["leta"]["database"]
     return make_conninfo(
@@ -33,9 +32,9 @@ def dsn() -> str:
     )
 
 
-def pool() -> Pool:
+def pool(config: Config) -> Pool:
     return AsyncConnectionPool(
-        dsn(),
+        dsn(config),
         min_size=2,
         max_size=24,
         open=False,
@@ -86,7 +85,7 @@ async def save_receipt(
 
 
 async def setup() -> None:
-    async with AsyncPostgresSaver.from_conn_string(dsn()) as saver:
+    async with AsyncPostgresSaver.from_conn_string(dsn(load())) as saver:
         await saver.setup()
 
 

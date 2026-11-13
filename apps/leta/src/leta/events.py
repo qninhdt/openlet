@@ -1,7 +1,7 @@
 import json
 import logging
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from typing import cast
 from uuid import UUID
 
@@ -47,14 +47,21 @@ def event(type: str, agent: UUID, run: UUID | None = None, **fields: JSON) -> Ev
 
 
 async def publish(redis: Redis, root: UUID, value: Event) -> bool:
+    return await publish_batch(redis, root, [value])
+
+
+async def publish_batch(redis: Redis, root: UUID, values: Sequence[Event]) -> bool:
+    if not values:
+        return True
     try:
         async with redis.pipeline(transaction=False) as pipe:
-            pipe.xadd(
-                key(root),
-                {"event": json.dumps(value, ensure_ascii=False)},
-                maxlen=10000,
-                approximate=True,
-            )
+            for value in values:
+                pipe.xadd(
+                    key(root),
+                    {"event": json.dumps(value, ensure_ascii=False)},
+                    maxlen=10000,
+                    approximate=True,
+                )
             pipe.expire(key(root), 86400)
             await pipe.execute()
         return True
@@ -118,21 +125,6 @@ async def suffix(
     stream = key(root)
     position = after
     while True:
-        first = cast(Records, await redis.xrange(stream, count=1))
-        if position != "0-0" and (
-            not first or cursor(first[0][0].decode()) > cursor(position)
-        ):
-            resyncs.add(1, {"reason": "cursor_gap"})
-            yield (
-                position,
-                event(
-                    "CUSTOM",
-                    root,
-                    name="openlet.resync_required",
-                    value={"reason": "cursor_gap"},
-                ),
-            )
-            return
         batches = cast(
             list[tuple[bytes, Records]],
             await redis.xread({stream: position}, count=100, block=5000),

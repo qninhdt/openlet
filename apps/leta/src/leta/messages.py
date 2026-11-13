@@ -79,11 +79,12 @@ async def admit(db: Pool, auth: Authorization, message: Message) -> dict[str, JS
             ).fetchone()
             if sender is None:
                 raise LookupError("sender not found")
-            await gate(
-                conn, cast(UUID, sender["leta_id"]), cast(UUID | None, sender["box_id"])
-            )
             if sender["leta_id"] != recipient["leta_id"]:
                 raise ValueError("cross-Leta delivery is not allowed")
+            if sender["box_id"] is not None and sender["box_id"] != recipient["box_id"]:
+                await gate(
+                    conn, cast(UUID, sender["leta_id"]), cast(UUID, sender["box_id"])
+                )
             if sender["box_id"] is None:
                 edge = await (
                     await conn.execute(
@@ -163,14 +164,32 @@ async def admit(db: Pool, auth: Authorization, message: Message) -> dict[str, JS
     return {"id": str(message.id), "seq": cast(int, counter["inbox_seq"])}
 
 
-async def pending(db: Pool, agent_id: UUID, after: int) -> list[Row]:
+async def has_pending(db: Pool, agent_id: UUID, after: int) -> bool:
+    async with db.connection() as conn:
+        row = await (
+            await conn.execute(
+                "SELECT EXISTS(SELECT 1 FROM agent_messages WHERE recipient_agent_id=%s AND seq>%s) AS pending",
+                (agent_id, after),
+            )
+        ).fetchone()
+    assert row is not None
+    return bool(row["pending"])
+
+
+async def pending(
+    db: Pool, agent_id: UUID, after: int, *, root: bool = False
+) -> list[Row]:
     async with db.connection() as conn:
         rows = await (
             await conn.execute(
-                """SELECT m.*,coalesce(a.name,b.name) AS source_name
+                (
+                    """SELECT m.id,m.seq,m.source_kind,m.source_id,m.conversation_id,m.created_at,m.in_reply_to_message_id,m.scheduled_at,"""
+                    + ("left(m.content,240)" if root else "m.content")
+                    + """ AS content,coalesce(a.name,b.name) AS source_name
             FROM agent_messages m LEFT JOIN agents a ON m.source_kind='agent' AND a.id=m.source_id
             LEFT JOIN boxes b ON m.source_kind='box' AND b.id=m.source_id
-            WHERE recipient_agent_id=%s AND seq>%s ORDER BY seq LIMIT 20""",
+            WHERE recipient_agent_id=%s AND seq>%s ORDER BY seq LIMIT 20"""
+                ),
                 (agent_id, after),
             )
         ).fetchall()
