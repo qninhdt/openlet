@@ -1,5 +1,7 @@
 # Setup and commands
 
+Use [the credential example](../.env.example) when creating the root dotenv file. Keep all local credentials together in that private, Git-ignored file with mode `0600`; preserve existing values when adding credentials. Service endpoints, model settings and limits remain in the shared YAML.
+
 Use Docker Compose v2 with YAML `!reset` support, Go 1.27.4, Python 3.14/uv 0.13.7 and pnpm 12.18.0. All Python roles use 3.14. Locked dependencies and image digests are committed.
 
 Copy [the complete configuration example](../infra/config/openlet.example.yaml) to `.local/openlet.yaml`. Supply its secret references through a private `.env` or process environment. YAML stores `${ENV_VARIABLE}` scalars, never resolved secret values. Replace Clerk, model and production S3 endpoints with real deployment values.
@@ -40,8 +42,8 @@ gcx login openlet --cloud --oauth
 langfuse api projects list
 ```
 
-Grafana opens a browser for sign-in and stack selection. Langfuse has no browser login command: configure `LANGFUSE_BASE_URL`, `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` using the project's API Keys page and regional URL. The CLI supports both environment variables and its native `--env` option for a private file. CLI sign-in does not replace Alloy's runtime Cloud access-policy token with `metrics:write`, `logs:write` and `traces:write` scopes; see [observability](observability.md).
+Grafana opens a browser for sign-in and stack selection, storing its login through native CLI credential storage. Langfuse has no browser login command: configure `LANGFUSE_BASE_URL`, `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` using the project's API Keys page and regional URL. Use its native `--env` option to load the root credential file and keep the CLI URL aligned with `langfuse.base_url` in YAML. CLI sign-in does not replace Alloy's runtime Cloud access-policy token with `metrics:write`, `logs:write` and `traces:write` scopes; see [observability](observability.md).
 
-Existing Clerk and Cloudflare CLIs can inspect authentication with `clerk whoami --json` and `cf auth whoami`. Clerk can retrieve development credentials with `clerk env pull`, using explicit application/instance selection and a private target file. Keep credential files ignored and private; YAML continues to use secret references.
+Existing Clerk and Cloudflare CLIs can inspect authentication with `clerk whoami --json` and `cf auth whoami`. Clerk can retrieve development credentials with `clerk env pull`, using explicit application/instance selection and its `--file` option to target the root credential file. Preserve existing values when updating credentials; YAML continues to use secret references.
 
 Cloudflare CLI OAuth does not supply the S3 credentials required by LetFS. Configure bucket-scoped R2 access keys and CORS for the actual browser origin; presigned uploads need access to the returned `ETag` header.

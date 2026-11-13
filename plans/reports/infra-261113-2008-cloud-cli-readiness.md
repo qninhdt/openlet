@@ -58,3 +58,15 @@ Lifecycle aborts incomplete multipart uploads after seven days; an existing
 See [operator CLI setup](../../docs/setup.md#cloud-operator-clis),
 [Cloud operations](../../docs/observability.md) and
 [implementation acceptance](../261111-2010-leta-rewrite/execution.md).
+
+## Follow-up: one local credential file
+
+The user requested one root dotenv file and a committed example. Credentials
+from the temporary Clerk/Langfuse files were merged into the existing root file;
+existing values were preserved, mode `0600` applied and both temporary files
+removed. Unavailable credentials remain empty.
+
+[The credential example](../../.env.example) covers all 17 secret references in
+the shared YAML plus the Clerk publishable key and Langfuse CLI regional URL.
+An assert-based check verified coverage, empty example values, preserved local
+values and private file permissions. Runtime endpoints/settings remain in YAML.
