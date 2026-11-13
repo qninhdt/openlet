@@ -34,9 +34,14 @@ func (r *receiver) Export(_ context.Context, req *collector.ExportTraceServiceRe
 
 type metricReceiver struct {
 	collectormetric.UnimplementedMetricsServiceServer
+	mu       sync.Mutex
+	requests []*collectormetric.ExportMetricsServiceRequest
 }
 
-func (*metricReceiver) Export(context.Context, *collectormetric.ExportMetricsServiceRequest) (*collectormetric.ExportMetricsServiceResponse, error) {
+func (r *metricReceiver) Export(_ context.Context, req *collectormetric.ExportMetricsServiceRequest) (*collectormetric.ExportMetricsServiceResponse, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.requests = append(r.requests, req)
 	return &collectormetric.ExportMetricsServiceResponse{}, nil
 }
 
@@ -60,7 +65,8 @@ func TestTelemetryExportAndCorrelation(t *testing.T) {
 	defer exporter.Stop()
 	received := &receiver{}
 	collector.RegisterTraceServiceServer(exporter, received)
-	collectormetric.RegisterMetricsServiceServer(exporter, &metricReceiver{})
+	metered := &metricReceiver{}
+	collectormetric.RegisterMetricsServiceServer(exporter, metered)
 	go exporter.Serve(listener)
 	shutdown, err := InitTelemetry(ctx, "test-service", "test", Telemetry{OTLPEndpoint: "http://" + listener.Addr().String(), TraceSampleRatio: 1, MetricsExportIntervalSeconds: 60})
 	if err != nil {
@@ -91,6 +97,23 @@ func TestTelemetryExportAndCorrelation(t *testing.T) {
 	span.End()
 	if err = shutdown(ctx); err != nil {
 		t.Fatal(err)
+	}
+	metered.mu.Lock()
+	defer metered.mu.Unlock()
+	foundDuration := false
+	for _, req := range metered.requests {
+		for _, res := range req.ResourceMetrics {
+			for _, scope := range res.ScopeMetrics {
+				for _, metric := range scope.Metrics {
+					if metric.Name == "rpc.server.call.duration" {
+						foundDuration = metric.Unit == "s" && metric.GetHistogram() != nil
+					}
+				}
+			}
+		}
+	}
+	if !foundDuration {
+		t.Fatal("missing native RPC duration histogram in seconds")
 	}
 	var record map[string]any
 	if err = json.Unmarshal(logs.Bytes(), &record); err != nil {

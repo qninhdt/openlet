@@ -1,0 +1,215 @@
+logging {
+  level = "warn"
+  format = "json"
+}
+
+otelcol.receiver.otlp "openlet" {
+  grpc { endpoint = "0.0.0.0:4317" }
+  http { endpoint = "0.0.0.0:4318" }
+  output {
+    traces = [otelcol.processor.memory_limiter.openlet.input]
+    metrics = [otelcol.processor.memory_limiter.openlet.input]
+  }
+}
+
+otelcol.processor.memory_limiter "openlet" {
+  check_interval = "1s"
+  limit = "256MiB"
+  spike_limit = "64MiB"
+  output {
+    traces = [otelcol.processor.batch.openlet.input]
+    metrics = [otelcol.processor.batch.openlet.input]
+  }
+}
+
+otelcol.processor.batch "openlet" {
+  timeout = "5s"
+  send_batch_size = 512
+  send_batch_max_size = 1024
+  output {
+    traces = [otelcol.processor.transform.tempo.input, otelcol.processor.filter.langfuse.input]
+    metrics = [otelcol.processor.transform.metrics.input]
+  }
+}
+
+// The Python Langfuse SDK already exports its own observations directly.
+otelcol.processor.filter "langfuse" {
+  error_mode = "propagate"
+  traces {
+    span = [
+      `resource.attributes["service.name"] != "openlet-letfs"`,
+      `not (attributes["langfuse.observation.type"] == "retriever" or name == "query_embedding" or name == "rerank")`,
+    ]
+  }
+  output { traces = [otelcol.exporter.otlphttp.langfuse.input] }
+}
+
+otelcol.auth.basic "langfuse" {
+  username = sys.env("LANGFUSE_PUBLIC_KEY")
+  password = sys.env("LANGFUSE_SECRET_KEY")
+}
+
+otelcol.exporter.otlphttp "langfuse" {
+  client {
+    endpoint = sys.env("LANGFUSE_OTLP_ENDPOINT")
+    auth = otelcol.auth.basic.langfuse.handler
+  }
+}
+
+otelcol.processor.transform "tempo" {
+  error_mode = "propagate"
+  trace_statements {
+    context = "span"
+    statements = [
+      `delete_matching_keys(attributes, "^(langfuse\\.(observation|trace)\\.(input|output)|gen_ai\\.(input|output|prompt|completion|system_instructions)|llm\\.(prompts|completions)|input\\.value|output\\.value|tool\\.(parameters|arguments|result)).*")`,
+    ]
+  }
+  trace_statements {
+    context = "spanevent"
+    statements = [
+      `delete_matching_keys(attributes, "^(gen_ai\\.(input|output|prompt|completion|content)|input\\.value|output\\.value).*")`,
+    ]
+  }
+  output { traces = [otelcol.exporter.otlphttp.tempo.input] }
+}
+
+otelcol.auth.basic "tempo" {
+  username = sys.env("GRAFANA_TRACES_USER")
+  password = sys.env("GRAFANA_CLOUD_TOKEN")
+}
+
+otelcol.exporter.otlphttp "tempo" {
+  client {
+    endpoint = sys.env("GRAFANA_TRACES_ENDPOINT")
+    auth = otelcol.auth.basic.tempo.handler
+  }
+}
+
+otelcol.processor.transform "metrics" {
+  error_mode = "ignore"
+  metric_statements {
+    context = "datapoint"
+    statements = [
+      `set(attributes["environment"], resource.attributes["deployment.environment.name"])`,
+      `set(attributes["service_name"], resource.attributes["service.name"])`,
+      `set(attributes["service_name"], attributes["service.name"]) where attributes["service.name"] != nil`,
+      `delete_key(attributes, "service.name")`,
+      `set(attributes["worker_role"], resource.attributes["worker.role"]) where resource.attributes["worker.role"] != nil`,
+    ]
+  }
+  output { metrics = [otelcol.exporter.prometheus.cloud.input] }
+}
+
+otelcol.exporter.prometheus "cloud" {
+  forward_to = [prometheus.remote_write.cloud.receiver]
+  include_scope_labels = false
+  include_target_info = false
+  resource_to_telemetry_conversion = false
+}
+
+prometheus.remote_write "cloud" {
+  endpoint {
+    url = sys.env("GRAFANA_METRICS_ENDPOINT")
+    basic_auth {
+      username = sys.env("GRAFANA_METRICS_USER")
+      password = sys.env("GRAFANA_CLOUD_TOKEN")
+    }
+  }
+}
+
+prometheus.exporter.self "alloy" {}
+prometheus.exporter.unix "host" {
+  rootfs_path = "/rootfs"
+  procfs_path = "/host/proc"
+  sysfs_path = "/host/sys"
+}
+prometheus.exporter.cadvisor "containers" {
+  docker_host = "unix:///var/run/docker.sock"
+  storage_duration = "5m"
+}
+prometheus.exporter.postgres "postgres" {
+  data_source_names = [sys.env("POSTGRES_METRICS_DSN")]
+}
+
+prometheus.scrape "native" {
+  targets = [
+    {__address__ = "spicedb:9090", job = "spicedb"},
+    {__address__ = "temporal:9090", job = "temporal"},
+    {__address__ = "envoy:9901", __metrics_path__ = "/stats/prometheus", job = "envoy"},
+  ]
+  scrape_interval = "60s"
+  forward_to = [prometheus.remote_write.cloud.receiver]
+}
+prometheus.scrape "qdrant" {
+  targets = [{__address__ = sys.env("QDRANT_METRICS_ADDRESS"), job = "qdrant"}]
+  http_headers = {"api-key" = [sys.env("QDRANT_API_KEY")]}
+  scrape_interval = "60s"
+  forward_to = [prometheus.remote_write.cloud.receiver]
+}
+prometheus.exporter.redis "cache" {
+  redis_addr = sys.env("REDIS_ADDRESS")
+  redis_password = sys.env("REDIS_PASSWORD")
+}
+prometheus.scrape "redis" {
+  targets = [] // Redis targets are enabled by configure.py with the Leta profile.
+  scrape_interval = "60s"
+  forward_to = [prometheus.remote_write.cloud.receiver]
+}
+prometheus.scrape "alloy" {
+  targets = prometheus.exporter.self.alloy.targets
+  scrape_interval = "60s"
+  forward_to = [prometheus.remote_write.cloud.receiver]
+}
+prometheus.scrape "host" {
+  targets = prometheus.exporter.unix.host.targets
+  scrape_interval = "60s"
+  forward_to = [prometheus.remote_write.cloud.receiver]
+}
+prometheus.scrape "containers" {
+  targets = prometheus.exporter.cadvisor.containers.targets
+  scrape_interval = "60s"
+  forward_to = [prometheus.remote_write.cloud.receiver]
+}
+prometheus.scrape "postgres" {
+  targets = prometheus.exporter.postgres.postgres.targets
+  scrape_interval = "60s"
+  forward_to = [prometheus.remote_write.cloud.receiver]
+}
+
+discovery.docker "openlet" {
+  host = "unix:///var/run/docker.sock"
+  filter {
+    name = "label"
+    values = ["com.docker.compose.project=" + sys.env("COMPOSE_PROJECT_NAME")]
+  }
+}
+discovery.relabel "logs" {
+  targets = discovery.docker.openlet.targets
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label = "service"
+  }
+  rule {
+    target_label = "environment"
+    replacement = sys.env("OPENLET_ENVIRONMENT")
+  }
+}
+loki.source.docker "openlet" {
+  host = "unix:///var/run/docker.sock"
+  targets = discovery.relabel.logs.output
+  forward_to = [loki.process.openlet.receiver]
+}
+loki.process "openlet" {
+  stage.json { expressions = {level = "level"} }
+  stage.labels { values = {level = ""} }
+  forward_to = [loki.write.cloud.receiver]
+}
+loki.write "cloud" {
+  endpoint {
+    url = sys.env("GRAFANA_LOGS_ENDPOINT")
+    basic_auth {
+      username = sys.env("GRAFANA_LOGS_USER")
+      password = sys.env("GRAFANA_CLOUD_TOKEN")
+    }
+  }
+}

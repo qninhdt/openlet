@@ -234,6 +234,20 @@ class LangfuseSettings(TypedDict):
     prompt_label: str
 
 
+class CloudSignal(TypedDict):
+    endpoint: str
+    user: str
+
+
+class ObservabilitySettings(TypedDict):
+    metrics: CloudSignal
+    traces: CloudSignal
+    logs: CloudSignal
+    token: str
+    postgres_user: str
+    postgres_password: str
+
+
 class Config(TypedDict):
     runtime: RuntimeSettings
     grpc: dict[str, int]
@@ -244,6 +258,7 @@ class Config(TypedDict):
     services: Services
     deployment: Deployment
     langfuse: NotRequired[LangfuseSettings]
+    observability: NotRequired[ObservabilitySettings]
 
 
 def load() -> Config:

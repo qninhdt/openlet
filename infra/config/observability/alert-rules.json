@@ -1,0 +1,266 @@
+[
+  {
+    "uid": "openlet-scrape",
+    "title": "Dependency scrape failed",
+    "ruleGroup": "Openlet",
+    "folderUID": "OPENLET_FOLDER_UID",
+    "condition": "B",
+    "for": "3m",
+    "noDataState": "NoData",
+    "execErrState": "Error",
+    "labels": {
+      "service": "openlet",
+      "severity": "warning"
+    },
+    "annotations": {
+      "summary": "Dependency scrape failed"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "PROMETHEUS_UID",
+        "model": {
+          "refId": "A",
+          "expr": "min(up{job=~\"postgres|redis|temporal|spicedb|envoy|qdrant\"})",
+          "instant": true,
+          "range": false,
+          "intervalMs": 1000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "B",
+        "relativeTimeRange": {
+          "from": 0,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "B",
+          "type": "threshold",
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "type": "lt",
+                "params": [
+                  0.5
+                ]
+              },
+              "operator": {
+                "type": "and"
+              },
+              "reducer": {
+                "type": "last",
+                "params": []
+              },
+              "type": "query"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "uid": "openlet-disk",
+    "title": "Host disk above 90%",
+    "ruleGroup": "Openlet",
+    "folderUID": "OPENLET_FOLDER_UID",
+    "condition": "B",
+    "for": "5m",
+    "noDataState": "NoData",
+    "execErrState": "Error",
+    "labels": {
+      "service": "openlet",
+      "severity": "warning"
+    },
+    "annotations": {
+      "summary": "Host disk above 90%"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "PROMETHEUS_UID",
+        "model": {
+          "refId": "A",
+          "expr": "max(1 - node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|squashfs\"} / node_filesystem_size_bytes)",
+          "instant": true,
+          "range": false,
+          "intervalMs": 1000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "B",
+        "relativeTimeRange": {
+          "from": 0,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "B",
+          "type": "threshold",
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "type": "gt",
+                "params": [
+                  0.9
+                ]
+              },
+              "operator": {
+                "type": "and"
+              },
+              "reducer": {
+                "type": "last",
+                "params": []
+              },
+              "type": "query"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "uid": "openlet-telemetry",
+    "title": "Trace exporter failures",
+    "ruleGroup": "Openlet",
+    "folderUID": "OPENLET_FOLDER_UID",
+    "condition": "B",
+    "for": "5m",
+    "noDataState": "NoData",
+    "execErrState": "Error",
+    "labels": {
+      "service": "openlet",
+      "severity": "warning"
+    },
+    "annotations": {
+      "summary": "Trace exporter failures"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "PROMETHEUS_UID",
+        "model": {
+          "refId": "A",
+          "expr": "sum(rate(otelcol_exporter_send_failed_spans_total[5m]))",
+          "instant": true,
+          "range": false,
+          "intervalMs": 1000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "B",
+        "relativeTimeRange": {
+          "from": 0,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "B",
+          "type": "threshold",
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "type": "gt",
+                "params": [
+                  0
+                ]
+              },
+              "operator": {
+                "type": "and"
+              },
+              "reducer": {
+                "type": "last",
+                "params": []
+              },
+              "type": "query"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "uid": "openlet-worker",
+    "title": "Activity schedule delay",
+    "ruleGroup": "Openlet",
+    "folderUID": "OPENLET_FOLDER_UID",
+    "condition": "B",
+    "for": "5m",
+    "noDataState": "NoData",
+    "execErrState": "Error",
+    "labels": {
+      "service": "openlet",
+      "severity": "warning"
+    },
+    "annotations": {
+      "summary": "Activity schedule delay"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "PROMETHEUS_UID",
+        "model": {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95,sum by (le) (rate(temporal_activity_schedule_to_start_latency_seconds_bucket[5m])))",
+          "instant": true,
+          "range": false,
+          "intervalMs": 1000,
+          "maxDataPoints": 43200
+        }
+      },
+      {
+        "refId": "B",
+        "relativeTimeRange": {
+          "from": 0,
+          "to": 0
+        },
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "B",
+          "type": "threshold",
+          "expression": "A",
+          "conditions": [
+            {
+              "evaluator": {
+                "type": "gt",
+                "params": [
+                  30
+                ]
+              },
+              "operator": {
+                "type": "and"
+              },
+              "reducer": {
+                "type": "last",
+                "params": []
+              },
+              "type": "query"
+            }
+          ]
+        }
+      }
+    ]
+  }
+]

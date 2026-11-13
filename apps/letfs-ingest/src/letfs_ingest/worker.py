@@ -42,6 +42,7 @@ async def run(role: Literal["cpu", "io"]) -> None:
     temporal = config["dependencies"]["temporal"]
     telemetry = config["telemetry"]
     metrics = OpenTelemetryConfig(
+        durations_as_seconds=True,
         url=telemetry["otlp_endpoint"] or "", metric_periodicity=timedelta(seconds=telemetry["metrics_export_interval_seconds"]),
     ) if telemetry["otlp_endpoint"] else None
     native = Runtime(telemetry=TelemetryConfig(

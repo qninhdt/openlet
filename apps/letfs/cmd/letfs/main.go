@@ -152,7 +152,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	opts := client.Options{HostPort: temporal.Address, Namespace: temporal.Namespace, Logger: log.NewStructuredLogger(slog.Default()), Interceptors: []interceptor.ClientInterceptor{tracing}, MetricsHandler: temporalotel.NewMetricsHandler(temporalotel.MetricsHandlerOptions{})}
+	opts := client.Options{HostPort: temporal.Address, Namespace: temporal.Namespace, Logger: log.NewStructuredLogger(slog.Default()), Interceptors: []interceptor.ClientInterceptor{tracing}, MetricsHandler: temporalotel.NewMetricsHandler(temporalotel.MetricsHandlerOptions{UseMonotonicCounters: true})}
 	if temporal.TLS {
 		opts.ConnectionOptions.TLS = &tls.Config{MinVersion: tls.VersionTLS12}
 	}
