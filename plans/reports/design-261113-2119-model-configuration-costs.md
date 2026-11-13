@@ -1,5 +1,9 @@
 # Model configuration, structured output and API costs
 
+Catalog, model-reference, price-source and retry recommendations below are
+superseded by the [provider-owned revision](design-261113-2202-provider-catalog-compaction-retries.md).
+Keep the recorded provider/SDK checks as historical evidence.
+
 ## Status and scope
 
 Revised proposal for review after the user rejected model aliases and a separate

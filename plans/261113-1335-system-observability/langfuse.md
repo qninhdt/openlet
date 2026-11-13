@@ -114,6 +114,8 @@ Capture bình thường model messages/output, tool arguments/results, errors, u
 
 Usage lấy native provider/LangChain metadata; bật stream usage theo adapter. Không estimate bằng tokenizer, cộng cached/reasoning tokens hai lần hoặc gọi missing usage là zero. Model alias cần native custom pricing nếu chưa nhận giá. [Token/cost](https://langfuse.com/docs/observability/features/token-and-cost-tracking).
 
+Theo cập nhật model configuration, giá LLM/embedding nhập trong từng model của provider, đơn vị dollar cho mỗi triệu token; không fetch giá OpenRouter hoặc lưu pricing-model mapping. Reranker chỉ thêm đơn vị giá khi có model/endpoint thực được bật. Dùng native model definitions/pricing tiers, đưa selected provider/model reference vào observation metadata để phân biệt giá khi nhiều provider trả cùng tên model. Pricing tiers hỗ trợ điều kiện top-level metadata; cần export/cost proof khi implementation. Không fork callback, đổi inference model name hoặc thêm billing service. Chi tiết [provider catalog và prices](../reports/design-261113-2202-provider-catalog-compaction-retries.md#7-structured-output-and-manual-prices).
+
 Không credentials/auth headers/checkpoint trong metadata. Model/file/tool content xuất hiện trong Cloud theo native capture, kể cả media integration hỗ trợ; demo dùng dữ liệu thử phù hợp. Keys server-side, dashboard operators; không tự uploader toàn storage. Tempo bỏ AI content.
 
 Expected conflict/denied/not_found giữ domain results; không tạo exceptions chỉ để dashboard đỏ. Unexpected exceptions/provider failures là execution errors.
