@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from time import monotonic
 from typing import cast
 
-from langchain.agents import create_agent
+from langchain.agents import create_agent  # pyright: ignore[reportUnknownVariableType]  # Native overload contains an unspecialized checkpoint generic.
 from langchain.agents.middleware import (
     AgentMiddleware,
     ModelRequest,
@@ -29,9 +29,8 @@ from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
 from langfuse import Langfuse, propagate_attributes
 from langfuse.langchain import CallbackHandler
-from langfuse.model import TextPromptClient
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from langgraph.graph.state import CompiledStateGraph
+from langgraph.graph.state import CompiledStateGraph  # pyright: ignore[reportMissingTypeStubs]  # Upstream package does not publish type stubs.
 from langgraph.types import Command
 from openlet_sdk.config import JSON, ReasoningEffort, secret
 from opentelemetry import metrics
@@ -281,6 +280,7 @@ async def run(s: Services, lf: Langfuse, input: RunInput) -> str:
         )
         agent = await get_agent(s.db, input.agent_id)
         ctx = Context(s, agent, input.run_id, Filesystem(s, agent))
+        stack.push_async_callback(ctx.filesystem.close)
         async with s.db.connection() as conn:
             await conn.execute(
                 "INSERT INTO runs(id,agent_id,status) VALUES(%s,%s,'running') ON CONFLICT(id) DO UPDATE SET status='running',finished_at=NULL,error_code=NULL",
@@ -323,29 +323,36 @@ async def run(s: Services, lf: Langfuse, input: RunInput) -> str:
             else "production"
         )
         role = "root" if agent["box_id"] is None else "leti"
+        trace_name = "leta.agent" if role == "root" else "leti.agent"
+        execution = activity.info()
+        metadata = {
+            "workspace_id": str(agent["workspace_id"]),
+            "agent_id": str(ctx.id),
+            "leta_id": str(ctx.root),
+            "run_id": str(ctx.run_id),
+            "temporal_workflow_id": execution.workflow_id or "",
+            "temporal_run_id": execution.workflow_run_id or "",
+            "temporal_attempt": str(execution.attempt),
+        }
+        if agent["box_id"]:
+            metadata["box_id"] = str(agent["box_id"])
         prompt, compaction = await asyncio.gather(
             asyncio.to_thread(lf.get_prompt, f"leta/{role}", label=label, type="text"),
             asyncio.to_thread(
                 lf.get_prompt, "leta/compaction", label=label, type="text"
             ),
         )
-        prompt = cast(TextPromptClient, prompt)
-        compaction = cast(TextPromptClient, compaction)
         stack.enter_context(
             propagate_attributes(
                 session_id=str(ctx.id),
-                trace_name="leta.run",
-                metadata={
-                    "workspace_id": str(agent["workspace_id"]),
-                    "leta_id": str(ctx.root),
-                    "run_id": str(ctx.run_id),
-                },
+                trace_name=trace_name,
+                metadata=metadata,
                 tags=[role],
             )
         )
         stack.enter_context(
             lf.start_as_current_observation(
-                name="leta.run",
+                name=trace_name,
                 as_type="agent",
                 trace_context={"trace_id": lf.create_trace_id()},
             )
@@ -353,6 +360,7 @@ async def run(s: Services, lf: Langfuse, input: RunInput) -> str:
         callback = CallbackHandler()
         callback.run_inline = True
         config["callbacks"] = [callback]
+        config["run_name"] = trace_name
         active.add(1, {"agent_role": role})
         await events.publish(
             s.redis,
@@ -483,69 +491,61 @@ async def run(s: Services, lf: Langfuse, input: RunInput) -> str:
                 async def advance() -> None:
                     live = Live(s, ctx)
                     changed: list[BaseMessage] = []
-                    async with AsyncExitStack() as batch:
-                        if "tools" in state.next:
-                            _, ctx.session, _ = await batch.enter_async_context(
-                                ctx.filesystem.batch()
-                            )
-                        try:
-                            with propagate_attributes(
-                                session_id=str(ctx.id),
-                                trace_name="leta.run",
-                                metadata={
-                                    "workspace_id": str(agent["workspace_id"]),
-                                    "leta_id": str(ctx.root),
-                                    "run_id": str(ctx.run_id),
-                                },
-                                tags=[role],
-                                prompt=prompt,
-                            ):
-                                async for item in graph.astream(
-                                    graph_input,
-                                    config,
-                                    context=ctx,
-                                    stream_mode=["messages", "updates"],
-                                    durability="sync",
+                    if "tools" in state.next:
+                        message = cast(AIMessage, state.values["messages"][-1])
+                        if any(
+                            call["name"].startswith(("file_", "exec_"))
+                            for call in message.tool_calls
+                        ):
+                            ctx.session = await ctx.filesystem.open()
+                    with propagate_attributes(
+                        session_id=str(ctx.id),
+                        trace_name=trace_name,
+                        metadata=metadata,
+                        tags=[role],
+                        prompt=prompt,
+                    ):
+                        async for item in graph.astream(  # pyright: ignore[reportUnknownMemberType]  # Upstream SDK has an untyped overload or kwargs.
+                            graph_input,
+                            config,
+                            context=ctx,
+                            stream_mode=["messages", "updates"],
+                            durability="sync",
+                        ):
+                            mode, value = cast(tuple[str, object], item)
+                            if mode == "messages":
+                                message, graph_metadata = cast(
+                                    tuple[BaseMessage, dict[str, object]], value
+                                )
+                                if (
+                                    isinstance(message, AIMessageChunk)
+                                    and graph_metadata.get("langgraph_node") == "model"
                                 ):
-                                    mode, value = cast(tuple[str, object], item)
-                                    if mode == "messages":
-                                        message, metadata = cast(
-                                            tuple[BaseMessage, dict[str, object]], value
+                                    await live.chunk(message)
+                            elif mode == "updates":
+                                for update in cast(dict[str, object], value).values():
+                                    if isinstance(update, dict):
+                                        changed.extend(
+                                            cast(
+                                                list[BaseMessage],
+                                                cast(dict[str, object], update).get(
+                                                    "messages", []
+                                                ),
+                                            )
                                         )
-                                        if (
-                                            isinstance(message, AIMessageChunk)
-                                            and metadata.get("langgraph_node")
-                                            == "model"
-                                        ):
-                                            await live.chunk(message)
-                                    elif mode == "updates":
-                                        for update in cast(
-                                            dict[str, dict[str, object]], value
-                                        ).values():
-                                            if isinstance(update, dict):
-                                                changed.extend(
-                                                    message
-                                                    for message in cast(
-                                                        list[BaseMessage],
-                                                        update.get("messages", []),
-                                                    )
-                                                    if isinstance(message, BaseMessage)
-                                                )
-                            await live.close()
-                            started = monotonic()
-                            await project(s, ctx, changed)
-                            state_duration.record(
-                                monotonic() - started,
-                                {"operation": "projection", "outcome": "ok"},
-                            )
-                            started = monotonic()
-                            await saver.aprune([str(ctx.id)], strategy="keep_latest")
-                            state_duration.record(
-                                monotonic() - started,
-                                {"operation": "prune", "outcome": "ok"},
-                            )
-                        finally:
-                            ctx.session = None
+                    await live.close()
+                    started = monotonic()
+                    await project(s, ctx, changed)
+                    state_duration.record(
+                        monotonic() - started,
+                        {"operation": "projection", "outcome": "ok"},
+                    )
+                    started = monotonic()
+                    await saver.aprune([str(ctx.id)], strategy="keep_latest")
+                    state_duration.record(
+                        monotonic() - started,
+                        {"operation": "prune", "outcome": "ok"},
+                    )
 
                 await protected(advance())
         finally:

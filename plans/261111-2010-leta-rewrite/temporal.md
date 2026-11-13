@@ -166,7 +166,7 @@ Sau mỗi model/tools boundary đã sync checkpoint và hoàn tất public-histo
 
 Working messages đã gồm rolling summary + bounded recent tail và được native saver khôi phục cùng cursor/continuation trên stable thread_id; không load toàn public transcript, bảng summary hoặc summary_until để dựng lại context. Native messages channel lưu cả current list khi đổi, channel version không đổi có thể tái dùng blob. Compaction giảm kích thước current context, pruning bỏ snapshots cũ; hai việc không thay thế nhau. Chi tiết tại [kiến trúc runtime](design.md#6-inbox-và-agent-execution); compaction đã chốt, token thresholds là cấu hình/tuning khi implementation, không cần duyệt lại kiến trúc.
 
-Không workflow từng model/tool hoặc SavedToolResults replay layer. Rotation không tạo UI run mới, reset tuổi đời agent hoặc mang continuation blob qua Temporal. Workspace/session mở theo tool batch rồi đóng để lifetime RAM buffers/session history không kéo dài theo activity. Shared clients/pools thuộc worker process. Shell nhiều effects có thể replay; không hứa exactly-once toàn command.
+Không workflow từng model/tool hoặc SavedToolResults replay layer. Rotation không tạo UI run mới, reset tuổi đời agent hoặc mang continuation blob qua Temporal. Workspace/session tạo lazily và tái sử dụng trong một lần thực thi run_agent, đóng khi activity thoát; không ghi command history hoặc persist shell env qua retry/CAN. Shared clients/pools thuộc worker process. Shell nhiều effects có thể replay; không hứa exactly-once toàn command.
 
 ### Rollover khi agent luôn bận
 

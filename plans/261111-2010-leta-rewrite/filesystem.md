@@ -1,6 +1,6 @@
 # VFS, shell và Python sandbox của Leta đã chốt
 
-Chốt 2026-11-13, chưa triển khai. Mirage là VFS/runtime chung của mọi file_* và exec_* tools; LetFS là owner của dữ liệu bền vững. Giữ native Redis content/index cache với ReadPolicy.BOUNDED, không kiểm quyền/version từ xa trước cache hit; bỏ policy.py. Dùng default Mirage 0.0.8: content/index TTL 600 giây, rút con số 5 giây chưa có số đo. Một storage_id là home binding, vẫn giữ dynamic public/shared/granted-private mounts theo [kiến trúc](design.md#10-filesystem-và-cache) và [native APIs](boundaries.md#5-file-operations-mounts-và-cache). Schema/Temporal inventory không đổi; public transport theo [HTTP/streaming đã chốt](streaming.md).
+Chốt 2026-11-13; implementation và acceptance được ghi tại [execution](execution.md). Mirage là VFS/runtime chung của mọi file_* và exec_* tools; LetFS là owner của dữ liệu bền vững. Giữ native Redis content/index cache với ReadPolicy.BOUNDED, không kiểm quyền/version từ xa trước cache hit; bỏ policy.py. Dùng default Mirage 0.0.8: content/index TTL 600 giây, rút con số 5 giây chưa có số đo. Một storage_id là home binding, vẫn giữ dynamic public/shared/granted-private mounts theo [kiến trúc](design.md#10-filesystem-và-cache) và [native APIs](boundaries.md#5-file-operations-mounts-và-cache). Schema/Temporal inventory không đổi; public transport theo [HTTP/streaming đã chốt](streaming.md).
 
 ## 1. Mục tiêu và quyết định
 
@@ -143,7 +143,7 @@ Lệnh text/filesystem có sẵn của Mirage đủ cho bước đầu: ls/cat/h
 
 Chỉ bật native command families cần cho các tác vụ trên và python/Monty; dùng CommandsBlock allow của Mirage, có cả builtins cần thiết. Không tự viết parser/deny-list bằng regex. Chương trình không có host FS, host env, socket/network hoặc arbitrary Python external callbacks. Không inject native clients/credentials vào Monty; chỉ adapter runtime mới có trusted clients.
 
-Network policy của sandbox tách khỏi native transport của adapter: model không được cấp network chỉ vì worker cần gọi LetFS/OpenRouter. Không đưa signed URLs, DB DSN, Redis URL hoặc token vào shell env. Không nối shell fallback sang subprocess, SSH, host /bin/bash, pip hoặc arbitrary external commands khi lệnh không hỗ trợ.
+Quyết định bổ sung đã được người dùng duyệt khi integration: Mirage native network allowlist chỉ cho đúng địa chỉ Redis đã cấu hình, vì `network=False` chặn cả native cache. Không thêm network command hoặc Python socket callback. Network policy của sandbox tách khỏi native transport của adapter: model không được cấp network chỉ vì worker cần gọi LetFS/OpenRouter. Không đưa signed URLs, DB DSN, Redis URL hoặc token vào shell env. Không nối shell fallback sang subprocess, SSH, host /bin/bash, pip hoặc arbitrary external commands khi lệnh không hỗ trợ.
 
 Trong một exec_shell, cwd/env thay đổi có tác dụng cho chính command/script đó. Mỗi tool call bắt đầu từ cwd explicit hoặc /home và clean virtual env có HOME; không có implicit cd/export qua các tool calls. exec_python cũng bắt đầu ở /home. Chỉ files là state bền vững; biến Python/process không sống qua call/batch/restart.
 
@@ -158,15 +158,15 @@ Giới hạn output cho model không được cắt nội dung file write rồi 
 
 ## 7. Lifetime, nhiều năm và Temporal
 
-Native gRPC clients/pools thuộc worker process. run_agent có thể chạy dài và heartbeat, không đóng activity theo chu kỳ năm phút. Mirage Workspace/session mở theo tool batch rồi đóng; RAM buffers/session history không sống theo tuổi đời activity. Redis content/index cache tái dùng qua batches với prefix ổn định và TTL; mount discovery result giữ trong runtime để refresh lazily. Các tool calls cùng batch dùng cùng bindings/cache; chờ tất cả executions/writes settle trước khi close.
+Native gRPC clients/pools thuộc worker process. run_agent có thể chạy dài và heartbeat, không đóng activity theo chu kỳ năm phút. Mirage Workspace/session tạo lazily trước tool batch đầu tiên và tái sử dụng xuyên suốt một lần thực thi activity run_agent; đóng khi lần thực thi đó hoàn thành, pause, cancel hoặc lỗi. Người dùng chốt thay đổi lifetime này ngày 2026-11-13 sau khi đối chiếu official embedded-terminal example. Workspace và Session là objects trong worker, không phải OS processes. Shell history dùng record=False, không tích lũy command history theo thời gian chạy. Redis content/index cache tái dùng qua batches với prefix ổn định và TTL; mount discovery result giữ trong runtime để refresh lazily. Các tool batches dùng cùng session/cache; refresh mounts tại safe boundary bằng native add_mount/unmount/set_mount_mode. Chờ tất cả executions/writes settle trước khi close.
 
 ```text
 run_agent giữ writer lock và cùng native graph thread
   → trước model call: bounded inbox middleware, control/model refresh
-  → trước tools node: mở Workspace, bind home/external mounts, Monty và budgets
-  → chạy tool batch, sync checkpoint/public projection, settle và close Workspace
+  → trước tools node: tạo Workspace lần đầu, các lần sau refresh mounts khi cần
+  → chạy tool batch, sync checkpoint/public projection, giữ lại Workspace/session
   → tiếp tục model/tools khi còn việc; compaction/prune ngay trong activity
-  → idle/pause/cancel: cleanup rồi nhả writer lock
+  → idle/pause/cancel/error: close Workspace rồi nhả writer lock
 Workflow chỉ rollover khi native suggestion ở workflow events
 ```
 

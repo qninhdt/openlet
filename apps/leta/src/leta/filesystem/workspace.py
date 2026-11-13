@@ -1,7 +1,5 @@
 import asyncio
 import posixpath
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from time import monotonic
 from typing import cast
 from uuid import UUID
@@ -9,10 +7,9 @@ from uuid import UUID
 from mirage import Mount, MountMode, PathSpec, ReadSpec, Session, Workspace
 from mirage.cache.file.config import RedisCacheConfig
 from mirage.cache.index.config import RedisIndexConfig
-from mirage.runtime.python.monty import MontyRuntime
-from mirage.runtime.python.monty.config import MontyConfig
+from mirage.runtime.python.monty import MontyRuntime  # pyright: ignore[reportMissingTypeStubs]  # Upstream package does not publish type stubs.
+from mirage.runtime.python.monty.config import MontyConfig  # pyright: ignore[reportMissingTypeStubs]  # Upstream package does not publish type stubs.
 from mirage.utils.path import expand_tilde, norm
-from mirage.workspace.workspace.types import VFSMount
 from openlet_api.letfs.v1 import letfs_pb2 as fs
 from openlet_sdk.config import JSON
 
@@ -76,6 +73,8 @@ class Filesystem:
         self.s, self.agent = s, agent
         self.bindings: dict[str, tuple[UUID, bool]] = {}
         self.discovered = 0.0
+        self.workspace: Workspace | None = None
+        self.session: Session | None = None
 
     async def discover(self) -> None:
         if monotonic() - self.discovered < 30:
@@ -103,54 +102,67 @@ class Filesystem:
                 break
         self.bindings, self.discovered = bindings, monotonic()
 
-    @asynccontextmanager
-    async def batch(self) -> AsyncIterator[tuple[Workspace, Session, list[LetFS]]]:
+    async def open(self) -> Session:
+        previous = self.bindings if self.workspace is not None else {}
         await self.discover()
         actor = Actor("agent", cast(UUID, self.agent["leta_id"]))
         workspace = cast(UUID, self.agent["workspace_id"])
         storage = cast(UUID, self.agent["storage_id"])
-        home = cast(UUID | None, self.agent["home_node_id"])
-        if home is None:
-            home_storage: fs.Storage = await self.s.files.GetStorage(
-                fs.StorageRequest(workspace_id=str(workspace), storage_id=str(storage)),
-                metadata=actor.metadata,
-                timeout=15,
+        if self.workspace is None:
+            home = cast(UUID | None, self.agent["home_node_id"])
+            if home is None:
+                home_storage: fs.Storage = await self.s.files.GetStorage(
+                    fs.StorageRequest(
+                        workspace_id=str(workspace), storage_id=str(storage)
+                    ),
+                    metadata=actor.metadata,
+                    timeout=15,
+                )
+                home = UUID(home_storage.root_node_id)
+            driver = LetFS(self.s.files, actor, workspace, storage, home)
+            cache_id = f"leta:vfs:{self.agent['leta_id']}:{storage}:{home}"
+            self.workspace = Workspace(
+                {"/home": Mount(vfs=driver, mode=MountMode.WRITE, read=ReadSpec())},
+                network={
+                    "allowed_domains": [
+                        self.s.config["dependencies"]["redis"]["address"]
+                    ]
+                },
+                max_memory="32MB",
+                cache=RedisCacheConfig(
+                    url=redis_url(self.s.config), key_prefix=cache_id + ":content:"
+                ),
+                index=RedisIndexConfig(
+                    url=redis_url(self.s.config), key_prefix=cache_id + ":index:"
+                ),
+                runtimes=[MontyRuntime(config=MontyConfig(max_memory="16MB"))],
+                env={"HOME": "/home", "PWD": "/home"},
+                profiles={"agent": {"commands": {"allow": list(COMMANDS)}}},
+                profile="agent",
             )
-            home = UUID(home_storage.root_node_id)
-        driver = LetFS(self.s.files, actor, workspace, storage, home)
-        mounts: dict[str, VFSMount] = {
-            "/home": Mount(vfs=driver, mode=MountMode.WRITE, read=ReadSpec())
-        }
-        drivers = [driver]
+        ws = self.workspace
+        for id, (root, _) in previous.items():
+            if id not in self.bindings or self.bindings[id][0] != root:
+                await ws.unmount(f"/mnt/{id}")
         for id, (root, write) in self.bindings.items():
-            remote = LetFS(self.s.files, actor, workspace, UUID(id), root)
-            mounts[f"/mnt/{id}"] = Mount(
-                vfs=remote,
-                mode=MountMode.WRITE if write else MountMode.READ,
-                read=ReadSpec(),
-            )
-            drivers.append(remote)
-        cache_id = f"leta:vfs:{self.agent['leta_id']}:{storage}:{home}"
-        ws = Workspace(
-            mounts,
-            network=False,
-            max_memory="32MB",
-            cache=RedisCacheConfig(
-                url=redis_url(self.s.config), key_prefix=cache_id + ":content:"
-            ),
-            index=RedisIndexConfig(
-                url=redis_url(self.s.config), key_prefix=cache_id + ":index:"
-            ),
-            runtimes=[MontyRuntime(config=MontyConfig(max_memory="16MB"))],
-            env={"HOME": "/home", "PWD": "/home"},
-            profiles={"agent": {"commands": {"allow": list(COMMANDS)}}},
-            profile="agent",
-        )
-        try:
-            session = await ws.session("tools")
-            yield ws, session, drivers
-        finally:
-            await ws.close()
+            mode = MountMode.WRITE if write else MountMode.READ
+            old = previous.get(id)
+            if old is None or old[0] != root:
+                ws.add_mount(
+                    f"/mnt/{id}",
+                    LetFS(self.s.files, actor, workspace, UUID(id), root),
+                    mode=mode,
+                    read=ReadSpec(),
+                )
+            elif old[1] != write:
+                ws.set_mount_mode(f"/mnt/{id}", mode)
+        if self.session is None:
+            self.session = await ws.session("tools")
+        return self.session
+
+    async def close(self) -> None:
+        if self.workspace is not None:
+            await self.workspace.close()
 
 
 def path(value: str = "~") -> str:

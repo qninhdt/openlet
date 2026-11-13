@@ -229,7 +229,7 @@ Mirage vẫn là command/VFS engine; Monty vẫn là sandbox. Viết adapter Let
 - TextSearch/ReadTree/ReadImage là native APIs đã có trong plan; adapter không dựng grep/image/parser engine thứ hai. SemanticSearch giữ riêng literal search.
 - `rm` là trash. Sandbox không host filesystem/environment/network; chỉ native cache connection được runtime cho phép. Giới hạn text/image/command output giữ budget cần thiết cho memory/context.
 
-Workspace/session mở theo tool batch rồi đóng sau khi executions/writes đã settle; không giữ Mirage session history theo tuổi đời activity dài. Redis content/index cache tái dùng qua batches, có TTL và server memory limit/eviction; shared clients/pools thuộc worker process. Requests mới chịu quyền tại LetFS; không cố thu hồi bytes đã nằm trong cache/transcript hoặc thêm permission-cache riêng.
+Workspace/session tạo lazily rồi dùng lại qua các tool batches trong một lần thực thi run_agent; đóng khi activity thoát sau khi executions/writes settle. Shell dùng record=False; không giữ command history hoặc khôi phục shell env qua activity retry. Redis content/index cache tái dùng qua batches, có TTL và server memory limit/eviction; shared clients/pools thuộc worker process. Requests mới chịu quyền tại LetFS; không cố thu hồi bytes đã nằm trong cache/transcript hoặc thêm permission-cache riêng.
 
 ## 11. API HTTP và public events
 
