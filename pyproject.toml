@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [tool.uv.workspace]
-members = ["packages/sdk-python", "apps/letfs-ingest"]
+members = ["packages/sdk-python", "apps/letfs-ingest", "apps/leta"]
 
 [dependency-groups]
 dev = [

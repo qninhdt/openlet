@@ -4,6 +4,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 COPY packages/sdk-python/pyproject.toml packages/sdk-python/pyproject.toml
 COPY apps/letfs-ingest/pyproject.toml apps/letfs-ingest/pyproject.toml
+COPY apps/leta/pyproject.toml apps/leta/pyproject.toml
 
 FROM base AS io-deps
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked --no-dev --package letfs-ingest --no-install-workspace
