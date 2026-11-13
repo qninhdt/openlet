@@ -39,6 +39,8 @@ class Inbox(AgentMiddleware[State, "Context"]):
         rows = await pending(self.db, self.agent, state.get("inbox_cursor", 0))
         if not rows:
             return None
+        if any(row["source_kind"] == "hitl" for row in rows):
+            runtime.context.filesystem.discovered = 0
         last = cast(int, rows[-1]["seq"])
         labels = {"agent_role": "root" if self.root else "leti"}
         inbox_count.add(len(rows), {**labels, "direction": "consumed"})
