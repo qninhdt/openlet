@@ -1,5 +1,11 @@
 # LiteLLM gateway for Openlet
 
+Follow-up: [SDK, capability and cost verification](research-261113-2324-litellm-sdk-capabilities.md)
+refines this report's client recommendation, replaces the proposed Langfuse
+price-definition copy with per-call gateway cost, and removes the need for a
+manually configured structured-output mode. This report remains the record of
+the initial gateway probes, not the final authority for those three choices.
+
 ## Status and scope
 
 Research and proposal, not an accepted migration. No application, dependency,
@@ -50,21 +56,21 @@ deployments, an ephemeral master key, no database, no Redis and no logging
 callback. Real upstream requests used the existing authorized Vilao credentials
 privately. Tests used synthetic prompts, not user documents.
 
-| Check | Result |
-|---|---|
-| `GET /v1/models` | Configured public aliases returned; included `mode` and available input/output limits |
-| `GET /model/info` | Configured limits, custom prices, tool capability and arbitrary `structured_output` metadata returned |
-| `GET /model_group/info` | Model kind, provider, limits, supported OpenAI parameters, tool support and reasoning-effort metadata returned |
-| Chat through public Vilao aliases | Both `gpt-6.1-sol:low` and `deepseek-v4.1-flash:none` returned successfully |
-| Streamed tool calling | Both models returned a complete `get_weather` call through OpenAI-compatible streaming |
-| Native LangChain client | `ChatOpenAI` 1.7.4 assembled both tool calls and completed tool-result continuations |
-| Embedding | Two inputs returned indices 0/1 and two 1,536-dimensional float vectors with usage |
-| Instructor | Pinned upstream Instructor 1.18.0 produced validated data in TOOLS and MD_JSON modes through the Proxy |
-| Transient failure | A controlled upstream returning 503 twice was called exactly three times before success |
-| Invalid request | Controlled 400 upstream was called once; Proxy returned 400 |
-| Fallback | Controlled primary received three calls, then configured backup received one and succeeded |
-| Custom price | Ten input plus two output tokens at illustrative rates produced `0.000014` dollars |
-| Endpoint registration | Running OpenAPI included chat, embeddings, both rerank aliases, decisions and systemone |
+| Check                             | Result                                                                                                         |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `GET /v1/models`                  | Configured public aliases returned; included `mode` and available input/output limits                          |
+| `GET /model/info`                 | Configured limits, custom prices, tool capability and arbitrary `structured_output` metadata returned          |
+| `GET /model_group/info`           | Model kind, provider, limits, supported OpenAI parameters, tool support and reasoning-effort metadata returned |
+| Chat through public Vilao aliases | Both `gpt-6.1-sol:low` and `deepseek-v4.1-flash:none` returned successfully                                    |
+| Streamed tool calling             | Both models returned a complete `get_weather` call through OpenAI-compatible streaming                         |
+| Native LangChain client           | `ChatOpenAI` 1.7.4 assembled both tool calls and completed tool-result continuations                           |
+| Embedding                         | Two inputs returned indices 0/1 and two 1,536-dimensional float vectors with usage                             |
+| Instructor                        | Pinned upstream Instructor 1.18.0 produced validated data in TOOLS and MD_JSON modes through the Proxy         |
+| Transient failure                 | A controlled upstream returning 503 twice was called exactly three times before success                        |
+| Invalid request                   | Controlled 400 upstream was called once; Proxy returned 400                                                    |
+| Fallback                          | Controlled primary received three calls, then configured backup received one and succeeded                     |
+| Custom price                      | Ten input plus two output tokens at illustrative rates produced `0.000014` dollars                             |
+| Endpoint registration             | Running OpenAPI included chat, embeddings, both rerank aliases, decisions and systemone                        |
 
 The fault-injection upstream was a separate local test server on port 4001;
 it was not a real second provider. Two retries were separated by approximately
@@ -342,16 +348,16 @@ checking are sufficient initially; no HA design is proposed.
 
 ## Code/config impact
 
-| Remove or avoid | Keep in Openlet |
-|---|---|
-| Leta-only static model catalog and duplicate provider-owned catalog proposal | Thin authenticated model-list projection and selection validation |
-| Application provider factories/routing adapters | Native Python/Go clients pointing at the gateway |
-| Application transport retry/backoff/fallback code | Temporal recovery and error classification |
-| Custom model price map, price fetching and token-cost arithmetic | Optional setup-time derived Langfuse price definitions |
-| Per-provider reasoning request formatting | One reference parser and native outbound effort parameter |
-| Vendor-specific rerank transport | RAG retrieval, filtering, optional-rerank choice and one standardized HTTP call |
-| Repeated upstream credentials in each service | Internal gateway URL/key and application model defaults |
-| Separate compaction model proposal | Correct cache-friendly native compaction, budgets and checkpoint behavior |
+| Remove or avoid                                                              | Keep in Openlet                                                                 |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Leta-only static model catalog and duplicate provider-owned catalog proposal | Thin authenticated model-list projection and selection validation               |
+| Application provider factories/routing adapters                              | Native Python/Go clients pointing at the gateway                                |
+| Application transport retry/backoff/fallback code                            | Temporal recovery and error classification                                      |
+| Custom model price map, price fetching and token-cost arithmetic             | Optional setup-time derived Langfuse price definitions                          |
+| Per-provider reasoning request formatting                                    | One reference parser and native outbound effort parameter                       |
+| Vendor-specific rerank transport                                             | RAG retrieval, filtering, optional-rerank choice and one standardized HTTP call |
+| Repeated upstream credentials in each service                                | Internal gateway URL/key and application model defaults                         |
+| Separate compaction model proposal                                           | Correct cache-friendly native compaction, budgets and checkpoint behavior       |
 
 Do not describe all of these as deleting existing implementation: several are
 parts of the preceding unimplemented proposal. Current code still needs the
