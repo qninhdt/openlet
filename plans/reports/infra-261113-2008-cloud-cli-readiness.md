@@ -70,3 +70,19 @@ removed. Unavailable credentials remain empty.
 the shared YAML plus the Clerk publishable key and Langfuse CLI regional URL.
 An assert-based check verified coverage, empty example values, preserved local
 values and private file permissions. Runtime endpoints/settings remain in YAML.
+
+## Follow-up: Cloud authentication
+
+Grafana stack login now succeeds: the current `openlet` context can call the
+native health API. The runtime ingestion token remains a separate credential.
+Langfuse project URL/keys and R2 S3 credentials are still empty in the root
+credential file; no provider credentials were invented or substituted.
+
+Cloudflare CLI OAuth can inspect R2, but account token listing and token
+permission-group discovery both returned HTTP 403 (`9109`, unauthorized).
+The current login therefore does not provide access to that token-management
+route. Create bucket-scoped Object Read & Write credentials through R2's
+Manage API Tokens page, or supply an authorized token-management credential.
+The secret access key is shown only at creation; existing token metadata cannot
+recover it. Langfuse's project Settings / API Keys page supplies its initial
+project key pair. Store these values directly in the private root credentials.
