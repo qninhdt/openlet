@@ -8,7 +8,7 @@
         "matchesJsonPath": "$.tools[0]"
       },
       {
-        "matchesJsonPath": "$.messages[?(@.role == 'tool')]"
+        "matchesJsonPath": "$.messages[?(@.tool_call_id == 'reuse-session')]"
       }
     ]
   },
@@ -17,6 +17,6 @@
     "headers": {
       "Content-Type": "text/event-stream"
     },
-    "body": "data: {\"id\": \"leta-test-finish\", \"object\": \"chat.completion.chunk\", \"created\": 1, \"model\": \"openai/gpt-4.1-mini\", \"choices\": [{\"index\": 0, \"delta\": {\"role\": \"assistant\", \"content\": \"The workspace task is complete.\"}, \"finish_reason\": null}]}\n\ndata: {\"id\": \"leta-test-finish\", \"object\": \"chat.completion.chunk\", \"created\": 1, \"model\": \"openai/gpt-4.1-mini\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"stop\"}]}\n\ndata: [DONE]\n\n"
+    "body": "data: {\"id\": \"leta-test-finish\", \"object\": \"chat.completion.chunk\", \"created\": 1, \"model\": \"openai/gpt-4.1-mini\", \"choices\": [{\"index\": 0, \"delta\": {\"role\": \"assistant\", \"content\": \"The workspace task is complete.\"}, \"finish_reason\": null}]}\n\ndata: {\"id\": \"leta-test-finish\", \"object\": \"chat.completion.chunk\", \"created\": 1, \"model\": \"openai/gpt-4.1-mini\", \"choices\": [{\"index\": 0, \"delta\": {}, \"finish_reason\": \"stop\"}]}\n\ndata: {\"id\": \"usage\", \"object\": \"chat.completion.chunk\", \"created\": 1, \"model\": \"openai/gpt-4.1-mini\", \"choices\": [], \"usage\": {\"prompt_tokens\": 120, \"completion_tokens\": 20, \"total_tokens\": 140}}\n\ndata: [DONE]\n\n"
   }
 }

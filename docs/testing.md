@@ -12,15 +12,18 @@ scripts/e2e.sh api
 
 Focused Go tests cover text/path/idempotency behavior; Python tests generate their Office inputs and check conversion/layout, enrichment evidence, index context, input bounds and telemetry. Public boundaries use concrete types rather than unparameterized dictionaries. The integration-tagged LetFS test requires an isolated, migrated, backed-up database and proves SQL invariants. Never point it at old or production databases.
 
-[Playwright](../e2e/playwright.config.ts) has exactly two projects: api and browser. API uses APIRequestContext; browser will use real frontend pages when a frontend exists. No browser placeholder suite runs today. Use native Playwright file/grep selection inside an already prepared test stack.
+[Playwright](../e2e/playwright.config.ts) has two projects: api and browser. `scripts/e2e.sh api` runs all service journeys, including Leta, in one shared dependency stack. API uses APIRequestContext; browser will use real frontend pages when a frontend exists. No browser placeholder suite runs today. Use native Playwright file/grep selection inside an already prepared test stack.
 
-The four API journeys cover:
+The five API journeys cover:
 
 - JWT verification, trusted-header stripping, ProtoJSON errors and internal RPC isolation.
-- Invitation acceptance/member limit, member storage, viewer grant/revoke and workspace deletion without Leta.
+- Invitation acceptance/member limit, member storage, viewer grant/revoke and workspace deletion.
 - Text/version/idempotency, quota rejection, copy, streamed ZIP, trash and restore.
 - XLSX through real CPU/IO Temporal workers, readonly artifacts, upload receipt replay/conflict, real Qdrant hybrid search and exact blob download. The embedding fixture ranks keyword evidence below the root README; BM25/RRF must recover it as the first result.
+- Leta provisioning, tools and persistent Mirage session, SSE bootstrap, boxes, HITL, owner-independent schedule delivery and workspace cleanup.
 
 PostgreSQL, SpiceDB, Temporal, RustFS and Qdrant are real dependencies. WireMock replaces only Clerk/JWKS/model HTTP boundaries. Fresh signing keys live for one run, including Playwright worker restarts. Assertions poll bounded async outcomes with native Playwright tools; tests do not sleep for business state.
 
-[CI](../.github/workflows/ci.yaml) runs on PRs and pushes to main/dev, filters changes by owner, skips stack startup for docs-only changes and runs one API stack when runtime wiring changes. Reports/logs are native artifacts. [Release](../.github/workflows/release.yaml) verifies the exact images it subsequently pushes. Local success does not establish remote CI, real Clerk/model quality or production-provider compatibility.
+[CI](../.github/workflows/ci.yaml) runs on PRs and pushes to main/dev, filters changes by owner, skips stack startup for docs-only changes and runs one shared core/Leta stack when runtime wiring changes. Reports/logs are native artifacts. [Release](../.github/workflows/release.yaml) verifies the exact images it subsequently pushes. Local success does not establish remote CI, real Clerk/model quality or production-provider compatibility.
+
+The Leta journey covers root provisioning, a native model/tool loop with file effects, bounded SSE bootstrap, box/Leti execution, asynchronous HITL, a native schedule after owner removal and cleanup. Native Python checks cover inferred tool arguments, cancellation settlement, event folding and VFS search paths. WireMock supplies deterministic external model/prompt responses, while LangGraph, Mirage, Redis, PostgreSQL and Temporal run normally. The [execution record](../plans/261111-2010-leta-rewrite/execution.md) distinguishes passing checks from incomplete integration; adding a test does not mean its acceptance has passed.

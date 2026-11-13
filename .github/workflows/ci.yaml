@@ -166,7 +166,7 @@ jobs:
       - run: |
           mkdir -p .local
           printf 'services:\n  platform: {image: "openlet/platform:local"}\n  letfs: {image: "openlet/letfs:local"}\n  ingest-cpu: {image: "openlet/ingest-cpu:local"}\n  ingest-io: {image: "openlet/ingest-io:local"}\n  leta-api: {image: "openlet/leta:local"}\n  leta-worker: {image: "openlet/leta:local"}\n  leta-migrate: {image: "openlet/leta:local"}\n' > .local/test-images.yaml
-          OPENLET_IMAGE_LOCK="$PWD/.local/test-images.yaml" scripts/e2e.sh leta
+          OPENLET_IMAGE_LOCK="$PWD/.local/test-images.yaml" scripts/e2e.sh api
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:

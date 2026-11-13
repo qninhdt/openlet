@@ -5,12 +5,12 @@ root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$root"
 project=${COMPOSE_PROJECT_NAME:-openlet-$(basename "$root")-e2e}
 suite=${1:-api}
-case "$suite" in api|leta|browser) ;; *) echo 'Usage: scripts/e2e.sh [api|leta|browser]' >&2; exit 2 ;; esac
+case "$suite" in api|browser) ;; *) echo 'Usage: scripts/e2e.sh [api|browser]' >&2; exit 2 ;; esac
 if [[ -n $(docker ps -aq --filter "label=com.docker.compose.project=$project") ]]; then
   echo "Compose project $project already exists; inspect and stop that run before starting another." >&2
   exit 1
 fi
-if [[ $suite == leta ]]; then export COMPOSE_PROFILES=leta; fi
+export COMPOSE_PROFILES=leta
 export OPENLET_CONFIG="$root/e2e/openlet.test.yaml"
 export OPENLET_GENERATED="$root/.local/e2e/generated"
 export OPENLET_BACKUPS="$root/.local/e2e/backups"
@@ -48,13 +48,10 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 "${compose[@]}" config --quiet
 if [[ -z ${OPENLET_IMAGE_LOCK:-} ]]; then
-  if ! "${compose[@]}" build platform letfs ingest-cpu ingest-io > "$OPENLET_ARTIFACTS/build.log" 2>&1; then
+  if ! "${compose[@]}" build platform letfs ingest-cpu ingest-io leta-api > "$OPENLET_ARTIFACTS/build.log" 2>&1; then
     tail -n 50 "$OPENLET_ARTIFACTS/build.log" >&2
     exit 1
   fi
-fi
-if [[ $suite == leta && -z ${OPENLET_IMAGE_LOCK:-} ]]; then
-  "${compose[@]}" build leta-api >> "$OPENLET_ARTIFACTS/build.log" 2>&1
 fi
 if [[ $suite == browser ]]; then
   docker build --file e2e/Dockerfile --target browser --tag openlet/e2e:local .
@@ -62,8 +59,4 @@ else
   "${compose[@]}" build e2e
 fi
 "${compose[@]}" up --detach --wait --wait-timeout 180
-if [[ $suite == leta ]]; then
-  "${compose[@]}" run --rm --no-deps e2e test --project=api --project=leta
-else
-  "${compose[@]}" run --rm --no-deps e2e test --project="$suite"
-fi
+"${compose[@]}" run --rm --no-deps e2e test --project="$suite"

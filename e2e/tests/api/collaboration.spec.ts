@@ -1,10 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { test, expect } from '../../fixtures/api.js';
 
-test('invitation, storage grant, revoke and workspace deletion work without Leta', async ({
-  account,
-  identity,
-}) => {
+test('invitation, storage grant, revoke and workspace deletion', async ({ account, identity }) => {
   const guest = await identity.createAccount();
   const workspace = `/v1/workspaces/${account.workspaceId}`;
   const storage = `${workspace}/storages/${account.storageId}`;

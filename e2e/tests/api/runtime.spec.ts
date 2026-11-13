@@ -19,13 +19,16 @@ test('native runtime, box containment, asynchronous HITL and owner-independent s
   const root: { id: string } = await creation.json();
   const path = `${workspace}/letas/${root.id}`;
   await expect
-    .poll(async () => (await (await account.api.get(path)).json()).state, { timeout: 30_000 })
+    .poll(async () => (await (await account.api.get(path)).json()).state, {
+      timeout: 30_000,
+    })
     .toBe('active');
   const input = {
     message_id: randomUUID(),
     content: 'Write a workspace report and run a shell calculation.',
   };
-  expect((await account.api.post(`${path}/messages`, { data: input })).ok()).toBeTruthy();
+  const admitted = await account.api.post(`${path}/messages`, { data: input });
+  expect(admitted.ok(), await admitted.text()).toBeTruthy();
   expect((await account.api.post(`${path}/messages`, { data: input })).ok()).toBeTruthy();
   await expect
     .poll(
@@ -53,7 +56,9 @@ test('native runtime, box containment, asynchronous HITL and owner-independent s
   expect((await report.json()).content).toBe('Native Leta runtime wrote this file.');
   const controller = new AbortController();
   const feed = await fetch(`http://envoy:8080${path}/events`, {
-    headers: { Authorization: `Bearer ${await identity.sign('stream-test', account.id)}` },
+    headers: {
+      Authorization: `Bearer ${await identity.sign('stream-test', account.id)}`,
+    },
     signal: controller.signal,
   });
   expect(feed.status).toBe(200);
@@ -107,7 +112,17 @@ test('native runtime, box containment, asynchronous HITL and owner-independent s
     data: { newOwnerUserId: guest.id },
   });
   expect(transfer.ok(), await transfer.text()).toBeTruthy();
-  expect((await guest.api.delete(`${workspace}/members/${account.id}`)).ok()).toBeTruthy();
+  await expect
+    .poll(async () => {
+      const list = await guest.api.get('/v1/workspaces');
+      expect(list.ok(), await list.text()).toBeTruthy();
+      return (await list.json()).workspaces.find(
+        (item: { id: string }) => item.id === account.workspaceId,
+      )?.role;
+    })
+    .toBe('WORKSPACE_ROLE_OWNER');
+  const leave = await account.api.delete(`${workspace}/members/${account.id}`);
+  expect(leave.ok(), await leave.text()).toBeTruthy();
   const scheduled = await guest.api.post(`${path}/schedules`, {
     data: {
       request_id: randomUUID(),
@@ -143,14 +158,20 @@ test('native runtime, box containment, asynchronous HITL and owner-independent s
   }
   expect(rootReport.id).toBeTruthy();
   expect(contents.join('\n')).toContain('native-shell');
+  expect(contents.join('\n')).toContain('Native Leta runtime wrote this file.');
   expect(contents.join('\n')).not.toMatch(/permission denied|not configured|Traceback/i);
   expect(
     (
-      await guest.api.delete(`${path}/boxes/${box.id}`, { data: { request_id: randomUUID() } })
+      await guest.api.delete(`${path}/boxes/${box.id}`, {
+        data: { request_id: randomUUID() },
+      })
     ).ok(),
   ).toBeTruthy();
-  expect((await guest.api.delete(workspace)).ok()).toBeTruthy();
+  const deleted = await guest.api.delete(workspace);
+  expect(deleted.ok(), await deleted.text()).toBeTruthy();
   await expect
-    .poll(async () => (await guest.api.get(workspace)).status(), { timeout: 30_000 })
+    .poll(async () => (await guest.api.get(workspace)).status(), {
+      timeout: 30_000,
+    })
     .toBe(404);
 });

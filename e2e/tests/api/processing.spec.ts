@@ -22,7 +22,9 @@ test('XLSX blob runs both workers, publishes readonly artifacts and becomes sear
   const prepared = await api.post(`${base}/uploads`, { data: preparation });
   expect(prepared.ok(), await prepared.text()).toBeTruthy();
   const upload = await prepared.json();
-  const preparedAgain = await api.post(`${base}/uploads`, { data: preparation });
+  const preparedAgain = await api.post(`${base}/uploads`, {
+    data: preparation,
+  });
   expect(preparedAgain.ok(), await preparedAgain.text()).toBeTruthy();
   expect(await preparedAgain.json()).toEqual(upload);
   const mismatched = await api.post(`${base}/uploads`, {
@@ -34,10 +36,14 @@ test('XLSX blob runs both workers, publishes readonly artifacts and becomes sear
     data: bytes,
   });
   expect(put.ok(), await put.text()).toBeTruthy();
-  const committed = await api.post(`${base}/uploads/${upload.id}:complete`, { data: {} });
+  const committed = await api.post(`${base}/uploads/${upload.id}:complete`, {
+    data: {},
+  });
   expect(committed.ok(), await committed.text()).toBeTruthy();
   const node = await committed.json();
-  const replay = await api.post(`${base}/uploads/${upload.id}:complete`, { data: {} });
+  const replay = await api.post(`${base}/uploads/${upload.id}:complete`, {
+    data: {},
+  });
   expect(replay.ok(), await replay.text()).toBeTruthy();
   expect(await replay.json()).toEqual(node);
   await expect
@@ -113,8 +119,13 @@ test('XLSX blob runs both workers, publishes readonly artifacts and becomes sear
   const chunks: Buffer[] = [];
   for (let offset = 0; offset < payload.length; offset += partSize)
     chunks.push(payload.subarray(offset, offset + partSize));
-  const parts = chunks.map((chunk, index) => ({ partNumber: index + 1, checksum: crc(chunk) }));
-  const signing = await api.post(`${base}/uploads/${transfer.id}:signParts`, { data: { parts } });
+  const parts = chunks.map((chunk, index) => ({
+    partNumber: index + 1,
+    checksum: crc(chunk),
+  }));
+  const signing = await api.post(`${base}/uploads/${transfer.id}:signParts`, {
+    data: { parts },
+  });
   expect(signing.ok(), await signing.text()).toBeTruthy();
   const signed = (await signing.json()).parts;
   const completed = [];

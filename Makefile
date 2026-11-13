@@ -60,7 +60,7 @@ integration:
 	go test -tags=integration ./apps/letfs/internal/storage -run TestStorageSQLInvariants -count=1
 
 e2e:
-	scripts/e2e.sh leta
+	scripts/e2e.sh api
 
 configure:
 	mkdir -p "$(OPENLET_BACKUPS)"
