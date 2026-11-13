@@ -92,6 +92,20 @@ test('XLSX blob runs both workers, publishes readonly artifacts and becomes sear
   expect(search.ok(), await search.text()).toBeTruthy();
   const { hits } = await search.json();
   expect(hits).toHaveLength(1);
+  expect(hits[0].path).toBe('sales.xlsx/README.md');
+  const scoped = await api.post(`${base}/files:semanticSearch`, {
+    data: { root: { nodeId: node.id }, query: 'csv', topK: 1 },
+  });
+  expect(scoped.ok(), await scoped.text()).toBeTruthy();
+  expect((await scoped.json()).hits[0].path).toBe('README.md');
+  const textSearch = await api.post(`${base}/files:textSearch`, {
+    data: { root: { nodeId: node.id }, query: 'Europe', pageSize: 100 },
+  });
+  expect(textSearch.ok(), await textSearch.text()).toBeTruthy();
+  const textHits = (await textSearch.json()).hits;
+  expect(
+    textHits.some((hit: { path: string }) => hit.path === 'revenue-report/revenue-report.csv'),
+  ).toBe(true);
   expect(hits[0].snippet).toContain('revenue-report.csv');
   const download = await api.get(`${base}/nodes/${node.id}:download`);
   const original = await request.get((await download.json()).blob.url);

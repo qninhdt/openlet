@@ -24,6 +24,7 @@ from mirage.vfs.call import vfs_call
 from mirage.vfs.types import Effect, Target
 from openlet_api.letfs.v1 import letfs_pb2 as fs
 from openlet_sdk.config import JSON
+from opentelemetry.baggage.propagation import W3CBaggagePropagator
 
 from ..agents import stable
 from ..auth import Actor
@@ -209,10 +210,6 @@ class LetFS(BaseVFS):
     ) -> list[PathSpec] | None:
         if whole_word:
             return None
-        tree = await self.read_tree(path)
-        if tree is None:
-            return None
-        paths = {item.extra["node_id"]: name for name, item in tree.items()}
         found: list[PathSpec] = []
         token = ""
         while True:
@@ -232,12 +229,8 @@ class LetFS(BaseVFS):
                 )
             )
             for hit in response.hits:
-                if hit.node.id not in paths:
-                    return None
                 found.append(
-                    mounted_path(
-                        path, posixpath.join("/", path.vfs_path, paths[hit.node.id])
-                    )
+                    mounted_path(path, posixpath.join("/", path.vfs_path, hit.path))
                 )
             token = response.next_page_token
             if not token:
@@ -303,22 +296,6 @@ class LetFS(BaseVFS):
             )
         )
         return cast(JSON, MessageToDict(response, preserving_proto_field_name=True))
-
-    @vfs_call(effect=Effect.READ, target=Target.FILE)
-    async def read_text_lines(self, path: PathSpec, first: int, count: int) -> bytes:
-        response: fs.ReadTextResponse = await self.call(
-            self.stub.ReadText(
-                fs.ReadTextRequest(
-                    workspace_id=str(self.workspace),
-                    storage_id=str(self.storage),
-                    target=self.locator(path),
-                    lines=fs.LineRange(first=first, count=count),
-                ),
-                metadata=self.actor.metadata,
-                timeout=15,
-            )
-        )
-        return response.content.encode()
 
     async def read_tree(self, path: PathSpec) -> dict[str, FileStat] | None:
         response: fs.ReadTreeResponse = await self.call(
@@ -612,6 +589,9 @@ class LetFS(BaseVFS):
 
     @vfs_call(effect=Effect.READ)
     async def semantic_search(self, path: PathSpec, query: str) -> dict[str, JSON]:
+        # Baggage is sent only to this internal RPC, never to model providers.
+        carrier: dict[str, str] = {}
+        W3CBaggagePropagator().inject(carrier)
         response = await self.call(
             self.stub.SemanticSearch(
                 fs.SemanticSearchRequest(
@@ -621,35 +601,19 @@ class LetFS(BaseVFS):
                     query=query,
                     top_k=10,
                 ),
-                metadata=self.actor.metadata,
+                metadata=[*self.actor.metadata, *carrier.items()],
                 timeout=60,
             )
         )
-        parents: dict[str, fs.Node] = {}
-        hits: list[JSON] = []
-        for hit in response.hits:
-            node = hit.node
-            parts: list[str] = []
-            while node.id != str(self.root):
-                parts.append(node.name)
-                parent = node.parent_id
-                if parent == str(self.root):
-                    break
-                if parent not in parents:
-                    parents[parent] = await self.call(
-                        self.stub.Stat(
-                            fs.NodeRequest(
-                                workspace_id=str(self.workspace),
-                                storage_id=str(self.storage),
-                                target=fs.NodeLocator(
-                                    node_id=parent, root_node_id=str(self.root)
-                                ),
-                            ),
-                            metadata=self.actor.metadata,
-                            timeout=15,
-                        )
-                    )
-                node = parents[parent]
-            resolved = mounted_path(path, "/" + "/".join(reversed(parts)))
-            hits.append({"path": resolved.virtual, "text": hit.snippet})
-        return {"path": path.virtual, "hits": hits}
+        return {
+            "path": path.virtual,
+            "hits": [
+                {
+                    "path": mounted_path(
+                        path, posixpath.join("/", path.vfs_path, hit.path)
+                    ).virtual,
+                    "text": hit.snippet,
+                }
+                for hit in response.hits
+            ],
+        }

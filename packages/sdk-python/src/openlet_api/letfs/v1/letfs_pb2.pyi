@@ -630,14 +630,16 @@ class TextSearchRequest(_message.Message):
     def __init__(self, workspace_id: _Optional[str] = ..., storage_id: _Optional[str] = ..., root: _Optional[_Union[NodeLocator, _Mapping]] = ..., query: _Optional[str] = ..., page_size: _Optional[int] = ..., page_token: _Optional[str] = ..., case_sensitive: _Optional[bool] = ..., lines_mode: _Optional[bool] = ...) -> None: ...
 
 class TextHit(_message.Message):
-    __slots__ = ("node", "snippet", "line_number")
+    __slots__ = ("node", "snippet", "line_number", "path")
     NODE_FIELD_NUMBER: _ClassVar[int]
     SNIPPET_FIELD_NUMBER: _ClassVar[int]
     LINE_NUMBER_FIELD_NUMBER: _ClassVar[int]
+    PATH_FIELD_NUMBER: _ClassVar[int]
     node: Node
     snippet: str
     line_number: int
-    def __init__(self, node: _Optional[_Union[Node, _Mapping]] = ..., snippet: _Optional[str] = ..., line_number: _Optional[int] = ...) -> None: ...
+    path: str
+    def __init__(self, node: _Optional[_Union[Node, _Mapping]] = ..., snippet: _Optional[str] = ..., line_number: _Optional[int] = ..., path: _Optional[str] = ...) -> None: ...
 
 class TextSearchResponse(_message.Message):
     __slots__ = ("hits", "next_page_token")
@@ -662,14 +664,16 @@ class SemanticSearchRequest(_message.Message):
     def __init__(self, workspace_id: _Optional[str] = ..., storage_id: _Optional[str] = ..., root: _Optional[_Union[NodeLocator, _Mapping]] = ..., query: _Optional[str] = ..., top_k: _Optional[int] = ...) -> None: ...
 
 class SemanticHit(_message.Message):
-    __slots__ = ("node", "snippet", "score")
+    __slots__ = ("node", "snippet", "score", "path")
     NODE_FIELD_NUMBER: _ClassVar[int]
     SNIPPET_FIELD_NUMBER: _ClassVar[int]
     SCORE_FIELD_NUMBER: _ClassVar[int]
+    PATH_FIELD_NUMBER: _ClassVar[int]
     node: Node
     snippet: str
     score: float
-    def __init__(self, node: _Optional[_Union[Node, _Mapping]] = ..., snippet: _Optional[str] = ..., score: _Optional[float] = ...) -> None: ...
+    path: str
+    def __init__(self, node: _Optional[_Union[Node, _Mapping]] = ..., snippet: _Optional[str] = ..., score: _Optional[float] = ..., path: _Optional[str] = ...) -> None: ...
 
 class SemanticSearchResponse(_message.Message):
     __slots__ = ("hits",)

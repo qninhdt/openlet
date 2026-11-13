@@ -3851,6 +3851,7 @@ type TextHit struct {
 	Node          *Node                  `protobuf:"bytes,1,opt,name=node,proto3" json:"node,omitempty"`
 	Snippet       string                 `protobuf:"bytes,2,opt,name=snippet,proto3" json:"snippet,omitempty"`
 	LineNumber    uint32                 `protobuf:"varint,3,opt,name=line_number,json=lineNumber,proto3" json:"line_number,omitempty"`
+	Path          string                 `protobuf:"bytes,4,opt,name=path,proto3" json:"path,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3904,6 +3905,13 @@ func (x *TextHit) GetLineNumber() uint32 {
 		return x.LineNumber
 	}
 	return 0
+}
+
+func (x *TextHit) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
 }
 
 type TextSearchResponse struct {
@@ -4039,6 +4047,7 @@ type SemanticHit struct {
 	Node          *Node                  `protobuf:"bytes,1,opt,name=node,proto3" json:"node,omitempty"`
 	Snippet       string                 `protobuf:"bytes,2,opt,name=snippet,proto3" json:"snippet,omitempty"`
 	Score         float64                `protobuf:"fixed64,3,opt,name=score,proto3" json:"score,omitempty"`
+	Path          string                 `protobuf:"bytes,4,opt,name=path,proto3" json:"path,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4092,6 +4101,13 @@ func (x *SemanticHit) GetScore() float64 {
 		return x.Score
 	}
 	return 0
+}
+
+func (x *SemanticHit) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
 }
 
 type SemanticSearchResponse struct {
@@ -5645,12 +5661,13 @@ const file_openlet_api_letfs_v1_letfs_proto_rawDesc = "" +
 	"page_token\x18\x06 \x01(\tR\tpageToken\x12%\n" +
 	"\x0ecase_sensitive\x18\a \x01(\bR\rcaseSensitive\x12\x1d\n" +
 	"\n" +
-	"lines_mode\x18\b \x01(\bR\tlinesMode\"p\n" +
+	"lines_mode\x18\b \x01(\bR\tlinesMode\"\x84\x01\n" +
 	"\aTextHit\x12*\n" +
 	"\x04node\x18\x01 \x01(\v2\x16.openlet.letfs.v1.NodeR\x04node\x12\x18\n" +
 	"\asnippet\x18\x02 \x01(\tR\asnippet\x12\x1f\n" +
 	"\vline_number\x18\x03 \x01(\rR\n" +
-	"lineNumber\"k\n" +
+	"lineNumber\x12\x12\n" +
+	"\x04path\x18\x04 \x01(\tR\x04path\"k\n" +
 	"\x12TextSearchResponse\x12-\n" +
 	"\x04hits\x18\x01 \x03(\v2\x19.openlet.letfs.v1.TextHitR\x04hits\x12&\n" +
 	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"\xe7\x01\n" +
@@ -5660,11 +5677,12 @@ const file_openlet_api_letfs_v1_letfs_proto_rawDesc = "" +
 	"storage_id\x18\x02 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\tstorageId\x129\n" +
 	"\x04root\x18\x03 \x01(\v2\x1d.openlet.letfs.v1.NodeLocatorB\x06\xbaH\x03\xc8\x01\x01R\x04root\x12\x1d\n" +
 	"\x05query\x18\x04 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x05query\x12\x1e\n" +
-	"\x05top_k\x18\x05 \x01(\rB\t\xbaH\x06*\x04\x18d(\x01R\x04topK\"i\n" +
+	"\x05top_k\x18\x05 \x01(\rB\t\xbaH\x06*\x04\x18d(\x01R\x04topK\"}\n" +
 	"\vSemanticHit\x12*\n" +
 	"\x04node\x18\x01 \x01(\v2\x16.openlet.letfs.v1.NodeR\x04node\x12\x18\n" +
 	"\asnippet\x18\x02 \x01(\tR\asnippet\x12\x14\n" +
-	"\x05score\x18\x03 \x01(\x01R\x05score\"K\n" +
+	"\x05score\x18\x03 \x01(\x01R\x05score\x12\x12\n" +
+	"\x04path\x18\x04 \x01(\tR\x04path\"K\n" +
 	"\x16SemanticSearchResponse\x121\n" +
 	"\x04hits\x18\x01 \x03(\v2\x1d.openlet.letfs.v1.SemanticHitR\x04hits\"\xd0\x01\n" +
 	"\x10TrashNodeRequest\x12+\n" +
