@@ -37,7 +37,6 @@ class Agent:
         self.rotating = False
         self.active: workflow.ActivityHandle[str] | None = None
         self.run_id: UUID | None = None
-        self.cancelled = False
         self.control = asyncio.Lock()
 
     def rotate(self) -> None:
@@ -78,7 +77,6 @@ class Agent:
     @workflow.update
     async def cancel_current(self, run_id: UUID) -> None:
         if self.run_id == run_id and self.active is not None:
-            self.cancelled = True
             self.wake = False
             handle = self.active
             handle.cancel()
@@ -130,7 +128,6 @@ class Agent:
                     if state.get("run_id")
                     else workflow.uuid4()
                 )
-            self.cancelled = False
             self.active = workflow.start_activity(
                 "run_agent",
                 RunInput(agent_id=input.agent_id, run_id=self.run_id),
