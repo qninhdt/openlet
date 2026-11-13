@@ -23,11 +23,12 @@ class ScheduleInput(BaseModel):
 
 @workflow.defn
 class ScheduleChanges:
-    def __init__(self) -> None:
+    @workflow.init
+    def __init__(self, input: ScheduleInput) -> None:
+        self.input = input
         self.lock = asyncio.Lock()
         self.deleted = False
         self.rotating = False
-        self.input: ScheduleInput | None = None
 
     @workflow.update
     async def change(self, request: Change) -> dict[str, JSON]:
@@ -53,7 +54,7 @@ class ScheduleChanges:
 
     @change.validator
     def validate_change(self, request: Change) -> None:
-        if self.input is None or request.schedule_id != self.input.schedule_id:
+        if request.schedule_id != self.input.schedule_id:
             raise ValueError("schedule does not match workflow")
         if self.rotating or self.deleted:
             raise ApplicationError(
@@ -62,7 +63,6 @@ class ScheduleChanges:
 
     @workflow.run
     async def run(self, input: ScheduleInput) -> None:
-        self.input = input
         await workflow.wait_condition(lambda: self.deleted or self.rotating)
         await workflow.wait_condition(workflow.all_handlers_finished)
         if not self.deleted:

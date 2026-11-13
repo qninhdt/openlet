@@ -25,7 +25,9 @@ class HitlInput(BaseModel):
 
 @workflow.defn
 class HitlRequest:
-    def __init__(self) -> None:
+    @workflow.init
+    def __init__(self, input: HitlInput) -> None:
+        self.input = input
         self.opened: dict[str, JSON] | None = None
         self.decision: dict[str, JSON] | None = None
         self.lock = asyncio.Lock()
@@ -93,7 +95,6 @@ class HitlRequest:
 
     @workflow.run
     async def run(self, input: HitlInput) -> None:
-        self.input = input
         opened = await workflow.execute_activity(
             "open_hitl_request",
             input.request,

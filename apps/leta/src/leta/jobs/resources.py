@@ -25,9 +25,10 @@ class ResourceOperation(BaseModel):
 
 @workflow.defn
 class LetaLifecycle:
-    def __init__(self) -> None:
+    @workflow.init
+    def __init__(self, operation: ResourceOperation) -> None:
         self.result: dict[str, JSON] | None = None
-        self.command: ResourceOperation | None = None
+        self.command = operation
 
     @workflow.update
     async def open(self, command: ResourceOperation) -> dict[str, JSON]:
@@ -41,7 +42,6 @@ class LetaLifecycle:
 
     @workflow.run
     async def run(self, operation: ResourceOperation) -> dict[str, JSON]:
-        self.command = operation
         if operation.action == "create":
             assert operation.root is not None
             creation = RootCreation(
@@ -106,9 +106,10 @@ class LetaLifecycle:
 
 @workflow.defn
 class BoxLifecycle:
-    def __init__(self) -> None:
+    @workflow.init
+    def __init__(self, operation: ResourceOperation) -> None:
         self.result: dict[str, JSON] | None = None
-        self.command: ResourceOperation | None = None
+        self.command = operation
 
     @workflow.update
     async def open(self, command: ResourceOperation) -> dict[str, JSON]:
@@ -122,7 +123,6 @@ class BoxLifecycle:
 
     @workflow.run
     async def run(self, operation: ResourceOperation) -> dict[str, JSON]:
-        self.command = operation
         if operation.action == "create":
             assert operation.box is not None
             home = await workflow.execute_activity(

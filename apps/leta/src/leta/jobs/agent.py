@@ -27,7 +27,9 @@ class RunInput(BaseModel):
 
 @workflow.defn
 class Agent:
-    def __init__(self) -> None:
+    @workflow.init
+    def __init__(self, input: AgentInput) -> None:
+        self.input = input
         self.wake = True
         self.paused = False
         self.stopping = False
@@ -106,7 +108,6 @@ class Agent:
 
     @workflow.run
     async def run(self, input: AgentInput) -> None:
-        self.input = input
         while not self.stopping:
             await workflow.wait_condition(
                 lambda: (
