@@ -5,6 +5,7 @@ from contextlib import AsyncExitStack
 from datetime import datetime, timezone
 from time import monotonic
 from typing import cast
+from uuid import UUID
 
 from langchain.agents import create_agent  # pyright: ignore[reportUnknownVariableType]  # Native overload contains an unspecialized checkpoint generic.
 from langchain.agents.middleware import (
@@ -14,6 +15,7 @@ from langchain.agents.middleware import (
     SummarizationMiddleware,
     ToolCallRequest,
 )
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import (
     AIMessage,
     AIMessageChunk,
@@ -22,29 +24,33 @@ from langchain_core.messages import (
     HumanMessage,
     SystemMessage,
     ToolMessage,
-    get_buffer_string,
 )
 from langchain_core.messages.utils import count_tokens_approximately
+from langchain_core.outputs import ChatGeneration, LLMResult
 from langchain_core.runnables import RunnableConfig
-from langchain_openai import ChatOpenAI
+from langchain_core.tools import BaseTool
+from langchain_litellm import ChatLiteLLM
 from langfuse import Langfuse, propagate_attributes
 from langfuse.langchain import CallbackHandler
+from langfuse.model import TextPromptClient
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph.state import CompiledStateGraph  # pyright: ignore[reportMissingTypeStubs]  # Upstream package does not publish type stubs.
+from langgraph.runtime import Runtime
 from langgraph.types import Command
 from openlet_sdk.config import JSON, ReasoningEffort, secret
+from openlet_sdk.inference import InferenceSettings, response_cost
 from opentelemetry import metrics
-from pydantic import SecretStr
 from temporalio import activity
+from temporalio.client import WorkflowUpdateFailedError
 from temporalio.exceptions import ApplicationError
 
 from .. import events
-from ..agents import get_agent, record, stable
-from ..config import Services, model
-from ..db import dsn
+from ..agents import history_id, record_batch, stable
+from ..config import Services
+from ..db import Row, dsn
 from ..filesystem.workspace import Filesystem
-from ..jobs.agent import RunInput
-from ..messages import pending
+from ..jobs.agent import RunInput, RunResult
+from ..messages import has_pending
 from .inbox import Inbox, State
 from .tools import Context, tools
 
@@ -52,6 +58,23 @@ meter = metrics.get_meter("openlet.leta")
 tool_duration = meter.create_histogram("openlet.leta.tool.duration", unit="s")
 state_duration = meter.create_histogram("openlet.leta.state.duration", unit="s")
 active = meter.create_up_down_counter("openlet.leta.runtime.active")
+
+
+class InferenceCost(BaseCallbackHandler):
+    run_inline = True
+
+    def __init__(self, lf: Langfuse) -> None:
+        self.lf = lf
+
+    def on_llm_end(self, response: LLMResult, **kwargs: object) -> None:
+        for group in response.generations:
+            for generation in group:
+                if isinstance(generation, ChatGeneration):
+                    cost = response_cost(
+                        generation.message.response_metadata.get("response_cost")
+                    )
+                    if cost is not None:
+                        self.lf.update_current_generation(cost_details=cost)
 
 
 class ToolEffects(AgentMiddleware[State, Context]):
@@ -62,12 +85,32 @@ class ToolEffects(AgentMiddleware[State, Context]):
     ) -> ToolMessage | Command[object]:
         started, outcome = monotonic(), "ok"
         try:
-            return await handler(request)
+            result = await handler(request)
+            if isinstance(result, ToolMessage) and result.status == "error":
+                outcome = "rejected"
+            return result
         except (ValueError, LookupError, PermissionError, OSError) as error:
             outcome = "rejected"
             return ToolMessage(
                 content=str(error), tool_call_id=request.tool_call["id"], status="error"
             )
+        except WorkflowUpdateFailedError as error:
+            cause = error.cause
+            while isinstance(cause, BaseException):
+                if isinstance(cause, ApplicationError) and cause.type in {
+                    "ValueError",
+                    "LookupError",
+                    "PermissionError",
+                }:
+                    outcome = "rejected"
+                    return ToolMessage(
+                        content=cause.message,
+                        tool_call_id=request.tool_call["id"],
+                        status="error",
+                    )
+                cause = getattr(cause, "cause", None)
+            outcome = "error"
+            raise
         except Exception:
             outcome = "error"
             raise
@@ -78,33 +121,196 @@ class ToolEffects(AgentMiddleware[State, Context]):
             )
 
 
-class InputBudget(AgentMiddleware[State, Context]):
-    def __init__(self, tokens: int) -> None:
-        self.tokens = tokens
+class ExecutionModel(AgentMiddleware[State, Context]):
+    def __init__(
+        self,
+        s: Services,
+        defaults: InferenceSettings,
+        prompt: TextPromptClient,
+        compaction: TextPromptClient,
+        catalog: list[BaseTool],
+        box_context: str,
+    ) -> None:
+        self.s, self.defaults, self.prompt, self.compaction = (
+            s,
+            defaults,
+            prompt,
+            compaction,
+        )
+        self.catalog, self.box_context = catalog, box_context
+        self.selection: tuple[str, ReasoningEffort, str] | None = None
+        self.chat: ChatLiteLLM
+        self.summary: SummarizationMiddleware[JSON, Context]
+        self.system = ""
+        self.tokens = 0
+
+    async def refresh(self, agent: Row) -> None:
+        selected = cast(str | None, agent["model_id"] or agent["root_model_id"])
+        effort = cast(
+            ReasoningEffort,
+            agent["reasoning_effort"]
+            if agent["model_id"]
+            else agent["root_reasoning_effort"],
+        )
+        if selected is None:
+            selected, effort = self.defaults.model, self.defaults.reasoning_effort
+        selection = (selected, effort, str(agent["system_prompt"]))
+        if selection == self.selection:
+            return
+        entry = await self.s.models.get(selected, effort)
+        if self.defaults.max_tokens > entry.max_output_tokens:
+            raise ValueError("prompt output budget exceeds gateway model limit")
+        self.system = self.prompt.compile(
+            agent_instructions=selection[2], box_context=self.box_context
+        )
+        gateway = self.s.config["models"]["gateway"]
+        if self.selection is None or selection[:2] != self.selection[:2]:
+            parameters = self.defaults.model_copy(
+                update={"reasoning_effort": effort}
+            ).parameters()
+            self.chat = ChatLiteLLM(
+                model="litellm_proxy/" + selected,
+                api_base=gateway["base_url"],
+                api_key=secret(gateway["api_key"]),
+                request_timeout=gateway["timeout_seconds"],
+                max_retries=0,
+                max_tokens=self.defaults.max_tokens,
+                metadata={"ls_model_name": selected},
+                model_kwargs={
+                    **{k: v for k, v in parameters.items() if k != "max_tokens"},
+                    "num_retries": 0,
+                    "stream_options": {"include_usage": True},
+                },
+            )
+        self.tokens = entry.context_window_tokens - self.defaults.max_tokens
+        overhead = count_tokens_approximately(
+            [
+                SystemMessage(content=self.system),
+                HumanMessage(content=self.compaction.compile()),
+            ],
+            tools=[item for item in self.catalog],
+        )
+        history_budget = self.tokens - overhead
+        if history_budget < 2000:
+            raise ApplicationError(
+                "model context is too small for instructions and tools",
+                non_retryable=True,
+            )
+        settings = self.s.config["services"]["leta"]["compaction"]
+        self.summary = SummarizationMiddleware[JSON, Context](
+            self.chat,
+            trigger=("tokens", int(history_budget * settings["trigger_fraction"])),
+            keep=("tokens", int(history_budget * settings["keep_fraction"])),
+            trim_tokens_to_summarize=None,
+            summarizer=self.summarize,
+        )
+        self.selection = selection
+
+    def guard(self, messages: list[BaseMessage]) -> None:
+        if (
+            count_tokens_approximately(messages, tools=[item for item in self.catalog])
+            > self.tokens
+        ):
+            raise ApplicationError(
+                "working context exceeds model input budget",
+                type="context_limit",
+                non_retryable=True,
+            )
+
+    async def summarize(self, messages: list[AnyMessage]) -> str:
+        request: list[BaseMessage] = [
+            SystemMessage(content=self.system),
+            *messages,
+            HumanMessage(content=self.compaction.compile()),
+        ]
+        self.guard(request)
+        with propagate_attributes(prompt=self.compaction):
+            bound = self.chat.bind_tools(self.catalog, tool_choice="none")  # pyright: ignore[reportUnknownMemberType]  # Native overload includes untyped callable tools.
+            result = await bound.ainvoke(request)
+        return result.text
+
+    async def abefore_model(
+        self, state: State, runtime: Runtime[Context]
+    ) -> dict[str, object] | None:
+        return await self.summary.abefore_model(state, runtime)
 
     async def awrap_model_call(
         self,
         request: ModelRequest[Context],
         handler: Callable[[ModelRequest[Context]], Awaitable[ModelResponse]],
     ) -> ModelResponse:
-        messages = [
-            *([request.system_message] if request.system_message else []),
-            *request.messages,
-        ]
-        if count_tokens_approximately(messages, tools=request.tools) > self.tokens:
-            raise ApplicationError(
-                "working context exceeds model input budget",
-                type="context_limit",
-                non_retryable=True,
+        self.guard([SystemMessage(content=self.system), *request.messages])
+        return await handler(
+            request.override(
+                model=self.chat, system_message=SystemMessage(content=self.system)
             )
-        return await handler(request)
+        )
+
+
+async def runtime_agent(s: Services, id: UUID) -> Row:
+    async with s.db.connection() as conn:
+        row = await (
+            await conn.execute(
+                """SELECT a.*,l.workspace_id,l.storage_id,l.state,l.paused,b.home_node_id,b.state AS box_state,
+            r.model_id AS root_model_id,r.reasoning_effort AS root_reasoning_effort
+            FROM agents a JOIN letas l ON l.id=a.leta_id JOIN agents r ON r.id=a.leta_id
+            LEFT JOIN boxes b ON b.id=a.box_id WHERE a.id=%s""",
+                (id,),
+            )
+        ).fetchone()
+    if row is None:
+        raise LookupError("agent not found")
+    return row
+
+
+async def box_context(s: Services, agent: Row) -> str:
+    if agent["box_id"] is None:
+        return ""
+    async with s.db.connection() as conn:
+        box = await (
+            await conn.execute(
+                "SELECT name,description,representative_agent_id FROM boxes WHERE id=%s",
+                (agent["box_id"],),
+            )
+        ).fetchone()
+        members = await (
+            await conn.execute(
+                """SELECT a.id,a.name,a.description,EXISTS(SELECT 1 FROM box_edges e
+            WHERE e.box_id=a.box_id AND ((e.agent_low_id=%s AND e.agent_high_id=a.id)
+            OR (e.agent_high_id=%s AND e.agent_low_id=a.id))) AS connected
+            FROM agents a WHERE a.box_id=%s ORDER BY a.name,a.id""",
+                (agent["id"], agent["id"], agent["box_id"]),
+            )
+        ).fetchall()
+    assert box is not None
+    lines = [
+        f"Box: {box['name']}",
+        f"Purpose: {box['description']}",
+        f"You: {agent['name']}",
+        "Teammates:",
+    ]
+    for member in members:
+        if member["id"] == agent["id"]:
+            continue
+        representative = (
+            " (representative)"
+            if member["id"] == box["representative_agent_id"]
+            else ""
+        )
+        recipient = f"; recipient: {member['id']}" if member["connected"] else ""
+        lines.append(
+            f"- {member['name']}{representative}: {member['description']}{recipient}"
+        )
+    if box["representative_agent_id"] == agent["id"]:
+        lines.append(f"You are the representative. Root recipient: {agent['leta_id']}")
+    return "\n".join(lines)
 
 
 async def project(s: Services, ctx: Context, messages: Sequence[BaseMessage]) -> None:
+    entries: list[tuple[str, str, JSON]] = []
     for message in messages:
         if not message.id:
             continue
-        entries: list[tuple[str, str, JSON]] = []
         if isinstance(message, HumanMessage):
             kind = (
                 "compaction"
@@ -147,40 +353,33 @@ async def project(s: Services, ctx: Context, messages: Sequence[BaseMessage]) ->
                     },
                 )
             )
-        for identity, kind, body in entries:
-            id = await record(s.db, ctx.id, ctx.run_id, identity, kind, body)
-            preview = json.dumps(body, ensure_ascii=False)
-            reference: dict[str, JSON] = {
-                "id": str(id),
-                "kind": kind,
-                "preview": preview[:500],
-                "truncated": len(preview) > 500,
-            }
-            if kind == "tool_result" and isinstance(message, ToolMessage):
-                await events.publish(
-                    s.redis,
-                    ctx.root,
-                    events.event(
-                        "TOOL_CALL_RESULT",
-                        ctx.id,
-                        ctx.run_id,
-                        messageId=str(id),
-                        toolCallId=str(stable(ctx.id, f"tool/{message.tool_call_id}")),
-                        role="tool",
-                        content=json.dumps(reference, ensure_ascii=False),
-                    ),
-                )
-            await events.publish(
-                s.redis,
-                ctx.root,
+    projected: list[events.Event] = []
+    for id, kind, body in await record_batch(s.db, ctx.id, ctx.run_id, entries):
+        preview = json.dumps(body, ensure_ascii=False)
+        reference: dict[str, JSON] = {
+            "id": str(id),
+            "kind": kind,
+            "preview": preview[:500],
+            "truncated": len(preview) > 500,
+        }
+        if kind == "tool_result" and isinstance(body, dict):
+            projected.append(
                 events.event(
-                    "CUSTOM",
+                    "TOOL_CALL_RESULT",
                     ctx.id,
                     ctx.run_id,
-                    name="openlet.history",
-                    value=reference,
-                ),
+                    messageId=str(id),
+                    toolCallId=body["tool_call_id"],
+                    role="tool",
+                    content=json.dumps(reference, ensure_ascii=False),
+                )
             )
+        projected.append(
+            events.event(
+                "CUSTOM", ctx.id, ctx.run_id, name="openlet.history", value=reference
+            )
+        )
+    await events.publish_batch(s.redis, ctx.root, projected)
 
 
 class Live:
@@ -201,7 +400,9 @@ class Live:
     async def chunk(self, message: AIMessageChunk) -> None:
         if message.text:
             if self.text is None:
-                self.text = str(stable(self.ctx.id, message.id)) if message.id else None
+                self.text = (
+                    str(history_id(self.ctx.id, message.id)) if message.id else None
+                )
                 await self.emit(
                     "TEXT_MESSAGE_START", messageId=self.text, role="assistant"
                 )
@@ -245,7 +446,7 @@ async def protected[T](work: Awaitable[T]) -> T:
         raise
 
 
-async def run(s: Services, lf: Langfuse, input: RunInput) -> str:
+async def run(s: Services, lf: Langfuse, input: RunInput) -> RunResult:
     async with AsyncExitStack() as stack:
         pulse = asyncio.create_task(heartbeat())
 
@@ -276,9 +477,9 @@ async def run(s: Services, lf: Langfuse, input: RunInput) -> str:
 
         stack.push_async_callback(unlock)
         saver = await stack.enter_async_context(
-            AsyncPostgresSaver.from_conn_string(dsn())
+            AsyncPostgresSaver.from_conn_string(dsn(s.config))
         )
-        agent = await get_agent(s.db, input.agent_id)
+        agent = await runtime_agent(s, input.agent_id)
         ctx = Context(s, agent, input.run_id, Filesystem(s, agent))
         stack.push_async_callback(ctx.filesystem.close)
         async with s.db.connection() as conn:
@@ -337,9 +538,19 @@ async def run(s: Services, lf: Langfuse, input: RunInput) -> str:
         if agent["box_id"]:
             metadata["box_id"] = str(agent["box_id"])
         prompt, compaction = await asyncio.gather(
-            asyncio.to_thread(lf.get_prompt, f"leta/{role}", label=label, type="text"),
             asyncio.to_thread(
-                lf.get_prompt, "leta/compaction", label=label, type="text"
+                lf.get_prompt,
+                f"leta/{role}",
+                label=label,
+                type="text",
+                cache_ttl_seconds=60,
+            ),
+            asyncio.to_thread(
+                lf.get_prompt,
+                "leta/compaction",
+                label=label,
+                type="text",
+                cache_ttl_seconds=60,
             ),
         )
         stack.enter_context(
@@ -359,7 +570,7 @@ async def run(s: Services, lf: Langfuse, input: RunInput) -> str:
         )
         callback = CallbackHandler()
         callback.run_inline = True
-        config["callbacks"] = [callback]
+        config["callbacks"] = [InferenceCost(lf), callback]
         config["run_name"] = trace_name
         active.add(1, {"agent_role": role})
         await events.publish(
@@ -373,116 +584,59 @@ async def run(s: Services, lf: Langfuse, input: RunInput) -> str:
                 runId=str(ctx.run_id),
             ),
         )
+        catalog = tools(root=agent["box_id"] is None)
+        execution_model = ExecutionModel(
+            s,
+            InferenceSettings.model_validate(prompt.config),
+            prompt,
+            compaction,
+            catalog,
+            await box_context(s, agent),
+        )
+        await execution_model.refresh(agent)
+        # TODO: invalid-only tool calls can end a turn early; see https://github.com/langchain-ai/langchain/issues/33504.
+        graph = cast(
+            CompiledStateGraph[State, Context, State, State],
+            create_agent(
+                execution_model.chat,
+                catalog,
+                state_schema=State,
+                context_schema=Context,
+                checkpointer=saver,
+                middleware=[
+                    Inbox(s.db, ctx.id, agent["box_id"] is None),
+                    execution_model,
+                    ToolEffects(),
+                ],
+                interrupt_after=["model", "tools"],
+            ),
+        )
+        cursor = (
+            cast(int, checkpoint.checkpoint["channel_values"].get("inbox_cursor", 0))
+            if checkpoint
+            else 0
+        )
         initial = checkpoint is None
         try:
             while True:
-                agent = await get_agent(s.db, ctx.id)
+                agent = await runtime_agent(s, ctx.id)
                 ctx.agent = agent
                 if (
                     agent["state"] != "active"
                     or agent["box_id"]
                     and agent["box_state"] != "active"
                 ):
-                    return "stopped"
+                    return RunResult(status="stopped", inbox_cursor=cursor)
                 if agent["paused"]:
-                    return "paused"
-                root = await get_agent(s.db, ctx.root) if agent["box_id"] else agent
-                effort = (
-                    agent["reasoning_effort"]
-                    if agent["model_id"]
-                    else root["reasoning_effort"]
-                )
-                if not agent["model_id"] and not root["model_id"]:
-                    effort = s.config["models"]["leta"]["default"]["reasoning_effort"]
-                entry = model(
-                    s.config,
-                    cast(str | None, agent["model_id"] or root["model_id"]),
-                    cast(ReasoningEffort, effort),
-                )
-                provider = s.config["models"]["provider"]
-                chat = ChatOpenAI(
-                    model=entry["model_id"],
-                    base_url=provider["base_url"],
-                    api_key=SecretStr(secret(provider["api_key"])),
-                    timeout=provider["timeout_seconds"],
-                    max_retries=0,
-                    max_completion_tokens=entry["max_output_tokens"],
-                    reasoning_effort=cast(str | None, effort),
-                    stream_usage=True,
-                )
-                context = f"Current time: {datetime.now(timezone.utc).isoformat()}. Timezone: UTC."
-                if agent["box_id"]:
-                    async with s.db.connection() as conn:
-                        box = await (
-                            await conn.execute(
-                                "SELECT representative_agent_id FROM boxes WHERE id=%s",
-                                (agent["box_id"],),
-                            )
-                        ).fetchone()
-                    context += f" You are {'the' if box and box['representative_agent_id'] == ctx.id else 'not the'} box representative."
-                system = (
-                    prompt.compile()
-                    + "\n\nConfigured assignment:\n"
-                    + str(agent["system_prompt"])
-                    + "\n\n"
-                    + context
-                )
-                catalog = tools(root=agent["box_id"] is None)
-                budget = entry["context_window_tokens"] - entry["max_output_tokens"]
-                history_budget = budget - count_tokens_approximately(
-                    [SystemMessage(content=system)], tools=[item for item in catalog]
-                )
-                if history_budget < 2000:
-                    raise ApplicationError(
-                        "model context is too small for agent instructions and tools",
-                        non_retryable=True,
-                    )
-
-                async def summarize(messages: list[AnyMessage]) -> str:
-                    with propagate_attributes(prompt=compaction):
-                        result = await chat.ainvoke(
-                            [
-                                SystemMessage(content=compaction.compile()),
-                                HumanMessage(
-                                    content=get_buffer_string(messages, format="xml")
-                                ),
-                            ]
-                        )
-                    return result.text
-
-                graph = cast(
-                    CompiledStateGraph[State, Context, State, State],
-                    create_agent(
-                        chat,
-                        catalog,
-                        system_prompt=system,
-                        state_schema=State,
-                        context_schema=Context,
-                        checkpointer=saver,
-                        middleware=[
-                            Inbox(s.db, ctx.id, agent["box_id"] is None),
-                            cast(
-                                AgentMiddleware[State, Context],
-                                SummarizationMiddleware[JSON, Context](
-                                    chat,
-                                    trigger=("tokens", int(history_budget * 0.8)),
-                                    keep=("tokens", int(history_budget * 0.3)),
-                                    trim_tokens_to_summarize=int(history_budget * 0.7),
-                                    summarizer=summarize,
-                                ),
-                            ),
-                            ToolEffects(),
-                            InputBudget(budget),
-                        ],
-                        interrupt_after=["model", "tools"],
-                    ),
-                )
+                    return RunResult(status="paused", inbox_cursor=cursor)
+                await execution_model.refresh(agent)
                 state = await graph.aget_state(config)
+                cursor = cast(int, state.values.get("inbox_cursor", 0))
                 if not state.next and not initial:
-                    if not await pending(
+                    if not await has_pending(
                         s.db, ctx.id, cast(int, state.values.get("inbox_cursor", 0))
                     ):
-                        return "completed"
+                        return RunResult(status="completed", inbox_cursor=cursor)
                     graph_input: State | None = {"messages": []}
                 else:
                     graph_input = {"messages": []} if initial else None
@@ -491,20 +645,7 @@ async def run(s: Services, lf: Langfuse, input: RunInput) -> str:
                 async def advance() -> None:
                     live = Live(s, ctx)
                     changed: list[BaseMessage] = []
-                    if "tools" in state.next:
-                        message = cast(AIMessage, state.values["messages"][-1])
-                        if any(
-                            call["name"].startswith(("file_", "exec_"))
-                            for call in message.tool_calls
-                        ):
-                            ctx.session = await ctx.filesystem.open()
-                    with propagate_attributes(
-                        session_id=str(ctx.id),
-                        trace_name=trace_name,
-                        metadata=metadata,
-                        tags=[role],
-                        prompt=prompt,
-                    ):
+                    with propagate_attributes(prompt=prompt):
                         async for item in graph.astream(  # pyright: ignore[reportUnknownMemberType]  # Upstream SDK has an untyped overload or kwargs.
                             graph_input,
                             config,

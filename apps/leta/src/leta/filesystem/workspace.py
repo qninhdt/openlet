@@ -75,6 +75,7 @@ class Filesystem:
         self.discovered = 0.0
         self.workspace: Workspace | None = None
         self.session: Session | None = None
+        self.lock = asyncio.Lock()
 
     async def discover(self) -> None:
         if monotonic() - self.discovered < 30:
@@ -103,6 +104,10 @@ class Filesystem:
         self.bindings, self.discovered = bindings, monotonic()
 
     async def open(self) -> Session:
+        async with self.lock:
+            return await self._open()
+
+    async def _open(self) -> Session:
         previous = self.bindings if self.workspace is not None else {}
         await self.discover()
         actor = Actor("agent", cast(UUID, self.agent["leta_id"]))
@@ -141,21 +146,22 @@ class Filesystem:
                 profile="agent",
             )
         ws = self.workspace
-        for id, (root, _) in previous.items():
-            if id not in self.bindings or self.bindings[id][0] != root:
-                await ws.unmount(f"/mnt/{id}")
-        for id, (root, write) in self.bindings.items():
-            mode = MountMode.WRITE if write else MountMode.READ
-            old = previous.get(id)
-            if old is None or old[0] != root:
-                ws.add_mount(
-                    f"/mnt/{id}",
-                    LetFS(self.s.files, actor, workspace, UUID(id), root),
-                    mode=mode,
-                    read=ReadSpec(),
-                )
-            elif old[1] != write:
-                ws.set_mount_mode(f"/mnt/{id}", mode)
+        if previous != self.bindings:
+            for id, (root, _) in previous.items():
+                if id not in self.bindings or self.bindings[id][0] != root:
+                    await ws.unmount(f"/mnt/{id}")
+            for id, (root, write) in self.bindings.items():
+                mode = MountMode.WRITE if write else MountMode.READ
+                old = previous.get(id)
+                if old is None or old[0] != root:
+                    ws.add_mount(
+                        f"/mnt/{id}",
+                        LetFS(self.s.files, actor, workspace, UUID(id), root),
+                        mode=mode,
+                        read=ReadSpec(),
+                    )
+                elif old[1] != write:
+                    ws.set_mount_mode(f"/mnt/{id}", mode)
         if self.session is None:
             self.session = await ws.session("tools")
         return self.session
@@ -179,12 +185,23 @@ def scope(value: str) -> PathSpec:
 async def shell(
     session: Session, command: str, *, cwd: str = "/home", runtime: str | None = None
 ) -> dict[str, JSON]:
+    buffers = {"stdout": bytearray(), "stderr": bytearray()}
+    limits = {"stdout": 16000, "stderr": 4000}
+    truncated = False
     async with asyncio.timeout(30):
-        result = await session.shell(command, cwd=cwd, runtime=runtime, record=False)
-    stdout, stderr = await result.stdout_str(), await result.stderr_str()
+        execution = await session.shell(
+            command, cwd=cwd, runtime=runtime, record=False, stream=True
+        )
+        async with execution:
+            async for event in execution.events:
+                name = "stdout" if event.stream == "stdout" else "stderr"
+                remaining = limits[name] - len(buffers[name])
+                buffers[name].extend(event.data[:remaining])
+                truncated |= len(event.data) > remaining
+            result = await execution.wait()
     return {
-        "stdout": stdout[:16000],
-        "stderr": stderr[:4000],
+        "stdout": buffers["stdout"].decode("utf-8", errors="replace"),
+        "stderr": buffers["stderr"].decode("utf-8", errors="replace"),
         "exit_code": result.exit_code,
-        "truncated": len(stdout) > 16000 or len(stderr) > 4000,
+        "truncated": truncated,
     }

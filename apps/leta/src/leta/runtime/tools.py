@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Annotated, Literal, cast
@@ -6,24 +7,21 @@ from uuid import UUID
 from langchain.tools import ToolRuntime, tool
 from langchain_core.messages import AIMessage
 from langchain_core.tools import BaseTool
+from langfuse import propagate_attributes
 from mirage import ContentType, Session
 from openlet_sdk.config import JSON
 from pydantic import Field
-from temporalio.client import WithStartWorkflowOperation
-from temporalio.common import WorkflowIDConflictPolicy
 
 from .. import boxes, history, hitl, messages, schedules
-from ..agents import get_agent, json_row, stable
+from ..agents import json_row, stable
 from ..auth import Actor
 from ..boxes import BoxCreation, CreateBox, LetiDefinition
 from ..config import Services
-from ..db import Row, request_hash
+from ..db import Row
 from ..filesystem.letfs import current_operation
 from ..filesystem.workspace import Filesystem, scope, shell
 from ..filesystem.workspace import path as file_path
-from ..jobs.hitl import HitlInput, HitlRequest
 from ..jobs.resources import ResourceOperation
-from ..jobs.schedules import ScheduleChanges, ScheduleInput
 from ..messages import Message
 from .inbox import State
 
@@ -38,7 +36,6 @@ class Context:
     agent: Row
     run_id: UUID
     filesystem: Filesystem
-    session: Session | None = None
 
     @property
     def id(self) -> UUID:
@@ -54,9 +51,8 @@ def request_id(runtime: ToolRuntime[Context, State]) -> UUID:
     return stable(runtime.context.id, runtime.tool_call_id)
 
 
-def session(runtime: ToolRuntime[Context, State]) -> Session:
-    assert runtime.context.session is not None
-    return runtime.context.session
+async def session(runtime: ToolRuntime[Context, State]) -> Session:
+    return await runtime.context.filesystem.open()
 
 
 @tool
@@ -73,12 +69,23 @@ async def inbox_send(
     s, agent = ctx.services, ctx.agent
     target = to
     id = request_id(runtime)
-    if ctx.id == ctx.root and await s.auth.allowed(
-        Actor("user", target),
-        "workspace",
-        cast(UUID, agent["workspace_id"]),
-        "participate",
-    ):
+    async with s.db.connection() as conn:
+        recipient = await (
+            await conn.execute(
+                """SELECT a.id,a.box_id FROM agents a WHERE a.leta_id=%s AND
+            (a.id=%s OR a.id=(SELECT representative_agent_id FROM boxes WHERE id=%s AND leta_id=%s))""",
+                (ctx.root, target, target, ctx.root),
+            )
+        ).fetchone()
+    if recipient is None:
+        if ctx.id != ctx.root:
+            raise ValueError("recipient is outside the communication graph")
+        await s.auth.require(
+            Actor("user", target),
+            "workspace",
+            cast(UUID, agent["workspace_id"]),
+            "participate",
+        )
         return await messages.deliver_user(
             s.db,
             ctx.root,
@@ -88,16 +95,7 @@ async def inbox_send(
             messages.conversation(ctx.root, "user", target),
             in_reply_to,
         )
-    async with s.db.connection() as conn:
-        box = await (
-            await conn.execute(
-                "SELECT representative_agent_id FROM boxes WHERE id=%s AND leta_id=%s",
-                (target, ctx.root),
-            )
-        ).fetchone()
-    if box:
-        target = cast(UUID, box["representative_agent_id"])
-    recipient = await get_agent(s.db, target)
+    target = cast(UUID, recipient["id"])
     source_kind = "box" if target == ctx.root and agent["box_id"] else "agent"
     source = cast(UUID, agent["box_id"]) if source_kind == "box" else ctx.id
     if in_reply_to:
@@ -292,23 +290,6 @@ async def box_delete(runtime: ToolRuntime[Context, State], box_id: UUID) -> JSON
     )
 
 
-async def open_hitl(ctx: Context, request: hitl.OpenRequest) -> JSON:
-    queues = ctx.services.config["dependencies"]["temporal"]["queues"]
-    start: WithStartWorkflowOperation[HitlRequest, None] = WithStartWorkflowOperation(
-        HitlRequest.run,
-        HitlInput(request=request, bridge_queue=queues["leta_bridge"]),
-        id=f"hitl/{request.id}",
-        task_queue=queues["leta"],
-        id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
-    )
-    return await ctx.services.temporal.execute_update_with_start_workflow(  # pyright: ignore[reportUnknownMemberType]  # Upstream SDK has an untyped overload or kwargs.
-        HitlRequest.open,
-        request,
-        start_workflow_operation=start,
-        id=request_hash(request).hex(),
-    )
-
-
 @tool
 async def hitl_ask(
     runtime: ToolRuntime[Context, State],
@@ -318,8 +299,10 @@ async def hitl_ask(
 ) -> JSON:
     """Ask any current workspace member; the answer arrives later in your inbox."""
     ctx = runtime.context
-    return await open_hitl(
-        ctx,
+    from ..worker import submit_hitl
+
+    return await submit_hitl(
+        ctx.services,
         hitl.OpenRequest(
             id=request_id(runtime),
             requester_agent_id=ctx.id,
@@ -341,8 +324,10 @@ async def hitl_request(
 ) -> JSON:
     """Request storage access for root and its Leti. Pending or accepted is not yet granted."""
     ctx = runtime.context
-    return await open_hitl(
-        ctx,
+    from ..worker import submit_hitl
+
+    return await submit_hitl(
+        ctx.services,
         hitl.OpenRequest(
             id=request_id(runtime),
             requester_agent_id=ctx.id,
@@ -355,15 +340,12 @@ async def hitl_request(
 
 
 async def own_hitl(ctx: Context, id: UUID) -> dict[str, JSON]:
-    request = await hitl.get(ctx.services.db, id)
-    owner = await get_agent(ctx.services.db, UUID(str(request["requester_agent_id"])))
-    if (
-        owner["leta_id"] != ctx.root
-        or ctx.agent["box_id"] is not None
-        and owner["id"] != ctx.id
-    ):
-        raise PermissionError("request belongs to another agent")
-    return request
+    return await hitl.get(
+        ctx.services.db,
+        id,
+        root=ctx.root,
+        requester=ctx.id if ctx.agent["box_id"] is not None else None,
+    )
 
 
 @tool
@@ -447,37 +429,18 @@ async def leti_hitl_list(
 async def change_schedule(
     runtime: ToolRuntime[Context, State], change: schedules.Change
 ) -> JSON:
-    ctx = runtime.context
-    queues = ctx.services.config["dependencies"]["temporal"]["queues"]
-    start: WithStartWorkflowOperation[ScheduleChanges, None] = (
-        WithStartWorkflowOperation(
-            ScheduleChanges.run,
-            ScheduleInput(
-                schedule_id=change.schedule_id, bridge_queue=queues["leta_bridge"]
-            ),
-            id=f"schedule-changes/{change.schedule_id}",
-            task_queue=queues["leta"],
-            id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
-        )
-    )
-    return await ctx.services.temporal.execute_update_with_start_workflow(  # pyright: ignore[reportUnknownMemberType]  # Upstream SDK has an untyped overload or kwargs.
-        ScheduleChanges.change,
-        change,
-        id=request_hash(change).hex(),
-        start_workflow_operation=start,
-    )
+    from ..worker import submit_schedule
+
+    return await submit_schedule(runtime.context.services, change)
 
 
 async def own_schedule(ctx: Context, id: UUID) -> dict[str, JSON]:
-    value = await schedules.get(ctx.services.db, id)
-    creator = await get_agent(ctx.services.db, UUID(str(value["creator_agent_id"])))
-    if (
-        creator["leta_id"] != ctx.root
-        or ctx.agent["box_id"] is not None
-        and creator["id"] != ctx.id
-    ):
-        raise PermissionError("schedule belongs to another agent")
-    return value
+    return await schedules.get(
+        ctx.services.db,
+        id,
+        root=ctx.root,
+        creator=ctx.id if ctx.agent["box_id"] is not None else None,
+    )
 
 
 @tool("schedule_create")
@@ -499,7 +462,7 @@ async def root_schedule_create(
     id = request_id(runtime)
     target = ctx.id
     if target_box_id:
-        box = await boxes.get(ctx.services.db, ctx.root, str(target_box_id))
+        box = await boxes.identity(ctx.services.db, ctx.root, target_box_id)
         target = UUID(str(box["representative_agent_id"]))
     return await change_schedule(
         runtime,
@@ -707,7 +670,7 @@ async def file_list(
     depth: Annotated[int, Field(ge=1, le=10)] = 1,
 ) -> JSON:
     """List files and directories; /mnt lists accessible storages."""
-    vfs = session(runtime).vfs
+    vfs = (await session(runtime)).vfs
     if file_path(path) == "/mnt":
         return {
             "items": [
@@ -728,7 +691,7 @@ async def file_read(
     start_line: Annotated[int, Field(ge=1)] = 1,
 ) -> JSON:
     """Read a text window, image preview or uploaded-document artifacts; follow returned continuations."""
-    vfs = session(runtime).vfs
+    vfs = (await session(runtime)).vfs
     metadata = await vfs.stat(file_path(path))
     media = str(metadata.extra.get("media_type", ""))
     if media and not (
@@ -742,8 +705,9 @@ async def file_read(
     lines = data.decode().splitlines()
     text = "\n".join(
         f"{i + 1}: {text}"
-        for i, text in enumerate(lines)
-        if start_line <= i + 1 < start_line + 200
+        for i, text in enumerate(
+            lines[start_line - 1 : start_line + 199], start_line - 1
+        )
     )
     return {
         "content": text[:16000],
@@ -762,7 +726,7 @@ async def file_write(
     """Create text; overwrite=true replaces the entire file. Use file_edit for partial changes."""
     token = current_operation.set(request_id(runtime))
     try:
-        await session(runtime).vfs.dispatch(
+        await (await session(runtime)).vfs.dispatch(
             "write_text", scope(path), content=content, overwrite=overwrite
         )
     finally:
@@ -781,7 +745,7 @@ async def file_edit(
     """Replace literal text; exactly one match unless replace_all=true. Empty new_text deletes the match."""
     token = current_operation.set(request_id(runtime))
     try:
-        await session(runtime).vfs.dispatch(
+        await (await session(runtime)).vfs.dispatch(
             "edit_text",
             scope(path),
             old_text=old_text,
@@ -800,13 +764,29 @@ async def file_semantic_search(
     paths: Annotated[list[str] | None, Field(max_length=5)] = None,
 ) -> JSON:
     """Find passages by meaning; use shell search for exact text."""
-    results: list[JSON] = []
-    for item in paths or ["~"]:
-        result, _ = await session(runtime).vfs.dispatch(
-            "semantic_search", scope(item), query=query
-        )
-        results.append(cast(JSON, result))
-    return {"results": results}
+    vfs = (await session(runtime)).vfs
+
+    async def search(item: str) -> JSON:
+        result, _ = await vfs.dispatch("semantic_search", scope(item), query=query)
+        return cast(JSON, result)
+
+    ctx = runtime.context
+    with propagate_attributes(
+        session_id=str(ctx.id),
+        metadata={
+            "workspace_id": str(ctx.agent["workspace_id"]),
+            "agent_id": str(ctx.id),
+            "leta_id": str(ctx.root),
+            "run_id": str(ctx.run_id),
+            **({"box_id": str(ctx.agent["box_id"])} if ctx.agent["box_id"] else {}),
+        },
+        as_baggage=True,
+    ):
+        return {
+            "results": list(
+                await asyncio.gather(*(search(item) for item in paths or ["~"]))
+            )
+        }
 
 
 @tool
@@ -814,13 +794,13 @@ async def exec_shell(
     runtime: ToolRuntime[Context, State], command: str, cwd: str = "~"
 ) -> JSON:
     """Run supported shell commands and pipelines over workspace files; no host programs or network."""
-    return await shell(session(runtime), command, cwd=file_path(cwd))
+    return await shell(await session(runtime), command, cwd=file_path(cwd))
 
 
 @tool
 async def exec_python(runtime: ToolRuntime[Context, State], code: str) -> JSON:
     """Run Python calculations and file transformations; no packages, network or state across calls."""
-    return await shell(session(runtime), code, runtime="monty")
+    return await shell(await session(runtime), code, runtime="monty")
 
 
 def tools(*, root: bool) -> list[BaseTool]:

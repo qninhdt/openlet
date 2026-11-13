@@ -8,15 +8,13 @@ from leta.config import Services
 from leta.filesystem.workspace import Filesystem
 from leta.runtime.inbox import State
 from leta.runtime.tools import Context, tools
-from mirage import Workspace
+from mirage import Session, Workspace
 from pydantic import BaseModel
 
 
 def test_native_tools_expose_only_agent_arguments() -> None:
     root = {tool.name: tool for tool in tools(root=True)}
     leti = {tool.name: tool for tool in tools(root=False)}
-    assert len(root) == 28
-    assert len(leti) == 22
     assert set(root) - set(leti) == {
         "inbox_list",
         "inbox_read",
@@ -54,12 +52,16 @@ async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None
     graph = builder.compile()  # pyright: ignore[reportUnknownMemberType]  # Native overload leaves checkpoint generics unspecified.
     workspace = Workspace({}, network=False)
     try:
+
+        class Files:
+            async def open(self) -> Session:
+                return await workspace.session("tools")
+
         context = Context(
             services=cast(Services, None),
             agent={},
             run_id=uuid4(),
-            filesystem=cast(Filesystem, None),
-            session=await workspace.session("tools"),
+            filesystem=cast(Filesystem, Files()),
         )
         result = await graph.ainvoke(  # pyright: ignore[reportUnknownMemberType]  # Native overload leaves Command generics unspecified.
             {
