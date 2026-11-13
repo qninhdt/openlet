@@ -244,18 +244,14 @@ class ListStoragesResponse(_message.Message):
     def __init__(self, storages: _Optional[_Iterable[_Union[Storage, _Mapping]]] = ..., next_page_token: _Optional[str] = ...) -> None: ...
 
 class UpdateStorageRequest(_message.Message):
-    __slots__ = ("workspace_id", "storage_id", "name", "visibility", "request_id")
+    __slots__ = ("workspace_id", "storage_id", "name")
     WORKSPACE_ID_FIELD_NUMBER: _ClassVar[int]
     STORAGE_ID_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
-    VISIBILITY_FIELD_NUMBER: _ClassVar[int]
-    REQUEST_ID_FIELD_NUMBER: _ClassVar[int]
     workspace_id: str
     storage_id: str
     name: str
-    visibility: StorageVisibility
-    request_id: str
-    def __init__(self, workspace_id: _Optional[str] = ..., storage_id: _Optional[str] = ..., name: _Optional[str] = ..., visibility: _Optional[_Union[StorageVisibility, str]] = ..., request_id: _Optional[str] = ...) -> None: ...
+    def __init__(self, workspace_id: _Optional[str] = ..., storage_id: _Optional[str] = ..., name: _Optional[str] = ...) -> None: ...
 
 class SetStorageAccessRequest(_message.Message):
     __slots__ = ("workspace_id", "storage_id", "actor", "role")

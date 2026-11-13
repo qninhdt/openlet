@@ -104,7 +104,7 @@ func (s *Server) DeleteWorkspace(ctx context.Context, r *pb.WorkspaceRequest) (*
 	if err != nil {
 		return nil, err
 	}
-	_, err = s.Temporal.ExecuteWorkflow(ctx, client.StartWorkflowOptions{ID: "delete-workspace/" + r.WorkspaceId, TaskQueue: s.Queue, WorkflowIDConflictPolicy: enums.WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING, WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE}, DeleteWorkspace, r.WorkspaceId)
+	_, err = s.Temporal.ExecuteWorkflow(ctx, client.StartWorkflowOptions{ID: "delete-workspace/" + r.WorkspaceId, TaskQueue: s.Queue, WorkflowIDConflictPolicy: enums.WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING, WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE}, DeleteWorkspace, s.cleanupInput(r.WorkspaceId))
 	return w, err
 }
 func (s *Server) CreateWorkspace(ctx context.Context, r *pb.CreateWorkspaceRequest) (*pb.Workspace, error) {
@@ -120,7 +120,7 @@ func (s *Server) CreateWorkspace(ctx context.Context, r *pb.CreateWorkspaceReque
 		return nil, err
 	}
 	hash := sha256.Sum256(raw)
-	input := ProvisionInput{UserID: r.OwnerUserId, WorkspaceID: uuid.NewString(), SharedStorageID: uuid.NewString(), SharedRootID: uuid.NewString(), PrivateStorageID: uuid.NewString(), PrivateRootID: uuid.NewString(), Name: r.Name, Request: r, Quota: s.Settings.DefaultQuotaBytes}
+	input := ProvisionInput{LetFSQueue: s.Queues.LetFS, UserID: r.OwnerUserId, WorkspaceID: uuid.NewString(), SharedStorageID: uuid.NewString(), SharedRootID: uuid.NewString(), PrivateStorageID: uuid.NewString(), PrivateRootID: uuid.NewString(), Name: r.Name, Request: r, Quota: s.Settings.DefaultQuotaBytes}
 	run, err := s.Temporal.ExecuteWorkflow(ctx, client.StartWorkflowOptions{ID: "create-workspace/" + r.RequestId + "/" + hex.EncodeToString(hash[:]), TaskQueue: s.Queue, WorkflowIDConflictPolicy: enums.WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING, WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE}, ProvisionWorkspace, input)
 	if err != nil {
 		return nil, err

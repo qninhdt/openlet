@@ -8,7 +8,6 @@ import (
 	az "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/google/uuid"
 	sdk "github.com/qninhdt/openlet/packages/sdk-go"
-	fs "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/letfs/v1"
 	pb "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/platform/v1"
 	enums "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/activity"
@@ -16,8 +15,6 @@ import (
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/metadata"
 )
 
 type ProvisionInput struct {
@@ -25,6 +22,7 @@ type ProvisionInput struct {
 	AvatarURL                                                                                                       *string
 	Request                                                                                                         *pb.CreateWorkspaceRequest
 	Quota                                                                                                           int64
+	LetFSQueue                                                                                                      string
 }
 type ProvisionResult struct {
 	User      *pb.User
@@ -32,7 +30,11 @@ type ProvisionResult struct {
 	Existing  bool
 	ZedToken  string
 }
-type MemberStorageInput struct{ WorkspaceID, UserID, StorageID, RootID, ZedToken string }
+type DeleteWorkspaceInput struct {
+	WorkspaceID     string
+	LetFSQueue      string
+	LetaBridgeQueue string
+}
 
 func RegisterWorker(w worker.Worker, s *Server) {
 	w.RegisterWorkflow(ProvisionWorkspace)
@@ -40,10 +42,10 @@ func RegisterWorker(w worker.Worker, s *Server) {
 	w.RegisterWorkflow(DeleteWorkspace)
 	w.RegisterWorkflow(Maintenance)
 	w.RegisterActivityWithOptions(s.admitWorkspace, activity.RegisterOptions{Name: "AdmitWorkspace"})
-	w.RegisterActivityWithOptions(s.provisionWorkspaceResources, activity.RegisterOptions{Name: "ProvisionWorkspaceResources"})
+	w.RegisterActivityWithOptions(s.provisionWorkspaceAccess, activity.RegisterOptions{Name: "ProvisionWorkspaceAccess"})
 	w.RegisterActivityWithOptions(s.activateWorkspace, activity.RegisterOptions{Name: "ActivateWorkspace"})
-	w.RegisterActivityWithOptions(s.provisionMemberStorage, activity.RegisterOptions{Name: "ProvisionMemberStorageResources"})
-	w.RegisterActivityWithOptions(s.deleteWorkspaceResources, activity.RegisterOptions{Name: "DeleteWorkspaceResources"})
+	w.RegisterActivityWithOptions(s.revokeWorkspaceAccess, activity.RegisterOptions{Name: "RevokeWorkspaceAccess"})
+	w.RegisterActivityWithOptions(s.deleteWorkspaceRecord, activity.RegisterOptions{Name: "DeleteWorkspaceRecord"})
 	w.RegisterActivityWithOptions(s.maintenance, activity.RegisterOptions{Name: "PlatformMaintenance"})
 }
 func activityContext(ctx workflow.Context) workflow.Context {
@@ -58,7 +60,11 @@ func ProvisionWorkspace(ctx workflow.Context, in ProvisionInput) (*ProvisionResu
 	if result.Existing {
 		return &result, nil
 	}
-	if err := workflow.ExecuteActivity(ctx, "ProvisionWorkspaceResources", in).Get(ctx, &result.ZedToken); err != nil {
+	if err := workflow.ExecuteActivity(ctx, "ProvisionWorkspaceAccess", in).Get(ctx, &result.ZedToken); err != nil {
+		return nil, err
+	}
+	storageCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{TaskQueue: in.LetFSQueue, StartToCloseTimeout: 2 * time.Minute, RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 10}})
+	if err := workflow.ExecuteActivity(storageCtx, "ProvisionInitialStorages", sdk.InitialStoragesInput{WorkspaceID: in.WorkspaceID, UserID: in.UserID, SharedStorageID: in.SharedStorageID, SharedRootID: in.SharedRootID, PrivateStorageID: in.PrivateStorageID, PrivateRootID: in.PrivateRootID, Quota: in.Quota, ZedToken: result.ZedToken}).Get(ctx, nil); err != nil {
 		return nil, err
 	}
 	if err := workflow.ExecuteActivity(ctx, "ActivateWorkspace", in.WorkspaceID).Get(ctx, &result.Workspace); err != nil {
@@ -66,11 +72,39 @@ func ProvisionWorkspace(ctx workflow.Context, in ProvisionInput) (*ProvisionResu
 	}
 	return &result, nil
 }
-func ProvisionMemberStorage(ctx workflow.Context, in MemberStorageInput) error {
-	return workflow.ExecuteActivity(activityContext(ctx), "ProvisionMemberStorageResources", in).Get(ctx, nil)
+func ProvisionMemberStorage(ctx workflow.Context, in sdk.MemberStorageInput) error {
+	ctx = workflow.WithActivityOptions(activityContext(ctx), workflow.ActivityOptions{TaskQueue: in.LetFSQueue, StartToCloseTimeout: 2 * time.Minute, RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 10}})
+	return workflow.ExecuteActivity(ctx, "ProvisionMemberStorageResources", in).Get(ctx, nil)
 }
-func DeleteWorkspace(ctx workflow.Context, id string) error {
-	return workflow.ExecuteActivity(activityContext(ctx), "DeleteWorkspaceResources", id).Get(ctx, nil)
+func DeleteWorkspace(ctx workflow.Context, in DeleteWorkspaceInput) error {
+	if _, err := uuid.Parse(in.WorkspaceID); err != nil || in.LetFSQueue == "" || in.LetaBridgeQueue == "" {
+		return temporal.NewNonRetryableApplicationError("workspace ID and owning cleanup queues are required", "invalid_cleanup_input", nil)
+	}
+	options := workflow.ActivityOptions{StartToCloseTimeout: 2 * time.Minute, RetryPolicy: &temporal.RetryPolicy{InitialInterval: time.Second, MaximumInterval: time.Minute}}
+	local := workflow.WithActivityOptions(ctx, options)
+	payload := sdk.WorkspaceCleanup{WorkspaceID: in.WorkspaceID}
+	if err := workflow.ExecuteActivity(local, "RevokeWorkspaceAccess", payload).Get(ctx, nil); err != nil {
+		return err
+	}
+	options.TaskQueue = in.LetFSQueue
+	storage := workflow.ExecuteActivity(workflow.WithActivityOptions(ctx, options), "DeleteWorkspaceStorage", payload)
+	options.TaskQueue = in.LetaBridgeQueue
+	options.StartToCloseTimeout = 24 * time.Hour
+	options.HeartbeatTimeout = 30 * time.Second
+	agents := workflow.ExecuteActivity(workflow.WithActivityOptions(ctx, options), "DeleteWorkspaceAgents", payload)
+	storageErr := storage.Get(ctx, nil)
+	var recordErr error
+	if storageErr == nil {
+		recordErr = workflow.ExecuteActivity(local, "DeleteWorkspaceRecord", payload).Get(ctx, nil)
+	}
+	agentsErr := agents.Get(ctx, nil)
+	if storageErr != nil {
+		return storageErr
+	}
+	if recordErr != nil {
+		return recordErr
+	}
+	return agentsErr
 }
 func Maintenance(ctx workflow.Context) error {
 	return workflow.ExecuteActivity(activityContext(ctx), "PlatformMaintenance").Get(ctx, nil)
@@ -113,72 +147,30 @@ func (s *Server) admitWorkspace(ctx context.Context, in ProvisionInput) (*Provis
 	}
 	return out, tx.Commit(ctx)
 }
-func (s *Server) provisionWorkspaceResources(ctx context.Context, in ProvisionInput) (string, error) {
-	if err := s.write(ctx, sdk.Touch(sdk.Relation("workspace", in.WorkspaceID, "owner", "user", in.UserID, ""))); err != nil {
-		return "", err
-	}
-	if _, err := s.LetFS.ProvisionWorkspaceStorage(ctx, &fs.ProvisionWorkspaceStorageRequest{WorkspaceId: in.WorkspaceID, QuotaBytes: in.Quota}); err != nil {
-		return "", err
-	}
-	if _, err := s.LetFS.CreateStorage(ctx, &fs.CreateStorageRequest{WorkspaceId: in.WorkspaceID, StorageId: in.SharedStorageID, RootNodeId: in.SharedRootID, Owner: &fs.StorageOwnership{Owner: &fs.StorageOwnership_WorkspaceId{WorkspaceId: in.WorkspaceID}}, Name: "Shared", Visibility: fs.StorageVisibility_STORAGE_VISIBILITY_PUBLIC, AllowBlobFiles: true, AllowIndexing: true}); err != nil {
-		return "", err
-	}
-	var headers metadata.MD
-	_, err := s.LetFS.CreateStorage(ctx, &fs.CreateStorageRequest{WorkspaceId: in.WorkspaceID, StorageId: in.PrivateStorageID, RootNodeId: in.PrivateRootID, Owner: &fs.StorageOwnership{Owner: &fs.StorageOwnership_UserId{UserId: in.UserID}}, Name: "Personal", Visibility: fs.StorageVisibility_STORAGE_VISIBILITY_PRIVATE, AllowBlobFiles: true, AllowIndexing: true}, grpc.Header(&headers))
+func (s *Server) provisionWorkspaceAccess(ctx context.Context, in ProvisionInput) (string, error) {
+	result, err := s.Graph.WriteRelationships(ctx, &az.WriteRelationshipsRequest{Updates: []*az.RelationshipUpdate{sdk.Touch(sdk.Relation("workspace", in.WorkspaceID, "owner", "user", in.UserID, ""))}})
 	if err != nil {
 		return "", err
 	}
-	return headers.Get("x-openlet-zed-token")[0], nil
+	return result.WrittenAt.Token, nil
 }
 func (s *Server) activateWorkspace(ctx context.Context, id string) (*pb.Workspace, error) {
 	return scanWorkspace(s.DB.QueryRow(ctx, `UPDATE workspaces SET state='active' WHERE id=$1 AND state IN ('provisioning','active') RETURNING id,name,state,created_at`, id))
 }
 func (s *Server) provisionMember(ctx context.Context, workspace, user, request, token string) error {
-	_, err := s.Temporal.ExecuteWorkflow(ctx, client.StartWorkflowOptions{ID: "member-storage/" + workspace + "/" + user + "/" + request, TaskQueue: s.Queue, WorkflowIDConflictPolicy: enums.WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING, WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE}, ProvisionMemberStorage, MemberStorageInput{ZedToken: token, WorkspaceID: workspace, UserID: user, StorageID: uuid.NewString(), RootID: uuid.NewString()})
+	_, err := s.Temporal.ExecuteWorkflow(ctx, client.StartWorkflowOptions{ID: "member-storage/" + workspace + "/" + user + "/" + request, TaskQueue: s.Queue, WorkflowIDConflictPolicy: enums.WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING, WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE}, ProvisionMemberStorage, sdk.MemberStorageInput{LetFSQueue: s.Queues.LetFS, ZedToken: token, WorkspaceID: workspace, UserID: user, StorageID: uuid.NewString(), RootID: uuid.NewString()})
 	return err
 }
-func (s *Server) provisionMemberStorage(ctx context.Context, in MemberStorageInput) error {
-	if in.ZedToken != "" {
-		md, _ := metadata.FromIncomingContext(ctx)
-		md = md.Copy()
-		md.Set("x-openlet-zed-token", in.ZedToken)
-		ctx = metadata.NewIncomingContext(ctx, md)
-		ctx = metadata.AppendToOutgoingContext(ctx, "x-openlet-zed-token", in.ZedToken)
-	}
-	check, err := s.Graph.CheckPermission(ctx, &az.CheckPermissionRequest{Resource: sdk.Object("workspace", in.WorkspaceID), Permission: "participate", Subject: sdk.Subject(sdk.Actor{Type: "user", ID: in.UserID}), Consistency: sdk.Consistency(ctx)})
-	if err != nil {
-		return err
-	}
-	if check.Permissionship != az.CheckPermissionResponse_PERMISSIONSHIP_HAS_PERMISSION {
-		return nil
-	}
-	request := &fs.ListStoragesRequest{WorkspaceId: in.WorkspaceID, OwnedOnly: true, PageSize: 100}
-	for {
-		rows, err := s.Storages.ListStorages(sdk.WithActor(ctx, sdk.Actor{Type: "user", ID: in.UserID}), request)
-		if err != nil {
-			return err
-		}
-		if len(rows.Storages) > 0 {
-			return nil
-		}
-		if rows.NextPageToken == "" {
-			break
-		}
-		request.PageToken = rows.NextPageToken
-	}
-	_, err = s.LetFS.CreateStorage(ctx, &fs.CreateStorageRequest{WorkspaceId: in.WorkspaceID, StorageId: in.StorageID, RootNodeId: in.RootID, Owner: &fs.StorageOwnership{Owner: &fs.StorageOwnership_UserId{UserId: in.UserID}}, Name: "Personal", Visibility: fs.StorageVisibility_STORAGE_VISIBILITY_PRIVATE, AllowBlobFiles: true, AllowIndexing: true})
+func (s *Server) revokeWorkspaceAccess(ctx context.Context, in sdk.WorkspaceCleanup) error {
+	_, err := s.Graph.DeleteRelationships(ctx, &az.DeleteRelationshipsRequest{RelationshipFilter: &az.RelationshipFilter{ResourceType: "workspace", OptionalResourceId: in.WorkspaceID}})
 	return err
 }
-func (s *Server) deleteWorkspaceResources(ctx context.Context, id string) error {
-	// Revocation precedes storage cleanup; no Leta runtime barrier.
-	if _, err := s.Graph.DeleteRelationships(ctx, &az.DeleteRelationshipsRequest{RelationshipFilter: &az.RelationshipFilter{ResourceType: "workspace", OptionalResourceId: id}}); err != nil {
-		return err
-	}
-	if _, err := s.LetFS.DeleteWorkspaceStorage(ctx, &fs.WorkspaceStorageRequest{WorkspaceId: id}); err != nil {
-		return err
-	}
-	_, err := s.DB.Exec(ctx, `DELETE FROM workspaces WHERE id=$1 AND state='deleting'`, id)
+func (s *Server) deleteWorkspaceRecord(ctx context.Context, in sdk.WorkspaceCleanup) error {
+	_, err := s.DB.Exec(ctx, `DELETE FROM workspaces WHERE id=$1 AND state='deleting'`, in.WorkspaceID)
 	return err
+}
+func (s *Server) cleanupInput(id string) DeleteWorkspaceInput {
+	return DeleteWorkspaceInput{WorkspaceID: id, LetFSQueue: s.Queues.LetFS, LetaBridgeQueue: s.Queues.LetaBridge}
 }
 func (s *Server) maintenance(ctx context.Context) error {
 	if _, err := s.DB.Exec(ctx, `DELETE FROM idempotency_keys WHERE (caller,method,key) IN (SELECT caller,method,key FROM idempotency_keys WHERE expires_at<now() LIMIT 500)`); err != nil {
@@ -205,7 +197,7 @@ func (s *Server) maintenance(ctx context.Context) error {
 		return err
 	}
 	for _, id := range ids {
-		if _, err = s.Temporal.ExecuteWorkflow(ctx, client.StartWorkflowOptions{ID: "delete-workspace/" + id, TaskQueue: s.Queue, WorkflowIDConflictPolicy: enums.WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING, WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE}, DeleteWorkspace, id); err != nil {
+		if _, err = s.Temporal.ExecuteWorkflow(ctx, client.StartWorkflowOptions{ID: "delete-workspace/" + id, TaskQueue: s.Queue, WorkflowIDConflictPolicy: enums.WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING, WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE}, DeleteWorkspace, s.cleanupInput(id)); err != nil {
 			return err
 		}
 	}

@@ -1,18 +1,21 @@
 # Temporal workflows
 
-Temporal uses PostgreSQL persistence and native SDK workers. Each owner registers its workflows/activities on the queues in the common YAML; no shared workflow implementation or callback bridge exists.
+Temporal uses PostgreSQL persistence and native SDK workers. Each owner registers its workflows/activities on the queues in the common YAML; the shared workspace-cleanup activities use a minimal JSON payload.
 
 | Owner | Workflow | Behavior |
 |---|---|---|
-| Platform | ProvisionWorkspace | Admit SQL identity/workspace, provision graph/storage, activate workspace |
-| Platform | ProvisionMemberStorage | Create a member's storage through LetFS when needed |
-| Platform | DeleteWorkspace | Revoke workspace graph, delete owning LetFS storage data, delete workspace row |
+| Platform | ProvisionWorkspace | Platform admits SQL identity/workspace and provisions access; LetFS provisions initial storages; Platform activates |
+| Platform | ProvisionMemberStorage | LetFS worker checks membership and provisions personal storage in-process when needed |
+| Platform | DeleteWorkspace | Revoke access, dispatch LetFS storage and Leta agent cleanup, delete workspace row after storage ACK, await agents |
 | Platform | Maintenance | Expire receipts/invitations and redispatch admitted deletion |
-| LetFS | UpdateStorageVisibility | Converge local metadata and canonical graph visibility |
 | LetFS | ProcessBlob | CPU ParseBlob when required, then IO EnrichAndIndex; report failure after retries |
 | LetFS | Maintenance | Expire uploads, recover pending dispatch and collect unreferenced objects/index points |
 
-Platform and LetFS maintenance run from native Schedules with overlap Skip. Workspace deletion has no Leta stop/ACK dependency.
+Platform and LetFS maintenance run from native Schedules with overlap Skip. Storage cleanup and Platform SQL deletion do not wait for Leta. The workflow remains pending until agent cleanup completes, including while Leta is offline. Both cleanup activities use native retries without a total lifetime limit. Storage visibility is immutable after provisioning; UpdateStorage only renames.
+
+Workspace cleanup activities receive `{"workspace_id":"<uuid>"}`. Platform routes `DeleteWorkspaceStorage` to the LetFS queue and `DeleteWorkspaceAgents` to `leta_bridge`. Provisioning activities also run on the owning LetFS worker and call feature functions directly.
+
+Deployment changes workflow command sequences and inputs. Drain or recover old open executions before switching workers; do not deploy the new definitions into old running histories or reset an existing namespace. Leta cutover uses a fresh database and namespace as described in its plan.
 
 Processing carries file ID/content version and queue/timeout settings. Contents, manifests and chunks stay outside Temporal history. CPU downloads a signed source, converts it in a bounded subprocess with offline assets and publishes a manifest through LetFS. Text artifacts stay in PostgreSQL; binary artifacts upload through signed S3 URLs. IO enriches leaves then folder READMEs, indexes full text with ancestor context, and marks readiness only after acknowledged Qdrant writes.
 

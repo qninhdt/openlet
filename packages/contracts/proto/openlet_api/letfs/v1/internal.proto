@@ -23,7 +23,6 @@ service LetFSInternalService {
  rpc ProvisionWorkspaceStorage(ProvisionWorkspaceStorageRequest) returns (WorkspaceStorage);
  rpc CreateStorage(CreateStorageRequest) returns (Storage);
  rpc DeleteStorage(StorageRequest) returns (google.protobuf.Empty);
- rpc DeleteWorkspaceStorage(WorkspaceStorageRequest) returns (google.protobuf.Empty);
  rpc GetProcessingInput(ProcessingRequest) returns (ProcessingInput);
  rpc PrepareArtifactUploads(PrepareArtifactUploadsRequest) returns (PrepareArtifactUploadsResponse);
  rpc CommitParse(CommitParseRequest) returns (ProcessingOutcome);

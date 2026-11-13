@@ -12,7 +12,6 @@ import (
 func TestStorageMutationRequests(t *testing.T) {
 	id := uuid.NewString()
 	name := "Renamed"
-	visibility := pb.StorageVisibility_STORAGE_VISIBILITY_PUBLIC
 	for _, tc := range []struct {
 		name    string
 		request proto.Message
@@ -22,10 +21,8 @@ func TestStorageMutationRequests(t *testing.T) {
 		{"artifact path is not a name", &pb.EnrichedArtifact{NodeId: id, Name: proto.String("folder/revenue.md")}, false},
 		{"artifact name is not empty", &pb.EnrichedArtifact{NodeId: id, Name: proto.String("")}, false},
 		{"artifact name rejects NUL", &pb.EnrichedArtifact{NodeId: id, Name: proto.String("bad\x00.md")}, false},
-		{"rename without receipt", &pb.UpdateStorageRequest{WorkspaceId: id, StorageId: id, Name: &name}, true},
+		{"rename without receipt", &pb.UpdateStorageRequest{WorkspaceId: id, StorageId: id, Name: name}, true},
 		{"empty update", &pb.UpdateStorageRequest{WorkspaceId: id, StorageId: id}, false},
-		{"visibility without identity", &pb.UpdateStorageRequest{WorkspaceId: id, StorageId: id, Visibility: &visibility}, false},
-		{"visibility workflow identity", &pb.UpdateStorageRequest{WorkspaceId: id, StorageId: id, Visibility: &visibility, RequestId: id}, true},
 		{"multipart checksums", &pb.SignPartsRequest{WorkspaceId: id, StorageId: id, UploadId: id, Parts: []*pb.UploadPart{{PartNumber: 1, Checksum: "AAAAAA=="}}}, true},
 		{"duplicate part", &pb.SignPartsRequest{WorkspaceId: id, StorageId: id, UploadId: id, Parts: []*pb.UploadPart{{PartNumber: 1, Checksum: "AAAAAA=="}, {PartNumber: 1, Checksum: "AAAAAA=="}}}, false},
 	} {

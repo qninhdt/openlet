@@ -117,33 +117,6 @@ func (s *Server) DeleteStorage(ctx context.Context, r *pb.StorageRequest) (*empt
 	}
 	return &emptypb.Empty{}, tx.Commit(ctx)
 }
-func (s *Server) DeleteWorkspaceStorage(ctx context.Context, r *pb.WorkspaceStorageRequest) (*emptypb.Empty, error) {
-	rows, err := s.DB.Query(ctx, `SELECT id FROM storages WHERE workspace_id=$1`, r.WorkspaceId)
-	if err != nil {
-		return nil, err
-	}
-	ids := []string{}
-	for rows.Next() {
-		var id string
-		if err = rows.Scan(&id); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	rows.Close()
-	if err = rows.Err(); err != nil {
-		return nil, err
-	}
-	// Native graph delete filters accept one resource ID; lifecycle is not a per-node hot path.
-	for _, id := range ids {
-		if _, err = s.Graph.DeleteRelationships(ctx, &az.DeleteRelationshipsRequest{RelationshipFilter: &az.RelationshipFilter{ResourceType: "storage", OptionalResourceId: id}}); err != nil {
-			return nil, err
-		}
-	}
-	_, err = s.DB.Exec(ctx, `DELETE FROM workspace_storage WHERE workspace_id=$1`, r.WorkspaceId)
-	return &emptypb.Empty{}, err
-}
 func (s *Server) GetWorkspaceStorage(ctx context.Context, r *pb.WorkspaceStorageRequest) (*pb.WorkspaceStorage, error) {
 	if _, err := s.check(ctx, "workspace", r.WorkspaceId, "view"); err != nil {
 		return nil, err

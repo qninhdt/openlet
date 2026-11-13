@@ -11,7 +11,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	sdk "github.com/qninhdt/openlet/packages/sdk-go"
-	fs "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/letfs/v1"
 	pb "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/platform/v1"
 	"go.temporal.io/sdk/client"
 	"google.golang.org/grpc/codes"
@@ -36,9 +35,8 @@ type Server struct {
 	Graph    *authzed.Client
 	Clerk    *user.Client
 	Temporal client.Client
-	LetFS    fs.LetFSInternalServiceClient
-	Storages fs.LetFSServiceClient
 	Settings Settings
+	Queues   sdk.Queues
 	Queue    string
 }
 

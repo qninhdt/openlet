@@ -30,6 +30,7 @@ dependencies:
       letfs: openlet-letfs
       ingest_cpu: openlet-ingest-cpu
       ingest_io: openlet-ingest-io
+      leta_bridge: openlet-leta-bridge
   spicedb:
     address: spicedb:50051
     tls: false

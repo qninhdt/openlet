@@ -51,11 +51,6 @@ class LetFSInternalServiceStub:
                 request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.StorageRequest.SerializeToString,
                 response_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
                 _registered_method=True)
-        self.DeleteWorkspaceStorage = channel.unary_unary(
-                '/openlet.letfs.v1.LetFSInternalService/DeleteWorkspaceStorage',
-                request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.WorkspaceStorageRequest.SerializeToString,
-                response_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
-                _registered_method=True)
         self.GetProcessingInput = channel.unary_unary(
                 '/openlet.letfs.v1.LetFSInternalService/GetProcessingInput',
                 request_serializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.ProcessingRequest.SerializeToString,
@@ -104,12 +99,6 @@ class LetFSInternalServiceServicer:
         raise NotImplementedError('Method not implemented!')
 
     def DeleteStorage(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def DeleteWorkspaceStorage(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -167,11 +156,6 @@ def add_LetFSInternalServiceServicer_to_server(servicer, server):
             'DeleteStorage': grpc.unary_unary_rpc_method_handler(
                     servicer.DeleteStorage,
                     request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.StorageRequest.FromString,
-                    response_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
-            ),
-            'DeleteWorkspaceStorage': grpc.unary_unary_rpc_method_handler(
-                    servicer.DeleteWorkspaceStorage,
-                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.WorkspaceStorageRequest.FromString,
                     response_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
             ),
             'GetProcessingInput': grpc.unary_unary_rpc_method_handler(
@@ -285,33 +269,6 @@ class LetFSInternalService:
             target,
             '/openlet.letfs.v1.LetFSInternalService/DeleteStorage',
             openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.StorageRequest.SerializeToString,
-            google_dot_protobuf_dot_empty__pb2.Empty.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def DeleteWorkspaceStorage(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/openlet.letfs.v1.LetFSInternalService/DeleteWorkspaceStorage',
-            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.WorkspaceStorageRequest.SerializeToString,
             google_dot_protobuf_dot_empty__pb2.Empty.FromString,
             options,
             channel_credentials,

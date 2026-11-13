@@ -39,6 +39,7 @@ dependencies:
       ingest_io: openlet-ingest-io
       leta: openlet-leta
       leta_runtime: openlet-leta-runtime
+      leta_bridge: openlet-leta-bridge
   spicedb:
     address: spicedb:50051
     tls: false

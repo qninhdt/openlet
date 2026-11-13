@@ -1161,12 +1161,11 @@ const file_openlet_api_letfs_v1_internal_proto_rawDesc = "" +
 	"\afile_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x06fileId\x12!\n" +
 	"\aversion\x18\x02 \x01(\x03B\a\xbaH\x04\"\x02 \x00R\aversion\x12&\n" +
 	"\n" +
-	"error_code\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\terrorCode2\xdb\a\n" +
+	"error_code\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\terrorCode2\xfe\x06\n" +
 	"\x14LetFSInternalService\x12s\n" +
 	"\x19ProvisionWorkspaceStorage\x122.openlet.letfs.v1.ProvisionWorkspaceStorageRequest\x1a\".openlet.letfs.v1.WorkspaceStorage\x12R\n" +
 	"\rCreateStorage\x12&.openlet.letfs.v1.CreateStorageRequest\x1a\x19.openlet.letfs.v1.Storage\x12I\n" +
-	"\rDeleteStorage\x12 .openlet.letfs.v1.StorageRequest\x1a\x16.google.protobuf.Empty\x12[\n" +
-	"\x16DeleteWorkspaceStorage\x12).openlet.letfs.v1.WorkspaceStorageRequest\x1a\x16.google.protobuf.Empty\x12\\\n" +
+	"\rDeleteStorage\x12 .openlet.letfs.v1.StorageRequest\x1a\x16.google.protobuf.Empty\x12\\\n" +
 	"\x12GetProcessingInput\x12#.openlet.letfs.v1.ProcessingRequest\x1a!.openlet.letfs.v1.ProcessingInput\x12{\n" +
 	"\x16PrepareArtifactUploads\x12/.openlet.letfs.v1.PrepareArtifactUploadsRequest\x1a0.openlet.letfs.v1.PrepareArtifactUploadsResponse\x12X\n" +
 	"\vCommitParse\x12$.openlet.letfs.v1.CommitParseRequest\x1a#.openlet.letfs.v1.ProcessingOutcome\x12b\n" +
@@ -1211,9 +1210,8 @@ var file_openlet_api_letfs_v1_internal_proto_goTypes = []any{
 	(*emptypb.Empty)(nil),                    // 20: google.protobuf.Empty
 	(*TextContent)(nil),                      // 21: openlet.letfs.v1.TextContent
 	(*StorageRequest)(nil),                   // 22: openlet.letfs.v1.StorageRequest
-	(*WorkspaceStorageRequest)(nil),          // 23: openlet.letfs.v1.WorkspaceStorageRequest
-	(*WorkspaceStorage)(nil),                 // 24: openlet.letfs.v1.WorkspaceStorage
-	(*Storage)(nil),                          // 25: openlet.letfs.v1.Storage
+	(*WorkspaceStorage)(nil),                 // 23: openlet.letfs.v1.WorkspaceStorage
+	(*Storage)(nil),                          // 24: openlet.letfs.v1.Storage
 }
 var file_openlet_api_letfs_v1_internal_proto_depIdxs = []int32{
 	16, // 0: openlet.letfs.v1.CreateStorageRequest.owner:type_name -> openlet.letfs.v1.StorageOwnership
@@ -1235,25 +1233,23 @@ var file_openlet_api_letfs_v1_internal_proto_depIdxs = []int32{
 	0,  // 16: openlet.letfs.v1.LetFSInternalService.ProvisionWorkspaceStorage:input_type -> openlet.letfs.v1.ProvisionWorkspaceStorageRequest
 	1,  // 17: openlet.letfs.v1.LetFSInternalService.CreateStorage:input_type -> openlet.letfs.v1.CreateStorageRequest
 	22, // 18: openlet.letfs.v1.LetFSInternalService.DeleteStorage:input_type -> openlet.letfs.v1.StorageRequest
-	23, // 19: openlet.letfs.v1.LetFSInternalService.DeleteWorkspaceStorage:input_type -> openlet.letfs.v1.WorkspaceStorageRequest
-	2,  // 20: openlet.letfs.v1.LetFSInternalService.GetProcessingInput:input_type -> openlet.letfs.v1.ProcessingRequest
-	7,  // 21: openlet.letfs.v1.LetFSInternalService.PrepareArtifactUploads:input_type -> openlet.letfs.v1.PrepareArtifactUploadsRequest
-	11, // 22: openlet.letfs.v1.LetFSInternalService.CommitParse:input_type -> openlet.letfs.v1.CommitParseRequest
-	13, // 23: openlet.letfs.v1.LetFSInternalService.CommitEnrichment:input_type -> openlet.letfs.v1.CommitEnrichmentRequest
-	2,  // 24: openlet.letfs.v1.LetFSInternalService.CompleteIndex:input_type -> openlet.letfs.v1.ProcessingRequest
-	14, // 25: openlet.letfs.v1.LetFSInternalService.FailProcessing:input_type -> openlet.letfs.v1.FailProcessingRequest
-	24, // 26: openlet.letfs.v1.LetFSInternalService.ProvisionWorkspaceStorage:output_type -> openlet.letfs.v1.WorkspaceStorage
-	25, // 27: openlet.letfs.v1.LetFSInternalService.CreateStorage:output_type -> openlet.letfs.v1.Storage
-	20, // 28: openlet.letfs.v1.LetFSInternalService.DeleteStorage:output_type -> google.protobuf.Empty
-	20, // 29: openlet.letfs.v1.LetFSInternalService.DeleteWorkspaceStorage:output_type -> google.protobuf.Empty
-	5,  // 30: openlet.letfs.v1.LetFSInternalService.GetProcessingInput:output_type -> openlet.letfs.v1.ProcessingInput
-	9,  // 31: openlet.letfs.v1.LetFSInternalService.PrepareArtifactUploads:output_type -> openlet.letfs.v1.PrepareArtifactUploadsResponse
-	3,  // 32: openlet.letfs.v1.LetFSInternalService.CommitParse:output_type -> openlet.letfs.v1.ProcessingOutcome
-	3,  // 33: openlet.letfs.v1.LetFSInternalService.CommitEnrichment:output_type -> openlet.letfs.v1.ProcessingOutcome
-	3,  // 34: openlet.letfs.v1.LetFSInternalService.CompleteIndex:output_type -> openlet.letfs.v1.ProcessingOutcome
-	3,  // 35: openlet.letfs.v1.LetFSInternalService.FailProcessing:output_type -> openlet.letfs.v1.ProcessingOutcome
-	26, // [26:36] is the sub-list for method output_type
-	16, // [16:26] is the sub-list for method input_type
+	2,  // 19: openlet.letfs.v1.LetFSInternalService.GetProcessingInput:input_type -> openlet.letfs.v1.ProcessingRequest
+	7,  // 20: openlet.letfs.v1.LetFSInternalService.PrepareArtifactUploads:input_type -> openlet.letfs.v1.PrepareArtifactUploadsRequest
+	11, // 21: openlet.letfs.v1.LetFSInternalService.CommitParse:input_type -> openlet.letfs.v1.CommitParseRequest
+	13, // 22: openlet.letfs.v1.LetFSInternalService.CommitEnrichment:input_type -> openlet.letfs.v1.CommitEnrichmentRequest
+	2,  // 23: openlet.letfs.v1.LetFSInternalService.CompleteIndex:input_type -> openlet.letfs.v1.ProcessingRequest
+	14, // 24: openlet.letfs.v1.LetFSInternalService.FailProcessing:input_type -> openlet.letfs.v1.FailProcessingRequest
+	23, // 25: openlet.letfs.v1.LetFSInternalService.ProvisionWorkspaceStorage:output_type -> openlet.letfs.v1.WorkspaceStorage
+	24, // 26: openlet.letfs.v1.LetFSInternalService.CreateStorage:output_type -> openlet.letfs.v1.Storage
+	20, // 27: openlet.letfs.v1.LetFSInternalService.DeleteStorage:output_type -> google.protobuf.Empty
+	5,  // 28: openlet.letfs.v1.LetFSInternalService.GetProcessingInput:output_type -> openlet.letfs.v1.ProcessingInput
+	9,  // 29: openlet.letfs.v1.LetFSInternalService.PrepareArtifactUploads:output_type -> openlet.letfs.v1.PrepareArtifactUploadsResponse
+	3,  // 30: openlet.letfs.v1.LetFSInternalService.CommitParse:output_type -> openlet.letfs.v1.ProcessingOutcome
+	3,  // 31: openlet.letfs.v1.LetFSInternalService.CommitEnrichment:output_type -> openlet.letfs.v1.ProcessingOutcome
+	3,  // 32: openlet.letfs.v1.LetFSInternalService.CompleteIndex:output_type -> openlet.letfs.v1.ProcessingOutcome
+	3,  // 33: openlet.letfs.v1.LetFSInternalService.FailProcessing:output_type -> openlet.letfs.v1.ProcessingOutcome
+	25, // [25:34] is the sub-list for method output_type
+	16, // [16:25] is the sub-list for method input_type
 	16, // [16:16] is the sub-list for extension type_name
 	16, // [16:16] is the sub-list for extension extendee
 	0,  // [0:16] is the sub-list for field type_name

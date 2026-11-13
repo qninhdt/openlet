@@ -8,8 +8,6 @@ import (
 
 	"go.temporal.io/api/serviceerror"
 
-	az "github.com/authzed/authzed-go/proto/authzed/api/v1"
-	sdk "github.com/qninhdt/openlet/packages/sdk-go"
 	pb "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/letfs/v1"
 	enums "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/activity"
@@ -19,9 +17,6 @@ import (
 	"go.temporal.io/sdk/workflow"
 )
 
-type VisibilityInput struct {
-	Request *pb.UpdateStorageRequest
-}
 type ProcessInput struct {
 	FileID               string `json:"file_id"`
 	Version              int64  `json:"version"`
@@ -33,32 +28,13 @@ type ProcessInput struct {
 }
 
 func RegisterWorker(w worker.Worker, s *Server) {
-	w.RegisterWorkflow(UpdateStorageVisibility)
 	w.RegisterWorkflow(ProcessBlob)
 	w.RegisterWorkflow(Maintenance)
-	w.RegisterActivityWithOptions(s.updateVisibility, activity.RegisterOptions{Name: "UpdateStorageVisibilityResources"})
+	w.RegisterActivityWithOptions(s.provisionInitialStorages, activity.RegisterOptions{Name: "ProvisionInitialStorages"})
+	w.RegisterActivityWithOptions(s.provisionMemberStorage, activity.RegisterOptions{Name: "ProvisionMemberStorageResources"})
+	w.RegisterActivityWithOptions(s.deleteWorkspaceStorage, activity.RegisterOptions{Name: "DeleteWorkspaceStorage"})
 	w.RegisterActivityWithOptions(s.reportProcessingFailure, activity.RegisterOptions{Name: "ReportProcessingFailure"})
 	w.RegisterActivityWithOptions(s.maintenance, activity.RegisterOptions{Name: "LetFSMaintenance"})
-}
-func UpdateStorageVisibility(ctx workflow.Context, in VisibilityInput) (*pb.Storage, error) {
-	ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{StartToCloseTimeout: time.Minute, RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 10}})
-	var result pb.Storage
-	err := workflow.ExecuteActivity(ctx, "UpdateStorageVisibilityResources", in).Get(ctx, &result)
-	return &result, err
-}
-func (s *Server) updateVisibility(ctx context.Context, in VisibilityInput) (*pb.Storage, error) {
-	r := in.Request
-	out, err := scanStorage(s.DB.QueryRow(ctx, `UPDATE storages SET name=coalesce($3,name),visibility=$4 WHERE id=$1 AND workspace_id=$2 RETURNING `+storageColumns, r.StorageId, r.WorkspaceId, r.Name, visibilityName(*r.Visibility)))
-	if err != nil {
-		return nil, err
-	}
-	rel := sdk.Relation("storage", r.StorageId, "public_workspace", "workspace", r.WorkspaceId, "")
-	update := sdk.Delete(rel)
-	if out.Visibility == pb.StorageVisibility_STORAGE_VISIBILITY_PUBLIC {
-		update = sdk.Touch(rel)
-	}
-	_, err = s.Graph.WriteRelationships(ctx, &az.WriteRelationshipsRequest{Updates: []*az.RelationshipUpdate{update}})
-	return out, err
 }
 func ProcessBlob(ctx workflow.Context, in ProcessInput) error {
 	options := workflow.ActivityOptions{StartToCloseTimeout: time.Duration(in.ParseTimeoutSeconds) * time.Second, TaskQueue: in.CPUQueue, HeartbeatTimeout: 30 * time.Second, RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 3}}

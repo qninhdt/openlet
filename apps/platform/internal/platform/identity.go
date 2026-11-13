@@ -34,7 +34,7 @@ func (s *Server) Onboard(ctx context.Context, _ *emptypb.Empty) (*pb.User, error
 	if name == "" {
 		name = "User"
 	}
-	input := ProvisionInput{Subject: subject, UserID: uuid.NewString(), WorkspaceID: uuid.NewString(), SharedStorageID: uuid.NewString(), SharedRootID: uuid.NewString(), PrivateStorageID: uuid.NewString(), PrivateRootID: uuid.NewString(), Name: name + "'s workspace", DisplayName: name, AvatarURL: profile.ImageURL, Quota: s.Settings.DefaultQuotaBytes}
+	input := ProvisionInput{LetFSQueue: s.Queues.LetFS, Subject: subject, UserID: uuid.NewString(), WorkspaceID: uuid.NewString(), SharedStorageID: uuid.NewString(), SharedRootID: uuid.NewString(), PrivateStorageID: uuid.NewString(), PrivateRootID: uuid.NewString(), Name: name + "'s workspace", DisplayName: name, AvatarURL: profile.ImageURL, Quota: s.Settings.DefaultQuotaBytes}
 	h := sha256.Sum256([]byte(subject))
 	run, err := s.Temporal.ExecuteWorkflow(ctx, client.StartWorkflowOptions{ID: "onboard/" + hex.EncodeToString(h[:]), TaskQueue: s.Queue, WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE, WorkflowIDConflictPolicy: enums.WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING}, ProvisionWorkspace, input)
 	if err != nil {

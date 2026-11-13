@@ -30,12 +30,9 @@ message StorageRequest { string workspace_id = 1 [(buf.validate.field).string.uu
 message ListStoragesRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; int32 page_size = 2 [(buf.validate.field).int32 = {gte: 0, lte: 100}]; string page_token = 3; optional StorageVisibility visibility = 4; bool owned_only = 5; }
 message ListStoragesResponse { repeated Storage storages = 1; string next_page_token = 2; }
 message UpdateStorageRequest {
-  option (buf.validate.message).cel = {id: "storage.update", message: "name or visibility is required; visibility requires request_id", expression: "(has(this.name) || has(this.visibility)) && (!has(this.visibility) || this.request_id != '')"};
-  string workspace_id = 1 [(buf.validate.field).string.uuid = true];
-  string storage_id = 2 [(buf.validate.field).string.uuid = true];
-  optional string name = 3 [(buf.validate.field).string.min_len = 1];
-  optional StorageVisibility visibility = 4 [(buf.validate.field).enum = {defined_only: true, not_in: 0}];
-  string request_id = 5 [(buf.validate.field) = {ignore: IGNORE_IF_ZERO_VALUE, string: {uuid: true}}];
+ string workspace_id = 1 [(buf.validate.field).string.uuid = true];
+ string storage_id = 2 [(buf.validate.field).string.uuid = true];
+ string name = 3 [(buf.validate.field).string = {min_len: 1, max_bytes: 255}];
 }
 message SetStorageAccessRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; ActorRef actor = 3 [(buf.validate.field).required = true]; StorageRole role = 4 [(buf.validate.field).enum = {in: [2,3]}]; }
 message RevokeStorageAccessRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; ActorRef actor = 3 [(buf.validate.field).required = true]; }

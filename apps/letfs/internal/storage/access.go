@@ -2,16 +2,11 @@ package storage
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"io"
 
 	az "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	sdk "github.com/qninhdt/openlet/packages/sdk-go"
 	pb "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/letfs/v1"
-	enums "go.temporal.io/api/enums/v1"
-	"go.temporal.io/sdk/client"
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -111,22 +106,5 @@ func (s *Server) UpdateStorage(ctx context.Context, r *pb.UpdateStorageRequest) 
 	if err != nil {
 		return nil, err
 	}
-	if r.Visibility == nil {
-		return scanStorage(s.DB.QueryRow(ctx, `UPDATE storages SET name=$3 WHERE id=$1 AND workspace_id=$2 RETURNING `+storageColumns, r.StorageId, r.WorkspaceId, r.Name))
-	}
-	if err = s.storageParent(ctx, r.WorkspaceId, r.StorageId); err != nil {
-		return nil, err
-	}
-	raw, err := proto.MarshalOptions{Deterministic: true}.Marshal(r)
-	if err != nil {
-		return nil, err
-	}
-	h := sha256.Sum256(raw)
-	run, err := s.Temporal.ExecuteWorkflow(ctx, client.StartWorkflowOptions{ID: "storage-visibility/" + r.RequestId + "/" + hex.EncodeToString(h[:]), TaskQueue: s.Queues.LetFS, WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY, WorkflowIDConflictPolicy: enums.WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING}, UpdateStorageVisibility, VisibilityInput{Request: r})
-	if err != nil {
-		return nil, err
-	}
-	var result pb.Storage
-	err = run.Get(ctx, &result)
-	return &result, err
+	return scanStorage(s.DB.QueryRow(ctx, `UPDATE storages SET name=$3 WHERE id=$1 AND workspace_id=$2 RETURNING `+storageColumns, r.StorageId, r.WorkspaceId, r.Name))
 }

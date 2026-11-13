@@ -17,7 +17,6 @@ import (
 	"github.com/clerk/clerk-sdk-go/v2/user"
 	"github.com/qninhdt/openlet/apps/platform/internal/platform"
 	sdk "github.com/qninhdt/openlet/packages/sdk-go"
-	fs "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/letfs/v1"
 	pb "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/platform/v1"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -52,11 +51,11 @@ func run() error {
 	var postgres sdk.Postgres
 	var graph sdk.SpiceDB
 	var temporal sdk.Temporal
-	var target, clerkURL, clerkKey string
+	var clerkURL, clerkKey string
 	for _, v := range []struct {
 		path   string
 		target any
-	}{{"runtime", &runtime}, {"telemetry", &telemetry}, {"grpc", &g}, {"services.platform", &settings}, {"dependencies.postgres", &postgres}, {"dependencies.spicedb", &graph}, {"dependencies.temporal", &temporal}, {"services.letfs.grpc_target", &target}, {"auth.clerk.api_url", &clerkURL}, {"auth.clerk.secret_key", &clerkKey}} {
+	}{{"runtime", &runtime}, {"telemetry", &telemetry}, {"grpc", &g}, {"services.platform", &settings}, {"dependencies.postgres", &postgres}, {"dependencies.spicedb", &graph}, {"dependencies.temporal", &temporal}, {"auth.clerk.api_url", &clerkURL}, {"auth.clerk.secret_key", &clerkKey}} {
 		if err = c.Section(v.path, v.target); err != nil {
 			return err
 		}
@@ -88,11 +87,6 @@ func run() error {
 		return err
 	}
 	defer az.Close()
-	connection, err := sdk.Dial(target)
-	if err != nil {
-		return err
-	}
-	defer connection.Close()
 	tracing, err := temporalotel.NewTracingInterceptor(temporalotel.TracerOptions{DisableBaggage: true, TextMapPropagator: propagation.TraceContext{}})
 	if err != nil {
 		return err
@@ -110,7 +104,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	app := &platform.Server{DB: db, Graph: az, Clerk: user.NewClient(&clerk.ClientConfig{BackendConfig: clerk.BackendConfig{URL: &clerkURL, Key: &key, HTTPClient: &http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)}}}), Temporal: tc, LetFS: fs.NewLetFSInternalServiceClient(connection), Storages: fs.NewLetFSServiceClient(connection), Settings: settings, Queue: temporal.Queues.Platform}
+	app := &platform.Server{DB: db, Graph: az, Clerk: user.NewClient(&clerk.ClientConfig{BackendConfig: clerk.BackendConfig{URL: &clerkURL, Key: &key, HTTPClient: &http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)}}}), Temporal: tc, Settings: settings, Queue: temporal.Queues.Platform, Queues: temporal.Queues}
 	w := worker.New(tc, temporal.Queues.Platform, worker.Options{WorkerStopTimeout: time.Duration(runtime.ShutdownTimeoutSeconds) * time.Second})
 	platform.RegisterWorker(w, app)
 	if err = w.Start(); err != nil {

@@ -23,7 +23,6 @@ const (
 	LetFSInternalService_ProvisionWorkspaceStorage_FullMethodName = "/openlet.letfs.v1.LetFSInternalService/ProvisionWorkspaceStorage"
 	LetFSInternalService_CreateStorage_FullMethodName             = "/openlet.letfs.v1.LetFSInternalService/CreateStorage"
 	LetFSInternalService_DeleteStorage_FullMethodName             = "/openlet.letfs.v1.LetFSInternalService/DeleteStorage"
-	LetFSInternalService_DeleteWorkspaceStorage_FullMethodName    = "/openlet.letfs.v1.LetFSInternalService/DeleteWorkspaceStorage"
 	LetFSInternalService_GetProcessingInput_FullMethodName        = "/openlet.letfs.v1.LetFSInternalService/GetProcessingInput"
 	LetFSInternalService_PrepareArtifactUploads_FullMethodName    = "/openlet.letfs.v1.LetFSInternalService/PrepareArtifactUploads"
 	LetFSInternalService_CommitParse_FullMethodName               = "/openlet.letfs.v1.LetFSInternalService/CommitParse"
@@ -39,7 +38,6 @@ type LetFSInternalServiceClient interface {
 	ProvisionWorkspaceStorage(ctx context.Context, in *ProvisionWorkspaceStorageRequest, opts ...grpc.CallOption) (*WorkspaceStorage, error)
 	CreateStorage(ctx context.Context, in *CreateStorageRequest, opts ...grpc.CallOption) (*Storage, error)
 	DeleteStorage(ctx context.Context, in *StorageRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
-	DeleteWorkspaceStorage(ctx context.Context, in *WorkspaceStorageRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	GetProcessingInput(ctx context.Context, in *ProcessingRequest, opts ...grpc.CallOption) (*ProcessingInput, error)
 	PrepareArtifactUploads(ctx context.Context, in *PrepareArtifactUploadsRequest, opts ...grpc.CallOption) (*PrepareArtifactUploadsResponse, error)
 	CommitParse(ctx context.Context, in *CommitParseRequest, opts ...grpc.CallOption) (*ProcessingOutcome, error)
@@ -80,16 +78,6 @@ func (c *letFSInternalServiceClient) DeleteStorage(ctx context.Context, in *Stor
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
 	err := c.cc.Invoke(ctx, LetFSInternalService_DeleteStorage_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *letFSInternalServiceClient) DeleteWorkspaceStorage(ctx context.Context, in *WorkspaceStorageRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(emptypb.Empty)
-	err := c.cc.Invoke(ctx, LetFSInternalService_DeleteWorkspaceStorage_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +151,6 @@ type LetFSInternalServiceServer interface {
 	ProvisionWorkspaceStorage(context.Context, *ProvisionWorkspaceStorageRequest) (*WorkspaceStorage, error)
 	CreateStorage(context.Context, *CreateStorageRequest) (*Storage, error)
 	DeleteStorage(context.Context, *StorageRequest) (*emptypb.Empty, error)
-	DeleteWorkspaceStorage(context.Context, *WorkspaceStorageRequest) (*emptypb.Empty, error)
 	GetProcessingInput(context.Context, *ProcessingRequest) (*ProcessingInput, error)
 	PrepareArtifactUploads(context.Context, *PrepareArtifactUploadsRequest) (*PrepareArtifactUploadsResponse, error)
 	CommitParse(context.Context, *CommitParseRequest) (*ProcessingOutcome, error)
@@ -187,9 +174,6 @@ func (UnimplementedLetFSInternalServiceServer) CreateStorage(context.Context, *C
 }
 func (UnimplementedLetFSInternalServiceServer) DeleteStorage(context.Context, *StorageRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteStorage not implemented")
-}
-func (UnimplementedLetFSInternalServiceServer) DeleteWorkspaceStorage(context.Context, *WorkspaceStorageRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method DeleteWorkspaceStorage not implemented")
 }
 func (UnimplementedLetFSInternalServiceServer) GetProcessingInput(context.Context, *ProcessingRequest) (*ProcessingInput, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetProcessingInput not implemented")
@@ -279,24 +263,6 @@ func _LetFSInternalService_DeleteStorage_Handler(srv interface{}, ctx context.Co
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(LetFSInternalServiceServer).DeleteStorage(ctx, req.(*StorageRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _LetFSInternalService_DeleteWorkspaceStorage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(WorkspaceStorageRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(LetFSInternalServiceServer).DeleteWorkspaceStorage(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: LetFSInternalService_DeleteWorkspaceStorage_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(LetFSInternalServiceServer).DeleteWorkspaceStorage(ctx, req.(*WorkspaceStorageRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -427,10 +393,6 @@ var LetFSInternalService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteStorage",
 			Handler:    _LetFSInternalService_DeleteStorage_Handler,
-		},
-		{
-			MethodName: "DeleteWorkspaceStorage",
-			Handler:    _LetFSInternalService_DeleteWorkspaceStorage_Handler,
 		},
 		{
 			MethodName: "GetProcessingInput",

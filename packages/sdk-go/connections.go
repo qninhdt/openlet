@@ -42,6 +42,7 @@ type Queues struct {
 	IngestIO    string `yaml:"ingest_io"`
 	Leta        string `yaml:"leta"`
 	LetaRuntime string `yaml:"leta_runtime"`
+	LetaBridge  string `yaml:"leta_bridge"`
 }
 type Temporal struct {
 	Address   string `yaml:"address"`
