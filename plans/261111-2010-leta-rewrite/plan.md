@@ -2,12 +2,12 @@
 
 Lượt tiếp theo: [inference, runtime, prompts và compaction](../261114-0035-inference-prompts-compaction/plan.md),
 đối chiếu đủ 17 commit `d69be44..026c044`. Plan mới gom thiết kế/commit boundaries,
-proposal bị supersede và verification còn lại; chưa application migration.
+proposal bị supersede; runtime migration đã triển khai, xem [acceptance mới](../261114-0035-inference-prompts-compaction/execution.md).
 Đã chốt separate model/effort fields, manual enrichment output mode, runtime
 reuse/benchmark, Leti box context và native LF variables/composition/publication.
 LangChain invalid-tool-call issue chỉ TODO; **Playground/evaluation hoãn**.
 
-Cập nhật 2026-11-13. Đang implementation theo thiết kế đã duyệt: native runtime/API/worker, domain schema, Cloud observability và delivery wiring đã có code. Xem [execution record](execution.md) cho commit boundaries, checks và Redis/Mirage integration sau allowlist đã được người dùng duyệt; shared API E2E 5/5 đã pass; Cloud/deploy acceptance còn lại. Inventory 6 workflows/22 activities/3 queues, schema 11 bảng/86 cột giữ nguyên. Archive chỉ context; không dùng skills/subagents.
+Cập nhật 2026-11-14. Đã triển khai theo thiết kế đã duyệt: native runtime/API/worker, domain schema, Cloud observability và delivery wiring đã có code. Xem [execution record](execution.md) cho commit boundaries, checks và Redis/Mirage integration sau allowlist đã được người dùng duyệt; shared API E2E 5/5 đã pass; Cloud prompts/demo/traces/logs đã kiểm; metrics còn chờ Cloud giải phóng series cũ, xem acceptance mới. Inventory 6 workflows/22 activities/3 queues, schema 11 bảng/86 cột giữ nguyên. Archive chỉ context; không dùng skills/subagents.
 
 ## Kết quả, phạm vi và ràng buộc
 
@@ -21,7 +21,7 @@ Thuật ngữ inbox thống nhất: **inbox notification**, gọi ngắn là **n
 
 ## Tài liệu owning
 
-- [LiteLLM/inference đã chốt 2026-11-14](inference.md): một public model group cho nhiều provider, Leta list từ gateway, custom cost mỗi deployment; Langfuse giữ task model/parameters, LiteLLM giữ deployments/capabilities/prices/retry. Thay catalog/effort-suffix proposal cũ; chưa implementation migration.
+- [LiteLLM/inference đã chốt 2026-11-14](inference.md): một public model group cho nhiều provider, Leta list từ gateway, custom cost mỗi deployment; Langfuse giữ task model/parameters, LiteLLM giữ deployments/capabilities/prices/retry. Thay catalog/effort-suffix proposal cũ; migration đã triển khai.
 - [Kiến trúc và folder structure](design.md).
 - [Hệ thống/components/infra đã chốt](system.md): một image/hai process roles, ba native worker queues, datastores, Compose/migrations, config/secrets, concurrency/shutdown, backup và telemetry/CI.
 - [Box/Leti đã chốt](boxes.md): immutable communication graph, representative, independent lazy agents và shared box home; Temporal home-first rồi atomic active graph/receipt, giữ home_node_id NOT NULL và bỏ SQL boxes.provisioning.
@@ -33,7 +33,7 @@ Thuật ngữ inbox thống nhất: **inbox notification**, gọi ngắn là **n
 - [Scheduler đề xuất cuối](scheduler.md): native at/interval/calendar, SQL definitions, serialized changes và inbox delivery; khác archive ở one-shot/backfill, metadata-only edit và finalized receipts. Không thêm scheduler service/tables/activities.
 - [HITL đề xuất cuối](hitl.md): async ask/approval; ask được chọn bất kỳ human owner/member cùng workspace, không phụ thuộc agent owner hoặc agent.use; private access dùng explicit storage/recipient. Finite workflow và result delivery, không grant ledger hoặc schema mới.
 - [Agent tool contracts/token budget đã rà lại](tools.md), [TypeScript draft](tool-contracts.ts): 28 tools root/22 Leti, chỉ giữ descriptions cần thiết; catalogs khoảng 2,7k/2,1k reference tokens, tính riêng system prompt/context. Agent chọn ý định; system quản lý versions/timeouts/page budgets/form IDs/canonical timing. Full input JSON schemas, output shapes và counts; chưa phải provider billing hoặc implementation.
-- [Inbox JSON Schema đã chốt](inbox-input.schema.json) và [field audit/batching](prompting.md#inbox-input--json-đã-chốt): root nhận notifications, dùng inbox_read; Leti nhận bounded full-message batches; input/tool results dùng cùng item shapes. JSON trước mắt, English text renderer có thể thêm sau; chưa implementation.
+- [Inbox JSON Schema đã chốt](inbox-input.schema.json) và [field audit/batching](prompting.md#inbox-input--json-đã-chốt): root nhận notifications, dùng inbox_read; Leti nhận bounded full-message batches; input/tool results dùng cùng item shapes. JSON đã triển khai; English text renderer có thể thêm sau khi cần.
 - [Prompting draft để review](prompting.md): khái niệm sản phẩm, nghiên cứu prompt Anthropic/OpenAI/Google, nguyên văn common/root/Leti/compaction, composition và behavior eval cases. System prompt blocks vẫn chưa duyệt.
 - [Observability toàn hệ thống đã chốt](../261113-1335-system-observability/plan.md): OTel/Alloy → Grafana Cloud Free Mimir/Tempo/Loki và Langfuse Cloud Free; local chỉ Alloy, native LangGraph callback mỗi lượt graph, session theo agent, native prompt cache/version/link. Demo 1–10 testers, evaluation deferred; không đổi domain/Temporal đã chốt, integration đã có code.
 - [API/streaming/replay đã chốt](streaming.md): HTTP JSON + SSE, AG-UI event schema, Redis native cursor/suffix và batch folding; fresh browser chỉ tải current state + một trang previews, không replay whole run. Full tool results đọc theo entry, canonical refresh sửa missed notifications; không SQL writes theo token.
@@ -80,14 +80,14 @@ Các hàng này là approved design, không phải báo cáo app mới đã ch�
 
 ### Quyết định kiến trúc còn mở
 
-Các phần domain/runtime/infra đã duyệt không còn decision cần mở lại trước implementation. Mirage/cache dùng native default 600 giây, không giữ số 5 giây tự đặt. Theo yêu cầu mới 2026-11-13, [prompting](prompting.md) đang ở draft để review; integration OTel/Alloy + Grafana Cloud Free + Langfuse Cloud Free đã được người dùng chốt; evaluation deferred. Prompt content vẫn draft chưa được duyệt. Những deliverables và số đo bên dưới là công việc triển khai; explicit deferrals không tự thành feature bắt buộc.
+Các phần domain/runtime/infra đã duyệt không còn decision cần mở lại trước implementation. Mirage/cache dùng native default 600 giây, không giữ số 5 giây tự đặt. [Prompting](prompting.md) đã compile/chạy thật và publish production version1; OTel/Alloy + Grafana Cloud Free + Langfuse Cloud Free đã triển khai; evaluation deferred. Những deliverables và số đo bên dưới là công việc triển khai; explicit deferrals không tự thành feature bắt buộc.
 
 ### Chưa thảo luận chi tiết
 
 | Phần                               | Mức còn thiếu                                                                                                                                                                                                                                                                                                   |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Prompting                          | Inbox JSON schemas/batching/tool outputs đã chốt. Common/root/Leti/compaction instruction drafts và behavior cases vẫn chờ review nội dung, chưa provider eval. Không đổi các business rules đã chốt                                                                                                            |
-| Observability và prompt management | [Thiết kế đã chốt](../261113-1335-system-observability/plan.md) theo Cloud Free/demo 1–10 testers: native callback, shared OTel/default exporter, prompt cache/labels/version/link; evaluation hoãn toàn bộ. Integration đã duyệt, chưa runtime proof                                                           |
+| Observability và prompt management | [Thiết kế đã chốt](../261113-1335-system-observability/plan.md) theo Cloud Free/demo 1–10 testers: native callback, shared OTel/default exporter, prompt cache/labels/version/link; evaluation hoãn toàn bộ. Actual Cloud traces/cost/prompt proof; full metric ingestion chờ head compaction                                                           |
 | Complete HTTP API contract         | Cần viết đủ DTO/errors/pagination/receipt result serialization trước khi code API của từng feature. Đây chủ yếu là cụ thể hóa routes/tool/domain semantics đã duyệt, không bắt người dùng quyết từng field/status hoặc chặn schema/core/Temporal. Chỉ đưa lại decision nếu phát hiện thay đổi product semantics |
 | Concrete operational budgets       | Chưa đủ số runtime slots/pool/host resources, Redis retention, page/output/model limits. Ownership/boundedness đã chốt; cụ thể hóa bằng defaults và focused measurements khi implementation/deploy, không cần mở một kiến trúc mới                                                                              |
 
@@ -95,9 +95,9 @@ Chủ động hoãn/ngoài scope, không phải bị quên: transfer ownership, 
 
 ### Sẵn sàng bắt đầu sau lượt rà soát
 
-Temporal/scheduler/inbox/HITL/Box/Leti/schema/compaction, Mirage/cache, shared cleanup và retention MVP đã chốt; visibility mutation đã cắt. Readiness này áp dụng cho các phần đã duyệt; prompting vẫn draft, observability/prompt management đã duyệt; evaluation deferred, chưa yêu cầu bắt đầu code. Mirage dùng native bounded Redis content/index cache với default 600 giây, lazy mount refresh; bỏ cache-hit remote checks/policy.py và rút đề xuất bỏ cache. MVP không auto-purge durable inbox/public history/archived records; future physical purge/expiry hoãn. Complete HTTP DTO/errors là deliverable cần hoàn thiện trước code API từng feature. Runtime slots, DB pool, page/output/token budgets, Redis suffix caps, timeouts, replay/interoperability checks và native versioning khi có open histories là implementation/verification, không quyết định kiến trúc mới.
+Temporal/scheduler/inbox/HITL/Box/Leti/schema/compaction, Mirage/cache, shared cleanup và retention MVP đã chốt; visibility mutation đã cắt. Implementation theo approved design đã hoàn tất; prompts production đã publish, observability/Cloud acceptance ghi tại execution mới; evaluation deferred. Mirage dùng native bounded Redis content/index cache với default 600 giây, lazy mount refresh; bỏ cache-hit remote checks/policy.py và rút đề xuất bỏ cache. MVP không auto-purge durable inbox/public history/archived records; future physical purge/expiry hoãn. Complete HTTP DTO/errors là deliverable cần hoàn thiện trước code API từng feature. Runtime slots, DB pool, page/output/token budgets, Redis suffix caps, timeouts, replay/interoperability checks và native versioning khi có open histories là implementation/verification, không quyết định kiến trúc mới.
 
-### Chưa implementation hoặc chưa kiểm chứng
+### Giới hạn verification và vận hành
 
 New app Leta, generated Python clients, queue/config/Compose/Envoy/CI wiring, domain/native saver migrations và shared integration đã có code. Shared API E2E đã pass 5/5; Pyright strict bao gồm source/tests, Ruff/format/TypeScript và Go checks pass. Native checkpoint restart/prune, full-stack worker SIGKILL recovery, cache/HITL grant/revoke/mount, duplicate/conflict admission, cancellation/pause/resume/CAN và Langfuse runtime usage/prompt linkage có local proof; giới hạn của từng proof và Cloud/deployment acceptance nằm trong [execution record](execution.md). Capacity, actual Cloud ingestion/usage, restore và cutover cần kiểm trên deployment đích; đây không phải các kiến trúc chưa được duyệt.
 
@@ -114,28 +114,33 @@ Core changes đã được duyệt gồm owning provisioning/cleanup activities,
 
 ## Acceptance
 
-- [ ] Source/tests cũ chỉ context archive; không import/re-export/copy/fallback hoặc restore old suites.
+Checklist implementation đã đối chiếu với source, native runtime proofs và shared
+API E2E. Actual Cloud quota follow-up được theo dõi riêng trong
+[execution mới](../261114-0035-inference-prompts-compaction/execution.md). Không
+coi runtime restart/CAN proof là load test chạy nhiều tháng hoặc full UI test.
+
+- [x] Source/tests cũ chỉ context archive; không import/re-export/copy/fallback hoặc restore old suites.
 - [x] Schema đúng 11 bảng/field audit; root-only fields ở letas, recipient-specific deliveries, scalar type/status; không permission/progress mirrors.
-- [ ] Giữ same-root/box/run FKs, naming/home/order uniqueness và essential CHECK; không cắt constraints để đạt số lượng thấp.
-- [ ] Box home-first qua native CreateDirectories, Temporal giữ returned ID rồi SQL atomic active box/Leti/edges/receipt; home_node_id NOT NULL, box không provisioning row, create không start agents/gửi việc. Retry giữ stable path, root gate ngăn activation sau close; không core node-ID input hoặc orphan framework. Shared home/cross-box containment và route checks giữ đúng.
-- [ ] Runtime luôn bận qua CAN/restart giữ logical run/context/pending work/public history; không slice định kỳ hoặc lifetime reset. Inbox mới không dừng activity; rollover check ở workflow events, native cancellation chờ protected checkpoint/public projection/cleanup trước CAN, không mark UI run cancelled vì rotation.
-- [ ] Mỗi model/tools boundary đã sync checkpoint và hoàn tất public projection gọi native keep_latest trước bước tiếp theo, dưới writer lock; không đợi compaction/activity end hoặc prune khi checkpoint/projection chưa thành công. Latest checkpoint mỗi namespace giữ summary + bounded tail/cursor/continuation và native recovery dependencies; resume không quét public history hoặc thêm summary/progress tables. Compaction đã duyệt; token thresholds cấu hình/tuning khi implementation, không yêu cầu duyệt lại.
-- [ ] Schedule canonical pending command ở Temporal, old finalized receipt chặn stale apply qua CAN; không pending receipt/journal hoặc network trong SQL transaction.
-- [ ] Retry guarantees đúng actual receipt horizon từng service; không exactly-once toàn shell hoặc grant/revoke concurrent.
-- [ ] No bridge-slot cycle; cleanup settle producers/writers/grant effects, không chờ queued HITL delivery/BoxDelete cùng pool.
-- [ ] Core gRPC/actor/resource contracts đúng: Leta ghi/dọn agent.workspace và workspace.agent cùng native graph batch; Platform kiểm workspace active dùng chung; storage/grants LetFS. Không RegisterAgent/UnregisterAgent hoặc adapter còn active; child IO là root actor + enforced box containment.
-- [ ] eligible_actor = participate + agent; không owner-membership gate cho agent hoặc owned_agent. RemoveMember chỉ xóa human membership; human mất quyền, agent giữ quyền theo grants của chính nó, cross-workspace vẫn bị chặn. Agent/workspace delete mới dọn quan hệ thuộc workspace.
-- [ ] HITL addressed human là event identity; ask chọn bất kỳ human workspace owner/member, open/read/answer kiểm current participation + exact recipient, không agent.use hoặc agent owner. Approval apply kiểm current grant rights. Native LetFS requests giữ auth/containment; bounded cached bytes không cần remote authorization lại.
+- [x] Giữ same-root/box/run FKs, naming/home/order uniqueness và essential CHECK; không cắt constraints để đạt số lượng thấp.
+- [x] Box home-first qua native CreateDirectories, Temporal giữ returned ID rồi SQL atomic active box/Leti/edges/receipt; home_node_id NOT NULL, box không provisioning row, create không start agents/gửi việc. Retry giữ stable path, root gate ngăn activation sau close; không core node-ID input hoặc orphan framework. Shared home/cross-box containment và route checks giữ đúng.
+- [x] Runtime luôn bận qua CAN/restart giữ logical run/context/pending work/public history; không slice định kỳ hoặc lifetime reset. Inbox mới không dừng activity; rollover check ở workflow events, native cancellation chờ protected checkpoint/public projection/cleanup trước CAN, không mark UI run cancelled vì rotation.
+- [x] Mỗi model/tools boundary đã sync checkpoint và hoàn tất public projection gọi native keep_latest trước bước tiếp theo, dưới writer lock; không đợi compaction/activity end hoặc prune khi checkpoint/projection chưa thành công. Latest checkpoint mỗi namespace giữ summary + bounded tail/cursor/continuation và native recovery dependencies; resume không quét public history hoặc thêm summary/progress tables. Compaction đã duyệt; token thresholds cấu hình/tuning khi implementation, không yêu cầu duyệt lại.
+- [x] Schedule canonical pending command ở Temporal, old finalized receipt chặn stale apply qua CAN; không pending receipt/journal hoặc network trong SQL transaction.
+- [x] Retry guarantees đúng actual receipt horizon từng service; không exactly-once toàn shell hoặc grant/revoke concurrent.
+- [x] No bridge-slot cycle; cleanup settle producers/writers/grant effects, không chờ queued HITL delivery/BoxDelete cùng pool.
+- [x] Core gRPC/actor/resource contracts đúng: Leta ghi/dọn agent.workspace và workspace.agent cùng native graph batch; Platform kiểm workspace active dùng chung; storage/grants LetFS. Không RegisterAgent/UnregisterAgent hoặc adapter còn active; child IO là root actor + enforced box containment.
+- [x] eligible_actor = participate + agent; không owner-membership gate cho agent hoặc owned_agent. RemoveMember chỉ xóa human membership; human mất quyền, agent giữ quyền theo grants của chính nó, cross-workspace vẫn bị chặn. Agent/workspace delete mới dọn quan hệ thuộc workspace.
+- [x] HITL addressed human là event identity; ask chọn bất kỳ human workspace owner/member, open/read/answer kiểm current participation + exact recipient, không agent.use hoặc agent owner. Approval apply kiểm current grant rights. Native LetFS requests giữ auth/containment; bounded cached bytes không cần remote authorization lại.
 - [x] Tool args chỉ ý định/ngữ nghĩa: không expected_version/timeout_seconds/limit/max_lines/question-option IDs/native timing spec. System normalize một lần, tự giữ time/output/page budgets; native file safety vẫn giữ, không version registry hoặc wrapper compatibility.
 - [x] Model-visible tool names theo `<resource_or_namespace>_<action>`, singular resources và snake_case; tên mới trực tiếp trong 28/22 bindings, không alias tên cũ. Activities/native RPC/archive không đổi theo tool rename.
-- [ ] Shared workspace cleanup: Platform revoke → schedule hai owning activities → storage ACK/xóa SQL không đợi Leta; workflow còn pending khi Leta offline, worker lên dọn tiếp. Go/Python JSON/queue mapping khớp, không pending future bị bỏ hoặc bridge-slot cycle. Không claim physical purge history/checkpoints.
+- [x] Shared workspace cleanup: Platform revoke → schedule hai owning activities → storage ACK/xóa SQL không đợi Leta; workflow còn pending khi Leta offline, worker lên dọn tiếp. Go/Python JSON/queue mapping khớp, không pending future bị bỏ hoặc bridge-slot cycle. Không claim physical purge history/checkpoints.
 - [x] Một home binding, public/shared/private grants discover/mount bằng root actor; refresh sau HITL, không alias toàn home storage để Leti thoát box. Không tự thêm đổi home binding hoặc SQL mount/grant mirror.
-- [ ] Giữ Mirage native fast paths đã duyệt cho lines/head/tail/metrics/literal search và native copy/move/mutations; fallback chỉ khi semantics chưa map được. Box home root path ~/.boxes/<box_id>, child path ~; mount bằng native home_node_id.
+- [x] Giữ Mirage native fast paths đã duyệt cho lines/head/tail/metrics/literal search và native copy/move/mutations; fallback chỉ khi semantics chưa map được. Box home root path ~/.boxes/<box_id>, child path ~; mount bằng native home_node_id.
 - [x] Mọi `file_*`/`exec_*` qua Mirage dispatcher và native Redis content/index cache BOUNDED/default TTL 600; warm hit không remote Stat/auth/version. Custom atomic edit khai báo WRITE, invalidates cache dùng chung với shell/Python. Cache reuse qua batches; external view thay đổi có thể cũ tới TTL, không custom invalidation bus/policy.py.
-- [ ] HTTP JSON + SSE theo streaming.md; AG-UI event schema/direct data + một client adapter, không claim stock HttpAgent/full standard HTTP-binding compatibility. Current authorization, không hidden reasoning hoặc HITL recipient bypass.
-- [ ] Browser mới chỉ current state + một trang history previews có entry/byte budgets rồi live suffix; không load whole logical run/Redis log/checkpoints dù agent chạy nhiều tháng. Detail/history/chat phân trang theo nhu cầu; UI window hữu hạn.
-- [ ] Redis native cursor, suffix/live cùng read path, retention gap resync; chỉ fold adjacent compatible deltas trong batch đọc, không timed merger/full-prefix reconstruction. Tool results là bounded preview/reference, không chunk theo token hoặc gửi trùng full body.
-- [ ] SQL writes ở inbox/domain/model/tool/checkpoint boundaries, không từng provider chunk. Canonical visible-query refresh sửa SQL/Redis gap, không rerun durable effects hoặc thêm outbox/Temporal Updates theo UI refresh.
+- [x] HTTP JSON + SSE theo streaming.md; AG-UI event schema/direct data + một client adapter, không claim stock HttpAgent/full standard HTTP-binding compatibility. Current authorization, không hidden reasoning hoặc HITL recipient bypass.
+- [x] Browser mới chỉ current state + một trang history previews có entry/byte budgets rồi live suffix; không load whole logical run/Redis log/checkpoints dù agent chạy nhiều tháng. Detail/history/chat phân trang theo nhu cầu; UI window hữu hạn.
+- [x] Redis native cursor, suffix/live cùng read path, retention gap resync; chỉ fold adjacent compatible deltas trong batch đọc, không timed merger/full-prefix reconstruction. Tool results là bounded preview/reference, không chunk theo token hoặc gửi trùng full body.
+- [x] SQL writes ở inbox/domain/model/tool/checkpoint boundaries, không từng provider chunk. Canonical visible-query refresh sửa SQL/Redis gap, không rerun durable effects hoặc thêm outbox/Temporal Updates theo UI refresh.
 - [x] Tests từ essential behavior, không test dependency internals/old exact structure; không stack mỗi case hoặc duplicate E2E.
 - [x] Không migration/data cutover nếu chưa backup; không old jobs/data/histories vào namespace/database mới.
 

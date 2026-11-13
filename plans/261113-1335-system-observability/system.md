@@ -1,12 +1,12 @@
 # Monitoring và observability toàn Openlet
 
-Thiết kế được người dùng chốt 2026-11-13, chưa implementation. [Plan/status](plan.md), [Langfuse và prompting](langfuse.md), [feature/source audit](feature-audit.md). Người dùng đã chọn Grafana Cloud Free và Langfuse Cloud Free; defaults cụ thể đo khi triển khai.
+Thiết kế được người dùng chốt 2026-11-13, đã triển khai; [execution mới](../261114-0035-inference-prompts-compaction/execution.md) ghi actual Cloud/demo proof và quota follow-up. [Plan/status](plan.md), [Langfuse và prompting](langfuse.md), [feature/source audit](feature-audit.md). Người dùng đã chọn Grafana Cloud Free và Langfuse Cloud Free; defaults cụ thể đo khi triển khai.
 
 ## 1. Hiện trạng và phần thực sự cần thêm
 
 [Core telemetry](../261111-1727-platform-letfs-rewrite/telemetry.md) đã có một native OTel provider/process, OTLP/gRPC traces + metrics, gRPC/HTTP/S3/Qdrant/pgx/runtime instrumentation, native Temporal propagation/metrics và JSON log correlation. Envoy có tracing/access logs. [Local proof](../reports/implementation-261112-native-telemetry.md) đã thấy parent chains liên service và core vẫn chạy khi collector unavailable.
 
-Chưa có Alloy hoặc Cloud endpoints/dashboards/alerts provisioning trong active deployment. Temporal server template chưa mở native metrics endpoint. Leta mới là accepted design, chưa có active app. Vì thế giữ instrumentation đã có; bổ sung Alloy/Cloud destinations, native dependency scrapes và các AI/domain boundaries mà auto-instrumentation không biết.
+Active demo đã có Alloy, Cloud endpoints, bốn imported dashboards, Temporal native metrics và Leta API/worker. Alert assets có sẵn nhưng chưa activate notification/contact points. Native metric allowlist giới hạn cardinality; full Cloud ingestion còn chờ giải phóng series cũ trong ingester memory. Không thay trace/log sampling để giảm metrics.
 
 Không rewrite handlers để bọc telemetry. Không bổ sung bảng telemetry vào Platform/LetFS/Leta.
 

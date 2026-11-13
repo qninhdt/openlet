@@ -1,14 +1,12 @@
 # Observability toàn Openlet: thiết kế đã chốt
 
-[Plan triển khai tiếp theo 2026-11-14](../261114-0035-inference-prompts-compaction/plan.md)
-gom LiteLLM, cost của LLM/embedding/reranker trong agent/file processing/search,
-runtime optimization, Prompt Config/lifecycle và cache-friendly compaction.
-Chưa migration runtime. Native LF variables/composition, actual Cloud prompt
-publication và flat config defaults/DB override đã chốt; **Playground/evaluation
-hoãn**. Thử prompt qua Openlet trước promote label; không public gateway/LLM
-connection lúc này.
-
-Đang implementation cùng Leta. Collector/Cloud config, native SDK instrumentation, RAG/ingest observations và managed prompts đã có code; evaluation hoãn. Xem [execution record](../261111-2010-leta-rewrite/execution.md) cho checks và acceptance còn lại; chưa deploy Cloud.
+Implementation theo [plan hợp nhất 2026-11-14](../261114-0035-inference-prompts-compaction/plan.md)
+đã triển khai LiteLLM, cost attribution, runtime optimization, managed prompts và
+compaction. [Execution mới nhất](../261114-0035-inference-prompts-compaction/execution.md) ghi
+checks, benchmark và actual Cloud/demo proof. Năm prompt version1 đã publish
+production; Grafana dashboards, traces/logs và Langfuse AI/RAG đã có dữ liệu thật.
+Full Cloud metric ingestion còn chờ old-series head compaction sau native Alloy
+filtering; số đo/giới hạn trong execution. **Playground/evaluation hoãn**.
 
 Người dùng chốt toàn bộ thiết kế observability 2026-11-13, gồm RAG và file processing: **Langfuse Cloud Hobby/Free**, demo và 1–10 Openlet testers, tích hợp theo docs chuẩn; evaluation là chủ đề thiết kế tiếp theo, chưa triển khai. Agent tồn tại lâu nhưng graph invocation thường hoàn thành rồi dừng/chờ công việc mới. Không dùng skill/subagent hoặc thay domain/Temporal/schema đã chốt. Người dùng đã chốt Grafana Cloud Free: local chỉ Alloy, Cloud Mimir/Tempo/Loki/Grafana thay toàn bộ monitoring backends self-host.
 
@@ -22,15 +20,15 @@ Scope: topology, native instrumentation/correlation, metrics/dashboard, prompt/v
 
 | Phần                  | Trạng thái                                                                              | Chi tiết                                                                                                                     |
 | --------------------- | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| Native core telemetry | Baseline có local proof                                                                 | [Core](../261111-1727-platform-letfs-rewrite/telemetry.md), [evidence](../reports/implementation-261112-native-telemetry.md) |
+| Native core telemetry | Đã triển khai; local và Cloud trace/log proof                                                                 | [Core](../261111-1727-platform-letfs-rewrite/telemetry.md), [evidence](../reports/implementation-261112-native-telemetry.md) |
 | Hosting/tier          | Người dùng chọn Grafana Cloud Free + Langfuse Hobby                                     | Local chỉ Alloy, native container logs lên Cloud Loki; không backend self-host                                               |
-| Monitoring            | Đã có config/dashboard assets; local Alloy validate/routing proof pass, Cloud chưa kiểm | [System design](system.md)                                                                                                   |
-| Tracing/prompts       | Integration có native runtime export proof; prompt content vẫn draft/chưa publish       | [Langfuse design](langfuse.md)                                                                                               |
-| LiteLLM/inference     | Chốt 2026-11-14, chưa migrate implementation                                            | [Shared groups, Prompt Config và per-deployment cost](../261111-2010-leta-rewrite/inference.md)                              |
-| RAG/file processing   | Đã có implementation và local export/routing proof                                      | [Retrieval và ingestion](langfuse.md#rag-online)                                                                             |
+| Monitoring            | Đã deploy Cloud và dashboards; metric cardinality đã filter, full ingestion chờ head compaction | [System design](system.md)                                                                                                   |
+| Tracing/prompts       | Actual Cloud agent/RAG proof; năm prompt production version1       | [Langfuse design](langfuse.md)                                                                                               |
+| LiteLLM/inference     | Native gateway/SDK migration đã triển khai                                            | [Shared groups, Prompt Config và per-deployment cost](../261111-2010-leta-rewrite/inference.md)                              |
+| RAG/file processing   | Actual processing/search/AI cost/session Cloud proof                                      | [Retrieval và ingestion](langfuse.md#rag-online)                                                                             |
 | Feature research      | 27+15 pages đã nghiên cứu                                                               | [Audit](feature-audit.md), cập nhật scope mới                                                                                |
 | Evaluation            | Hoãn theo quyết định người dùng                                                         | Không thuộc scope implementation hai plan hiện tại                                                                           |
-| Runtime/deploy        | Shared API E2E 5/5 pass; Cloud/deploy acceptance còn lại                                | [Execution](../261111-2010-leta-rewrite/execution.md)                                                                        |
+| Runtime/deploy        | Shared API E2E5/5, demo/Cloud proof; full metric ingestion còn chờ                                | [Execution](../261114-0035-inference-prompts-compaction/execution.md)                                                                        |
 
 ## Thiết kế đã chốt
 
@@ -52,16 +50,16 @@ Scope: topology, native instrumentation/correlation, metrics/dashboard, prompt/v
 | 3. AI calls khác/RAG | Ingest wrapper, Go retrieval/embedding/rerank OTLP, compaction callback | RAG tree nối qua SemanticSearch RPC, usage không duplicate; processing stages ở Grafana, AI detail ở LF; Tempo không content |
 | 4. Prompts/demo      | Approved prompts/cache/labels/link/rollback/Usage                       | Exact versions, không per-token upload, đo demo units                                                                        |
 
-Dependencies: [Leta](../261111-2010-leta-rewrite/plan.md), [core](../261111-1727-platform-letfs-rewrite/plan.md). Không thêm domain tables/queues/activities. [Prompt content](../261111-2010-leta-rewrite/prompting.md) vẫn draft cần review.
+Dependencies: [Leta](../261111-2010-leta-rewrite/plan.md), [core](../261111-1727-platform-letfs-rewrite/plan.md). Không thêm domain tables/queues/activities. [Prompt content](../261111-2010-leta-rewrite/prompting.md) đã compile/chạy thật và publish production version1.
 
 ## Bằng chứng và giới hạn
 
 Research đọc official docs, 27 observability/15 prompt-management features, current source qua CodeGraph, public SDKs LF 5.2.0/LangChain 1.5.0/Temporal Python 1.35.0. Hiệu chỉnh kiểm lại native callback/shared OTel/prompt propagation/cache/Free pricing; thay proposal per-call traces/capture sampling/snapshot/evaluation trước đó.
 
-Offline proof cũ chỉ xác nhận vài primitives, không là proof integration mới. Graph/provider streaming và native Langfuse export đã có local runtime proof; chưa Cloud ingestion/auth, backend deploy, overhead hoặc quota thực đo. Thiết kế đã duyệt và đã có implementation; Cloud acceptance vẫn cần deployment thật.
+Offline proof cũ chỉ xác nhận primitives. Execution mới ghi real provider streaming, native Langfuse export/cost/session/prompt links, Tempo content filtering, Loki logs, R2 upload và Grafana usage thực đo; không dùng offline proof thay Cloud acceptance. Full metric ingestion còn chờ head compaction, không claim đã đủ dữ liệu.
 
 Free có 50k units/tháng, 30 ngày access, 2 dashboard seats; Openlet testers là khái niệm khác. Cold process/cache rỗng khi prompt API down chưa chạy được model call; chấp nhận cho demo, chưa fallback release system.
 
 Chốt deployment: [pipeline SDK/processor/exporter](system.md#3-shared-provider-native-exporters) giữ nguyên; [Grafana Cloud Free + Alloy](system.md#11-quyết-định-triển-khai-cloud-đã-chốt) thay baseline self-host. Cloud metrics/traces/logs retention 14 ngày; không local Prometheus/Tempo/Grafana/Loki hoặc S3 observability.
 
-Không còn quyết định kiến trúc observability cần chốt trước khi bàn evaluation. Endpoints/credentials/region, alert contact points/default thresholds và số đo Cloud usage là công việc deployment/tuning. RAG propagation, stream usage, duplicate/content filtering và prompt-cache behavior cần focused integration proof khi triển khai; không phải một vòng brainstorm mới. Nội dung system prompts vẫn draft độc lập với việc đã duyệt integration.
+Không còn quyết định kiến trúc observability cần chốt trước khi bàn evaluation. Endpoints/credentials/region, alert contact points/default thresholds và số đo Cloud usage là công việc deployment/tuning. RAG propagation, stream usage, duplicate/content filtering và prompt-cache behavior cần focused integration proof khi triển khai; không phải một vòng brainstorm mới. Nội dung system prompts đã publish production version1 và có actual inference proof.

@@ -1,6 +1,6 @@
 # Langfuse Cloud: tracing và prompt management
 
-Integration được người dùng chốt toàn bộ 2026-11-13, gồm RAG/file processing: **Langfuse Cloud Hobby/Free + Grafana Cloud Free**, demo và 1–10 Openlet testers. Evaluation là chủ đề thiết kế tiếp theo, chưa triển khai. [Plan](plan.md), [system pipeline](system.md), [feature/source audit](feature-audit.md). Prompt content vẫn draft; chưa tạo Cloud project/key, publish prompt hoặc sửa runtime.
+Integration được người dùng chốt toàn bộ 2026-11-13, gồm RAG/file processing: **Langfuse Cloud Hobby/Free + Grafana Cloud Free**, demo và 1–10 Openlet testers. Evaluation là chủ đề thiết kế tiếp theo, chưa triển khai. [Plan](plan.md), [system pipeline](system.md), [feature/source audit](feature-audit.md). Đã có actual Cloud traces/cost/session và năm prompt production version1; [execution mới](../261114-0035-inference-prompts-compaction/execution.md) ghi proof và giới hạn.
 
 ## 1. Phạm vi và cách hiểu run
 
@@ -53,7 +53,7 @@ Session: Leti L
 
 ### Python minh họa
 
-Chưa runtime implementation. `graph_input` đã được dựng bằng `prompt.compile()` cùng existing instructions/context; `existing_config` giữ checkpoint và runtime settings.
+Ví dụ minh họa integration; owning runtime đã triển khai. `graph_input` đã được dựng bằng `prompt.compile()` cùng existing instructions/context; `existing_config` giữ checkpoint và runtime settings.
 
 ```python
 from langfuse import get_client, propagate_attributes
@@ -114,7 +114,7 @@ Capture bình thường model messages/output, tool arguments/results, errors, u
 
 Usage lấy native provider/LangChain metadata; bật stream usage theo adapter. Không estimate bằng tokenizer, cộng cached/reasoning tokens hai lần hoặc gọi missing usage là zero. [Token/cost](https://langfuse.com/docs/observability/features/token-and-cost-tracking).
 
-Theo [LiteLLM/inference đã chốt 2026-11-14](../261111-2010-leta-rewrite/inference.md), LiteLLM tính giá mỗi deployment bằng native pricing/overrides, đơn vị USD/token; Langfuse nhận explicit request cost rồi aggregate. Một public model group có thể route qua Vilao/OpenAI/OpenRouter với giá khác nhau. Không price calculator/catalog trong backend hoặc sao chép price definitions sang LF. Streaming lấy final usage cost; nonstreaming/embedding lấy response-cost header. Ghi từng paid Instructor attempt trước khi response usage bị aggregate; không bật gateway→LF AI export lần hai. Reranker optional, không suy token/cost khi response không có dữ liệu. Migration này chưa implementation.
+Theo [LiteLLM/inference đã chốt 2026-11-14](../261111-2010-leta-rewrite/inference.md), LiteLLM tính giá mỗi deployment bằng native pricing/overrides, đơn vị USD/token; Langfuse nhận explicit request cost rồi aggregate. Một public model group có thể route qua Vilao/OpenAI/OpenRouter với giá khác nhau. Không price calculator/catalog trong backend hoặc sao chép price definitions sang LF. Streaming lấy final usage cost; nonstreaming/embedding lấy response-cost header. Ghi từng paid Instructor attempt trước khi response usage bị aggregate; không bật gateway→LF AI export lần hai. Reranker optional, không suy token/cost khi response không có dữ liệu. Migration đã triển khai, gồm actual streaming/embedding/correction cost proof.
 
 Không credentials/auth headers/checkpoint trong metadata. Model/file/tool content xuất hiện trong Cloud theo native capture, kể cả media integration hỗ trợ; demo dùng dữ liệu thử phù hợp. Keys server-side, dashboard operators; không tự uploader toàn storage. Tempo bỏ AI content.
 
@@ -130,7 +130,7 @@ Expected conflict/denied/not_found giữ domain results; không tạo exceptions
 | LetFS Go retrieval/rerank | Existing SemanticSearch server span + provider rerank span → Alloy → official Cloud OTLP | Retriever output chỉ gồm final authorized hits; rerank không giả generation hoặc usage        |
 | Leta compaction           | Existing LangChain callback + scoped `propagate_attributes(prompt=compaction_prompt)`    | Link compaction prompt, không kế thừa nhầm role prompt                                        |
 
-Python upload trực tiếp Cloud. Go dùng [official OTLP route](https://langfuse.com/integrations/native/opentelemetry), chọn đúng service và SemanticSearch retriever/query embedding/rerank spans; rerank dùng type span nên không lọc bằng embedding/generation type đơn thuần. Không forward Python LF spans lần nữa. Public SDK 5.2.0 embedding observation và per-attempt cost đã có [focused proof](../reports/research-261113-2324-litellm-sdk-capabilities.md); full migration chưa implementation.
+Python upload trực tiếp Cloud. Go dùng [official OTLP route](https://langfuse.com/integrations/native/opentelemetry), chọn đúng service và SemanticSearch retriever/query embedding/rerank spans; rerank dùng type span nên không lọc bằng embedding/generation type đơn thuần. Không forward Python LF spans lần nữa. Public SDK 5.2.0 embedding observation và per-attempt cost đã có [focused proof](../reports/research-261113-2324-litellm-sdk-capabilities.md); full migration đã có actual Cloud proof.
 
 Enrichment có AI trace riêng tại describe call khi cần tách Temporal parent bằng native trace_context; embeddings theo provider request. Không trace kéo dài suốt ingest nhiều file hoặc observation mỗi chunk.
 
@@ -159,9 +159,9 @@ Sơ đồ bỏ các graph/node/chain observations trung gian. Tận dụng serve
 | Rerank                   | Query, model trong metadata, candidate count; output selected indices/scores, native latency/status/error; không lặp toàn bộ candidate text                            |
 | Model sau search         | Messages thực gửi provider, output/usage; không dựng thêm bản sao RAG answer riêng                                                                                     |
 
-Không capture nội dung Qdrant candidates bị SQL loại, không observation từng hit/chunk. Mỗi RPC tìm trong một scope có retrieval observation tương ứng; tool nhiều paths giữ thứ tự/ranking từng scope đã chốt, không cross-mount fusion mới. Kết quả rỗng hợp lệ không là exception. Rerank relevance score là output xếp hạng, không phải Langfuse evaluation score. Current response struct chưa đọc rerank usage, nên chưa ghi token/cost hoặc suy từ document count.
+Không capture nội dung Qdrant candidates bị SQL loại, không observation từng hit/chunk. Mỗi RPC tìm trong một scope có retrieval observation tương ứng; tool nhiều paths giữ thứ tự/ranking từng scope đã chốt, không cross-mount fusion mới. Kết quả rỗng hợp lệ không là exception. Rerank relevance score là output xếp hạng, không phải Langfuse evaluation score. Rerank lấy cost do gateway trả khi có; không suy token/cost từ document count. Demo off vì upstream chưa hỗ trợ, fixture integration kiểm enabled path.
 
-W3C context đi qua native gRPC instrumentation. Callback dùng thuộc tính native [run_inline](https://reference.langchain.com/python/langchain-core/callbacks/base/BaseCallbackHandler/run_inline); SDK callback attach context đã kiểm source. Python LF processor giữ default filter cộng đúng client SemanticSearch; Go Alloy branch giữ existing server span đã annotate và embedding/rerank. Giữ RPC client parent để cây LF không bị đứt khi lọc infrastructure; không custom header, baggage/trace registry, parent rewriting hoặc callback subclass. [Official filtering caveat](https://langfuse.com/faq/all/existing-otel-setup).
+W3C context đi qua native gRPC instrumentation. Callback dùng thuộc tính native [run_inline](https://reference.langchain.com/python/langchain-core/callbacks/base/BaseCallbackHandler/run_inline); SDK callback attach context đã kiểm source. Python LF processor giữ default filter cộng đúng client SemanticSearch; Go Alloy branch giữ existing server span đã annotate và embedding/rerank. Giữ RPC client parent để cây LF không bị đứt khi lọc infrastructure; native baggage chỉ cho existing SemanticSearch RPC để gắn session/UUID attribution vào Go spans; không thêm RPC/lookup, provider baggage, trace registry, parent rewriting hoặc callback subclass. [Official filtering caveat](https://langfuse.com/faq/all/existing-otel-setup).
 
 ### File processing
 
@@ -191,7 +191,7 @@ Grafana theo dõi toàn bộ pipeline; Langfuse đi sâu vào AI calls. Cùng m�
 | Explicit agent selection/inheritance và hard limits       | Existing product state/application budgets                                 |
 | Summary/tail/inbox                                        | Existing checkpoint/domain runtime                                         |
 
-[System drafts](../261111-2010-leta-rewrite/prompting.md) vẫn cần review, chưa publish production. Không prompt mỗi user/agent.
+[System prompts](../261111-2010-leta-rewrite/prompting.md) đã compile/chạy thật và publish production version1. Không prompt mỗi user/agent.
 
 **Runtime:** trước mỗi graph invocation, `get_prompt(name, label="production")` → `compile()` → SystemMessage theo accepted composition. Giữ PromptClient suốt invocation, không fetch mỗi LLM/tool. `propagate_attributes(prompt=prompt)` link generations đúng version; compaction override scope riêng. Không gắn `langfuse_prompt` bừa lên graph/model metadata; PromptTemplate metadata là phương pháp khác, chưa cần thêm PromptTemplate chỉ để link. [Linking](https://langfuse.com/docs/prompt-management/features/link-to-traces).
 
@@ -201,7 +201,7 @@ Grafana theo dõi toàn bộ pipeline; Langfuse đi sâu vào AI calls. Cùng m�
 
 **Version/rollback:** edit tạo immutable version cùng config → thử thực tế qua Openlet → chuyển production label → runtime nhận qua cache. `latest` chỉ cho development; staging khi có deployment tương ứng. Root/Leti native composition pin common numeric version, ví dụ `@@@langfusePrompt:name=leta/common|version=7@@@`; common đổi thì outer role version mới. Không fetch/nối common lần nữa hoặc tự inherit config của common. Rollback chuyển label về version trước, không reset checkpoint/Temporal.
 
-Folders/labels/composition/cache/link/config đều native. **Playground hoãn theo chốt cuối**; không cần public local LiteLLM endpoint hoặc Langfuse LLM connection để managed prompts hoạt động. Task model/parameter config đã chốt; không đưa tool/output contracts vào LF. Hoãn A/B assignment, GitHub sync, protected-label workflow, webhooks/Slack và evaluation. Agentic CLI/API chỉ cho authorized operator, runtime agent không sửa/promote platform prompts. [Plan triển khai hợp nhất](../261114-0035-inference-prompts-compaction/plan.md) ghi chi tiết và acceptance; prompt wording vẫn draft.
+Folders/labels/composition/cache/link/config đều native. **Playground hoãn theo chốt cuối**; không cần public local LiteLLM endpoint hoặc Langfuse LLM connection để managed prompts hoạt động. Task model/parameter config đã chốt; không đưa tool/output contracts vào LF. Hoãn A/B assignment, GitHub sync, protected-label workflow, webhooks/Slack và evaluation. Agentic CLI/API chỉ cho authorized operator, runtime agent không sửa/promote platform prompts. [Plan triển khai hợp nhất](../261114-0035-inference-prompts-compaction/plan.md) ghi chi tiết và acceptance; prompt wording đã publish production version1.
 
 ## 8. Free và features dùng ngay
 
@@ -219,4 +219,4 @@ Dùng trace tree/Agent Graphs, sessions, input/output/tools/errors/latency, toke
 
 Implementation kiểm focused integration: graph hai models/một tool trong một trace; lần sau trace mới/cùng session; Leti độc lập; stream usage/no token observations; prompt/compaction đúng version; rollback/cache; provider không duplicate; Tempo không content. Thêm SemanticSearch journey xác nhận async callback → RPC client → Go retriever → embedding/rerank nối đúng, chỉ final authorized hits được capture và không duplicate usage. Direct ingest/Go calls kiểm theo actual pinned provider/version. Không test từng LF feature.
 
-Lượt hiệu chỉnh chỉ sửa docs/proposal, đã đối chiếu official docs/public SDK source. Chưa graph/provider/Cloud ingestion, credentials/quota hoặc deployment stack. Offline proof cũ không là verification callback wiring mới.
+Execution mới ghi actual graph/provider/Cloud ingestion, prompt links/cache/label rollback, RAG session và quota thực đo. Offline proof cũ không thay verification mới; full Grafana metric ingestion còn chờ old-series head compaction.

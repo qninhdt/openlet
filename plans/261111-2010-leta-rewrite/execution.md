@@ -1,14 +1,13 @@
 # Implementation Leta và observability
 
-## Lượt triển khai tiếp theo
+## Acceptance mới nhất
 
-[Plan hợp nhất 2026-11-14](../261114-0035-inference-prompts-compaction/plan.md)
-đối chiếu 17 commit sau `d69be44`, gom final LiteLLM/Prompt Config/cost/compaction
-design và superseded proposals. Chưa implementation migration; không dùng
-baseline checks bên dưới thay acceptance mới. Prompt management vừa chốt hoãn
-Playground/evaluation; actual prompt wording còn draft. Ba gate API effort,
-mixed-provider capability routing và cross-service cost attribution được ghi
-rõ trước boundary liên quan, không tự thay domain/Temporal.
+[Execution hợp nhất 2026-11-14](../261114-0035-inference-prompts-compaction/execution.md) ghi migration
+LiteLLM/Prompt Config/cost/compaction, tối ưu runtime, tests36/36, shared API
+E2E5/5, benchmark và actual Cloud/demo proof. Các checks bên dưới là baseline
+rewrite ban đầu, không thay acceptance mới. Playground/evaluation tiếp tục hoãn.
+Cloud metrics đang chờ old-series head compaction; xem số đo và giới hạn tại
+execution mới, không coi scrape/HTTP200 là ingestion proof.
 
 Bắt đầu 2026-11-13 theo yêu cầu người dùng. Dùng hai owning plans hiện có;
 evaluation hoãn. Không dùng archive implementation/tests, compatibility wrappers,
@@ -28,7 +27,7 @@ skills hoặc subagents. Pyright kiểm Leta, ingest, SDK và operational script
   native Langfuse callbacks/provider wrapper và managed-prompt linkage/cache.
 - Docker/Compose profiles, migrations, backup/restore, shared E2E và CI/release wiring.
 
-Các phần này đã có code và local integration proof; **Cloud/deploy và prompt-content acceptance còn mở**. Không coi việc
+Các phần này đã có code và integration proof; **Cloud/deploy/prompt-content results tại execution mới**, chỉ full metric ingestion còn chờ quota bộ nhớ Cloud giải phóng. Không coi việc
 thêm test hoặc build image là bằng chứng toàn bộ runtime đã hoạt động.
 
 ## Commit boundaries
@@ -118,29 +117,29 @@ không bị gọi lại; tool batch còn lại tiếp tục được. Đây là 
 một boundary có checkpoint, không hứa exactly-once cho arbitrary shell bị kill
 giữa side effect và checkpoint. Sau đó workspace cleanup vẫn hoàn tất.
 
-## Acceptance còn lại
+## Đối chiếu acceptance sau migration
 
-1. Deployment Cloud cần endpoints/credentials thật để kiểm ingestion/auth,
-   dashboard rendering, notifications và usage. Chưa thực hiện deployment.
-2. Nội dung system prompts vẫn draft, chưa được duyệt/publish. Test prompt
-   fixtures chỉ phục vụ deterministic CI, không phải production prompts.
-3. Cache-friendly compaction chưa đạt: callback hiện tại đổi system prompt,
-   flatten messages thành XML và không giữ tools; current time cũng được ghi
-   lại trong system tại mỗi boundary. Cần sửa request theo owning design và
-   kiểm actual wire prefix/cache usage; các proof checkpoint/pruning trước đó
-   không xác nhận phần này.
-4. [LiteLLM/inference đã chốt](inference.md) thay provider-owned catalog và
-   effort-suffix proposal: shared model groups, metadata-backed Leta listing,
-   Langfuse task config, gateway pricing/retries, Instructor mode/correction và
-   explicit per-request cost. Chưa implementation migration; giữ research cũ
-   làm bằng chứng, không giữ parser/catalog cũ để tương thích.
+Các mục còn mở của rewrite ban đầu đã được xử lý trong
+[execution hợp nhất](../261114-0035-inference-prompts-compaction/execution.md):
+
+1. Cloud endpoints/credentials, imported dashboards, actual traces/logs và
+   Langfuse usage/cost đã kiểm trên demo máy hiện tại. Full Grafana metric
+   ingestion chờ Cloud giải phóng old-series memory; notifications không activate.
+2. Năm prompt production version1 đã publish và chạy actual provider;
+   composition/variables/pinning/cache/label rollback đã kiểm.
+3. Cache-friendly compaction đã dùng cùng executing model/system/tools/native
+   message prefix, không XML/time context; actual provider/cache usage và
+   checkpoint/history recovery có proof.
+4. Native LiteLLM gateway, metadata-backed choices, task config, Instructor modes,
+   bounded corrections và explicit cost đã migrate; không legacy catalog/parser.
 
 ## Ranh giới vận hành
 
 Không thay database cũ/production; disposable integration databases được backup
 trước migration. Native checkpoint tables nằm trong Leta PostgreSQL backup;
 Redis disposable không backup. Core open histories cần drain/recovery trước
-cutover; không giữ legacy activities để tương thích. Không publish prompt,
-push image hoặc deploy Cloud trong lượt này.
+cutover; không giữ legacy activities để tương thích. Đây là ranh giới của lượt rewrite ban đầu; lượt migration sau đã publish prompt
+và deploy demo/Cloud theo authorization của người dùng, xem execution mới.
 
-Không còn background server/container test do phiên này khởi động cần giữ.
+Các temporary proof containers đã xóa; active demo `openlet-demo` được giữ
+chạy theo scope deployment trên máy hiện tại.
