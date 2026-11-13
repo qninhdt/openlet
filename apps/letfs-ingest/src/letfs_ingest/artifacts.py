@@ -1,19 +1,26 @@
 import asyncio
 import base64
 import mimetypes
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
+from pathlib import Path
 
 import google_crc32c
+import httpx
 from google.protobuf.empty_pb2 import Empty
 from openlet_api.letfs.v1 import internal_pb2 as internal
 from openlet_api.letfs.v1 import letfs_pb2 as pb
+from openlet_api.letfs.v1.internal_pb2_grpc import LetFSInternalServiceStub
+from openlet_sdk.config import LetFSSettings
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
+from .telemetry import ProcessingIdentity
+
 
 @asynccontextmanager
-async def heartbeats():
-    async def send():
+async def heartbeats() -> AsyncIterator[None]:
+    async def send() -> None:
         while True:
             activity.heartbeat()
             await asyncio.sleep(10)
@@ -27,16 +34,16 @@ async def heartbeats():
             await task
 
 
-def checksum(data):
+def checksum(data: bytes) -> str:
     return base64.b64encode(google_crc32c.Checksum(data).digest()).decode("ascii")
 
 
-def check_transfer(response):
+def check_transfer(response: httpx.Response) -> None:
     if not response.is_success:
         raise ApplicationError(f"object transfer failed (HTTP {response.status_code})", type="ObjectTransferFailed")
 
 
-async def download(http, url, target, limit):
+async def download(http: httpx.AsyncClient, url: str, target: Path, limit: int) -> None:
     size = 0
     async with http.stream("GET", url) as response:
         check_transfer(response)
@@ -49,7 +56,7 @@ async def download(http, url, target, limit):
                 activity.heartbeat()
 
 
-async def publish(stub, http, identity, output, settings):
+async def publish(stub: LetFSInternalServiceStub, http: httpx.AsyncClient, identity: ProcessingIdentity, output: Path, settings: LetFSSettings) -> None:
     artifacts, specs, blobs = [], [], {}
     total = 0
     for path in sorted(output.rglob("*")):

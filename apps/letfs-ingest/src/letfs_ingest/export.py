@@ -2,30 +2,34 @@ import csv
 from collections import Counter
 from pathlib import Path
 
+from docling_core.transforms.serializer.base import (
+    BaseDocSerializer,
+    SerializationResult,
+)
 from docling_core.transforms.serializer.common import create_ser_result
 from docling_core.transforms.serializer.markdown import (
     MarkdownDocSerializer,
     MarkdownParams,
     MarkdownTableSerializer,
 )
-from docling_core.types.doc import (
-    GroupLabel,
-    ImageRef,
-    PictureItem,
-    RichTableCell,
-    TableItem,
-)
+from docling_core.types.doc.base import ImageRefMode
+from docling_core.types.doc.common.reference import ImageRef
+from docling_core.types.doc.document import DoclingDocument
+from docling_core.types.doc.items.picture.picture import PictureItem
+from docling_core.types.doc.items.table.table import TableItem
+from docling_core.types.doc.items.table.table_data import RichTableCell
+from docling_core.types.doc.labels import GroupLabel
 
 from .layout import sections
 
 
 class TableLinks(MarkdownTableSerializer):
-    def __init__(self, filenames):
+    def __init__(self, filenames: dict[str, str]) -> None:
         self.filenames = filenames
 
-    def serialize(self, *, item, doc_serializer, doc, **kwargs):
+    def serialize(self, *, item: TableItem, doc_serializer: BaseDocSerializer, doc: DoclingDocument, **kwargs: object) -> SerializationResult:
         visited = kwargs.get("visited")
-        if visited is not None:
+        if isinstance(visited, set):
             for cell in item.data.table_cells:
                 if isinstance(cell, RichTableCell):
                     visited.update(part.self_ref for part, _ in doc.iterate_items(
@@ -38,7 +42,7 @@ class TableLinks(MarkdownTableSerializer):
         return create_ser_result(text="\n\n".join(part for part in parts if part), span_source=item)
 
 
-def write_table(document, table, target):
+def write_table(document: DoclingDocument, table: TableItem, target: Path) -> None:
     serializer = MarkdownDocSerializer(doc=document)
     with target.open("w", encoding="utf-8", newline="") as stream:
         writer = csv.writer(stream)
@@ -50,7 +54,7 @@ def write_table(document, table, target):
             ])
 
 
-def spreadsheets(document, source, output):
+def spreadsheets(document: DoclingDocument, source: Path, output: Path) -> None:
     from openpyxl import load_workbook
     from openpyxl.utils.cell import get_column_letter
 
@@ -95,7 +99,7 @@ def spreadsheets(document, source, output):
         workbook.close()
 
 
-def document(document, output, minimum_tokens, split_tokens, presentation=False):
+def document(document: DoclingDocument, output: Path, minimum_tokens: int, split_tokens: int, presentation: bool = False) -> None:
     items = list(document.iterate_items(with_groups=True, traverse_pictures=True))
     layout = [(0, len(items), "README.md")] if presentation else sections(items, minimum_tokens, split_tokens)
     counters, tables = Counter(), {}
@@ -118,12 +122,12 @@ def document(document, output, minimum_tokens, split_tokens, presentation=False)
                 write_table(document, item, folder / name)
     slides = [
         position for position, (item, _) in enumerate(items)
-        if item.label in {GroupLabel.SLIDE, GroupLabel.CHAPTER}
+        if getattr(item, "label", None) in {GroupLabel.SLIDE, GroupLabel.CHAPTER}
         and item.parent is not None and item.parent.cref == document.body.self_ref
     ] if presentation else []
     for start, stop, relative in layout:
         serializer = MarkdownDocSerializer(doc=document, table_serializer=TableLinks(tables), params=MarkdownParams(
-            start_idx=start, stop_idx=stop, image_mode="referenced", traverse_pictures=True,
+            start_idx=start, stop_idx=stop, image_mode=ImageRefMode.REFERENCED, traverse_pictures=True,
         ))
         if slides:
             parts = []

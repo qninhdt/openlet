@@ -3,16 +3,19 @@ import json
 from collections import defaultdict
 from pathlib import PurePosixPath
 
+import httpx
 from openlet_api.letfs.v1 import internal_pb2 as internal
 from openlet_api.letfs.v1 import letfs_pb2 as pb
 from temporalio import activity
 
 from .artifacts import check_transfer
 from .naming import artifact_paths, rewrite_artifact_links
+from .providers import Metadata, Models
 from .readme import own_body, render
+from .telemetry import ProcessingIdentity
 
 
-async def image_bytes(http, url, limit):
+async def image_bytes(http: httpx.AsyncClient, url: str, limit: int) -> bytes:
     data = bytearray()
     async with http.stream("GET", url) as response:
         check_transfer(response)
@@ -23,9 +26,10 @@ async def image_bytes(http, url, limit):
     return bytes(data)
 
 
-async def enrich(source, identity, ai, http, max_blob_bytes):
+async def enrich(source: internal.ProcessingInput, identity: ProcessingIdentity, ai: Models, http: httpx.AsyncClient, max_blob_bytes: int) -> internal.CommitEnrichmentRequest:
     files = {item.path: item for item in source.artifacts if item.node.HasField("file")}
-    metadata, children = {}, defaultdict(list)
+    metadata: dict[str, Metadata] = {}
+    children: defaultdict[PurePosixPath, list[str]] = defaultdict(list)
     readmes = sorted((path for path in files if PurePosixPath(path).name == "README.md"), key=lambda path: path.count("/"), reverse=True)
     for path in files:
         location = PurePosixPath(path)
@@ -34,7 +38,7 @@ async def enrich(source, identity, ai, http, max_blob_bytes):
         elif location.parent != PurePosixPath("."):
             children[location.parent.parent].append(path)
 
-    async def describe(path, summaries=""):
+    async def describe(path: str, summaries: str = "") -> None:
         item = files[path]
         async with ai.slots:
             image = await image_bytes(http, item.download_url, max_blob_bytes) if item.node.file.media_type.startswith("image/") else None

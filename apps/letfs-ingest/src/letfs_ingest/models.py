@@ -2,10 +2,10 @@ import argparse
 import os
 from pathlib import Path
 
-from openlet_sdk.config import load
+from openlet_sdk.config import Config, load
 
 
-def prepare(config):
+def prepare(config: Config) -> None:
     from docling.utils.model_downloader import download_models
 
     destination = Path(config["services"]["letfs_ingest"]["cpu"]["docling_models_path"])
@@ -16,7 +16,7 @@ def prepare(config):
     )
 
 
-def check(config):
+def check(config: Config) -> None:
     from docling.datamodel.base_models import InputFormat
 
     from .convert import converter

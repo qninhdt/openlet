@@ -1,21 +1,265 @@
 import os
+from typing import Literal, NotRequired, TypedDict, cast
 
 import yaml
 
+type JSON = None | bool | int | float | str | list[JSON] | dict[str, JSON]
+type ReasoningEffort = Literal['none', 'minimal', 'low', 'medium', 'high', 'xhigh'] | None
 
-def load():
-    with open(os.environ["OPENLET_CONFIG"]) as stream:
-        value = yaml.safe_load(stream)
+
+class RuntimeSettings(TypedDict):
+    environment: str
+    log_level: str
+    shutdown_timeout_seconds: int
+
+
+class TelemetrySettings(TypedDict):
+    otlp_endpoint: str | None
+    trace_sample_ratio: float
+    metrics_export_interval_seconds: int
+
+
+class DatabaseSettings(TypedDict):
+    name: str
+    user: str
+    password: str
+
+
+class MaintenanceSettings(TypedDict):
+    interval_seconds: int
+    object_gc_grace_seconds: NotRequired[int]
+
+
+class ProcessingSettings(TypedDict):
+    max_artifacts: int
+    max_manifest_text_bytes: int
+    max_artifact_blob_bytes: int
+    parse_timeout_seconds: int
+    enrich_index_timeout_seconds: int
+
+
+class LetFSSettings(TypedDict):
+    grpc_listen: str
+    grpc_target: str
+    database: DatabaseSettings
+    max_text_bytes: int
+    max_blob_bytes: int
+    multipart_threshold_bytes: int
+    multipart_part_bytes: int
+    upload_url_ttl_seconds: int
+    download_url_ttl_seconds: int
+    idempotency_retention_seconds: int
+    processing: ProcessingSettings
+    maintenance: MaintenanceSettings
+
+
+class ParseLimits(TypedDict):
+    max_pages: int
+    max_page_pixels: int
+    max_office_expanded_bytes: int
+    max_spreadsheet_cells: int
+    max_sheets: int
+    max_output_bytes: int
+
+
+class CPUSettings(TypedDict):
+    activity_concurrency: int
+    docling_models_path: str
+    min_section_tokens: int
+    split_tokens: int
+    threads: int
+    limits: ParseLimits
+
+
+class IOSettings(TypedDict):
+    activity_concurrency: int
+    model_concurrency: int
+    embedding_batch_size: int
+    chunk_size_tokens: int
+    chunk_overlap_tokens: int
+
+
+class IngestSettings(TypedDict):
+    cpu: CPUSettings
+    io: IOSettings
+
+
+class ProviderSettings(TypedDict):
+    base_url: str
+    api_key: str
+    timeout_seconds: int
+
+
+class EmbeddingSettings(TypedDict):
+    model: str
+    dimensions: int
+
+
+class EnrichmentSettings(TypedDict):
+    model: str
+    reasoning_effort: ReasoningEffort
+    max_output_tokens: int
+    max_input_characters: int
+    max_image_pixels: int
+    image_max_side: int
+    image_jpeg_quality: int
+
+
+class ModelChoice(TypedDict):
+    model_id: str
+    reasoning_effort: ReasoningEffort
+
+
+class ModelEntry(TypedDict):
+    model_id: str
+    reasoning_efforts: list[ReasoningEffort]
+    context_window_tokens: int
+    max_output_tokens: int
+
+
+class LetaModels(TypedDict):
+    default: ModelChoice
+    catalog: list[ModelEntry]
+
+
+class ModelsSettings(TypedDict):
+    provider: ProviderSettings
+    embedding: EmbeddingSettings
+    reranking: dict[str, str]
+    enrichment: EnrichmentSettings
+    leta: LetaModels
+
+
+class Queues(TypedDict):
+    platform: str
+    letfs: str
+    ingest_cpu: str
+    ingest_io: str
+    leta: str
+    leta_runtime: str
+    leta_bridge: str
+
+
+class TemporalSettings(TypedDict):
+    address: str
+    namespace: str
+    tls: bool
+    queues: Queues
+
+
+class PostgresSettings(TypedDict):
+    host: str
+    port: int
+    sslmode: str
+
+
+class SpiceDBSettings(TypedDict):
+    address: str
+    tls: bool
+    key: str
+
+
+class QdrantSettings(TypedDict):
+    address: str
+    tls: bool
+    api_key: str
+    collection: str
+
+
+class S3Settings(TypedDict):
+    endpoint: str
+    region: str
+    bucket: str
+    path_style: bool
+    access_key_id: str
+    secret_access_key: str
+
+
+class RedisSettings(TypedDict):
+    address: str
+    database: int
+    password: str
+
+
+class Dependencies(TypedDict):
+    postgres: PostgresSettings
+    temporal: TemporalSettings
+    spicedb: SpiceDBSettings
+    qdrant: QdrantSettings
+    s3: S3Settings
+    redis: RedisSettings
+
+
+class PlatformSettings(TypedDict):
+    database: DatabaseSettings
+    grpc_listen: str
+    grpc_target: str
+    max_members: int
+    default_quota_bytes: int
+    invitation_ttl_seconds: int
+    idempotency_retention_seconds: int
+    maintenance: MaintenanceSettings
+
+
+class LetaSettings(TypedDict):
+    http_listen: str
+    http_target: str
+    database: DatabaseSettings
+
+
+class Services(TypedDict):
+    platform: PlatformSettings
+    letfs: LetFSSettings
+    letfs_ingest: IngestSettings
+    leta: LetaSettings
+    gateway: dict[str, str]
+
+
+class TemporalDeployment(TypedDict):
+    database: DatabaseSettings
+    visibility_database: str
+    namespace_retention_hours: int
+
+
+class Deployment(TypedDict):
+    postgres: dict[str, str]
+    temporal: TemporalDeployment
+    spicedb: dict[str, DatabaseSettings]
+
+
+class LangfuseSettings(TypedDict):
+    base_url: str
+    public_key: str
+    secret_key: str
+    prompt_label: str
+
+
+class Config(TypedDict):
+    runtime: RuntimeSettings
+    grpc: dict[str, int]
+    telemetry: TelemetrySettings
+    auth: dict[str, dict[str, str]]
+    dependencies: Dependencies
+    models: ModelsSettings
+    services: Services
+    deployment: Deployment
+    langfuse: NotRequired[LangfuseSettings]
+
+
+def load() -> Config:
+    with open(os.environ['OPENLET_CONFIG']) as stream:
+        value: object = yaml.safe_load(stream)
     if not isinstance(value, dict):
-        raise ValueError("configuration must be a YAML mapping")
-    return value
+        raise ValueError('configuration must be a YAML mapping')
+    # The owning process validates the settings it consumes, not other services.
+    return cast(Config, value)
 
 
-def secret(value):
-    if not isinstance(value, str) or not (value.startswith("${") and value.endswith("}")):
-        raise ValueError("secret must reference a whole ${ENV_VARIABLE} scalar")
+def secret(value: str) -> str:
+    if not (value.startswith('${') and value.endswith('}')):
+        raise ValueError('secret must reference a whole ${ENV_VARIABLE} scalar')
     key = value[2:-1]
     result = os.environ[key]
     if not result:
-        raise ValueError(f"empty required environment variable {key}")
+        raise ValueError(f'empty required environment variable {key}')
     return result

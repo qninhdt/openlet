@@ -1,7 +1,7 @@
 import grpc
 
 
-def channel(address, *, tls=False, max_bytes):
+def channel(address: str, *, tls: bool = False, max_bytes: int) -> grpc.aio.Channel:
     options = [
         ("grpc.max_receive_message_length", max_bytes),
         ("grpc.max_send_message_length", max_bytes),

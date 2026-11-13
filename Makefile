@@ -34,6 +34,7 @@ check-go:
 
 check-python:
 	uv run --no-env-file --locked ruff check scripts apps/letfs-ingest packages/sdk-python/src/openlet_sdk
+	uv run --no-env-file --locked pyright
 
 test: test-go test-python
 
@@ -41,7 +42,7 @@ test-go:
 	go test $(GO_PACKAGES)
 
 test-python:
-	uv run --no-env-file --locked --package letfs-ingest --extra cpu pytest apps/letfs-ingest/tests -q
+	uv run --no-env-file --locked --package letfs-ingest --extra cpu pytest apps/letfs-ingest/tests packages/sdk-python/tests -q
 
 integration:
 	@test -n "$$OPENLET_TEST_DATABASE_URL" || { echo 'Set OPENLET_TEST_DATABASE_URL to an isolated, backed-up test database DSN.' >&2; exit 1; }

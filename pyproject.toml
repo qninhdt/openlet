@@ -3,6 +3,7 @@ name = "openlet-tooling"
 version = "0.1.0"
 requires-python = ">=3.14,<3.15"
 dependencies = [
+  "openlet-sdk",
   "pyyaml",
   "psycopg[binary]",
   "temporalio",
@@ -15,7 +16,16 @@ dependencies = [
 members = ["packages/sdk-python", "apps/letfs-ingest"]
 
 [dependency-groups]
-dev = ["grpcio-tools", "pytest", "pytest-asyncio", "ruff"]
+dev = [
+    "boto3-stubs>=1.44.2",
+    "grpcio-tools",
+    "pyright>=1.1.414",
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+    "types-protobuf>=7.35.1.20260906",
+    "types-pyyaml>=6.0.12.20261113",
+]
 
 [tool.ruff]
 target-version = "py314"
@@ -28,6 +38,18 @@ ignore = ["E501"]
 "**/*_pb2*.py" = ["ALL"]
 
 [tool.pytest.ini_options]
+addopts = ["--import-mode=importlib"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-testpaths = ["apps/letfs-ingest/tests"]
+testpaths = ["apps/letfs-ingest/tests", "packages/sdk-python/tests"]
+
+[tool.pyright]
+include = ["apps/letfs-ingest/src", "apps/leta/src", "packages/sdk-python/src/openlet_sdk", "scripts"]
+exclude = ["**/__pycache__", "archive", "packages/sdk-python/src/openlet_api", "packages/sdk-python/src/buf"]
+pythonVersion = "3.14"
+typeCheckingMode = "standard"
+reportMissingParameterType = "error"
+reportMissingTypeArgument = "error"
+
+[tool.uv.sources]
+openlet-sdk = { workspace = true }

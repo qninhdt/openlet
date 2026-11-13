@@ -1,17 +1,25 @@
 import asyncio
+from collections.abc import Iterator
 from contextlib import contextmanager
 from time import perf_counter
+from typing import TypedDict
 
 from opentelemetry import metrics, trace
 from opentelemetry.trace import StatusCode
 from temporalio import activity
+
+
+class ProcessingIdentity(TypedDict):
+    file_id: str
+    version: int
+
 
 duration = metrics.get_meter(__name__).create_histogram("openlet.processing.stage.duration", unit="s")
 tracer = trace.get_tracer(__name__)
 
 
 @contextmanager
-def stage(name, identity):
+def stage(name: str, identity: ProcessingIdentity) -> Iterator[None]:
     started, outcome = perf_counter(), "success"
     with tracer.start_as_current_span(
         f"ingest.{name}", attributes={"file.id": identity["file_id"], "file.version": identity["version"]},

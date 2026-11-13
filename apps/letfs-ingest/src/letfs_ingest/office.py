@@ -1,9 +1,11 @@
 from docling.backend.mspowerpoint_backend import MsPowerpointDocumentBackend
 from docling.backend.msword_backend import MsWordDocumentBackend
+from docling_core.types.doc.document import DoclingDocument
+from docx.table import _Cell
 
 
 class Word(MsWordDocumentBackend):
-    def _is_rich_table_cell(self, cell):
+    def _is_rich_table_cell(self, cell: _Cell) -> bool:
         # Docling's plain-cell path loses runs inside content controls and revisions.
         if cell._tc.xpath(".//w:sdt | .//w:ins"):
             return True
@@ -11,7 +13,7 @@ class Word(MsWordDocumentBackend):
 
 
 class Powerpoint(MsPowerpointDocumentBackend):
-    def convert(self):
+    def convert(self) -> DoclingDocument:
         # python-pptx omits shapes wrapped in markup compatibility branches.
         supported = {
             "http://schemas.microsoft.com/office/drawing/2010/main",

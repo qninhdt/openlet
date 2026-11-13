@@ -7,10 +7,12 @@ from datetime import timedelta
 import boto3
 import grpc
 import psycopg
-from authzed.api.v1 import SchemaServiceStub, WriteSchemaRequest
+from authzed.api.v1 import WriteSchemaRequest
+from authzed.api.v1.schema_service_pb2_grpc import SchemaServiceStub
 from botocore.exceptions import ClientError
 from configure import ROOT, load, secret
 from google.protobuf.duration_pb2 import Duration
+from openlet_sdk.config import Config
 from psycopg import sql
 from qdrant_client import QdrantClient, models
 from temporalio.api.workflowservice.v1 import RegisterNamespaceRequest
@@ -28,11 +30,11 @@ from temporalio.client import (
 from temporalio.service import RPCError, RPCStatusCode
 
 
-def databases(c):
+def databases(c: Config) -> None:
     pg = c["dependencies"]["postgres"]
     admin = c["deployment"]["postgres"]
-    targets = [c["services"][name]["database"] for name in ("platform", "letfs")]
-    targets += [c["deployment"][name]["database"] for name in ("temporal", "spicedb")]
+    targets = [c["services"]["platform"]["database"], c["services"]["letfs"]["database"]]
+    targets += [c["deployment"]["temporal"]["database"], c["deployment"]["spicedb"]["database"]]
     temporal = c["deployment"]["temporal"]
     targets += [{**temporal["database"], "name": temporal["visibility_database"]}]
     with psycopg.connect(host=pg["host"], port=pg["port"], dbname="postgres",
@@ -47,14 +49,14 @@ def databases(c):
                     sql.Identifier(target["name"]), sql.Identifier(target["user"])))
 
 
-async def resources(c):
+async def resources(c: Config) -> None:
     dep = c["dependencies"]
     graph = dep["spicedb"]
-    channel = grpc.aio.secure_channel(graph["address"], grpc.ssl_channel_credentials()) if graph["tls"] else grpc.aio.insecure_channel(graph["address"])
-    async with channel:
-        await SchemaServiceStub(channel).WriteSchema(
+    channel = grpc.secure_channel(graph["address"], grpc.ssl_channel_credentials()) if graph["tls"] else grpc.insecure_channel(graph["address"])
+    with channel:
+        await asyncio.to_thread(SchemaServiceStub(channel).WriteSchema,
             WriteSchemaRequest(schema=(ROOT / "packages/contracts/authz/schema.zed").read_text()),
-            metadata=[("authorization", "Bearer " + secret(graph["key"]))], timeout=30)
+            metadata=(("authorization", "Bearer " + secret(graph["key"])),), timeout=30)
     t = dep["temporal"]
     client = await Client.connect(t["address"], namespace=t["namespace"], tls=t["tls"])
     try:
@@ -64,11 +66,11 @@ async def resources(c):
     except RPCError as error:
         if error.status != RPCStatusCode.ALREADY_EXISTS:
             raise
-    for owner in ("platform", "letfs"):
-        interval = timedelta(seconds=c["services"][owner]["maintenance"]["interval_seconds"])
+    for owner, service in (("platform", c["services"]["platform"]), ("letfs", c["services"]["letfs"])):
+        interval = timedelta(seconds=service["maintenance"]["interval_seconds"])
         schedule = Schedule(
             action=ScheduleActionStartWorkflow("Maintenance", id=f"{owner}-maintenance",
-                task_queue=t["queues"][owner]),
+                task_queue=t["queues"]["platform"] if owner == "platform" else t["queues"]["letfs"]),
             spec=ScheduleSpec(intervals=[ScheduleIntervalSpec(every=interval)]),
             policy=SchedulePolicy(overlap=ScheduleOverlapPolicy.SKIP))
         identity = f"{owner}-maintenance"
@@ -95,7 +97,7 @@ async def resources(c):
     try:
         s3.head_bucket(Bucket=obj["bucket"])
     except ClientError as error:
-        if error.response["ResponseMetadata"]["HTTPStatusCode"] != 404:
+        if error.response.get("ResponseMetadata", {}).get("HTTPStatusCode") != 404:
             raise
         args = {} if obj["region"] == "us-east-1" else {"CreateBucketConfiguration": {"LocationConstraint": obj["region"]}}
         s3.create_bucket(Bucket=obj["bucket"], **args)

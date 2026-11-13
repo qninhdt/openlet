@@ -2,9 +2,11 @@ import argparse
 import asyncio
 import logging
 import signal
+from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack
 from datetime import timedelta
 from importlib.metadata import version
+from typing import Literal
 
 import httpx
 from openlet_api.letfs.v1.internal_pb2_grpc import LetFSInternalServiceStub
@@ -23,11 +25,13 @@ from temporalio.runtime import (
 )
 from temporalio.worker import Worker
 
+from .telemetry import ProcessingIdentity
 
-async def run(role):
+
+async def run(role: Literal["cpu", "io"]) -> None:
     config = load()
     runtime = config["runtime"]
-    settings = config["services"]["letfs_ingest"][role]
+    settings = config["services"]["letfs_ingest"]["cpu"] if role == "cpu" else config["services"]["letfs_ingest"]["io"]
     if settings["activity_concurrency"] < 1:
         raise ValueError("activity_concurrency must be positive")
     shutdown = initialize(f"openlet-ingest-{role}", runtime, config["telemetry"])
@@ -38,7 +42,7 @@ async def run(role):
     temporal = config["dependencies"]["temporal"]
     telemetry = config["telemetry"]
     metrics = OpenTelemetryConfig(
-        url=telemetry["otlp_endpoint"], metric_periodicity=timedelta(seconds=telemetry["metrics_export_interval_seconds"]),
+        url=telemetry["otlp_endpoint"] or "", metric_periodicity=timedelta(seconds=telemetry["metrics_export_interval_seconds"]),
     ) if telemetry["otlp_endpoint"] else None
     native = Runtime(telemetry=TelemetryConfig(
         logging=LoggingConfig(TelemetryFilter(core_level="WARN", other_level="ERROR"), forwarding=LogForwardingConfig(logging.getLogger("temporalio.core"))),
@@ -51,7 +55,9 @@ async def run(role):
             ))
             stub = LetFSInternalServiceStub(rpc)
             http = await stack.enter_async_context(httpx.AsyncClient(timeout=120))
+            activities: list[Callable[[ProcessingIdentity], Awaitable[None]]]
             if role == "cpu":
+                settings = config["services"]["letfs_ingest"]["cpu"]
                 from .parse import Parser, run_child
 
                 if not 0 < settings["min_section_tokens"] <= settings["split_tokens"]:
@@ -60,6 +66,7 @@ async def run(role):
                     raise RuntimeError("Docling models/runtime unavailable; prepare models before starting CPU worker")
                 activities = [Parser(stub, http, config["services"]["letfs"]).run]
             else:
+                settings = config["services"]["letfs_ingest"]["io"]
                 from openlet_sdk.config import secret
                 from qdrant_client import AsyncQdrantClient
 
@@ -80,7 +87,7 @@ async def run(role):
                 runtime=native, interceptors=[TracingInterceptor()],
             )
             worker = Worker(
-                client, task_queue=temporal["queues"][f"ingest_{role}"], activities=activities,
+                client, task_queue=temporal["queues"]["ingest_cpu"] if role == "cpu" else temporal["queues"]["ingest_io"], activities=activities,
                 max_concurrent_activities=settings["activity_concurrency"],
                 graceful_shutdown_timeout=timedelta(seconds=runtime["shutdown_timeout_seconds"]),
             )

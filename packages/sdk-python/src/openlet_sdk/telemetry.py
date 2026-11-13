@@ -1,11 +1,12 @@
 import json
 import logging
 import math
+from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
-from importlib.metadata import version
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
+from langfuse import Langfuse
 from opentelemetry import metrics, trace
 from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
@@ -13,25 +14,30 @@ from opentelemetry.instrumentation.grpc import GrpcAioInstrumentorClient
 from opentelemetry.instrumentation.httpx import (
     HTTPX2ClientInstrumentor,
     HTTPXClientInstrumentor,
+    RequestInfo,
 )
 from opentelemetry.instrumentation.system_metrics import SystemMetricsInstrumentor
 from opentelemetry.propagate import set_global_textmap
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import OTELResourceDetector, Resource
-from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
+from opentelemetry.trace import Span
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+from opentelemetry.util.types import AttributeValue
+
+from .config import LangfuseSettings, RuntimeSettings, TelemetrySettings, secret
 
 
 class JSONFormatter(logging.Formatter):
-    def __init__(self, identity=None):
+    def __init__(self, identity: Mapping[str, AttributeValue] | None = None) -> None:
         super().__init__()
         self.identity = identity or {}
 
-    def format(self, record):
-        fields = {
+    def format(self, record: logging.LogRecord) -> str:
+        fields: dict[str, object] = {
             **self.identity,
             "time": datetime.now(timezone.utc).isoformat(),
             "level": record.levelname.lower(),
@@ -49,23 +55,21 @@ class JSONFormatter(logging.Formatter):
         return json.dumps(fields, ensure_ascii=False)
 
 
-def redact_request(span, request):
+def redact_request(span: Span, request: RequestInfo) -> None:
     if span.is_recording():
         url = urlsplit(str(request.url))
         safe = urlunsplit((url.scheme, url.netloc.rsplit("@", 1)[-1], url.path, "", ""))
         for attribute in ("http.url", "url.full"):
-            if attribute in span.attributes:
-                span.set_attribute(attribute, safe)
+            span.set_attribute(attribute, safe)
 
 
-async def redact_async_request(span, request):
+async def redact_async_request(span: Span, request: RequestInfo) -> None:
     redact_request(span, request)
 
 
-def initialize(name, runtime, settings):
+def initialize(name: str, runtime: RuntimeSettings, settings: TelemetrySettings) -> Callable[[], None]:
     resource = Resource.create({
         "service.name": name,
-        "service.version": version("openlet-sdk"),
         "service.instance.id": str(uuid4()),
         "deployment.environment.name": runtime["environment"],
     }).merge(OTELResourceDetector().detect())
@@ -77,22 +81,21 @@ def initialize(name, runtime, settings):
         logging.getLogger(logger).setLevel(logging.WARNING)
     set_global_textmap(TraceContextTextMapPropagator())
     endpoint = settings["otlp_endpoint"]
-    if not endpoint:
-        return lambda: None
-    url = urlsplit(endpoint)
+    url = urlsplit(endpoint or "")
     ratio = settings["trace_sample_ratio"]
-    if url.scheme not in ("http", "https") or not url.hostname or url.username or url.query or url.fragment or not math.isfinite(ratio) or not 0 <= ratio <= 1 or settings["metrics_export_interval_seconds"] < 1:
+    if (endpoint and (url.scheme not in ("http", "https") or not url.hostname or url.username or url.query or url.fragment)) or not math.isfinite(ratio) or not 0 <= ratio <= 1 or settings["metrics_export_interval_seconds"] < 1:
         raise ValueError("invalid telemetry endpoint, sample ratio or metrics interval")
     tracing = TracerProvider(
         resource=resource,
         sampler=ParentBased(TraceIdRatioBased(ratio)),
     )
-    tracing.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint, timeout=3)))
+    if endpoint:
+        tracing.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint, timeout=3)))
     metering = MeterProvider(resource=resource, metric_readers=[PeriodicExportingMetricReader(
         OTLPMetricExporter(endpoint=endpoint, timeout=3),
         export_interval_millis=settings["metrics_export_interval_seconds"] * 1000,
         export_timeout_millis=3000,
-    )])
+    )] if endpoint else [])
     trace.set_tracer_provider(tracing)
     metrics.set_meter_provider(metering)
     SystemMetricsInstrumentor(config={
@@ -105,10 +108,29 @@ def initialize(name, runtime, settings):
     HTTPXClientInstrumentor().instrument(request_hook=redact_request, async_request_hook=redact_async_request)
     HTTPX2ClientInstrumentor().instrument(request_hook=redact_request, async_request_hook=redact_async_request)
 
-    def shutdown():
+    def shutdown() -> None:
         try:
             tracing.shutdown()
         finally:
             metering.shutdown(timeout_millis=3000)
 
     return shutdown
+
+
+def langfuse_span(span: ReadableSpan) -> bool:
+    from langfuse import is_default_export_span
+
+    attributes = span.attributes or {}
+    return is_default_export_span(span) or (
+        span.kind == trace.SpanKind.CLIENT
+        and attributes.get("rpc.service") == "openlet.letfs.v1.LetFSService"
+        and attributes.get("rpc.method") == "SemanticSearch"
+    )
+
+
+def initialize_langfuse(settings: LangfuseSettings, runtime: RuntimeSettings) -> Langfuse:
+    return Langfuse(
+        base_url=settings["base_url"], public_key=secret(settings["public_key"]),
+        secret_key=secret(settings["secret_key"]), environment=runtime["environment"],
+        should_export_span=langfuse_span,
+    )

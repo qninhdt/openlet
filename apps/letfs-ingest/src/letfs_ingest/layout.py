@@ -1,14 +1,18 @@
 import re
+from collections.abc import Sequence
 from itertools import accumulate
 
+from docling_core.types.doc.items.node import NodeItem
 
-def section_name(number, count, heading):
+
+def section_name(number: int, count: int, heading: str) -> str:
     slug = re.sub(r"[^\w-]+", "-", heading).strip("-_").lower()[:60] or "section"
     return f"{number:0{len(str(count))}d}-{slug}"
 
 
-def sections(items, minimum_tokens, split_tokens):
-    from docling_core.types.doc import SectionHeaderItem, TableItem
+def sections(items: Sequence[tuple[NodeItem, int]], minimum_tokens: int, split_tokens: int) -> list[tuple[int, int, str]]:
+    from docling_core.types.doc.items.table.table import TableItem
+    from docling_core.types.doc.items.text import SectionHeaderItem
 
     weights, headings = [], []
     table_depth = None
@@ -24,10 +28,10 @@ def sections(items, minimum_tokens, split_tokens):
         weights.append((len(text) + 3) // 4)
     totals = list(accumulate(weights, initial=0))
 
-    def size(start, stop):
+    def size(start: int, stop: int) -> int:
         return totals[stop] - totals[start]
 
-    def groups(start, stop, required):
+    def groups(start: int, stop: int, required: int) -> list[tuple[int, int, str]]:
         candidates = [heading for heading in headings if start <= heading[0] < stop]
         for level in sorted({heading[1] for heading in candidates}):
             same_level = [(position, title) for position, depth, title in candidates if depth == level]

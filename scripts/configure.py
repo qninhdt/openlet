@@ -4,36 +4,42 @@ import argparse
 import json
 import math
 import os
+from collections.abc import Iterable, Mapping
 from pathlib import Path
+from typing import TypedDict, cast
 from urllib.parse import quote, urlparse
 
 import yaml
+from openlet_sdk.config import TelemetrySettings, load, secret
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def load():
-    with open(os.environ["OPENLET_CONFIG"]) as stream:
-        return yaml.safe_load(stream)
+class ListenerFilter(TypedDict):
+    typed_config: dict[str, object]
+
+class FilterChain(TypedDict):
+    filters: list[ListenerFilter]
+
+class Listener(TypedDict):
+    filter_chains: list[FilterChain]
+
+class StaticResources(TypedDict):
+    listeners: list[Listener]
+    clusters: list[dict[str, object]]
+
+class EnvoyConfig(TypedDict):
+    static_resources: StaticResources
 
 
-def secret(value):
-    if not isinstance(value, str) or not (value.startswith("${") and value.endswith("}")):
-        raise ValueError("secret must be a whole ${ENV_VARIABLE} scalar")
-    result = os.environ[value[2:-1]]
-    if not result:
-        raise ValueError(f"empty required environment variable {value[2:-1]}")
-    return result
-
-
-def render(name, values):
+def render(name: str, values: Mapping[str, object]) -> dict[str, object]:
     text = (ROOT / "infra/config" / f"{name}.template.yaml").read_text()
     for key, value in values.items():
         text = text.replace(f"@{key}@", json.dumps(value))
-    return yaml.safe_load(text)
+    return cast(dict[str, object], yaml.safe_load(text))
 
 
-def configure_tracing(envoy, settings, environment):
+def configure_tracing(envoy: EnvoyConfig, settings: TelemetrySettings, environment: str) -> None:
     endpoint = settings["otlp_endpoint"]
     if not endpoint:
         return
@@ -75,7 +81,7 @@ def configure_tracing(envoy, settings, environment):
     envoy["static_resources"]["clusters"].append(cluster)
 
 
-def configure(output, test=False):
+def configure(output: Path, test: bool = False) -> None:
     c = load()
     dep, svc, deploy = c["dependencies"], c["services"], c["deployment"]
     pg, temporal = dep["postgres"], deploy["temporal"]
@@ -88,10 +94,10 @@ def configure(output, test=False):
     jwks = urlparse(auth["jwks_url"])
     if jwks.scheme not in ("http", "https") or not jwks.hostname:
         raise ValueError("JWKS URL must be HTTP(S)")
-    envoy = render("envoy", dict(LISTEN_HOST=host, LISTEN_PORT=int(port),
+    envoy = cast(EnvoyConfig, render("envoy", dict(LISTEN_HOST=host, LISTEN_PORT=int(port),
         PLATFORM_HOST=ph, PLATFORM_PORT=int(pp), LETFS_HOST=fh, LETFS_PORT=int(fp),
         ISSUER=auth["issuer"], AUDIENCE=auth["audience"], JWKS_URL=auth["jwks_url"],
-        JWKS_HOST=jwks.hostname, JWKS_PORT=jwks.port or (443 if jwks.scheme == "https" else 80)))
+        JWKS_HOST=jwks.hostname, JWKS_PORT=jwks.port or (443 if jwks.scheme == "https" else 80))))
     if jwks.scheme == "https":
         envoy["static_resources"]["clusters"][2]["transport_socket"] = {
             "name": "envoy.transport_sockets.tls", "typed_config": {
@@ -109,14 +115,14 @@ def configure(output, test=False):
     sql_env = {"SQL_HOST": pg["host"], "SQL_PORT": str(pg["port"]),
         "SQL_USER": temporal["database"]["user"], "SQL_PASSWORD": secret(temporal["database"]["password"]),
         "SQL_PLUGIN": "postgres12"}
-    runtime = {"services": {
+    runtime: dict[str, dict[str, dict[str, object]]] = {"services": {
         "postgres": {"environment": {"POSTGRES_USER": deploy["postgres"]["admin_user"],
             "POSTGRES_PASSWORD": secret(deploy["postgres"]["admin_password"]) }},
         "spicedb": {"environment": graph_env}, "spicedb-migrate": {"environment": graph_env},
         "temporal-migrate": {"environment": {**sql_env,
             "TEMPORAL_DATABASE": temporal["database"]["name"], "TEMPORAL_VISIBILITY_DATABASE": temporal["visibility_database"]}},
         "qdrant": {"environment": {"QDRANT__SERVICE__API_KEY": secret(dep["qdrant"]["api_key"])}}}}
-    def environment(references):
+    def environment(references: Iterable[str]) -> dict[str, str]:
         return {"OPENLET_CONFIG": "/etc/openlet/openlet.yaml",
             **({"OTEL_RESOURCE_ATTRIBUTES": os.environ["OTEL_RESOURCE_ATTRIBUTES"]} if os.environ.get("OTEL_RESOURCE_ATTRIBUTES") else {}),
             **{value[2:-1]: secret(value) for value in references}}
@@ -134,12 +140,12 @@ def configure(output, test=False):
     runtime["services"]["database-backup"] = {"environment": {
         "PGHOST": pg["host"], "PGPORT": str(pg["port"]),
         "PGUSER": deploy["postgres"]["admin_user"], "PGPASSWORD": secret(deploy["postgres"]["admin_password"])}}
-    for owner in ("platform", "letfs"):
-        database = svc[owner]["database"]
+    for owner, service in (("platform", svc["platform"]), ("letfs", svc["letfs"])):
+        database = service["database"]
         dsn = f'postgres://{quote(database["user"], safe="")}:{quote(secret(database["password"]), safe="")}@{pg["host"]}:{pg["port"]}/{database["name"]}?sslmode={pg["sslmode"]}'
         runtime["services"][f"{owner}-migrate"] = {"environment": {
             "GOOSE_DRIVER": "postgres", "GOOSE_DBSTRING": dsn, "GOOSE_MIGRATION_DIR": "/migrations"}}
-        runtime["services"][owner]["healthcheck"] = {"test": ["CMD", "grpc-health-probe", f'-addr=127.0.0.1:{svc[owner]["grpc_listen"].rsplit(":", 1)[1]}']}
+        runtime["services"][owner]["healthcheck"] = {"test": ["CMD", "grpc-health-probe", f'-addr=127.0.0.1:{service["grpc_listen"].rsplit(":", 1)[1]}']}
     runtime["services"]["envoy"] = {
         "ports": [f"127.0.0.1:{port}:{port}"],
         "environment": {"OTEL_RESOURCE_ATTRIBUTES": os.environ.get("OTEL_RESOURCE_ATTRIBUTES", "")},
@@ -148,7 +154,7 @@ def configure(output, test=False):
     os.umask(0o077)
     output.mkdir(parents=True, exist_ok=True)
     output.chmod(0o700)
-    outputs = [("envoy", envoy), ("temporal", native), ("compose.runtime", runtime)]
+    outputs: list[tuple[str, object]] = [("envoy", envoy), ("temporal", native), ("compose.runtime", runtime)]
     if test:
         outputs.append(("compose.test.runtime", {"services": {"s3": {"environment": {
             "RUSTFS_ACCESS_KEY": secret(dep["s3"]["access_key_id"]),

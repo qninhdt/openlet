@@ -1,7 +1,11 @@
 import json
 
+from openlet_sdk.config import JSON
 
-def own_body(text):
+from .providers import Metadata
+
+
+def own_body(text: str) -> str:
     if text.startswith("---\n"):
         header, separator, body = text[4:].partition("\n---\n\n")
         if separator:
@@ -14,7 +18,7 @@ def own_body(text):
     return text
 
 
-def render(metadata, body, children):
+def render(metadata: Metadata, body: str, children: dict[str, dict[str, JSON]]) -> str:
     fields = metadata.model_dump()
     fields["children"] = children
     return "---\n" + json.dumps(fields, ensure_ascii=False, indent=2) + "\n---\n\n" + own_body(body)

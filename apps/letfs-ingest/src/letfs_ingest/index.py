@@ -1,19 +1,33 @@
 import json
 import math
+from collections.abc import Iterator
 from pathlib import PurePosixPath
+from typing import TypedDict
 from uuid import NAMESPACE_URL, uuid5
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from openlet_api.letfs.v1 import internal_pb2 as internal
 from openlet_api.letfs.v1 import letfs_pb2 as pb
-from qdrant_client import models
+from openlet_sdk.config import Config, EmbeddingSettings, IOSettings
+from qdrant_client import AsyncQdrantClient, models
 from temporalio import activity
 
+from .providers import Models
 from .readme import own_body
-from .telemetry import stage
+from .telemetry import ProcessingIdentity, stage
 
 
-def points(source, identity, settings, embedding, collection):
+class PointPayload(TypedDict):
+    workspace_id: str
+    storage_id: str
+    source_id: str
+    source_version: int
+    file_id: str
+    kind: str
+    text: str
+
+
+def points(source: internal.ProcessingInput, identity: ProcessingIdentity, settings: IOSettings, embedding: EmbeddingSettings, collection: str) -> Iterator[tuple[str, PointPayload]]:
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=settings["chunk_size_tokens"] * 4,
         chunk_overlap=settings["chunk_overlap_tokens"] * 4,
@@ -59,13 +73,13 @@ def points(source, identity, settings, embedding, collection):
             }
 
 
-async def index(source, identity, ai, qdrant, config):
+async def index(source: internal.ProcessingInput, identity: ProcessingIdentity, ai: Models, qdrant: AsyncQdrantClient, config: Config) -> None:
     settings = config["services"]["letfs_ingest"]["io"]
     embedding = config["models"]["embedding"]
     collection = config["dependencies"]["qdrant"]["collection"]
-    batch = []
+    batch: list[tuple[str, PointPayload]] = []
 
-    async def flush():
+    async def flush() -> None:
         with stage("embed", identity):
             vectors = await ai.embed([payload["text"] for _, payload in batch])
         if len(vectors) != len(batch) or any(
@@ -74,7 +88,7 @@ async def index(source, identity, ai, qdrant, config):
         ):
             raise ValueError("embedding provider returned invalid vectors")
         await qdrant.upsert(collection_name=collection, wait=True, points=[
-            models.PointStruct(id=key, vector=vector, payload=payload)
+            models.PointStruct(id=key, vector=vector, payload=dict(payload))
             for (key, payload), vector in zip(batch, vectors, strict=True)
         ])
         batch.clear()

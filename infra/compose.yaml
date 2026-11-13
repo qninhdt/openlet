@@ -6,7 +6,7 @@ x-tools: &tools
     - ../pyproject.toml:/work/pyproject.toml:ro
     - ../uv.lock:/work/uv.lock:ro
     - ../apps/letfs-ingest/pyproject.toml:/work/apps/letfs-ingest/pyproject.toml:ro
-    - ../packages/sdk-python/pyproject.toml:/work/packages/sdk-python/pyproject.toml:ro
+    - ../packages/sdk-python:/work/packages/sdk-python:ro
     - ../packages/contracts/authz:/work/packages/contracts/authz:ro
     - ${OPENLET_CONFIG:?required}:/etc/openlet/openlet.yaml:ro
     - tools-venv:/work/.venv

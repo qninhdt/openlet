@@ -1,3 +1,9 @@
+from typing import TYPE_CHECKING
+
+from openlet_sdk.config import Config
+
+if TYPE_CHECKING:
+    from docling.document_converter import DocumentConverter
 import argparse
 import logging
 import os
@@ -20,7 +26,7 @@ class InvalidDocument(ValueError):
     pass
 
 
-def preflight(source, media, config):
+def preflight(source: Path, media: str, config: Config) -> None:
     limits = config["services"]["letfs_ingest"]["cpu"]["limits"]
     if source.stat().st_size > config["services"]["letfs"]["max_blob_bytes"]:
         raise InvalidDocument("input exceeds blob limit")
@@ -61,7 +67,7 @@ def preflight(source, media, config):
                 workbook.close()
 
 
-def converter(config):
+def converter(config: Config) -> DocumentConverter:
     from docling.datamodel.accelerator_options import AcceleratorOptions
     from docling.datamodel.base_models import InputFormat
     from docling.datamodel.pipeline_options import PdfPipelineOptions, RapidOcrOptions
@@ -93,7 +99,7 @@ def converter(config):
     )
 
 
-def convert(source, output, media, config):
+def convert(source: Path, output: Path, media: str, config: Config) -> None:
     from docling.datamodel.base_models import ConversionStatus
     from PIL import Image
 

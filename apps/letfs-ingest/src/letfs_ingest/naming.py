@@ -2,11 +2,16 @@ import posixpath
 import re
 import unicodedata
 from collections import defaultdict
+from collections.abc import Iterable, Mapping
 from pathlib import PurePosixPath
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
+from openlet_api.letfs.v1.internal_pb2 import ProcessingArtifact
 
-def artifact_paths(artifacts, metadata):
+from .providers import Metadata
+
+
+def artifact_paths(artifacts: Iterable[ProcessingArtifact], metadata: Mapping[str, Metadata]) -> dict[str, str]:
     names, reserved = {}, defaultdict(set)
     ordered = sorted(artifacts, key=lambda item: (item.path.count("/"), item.path))
     for item in ordered:
@@ -42,8 +47,8 @@ def artifact_paths(artifacts, metadata):
     return paths
 
 
-def rewrite_artifact_links(body, old_path, paths):
-    def destination(match):
+def rewrite_artifact_links(body: str, old_path: str, paths: Mapping[str, str]) -> str:
+    def destination(match: re.Match[str]) -> str:
         raw = match["target"]
         angled = raw.startswith("<")
         target = urlsplit(raw[1:-1] if angled else raw)

@@ -6,7 +6,8 @@ from enum import StrEnum
 from itertools import islice
 
 from openai import AsyncOpenAI
-from openlet_sdk.config import secret
+from openai.types.chat import ChatCompletionContentPartParam
+from openlet_sdk.config import JSON, Config, EnrichmentSettings, secret
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -58,7 +59,7 @@ class Metadata(BaseModel):
     context: str = Field(min_length=1, max_length=3000)
 
 
-def sample(text, characters):
+def sample(text: str, characters: int) -> str:
     if characters < 64:
         raise ValueError("evidence budget must be at least 64 characters")
     if len(text) <= characters:
@@ -72,13 +73,13 @@ def sample(text, characters):
     )
 
 
-def evidence(text, media, characters):
+def evidence(text: str, media: str, characters: int) -> str:
     if media == "text/csv":
         text = "\n".join(", ".join(row) for row in islice(csv.reader(io.StringIO(text)), 9))
     return sample(text, characters)
 
 
-def vision(data, settings):
+def vision(data: bytes, settings: EnrichmentSettings) -> str:
     with Image.open(io.BytesIO(data)) as image:
         if image.width * image.height > settings["max_image_pixels"]:
             raise ValueError("image exceeds pixel limit")
@@ -89,7 +90,7 @@ def vision(data, settings):
 
 
 class Models:
-    def __init__(self, config):
+    def __init__(self, config: Config) -> None:
         self.settings = config["models"]
         provider = self.settings["provider"]
         self.client = AsyncOpenAI(
@@ -98,16 +99,16 @@ class Models:
         )
         self.slots = asyncio.Semaphore(config["services"]["letfs_ingest"]["io"]["model_concurrency"])
 
-    async def describe(self, name, text, media, children, image=None):
+    async def describe(self, name: str, text: str, media: str, children: str, image: bytes | None = None) -> Metadata:
         settings = self.settings["enrichment"]
         budget = settings["max_input_characters"]
         own = evidence(text, media, budget)
-        content = [{"type": "text", "text": sample(
+        content: list[ChatCompletionContentPartParam] = [{"type": "text", "text": sample(
             f"Name: {name}\nMedia type: {media}\nContent:\n{own}\nChild summaries:\n{children}", budget,
         )}]
         if image is not None:
             content.append({"type": "image_url", "image_url": {"url": await asyncio.to_thread(vision, image, settings)}})
-        extra = {}
+        extra: dict[str, JSON] = {}
         if settings["reasoning_effort"] is not None:
             extra["reasoning"] = {"effort": settings["reasoning_effort"]}
         result = await self.client.chat.completions.parse(
@@ -123,7 +124,7 @@ class Models:
             raise ValueError("model did not return valid file metadata")
         return message.parsed
 
-    async def embed(self, texts):
+    async def embed(self, texts: list[str]) -> list[list[float]]:
         model = self.settings["embedding"]
         async with self.slots:
             response = await self.client.embeddings.create(

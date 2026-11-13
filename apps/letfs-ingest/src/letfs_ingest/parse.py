@@ -4,16 +4,19 @@ import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import httpx
 from openlet_api.letfs.v1 import internal_pb2 as pb
+from openlet_api.letfs.v1.internal_pb2_grpc import LetFSInternalServiceStub
+from openlet_sdk.config import LetFSSettings
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from .artifacts import download, heartbeats, publish
 from .convert import MEDIA_SUFFIXES
-from .telemetry import stage
+from .telemetry import ProcessingIdentity, stage
 
 
-async def run_child(arguments, timeout):
+async def run_child(arguments: list[str], timeout: float) -> int:
     env = {key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL", "TMPDIR", "OPENLET_CONFIG") if key in os.environ}
     env["HF_HUB_OFFLINE"] = "1"
     child = await asyncio.create_subprocess_exec(
@@ -32,18 +35,18 @@ async def run_child(arguments, timeout):
 
 
 class Parser:
-    def __init__(self, stub, http, settings):
+    def __init__(self, stub: LetFSInternalServiceStub, http: httpx.AsyncClient, settings: LetFSSettings) -> None:
         self.stub, self.http, self.settings = stub, http, settings
 
     @activity.defn(name="ParseBlob")
-    async def run(self, request: dict) -> None:
+    async def run(self, request: ProcessingIdentity) -> None:
         async with heartbeats():
-            identity = {"file_id": request["file_id"], "version": request["version"]}
+            identity: ProcessingIdentity = {"file_id": request["file_id"], "version": request["version"]}
             source = await self.stub.GetProcessingInput(pb.ProcessingRequest(**identity), timeout=30)
             if source.outcome.obsolete or source.outcome.stage != "pending":
                 return
-            with TemporaryDirectory(prefix="openlet-parse-") as directory:
-                directory = Path(directory)
+            with TemporaryDirectory(prefix="openlet-parse-") as temporary:
+                directory = Path(temporary)
                 name = directory / ("input" + MEDIA_SUFFIXES[source.media_type])
                 output = directory / "output"
                 output.mkdir()
