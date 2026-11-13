@@ -1,5 +1,10 @@
 # Model configuration, structured output and API costs
 
+Latest authority is the [approved LiteLLM design](../261111-2010-leta-rewrite/inference.md)
+and [consolidated implementation plan](../261114-0035-inference-prompts-compaction/plan.md).
+The revisions linked below are historical; do not implement their local catalog,
+pricing synchronization or retry proposals instead of the final gateway design.
+
 Catalog, model-reference, price-source and retry recommendations below are
 superseded by the [provider-owned revision](design-261113-2202-provider-catalog-compaction-retries.md).
 Keep the recorded provider/SDK checks as historical evidence.

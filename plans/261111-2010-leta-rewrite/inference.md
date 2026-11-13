@@ -5,6 +5,11 @@ LetFS, **chưa phải implementation hoàn tất**. Thay các proposal catalog r
 model reference có effort suffix và sao chép price definitions sang Langfuse.
 Không dùng skills/subagents; evaluation tiếp tục hoãn.
 
+[Plan triển khai hợp nhất](../261114-0035-inference-prompts-compaction/plan.md)
+ghi retrospective, thiết kế chi tiết, file map/commit sequence và các gate còn
+chưa chốt. Prompt-management release thử qua Openlet; Playground hoãn, không
+cần public gateway hoặc Langfuse LLM connection ở lượt này.
+
 ## 1. Ownership
 
 | Nội dung                                                                                                | Nguồn duy nhất                                                        |

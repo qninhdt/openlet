@@ -199,9 +199,9 @@ Grafana theo dõi toàn bộ pipeline; Langfuse đi sâu vào AI calls. Cùng m�
 
 **Availability:** demo chưa thêm cold-start fallback. Process mới/cache rỗng + API down thì model invocation báo lỗi theo existing handling/retry; không prompt rỗng hoặc silently latest. Warm cache giúp khi API chập chờn. Native `fallback=` có sẵn nếu sau này cần; chưa thêm prompt copy hoặc artifact generation. Đây là giới hạn demo.
 
-**Version/rollback:** edit tạo immutable version → thử thủ công Playground/staging → chuyển production label → runtime nhận qua cache. Root/Leti native composition pin common numeric version, ví dụ `@@@langfusePrompt:name=leta/common|version=7@@@`; common đổi thì outer role version mới. Không fetch/nối common lần nữa. Rollback chuyển label về version trước, không reset checkpoint/Temporal.
+**Version/rollback:** edit tạo immutable version cùng config → thử thực tế qua Openlet → chuyển production label → runtime nhận qua cache. `latest` chỉ cho development; staging khi có deployment tương ứng. Root/Leti native composition pin common numeric version, ví dụ `@@@langfusePrompt:name=leta/common|version=7@@@`; common đổi thì outer role version mới. Không fetch/nối common lần nữa hoặc tự inherit config của common. Rollback chuyển label về version trước, không reset checkpoint/Temporal.
 
-Folders/labels/composition/cache/Playground/link/config đều native. Task model/parameter config đã chốt; không đưa tool/output contracts vào LF. Chưa A/B assignment, GitHub sync, protected-label workflow hoặc webhooks. Không evaluation gate cho prompt release ở scope này.
+Folders/labels/composition/cache/link/config đều native. **Playground hoãn theo chốt cuối**; không cần public local LiteLLM endpoint hoặc Langfuse LLM connection để managed prompts hoạt động. Task model/parameter config đã chốt; không đưa tool/output contracts vào LF. Hoãn A/B assignment, GitHub sync, protected-label workflow, webhooks/Slack và evaluation. Agentic CLI/API chỉ cho authorized operator, runtime agent không sửa/promote platform prompts. [Plan triển khai hợp nhất](../261114-0035-inference-prompts-compaction/plan.md) ghi chi tiết và acceptance; prompt wording vẫn draft.
 
 ## 8. Free và features dùng ngay
 
@@ -209,7 +209,7 @@ Folders/labels/composition/cache/Playground/link/config đều native. Task mode
 
 Units = traces + observations + scores. Callback có graph/node/chain observations ngoài model/tools; không suy quota chỉ từ LLM calls. Dùng native Usage dashboard đo demo rồi quyết định nếu gần quota, chưa quota controller/purge daemon/nâng tier. [Units](https://langfuse.com/docs/administration/billable-units).
 
-Dùng trace tree/Agent Graphs, sessions, input/output/tools/errors/latency, token/cache/cost, search/filter, prompt metrics/version links, Playground và Usage. Tags vài role/use-case, comments khi debug. Không dựng lại UI hoặc poll Metrics API vào Prometheus. Hobby có feature limits.
+Dùng trace tree/Agent Graphs, sessions, input/output/tools/errors/latency, token/cache/cost, search/filter, prompt metrics/version links và Usage. Playground hoãn. Tags vài role/use-case, comments khi debug. Không dựng lại UI hoặc poll Metrics API vào Prometheus. Hobby có feature limits.
 
 30 ngày access không là cam kết tự xóa đúng ngày 30. Không Cloud cleanup trong workspace deletion; history/inbox có lifecycle riêng. [Retention](https://langfuse.com/docs/administration/data-retention).
 

@@ -1,5 +1,15 @@
 # Implementation Leta và observability
 
+## Lượt triển khai tiếp theo
+
+[Plan hợp nhất 2026-11-14](../261114-0035-inference-prompts-compaction/plan.md)
+đối chiếu 17 commit sau `d69be44`, gom final LiteLLM/Prompt Config/cost/compaction
+design và superseded proposals. Chưa implementation migration; không dùng
+baseline checks bên dưới thay acceptance mới. Prompt management vừa chốt hoãn
+Playground/evaluation; actual prompt wording còn draft. Ba gate API effort,
+mixed-provider capability routing và cross-service cost attribution được ghi
+rõ trước boundary liên quan, không tự thay domain/Temporal.
+
 Bắt đầu 2026-11-13 theo yêu cầu người dùng. Dùng hai owning plans hiện có;
 evaluation hoãn. Không dùng archive implementation/tests, compatibility wrappers,
 skills hoặc subagents. Pyright kiểm Leta, ingest, SDK và operational scripts.

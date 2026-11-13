@@ -69,7 +69,7 @@ Active [Compose](../../infra/compose.yaml) đã có các additions trên; shared
 
 Một `OPENLET_CONFIG` YAML, non-secrets trong YAML và secrets qua ENV references; theo [config core](../261111-1727-platform-letfs-rewrite/configuration.md). Role chỉ nhận credentials cần dùng: model-provider key thuộc worker, API không cần quyền gọi model. Migration job nhận database credentials cần cho migration.
 
-Model catalog/default ở `models.leta`. Dùng native generated Python clients của [SDK](../../packages/sdk-python/pyproject.toml), không copy SDK archive hoặc thêm HTTP wrapper cho core. [Make generate](../../Makefile) đã có generation Python từ active contracts; phần còn lại là nối consumer Leta và kiểm integration.
+Current implementation còn catalog/default ở `models.leta`; target thay bằng LiteLLM metadata và Langfuse Prompt Config theo [inference đã chốt](inference.md) và [plan triển khai tiếp theo](../261114-0035-inference-prompts-compaction/plan.md). Không triển khai lại local catalog này. Dùng native generated Python clients của [SDK](../../packages/sdk-python/pyproject.toml), không copy SDK archive hoặc thêm HTTP wrapper cho core. [Make generate](../../Makefile) đã có generation Python từ active contracts.
 
 Shared YAML hiện có leta/leta_runtime mappings. Thêm dependencies.temporal.queues.leta_bridge cùng Go Queues/Python/YAML mẫu/test/deploy để Platform route shared cleanup; không thêm key làm strict loader lỗi hoặc đòi services.leta/models.leta/Redis secrets. Bridge routing name không đòi worker healthy.
 

@@ -2,6 +2,13 @@
 
 ## Status
 
+Final authority: [approved LiteLLM inference](../261111-2010-leta-rewrite/inference.md)
+and [next implementation plan](../261114-0035-inference-prompts-compaction/plan.md).
+The provider-owned Openlet catalog, effort suffix/parser, local pricing and retry
+proposals below are superseded. Instructor pin and cache-friendly compaction
+evidence remain relevant. This historical report is not the next implementation
+specification.
+
 This follows the user's revised model configuration requirements. It supersedes
 the catalog, model-selection, automatic OpenRouter price sourcing and retry
 recommendations in the [previous proposal](design-261113-2119-model-configuration-costs.md).

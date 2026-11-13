@@ -1,5 +1,10 @@
 # Observability toàn Openlet: thiết kế đã chốt
 
+[Plan triển khai tiếp theo 2026-11-14](../261114-0035-inference-prompts-compaction/plan.md)
+gom LiteLLM/cost, Prompt Config/lifecycle và cache-friendly compaction. Chưa
+migration runtime. Cập nhật chốt cuối: **Playground/evaluation hoãn**, thử prompt
+qua Openlet trước promote label; không public gateway/LLM connection lúc này.
+
 Đang implementation cùng Leta. Collector/Cloud config, native SDK instrumentation, RAG/ingest observations và managed prompts đã có code; evaluation hoãn. Xem [execution record](../261111-2010-leta-rewrite/execution.md) cho checks và acceptance còn lại; chưa deploy Cloud.
 
 Người dùng chốt toàn bộ thiết kế observability 2026-11-13, gồm RAG và file processing: **Langfuse Cloud Hobby/Free**, demo và 1–10 Openlet testers, tích hợp theo docs chuẩn; evaluation là chủ đề thiết kế tiếp theo, chưa triển khai. Agent tồn tại lâu nhưng graph invocation thường hoàn thành rồi dừng/chờ công việc mới. Không dùng skill/subagent hoặc thay domain/Temporal/schema đã chốt. Người dùng đã chốt Grafana Cloud Free: local chỉ Alloy, Cloud Mimir/Tempo/Loki/Grafana thay toàn bộ monitoring backends self-host.
@@ -31,7 +36,7 @@ Scope: topology, native instrumentation/correlation, metrics/dashboard, prompt/v
 3. Leta/Leti dùng CallbackHandler mỗi invocation; native trace_context tách Temporal parent, model/tools cùng trace. Bật native run_inline để context truyền xuống RPC trong async tools; không subclass callback. Session existing agent ID, không per-call standalone traces hoặc UTC-day grouping.
 4. Capture/usage bình thường cho demo, native batch/export, không per-token observations. Tempo bỏ AI content. Theo dõi Usage dashboard thay vì quota/capture controller.
 5. Platform prompts và task model/parameters ở LF Prompt Config; agent instructions SQL, tools/output contracts code. LiteLLM sở hữu model groups/deployments/capabilities/prices/retry theo [inference đã chốt](../261111-2010-leta-rewrite/inference.md); không catalog/pricing copy trong Openlet/LF. Role prompt/config resolve một lần/invocation, native cache 60s/labels/version/link; rollback label. Chưa cold fallback machinery.
-6. Dùng native traces/Agent Graphs/sessions/search/token-cost/prompt metrics/Playground. Evaluation chưa có thiết kế/implementation, không thuộc scope observability.
+6. Dùng native traces/Agent Graphs/sessions/search/token-cost/prompt metrics. Playground và evaluation hoãn; không thuộc scope implementation lượt tới.
 7. RAG giữ search hiện tại; tận dụng SemanticSearch server span làm retriever, embedding có observation riêng, rerank là span với model/counts/indices/scores, chưa token/cost khi provider response chưa được đọc usage. Không observation từng hit hoặc LangChain retriever wrapper quanh RPC.
 8. Grafana theo dõi toàn bộ file processing; LF quan sát enrichment/batch embedding. Đối chiếu bằng file_id/source_version và TraceID khi cùng trace; LetFS processing state vẫn là nguồn trạng thái sản phẩm.
 
