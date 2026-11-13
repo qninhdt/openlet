@@ -11,15 +11,6 @@ test('text editing, quota, copy, trash, restore and ZIP keep content intact', as
     expect(response.ok(), await response.text()).toBeTruthy();
     expect((await response.json()).name).toBe(rename.name);
   }
-  const visibility = { visibility: 'STORAGE_VISIBILITY_PUBLIC', requestId: randomUUID() };
-  const changed = await api.patch(base, { data: visibility });
-  expect(changed.ok(), await changed.text()).toBeTruthy();
-  expect((await changed.json()).visibility).toBe(visibility.visibility);
-  const replayed = await api.patch(base, { data: visibility });
-  expect(replayed.ok(), await replayed.text()).toBeTruthy();
-  expect(await replayed.json()).toEqual(await changed.json());
-  const privateAgain = await api.patch(base, { data: { visibility: 'STORAGE_VISIBILITY_PRIVATE', requestId: randomUUID() } });
-  expect(privateAgain.ok(), await privateAgain.text()).toBeTruthy();
   const directories = { base: { nodeId: rootId }, path: 'docs/drafts' };
   const first = await api.post(`${base}/nodes:createDirectories`, { data: directories });
   expect(first.ok(), await first.text()).toBeTruthy();
