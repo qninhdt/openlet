@@ -5,8 +5,10 @@ from collections.abc import AsyncIterator
 from typing import cast
 from uuid import UUID
 
+from ag_ui.core import Event as AgUiEvent
 from openlet_sdk.config import JSON
 from opentelemetry import metrics
+from pydantic import TypeAdapter
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
@@ -17,6 +19,7 @@ from .history import search
 type Event = dict[str, JSON]
 type Records = list[tuple[bytes, dict[bytes, bytes]]]
 logger = logging.getLogger(__name__)
+ag_ui = TypeAdapter(AgUiEvent)
 resyncs = metrics.get_meter("openlet.leta").create_counter("openlet.leta.stream.resync")
 
 
@@ -35,7 +38,12 @@ def event(type: str, agent: UUID, run: UUID | None = None, **fields: JSON) -> Ev
     scope: dict[str, JSON] = {"agentId": str(agent)}
     if run:
         scope["runId"] = str(run)
-    return {"type": type, "metadata": {"openlet": scope}, **fields}
+    return cast(
+        Event,
+        ag_ui.validate_python(
+            {"type": type, "metadata": {"openlet": scope}, **fields}
+        ).model_dump(mode="json", by_alias=True, exclude_none=True),
+    )
 
 
 async def publish(redis: Redis, root: UUID, value: Event) -> bool:

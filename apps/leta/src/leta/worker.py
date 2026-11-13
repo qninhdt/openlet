@@ -1,33 +1,46 @@
-from collections.abc import Awaitable
-from datetime import datetime
+import asyncio
+import logging
+import signal
+from collections.abc import AsyncIterator
+from contextlib import AsyncExitStack, asynccontextmanager
+from datetime import datetime, timedelta
 from typing import Literal, cast
 from uuid import UUID
 
 import grpc
-from authzed.api.v1 import (
-    DeleteRelationshipsRequest,
-    DeleteRelationshipsResponse,
-    RelationshipFilter,
-    SubjectFilter,
-)
+from langfuse import Langfuse
 from openlet_api.letfs.v1 import internal_pb2 as internal
 from openlet_api.letfs.v1 import letfs_pb2 as fs
 from openlet_api.platform.v1 import internal_pb2 as platform
-from openlet_sdk.config import JSON
+from openlet_sdk.config import JSON, load
+from openlet_sdk.telemetry import initialize, initialize_langfuse
+from opentelemetry.instrumentation.psycopg import PsycopgInstrumentor
+from opentelemetry.instrumentation.redis import RedisInstrumentor
 from temporalio import activity
 from temporalio.client import WithStartWorkflowOperation, WorkflowUpdateFailedError
-from temporalio.common import WorkflowIDConflictPolicy
-from temporalio.exceptions import ApplicationError
+from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
+from temporalio.exceptions import ApplicationError, WorkflowAlreadyStartedError
+from temporalio.runtime import (
+    LogForwardingConfig,
+    LoggingConfig,
+    OpenTelemetryConfig,
+    Runtime,
+    TelemetryConfig,
+    TelemetryFilter,
+)
 from temporalio.service import RPCError, RPCStatusCode
+from temporalio.worker import Worker
 
-from . import agents, boxes, hitl, messages, schedules
+from . import agents, boxes, events, hitl, messages, schedules
 from .agents import RootCreation, get_agent, stable
 from .auth import Actor, relationship
 from .boxes import BoxCreation
-from .config import Services
-from .db import effect
-from .jobs.agent import Agent, AgentInput
+from .config import Services, connect, validate
+from .db import effect, receipt, request_hash
+from .jobs.agent import Agent, AgentInput, RunInput
+from .jobs.hitl import HitlRequest
 from .jobs.resources import BoxLifecycle, LetaLifecycle, ResourceOperation
+from .jobs.schedules import ScheduleChanges, ScheduleDelivery
 from .messages import Message
 
 
@@ -43,36 +56,96 @@ async def deliver(s: Services, message: Message) -> dict[str, JSON]:
         id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
     )
     return await s.temporal.execute_update_with_start_workflow(
-        Agent.receive, message, id=str(message.id), start_workflow_operation=start
+        Agent.receive,
+        message,
+        id=request_hash(message).hex(),
+        start_workflow_operation=start,
     )
 
 
 async def operation(
     s: Services, command: ResourceOperation, *, wait: bool = False
 ) -> dict[str, JSON]:
+    async with s.db.connection() as conn:
+        saved = None
+        if command.root is not None:
+            saved = await receipt(
+                conn,
+                f"user:{command.root.owner_id}",
+                "leta.create",
+                command.request_id,
+                command.root,
+            )
+        elif command.box is not None:
+            saved = await receipt(
+                conn,
+                f"agent:{command.box.leta_id}",
+                "box.create",
+                command.request_id,
+                command.box.request,
+            )
+        elif command.action in ("pause", "resume"):
+            saved = await receipt(
+                conn, str(command.id), "leta.control", command.request_id, command
+            )
+    if saved is not None:
+        return cast(dict[str, JSON], saved)
     is_box = command.box is not None or command.action == "delete_box"
     type = BoxLifecycle if is_box else LetaLifecycle
     action = "delete" if command.action == "delete_box" else command.action
     id = f"{'box' if is_box else 'leta'}/{command.id}/{action}"
+    if command.root is not None:
+        id = f"leta/create/{command.root.owner_id}/{command.request_id}"
     if action in ("pause", "resume"):
         id = f"leta/{command.id}/control/{command.request_id}"
-    handle = await s.temporal.start_workflow(
-        type.run,
-        command,
-        id=id,
-        task_queue=s.config["dependencies"]["temporal"]["queues"]["leta"],
-        id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
-    )
-    return (
-        await handle.result()
-        if wait
-        else await handle.execute_update("open", result_type=dict[str, JSON])
-    )
+    try:
+        handle = await s.temporal.start_workflow(
+            type.run,
+            command,
+            id=id,
+            task_queue=s.config["dependencies"]["temporal"]["queues"]["leta"],
+            id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+        )
+    except WorkflowAlreadyStartedError:
+        handle = s.temporal.get_workflow_handle(id, result_type=dict[str, JSON])
+    try:
+        result = await handle.execute_update(
+            "open", command, result_type=dict[str, JSON]
+        )
+    except RPCError as error:
+        if error.status != RPCStatusCode.NOT_FOUND:
+            raise
+        return cast(dict[str, JSON], await handle.result())
+    return cast(dict[str, JSON], await handle.result()) if wait else result
+
+
+@asynccontextmanager
+async def pulsing() -> AsyncIterator[None]:
+    async def pulse() -> None:
+        while True:
+            activity.heartbeat()
+            await asyncio.sleep(2)
+
+    task = asyncio.create_task(pulse())
+    try:
+        yield
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 class Activities:
-    def __init__(self, services: Services) -> None:
-        self.s = services
+    def __init__(self, services: Services, langfuse: Langfuse) -> None:
+        self.s, self.langfuse = services, langfuse
+
+    @activity.defn
+    async def run_agent(self, input: RunInput) -> str:
+        from .runtime.agent import run
+
+        return await run(self.s, self.langfuse, input)
 
     @activity.defn
     async def admit_input(self, message: Message) -> dict[str, JSON]:
@@ -103,6 +176,32 @@ class Activities:
         error: str | None,
     ) -> None:
         await agents.finish_run(self.s.db, id, status, error)
+        if status != "paused":
+            async with self.s.db.connection() as conn:
+                row = await (
+                    await conn.execute(
+                        "SELECT r.agent_id,a.leta_id FROM runs r JOIN agents a ON a.id=r.agent_id WHERE r.id=%s",
+                        (id,),
+                    )
+                ).fetchone()
+            if row:
+                await events.publish(
+                    self.s.redis,
+                    cast(UUID, row["leta_id"]),
+                    events.event(
+                        "RUN_ERROR" if status == "failed" else "RUN_FINISHED",
+                        cast(UUID, row["agent_id"]),
+                        id,
+                        **(
+                            {
+                                "message": error or "runtime failed",
+                                "code": error or "runtime_error",
+                            }
+                            if status == "failed"
+                            else {"threadId": str(row["agent_id"]), "runId": str(id)}
+                        ),
+                    ),
+                )
 
     @activity.defn
     async def deliver_input(self, message: Message) -> dict[str, JSON]:
@@ -312,15 +411,7 @@ class Activities:
         for row in requests:
             handle = self.s.temporal.get_workflow_handle(f"hitl/{row['id']}")
             try:
-                await handle.execute_update(
-                    "decide",
-                    hitl.Decision(
-                        request_id=cast(UUID, row["id"]),
-                        actor=Actor("agent", root),
-                        status="cancelled",
-                        resolved_at=datetime.now().astimezone(),
-                    ),
-                )
+                await handle.execute_update("settle_effects")
             except WorkflowUpdateFailedError:
                 request = await hitl.get(self.s.db, cast(UUID, row["id"]))
                 if request["status"] == "pending":
@@ -353,7 +444,6 @@ class Activities:
         if box is None or box["state"] == "archived":
             return
         root = await get_agent(self.s.db, cast(UUID, box["leta_id"]))
-        await self.settle_agents(cast(UUID, box["leta_id"]), id)
         try:
             await self.s.files.TrashNode(
                 fs.TrashNodeRequest(
@@ -376,73 +466,66 @@ class Activities:
 
     @activity.defn
     async def cleanup_box(self, id: UUID) -> None:
-        async with self.s.db.connection() as conn:
-            row = await (
-                await conn.execute("SELECT leta_id FROM boxes WHERE id=%s", (id,))
-            ).fetchone()
-        if row:
-            async with effect(self.s.db, cast(UUID, row["leta_id"])):
-                await self.archive_box(id)
+        async with pulsing():
+            async with self.s.db.connection() as conn:
+                row = await (
+                    await conn.execute("SELECT leta_id FROM boxes WHERE id=%s", (id,))
+                ).fetchone()
+            if row:
+                await self.settle_agents(cast(UUID, row["leta_id"]), id)
+                async with effect(self.s.db, cast(UUID, row["leta_id"])):
+                    await self.archive_box(id)
 
     @activity.defn
     async def cleanup_leta(self, id: UUID) -> None:
-        # Producers are settled before taking the effect barrier used by grant activities.
-        await self.settle_agents(id)
-        async with effect(self.s.db, id):
-            async with self.s.db.connection() as conn:
-                await conn.execute(
-                    "UPDATE boxes SET state='deleting' WHERE leta_id=%s AND state='active'",
-                    (id,),
-                )
-                rows = await (
+        async with pulsing():
+            # Producers are settled before taking the effect barrier used by grant activities.
+            await self.settle_agents(id)
+            async with effect(self.s.db, id):
+                async with self.s.db.connection() as conn:
                     await conn.execute(
-                        "SELECT id FROM boxes WHERE leta_id=%s AND state<>'archived'",
+                        "UPDATE boxes SET state='deleting' WHERE leta_id=%s AND state='active'",
                         (id,),
                     )
-                ).fetchall()
-            for row in rows:
-                await self.archive_box(cast(UUID, row["id"]))
-            for filter in (
-                RelationshipFilter(resource_type="agent", optional_resource_id=str(id)),
-                RelationshipFilter(
-                    resource_type="workspace",
-                    optional_relation="agent",
-                    optional_subject_filter=SubjectFilter(
-                        subject_type="agent", optional_subject_id=str(id)
-                    ),
-                ),
-            ):
-                await cast(
-                    Awaitable[DeleteRelationshipsResponse],
-                    self.s.auth.stub.DeleteRelationships(
-                        DeleteRelationshipsRequest(relationship_filter=filter),
-                        metadata=self.s.auth.metadata,
-                        timeout=15,
-                    ),
+                    rows = await (
+                        await conn.execute(
+                            "SELECT id FROM boxes WHERE leta_id=%s AND state<>'archived'",
+                            (id,),
+                        )
+                    ).fetchall()
+                for row in rows:
+                    await self.archive_box(cast(UUID, row["id"]))
+                root = await get_agent(self.s.db, id)
+                workspace = cast(UUID, root["workspace_id"])
+                await self.s.auth.write(
+                    [
+                        relationship("agent", id, "workspace", "workspace", workspace),
+                        relationship("workspace", workspace, "agent", "agent", id),
+                    ],
+                    delete=True,
                 )
-            async with self.s.db.connection() as conn:
-                await conn.execute(
-                    "UPDATE letas SET state='archived' WHERE id=%s", (id,)
-                )
+                async with self.s.db.connection() as conn:
+                    await conn.execute(
+                        "UPDATE letas SET state='archived' WHERE id=%s", (id,)
+                    )
 
     @activity.defn(name="DeleteWorkspaceAgents")
     async def delete_workspace_agents(self, input: dict[str, str]) -> None:
-        root_id = input.get("workspace_id") or input.get("WorkspaceID")
-        if root_id is None:
-            raise ValueError("workspace ID required")
-        async with self.s.db.connection() as conn:
-            rows = await (
-                await conn.execute(
-                    "UPDATE letas SET state='deleting' WHERE workspace_id=%s AND state<>'archived' RETURNING id",
-                    (UUID(root_id),),
-                )
-            ).fetchall()
-        for row in rows:
-            await self.cleanup_leta(cast(UUID, row["id"]))
+        async with pulsing():
+            root_id = input["workspace_id"]
+            async with self.s.db.connection() as conn:
+                rows = await (
+                    await conn.execute(
+                        "UPDATE letas SET state='deleting' WHERE workspace_id=%s AND state<>'archived' RETURNING id",
+                        (UUID(root_id),),
+                    )
+                ).fetchall()
+            for row in rows:
+                await self.cleanup_leta(cast(UUID, row["id"]))
 
     @activity.defn
     async def open_hitl_request(self, request: hitl.OpenRequest) -> dict[str, JSON]:
-        return await hitl.open_request(self.s.db, self.s.auth, request)
+        return await hitl.open_request(self.s.db, self.s.auth, self.s.files, request)
 
     @activity.defn
     async def resolve_hitl_request(self, decision: hitl.Decision) -> dict[str, JSON]:
@@ -498,3 +581,114 @@ class Activities:
             scheduled_at=nominal,
             content=str(value["content"]),
         )
+
+
+async def main() -> None:
+    config = load()
+    validate(config)
+    shutdown = initialize("openlet-leta-worker", config["runtime"], config["telemetry"])
+    PsycopgInstrumentor().instrument()
+    RedisInstrumentor().instrument()
+    stop = asyncio.Event()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        asyncio.get_running_loop().add_signal_handler(sig, stop.set)
+    telemetry = config["telemetry"]
+    native = Runtime(
+        telemetry=TelemetryConfig(
+            logging=LoggingConfig(
+                TelemetryFilter(core_level="WARN", other_level="ERROR"),
+                forwarding=LogForwardingConfig(logging.getLogger("temporalio.core")),
+            ),
+            metrics=OpenTelemetryConfig(
+                url=telemetry["otlp_endpoint"],
+                durations_as_seconds=True,
+                metric_periodicity=timedelta(
+                    seconds=telemetry["metrics_export_interval_seconds"]
+                ),
+            )
+            if telemetry["otlp_endpoint"]
+            else None,
+            global_tags={
+                "service.name": "openlet-leta-worker",
+                "worker_role": "leta",
+                "deployment.environment.name": config["runtime"]["environment"],
+            },
+        )
+    )
+    try:
+        async with AsyncExitStack() as stack:
+            lf_settings = config.get("langfuse")
+            if lf_settings is None:
+                raise ValueError("Langfuse settings are required for Leta prompts")
+            lf = initialize_langfuse(lf_settings, config["runtime"])
+            stack.callback(lf.shutdown)
+            services = await stack.enter_async_context(connect(config, native=native))
+            activities = Activities(services, lf)
+            queues = config["dependencies"]["temporal"]["queues"]
+            graceful = timedelta(seconds=config["runtime"]["shutdown_timeout_seconds"])
+            await stack.enter_async_context(
+                Worker(
+                    services.temporal,
+                    task_queue=queues["leta"],
+                    workflows=[
+                        Agent,
+                        LetaLifecycle,
+                        BoxLifecycle,
+                        HitlRequest,
+                        ScheduleChanges,
+                        ScheduleDelivery,
+                    ],
+                    activities=[
+                        activities.admit_input,
+                        activities.load_agent_control,
+                        activities.finish_run,
+                        activities.prepare_leta,
+                        activities.provision_leta,
+                        activities.close_leta,
+                        activities.set_leta_paused,
+                        activities.provision_box,
+                        activities.prepare_box,
+                        activities.close_box,
+                        activities.open_hitl_request,
+                        activities.resolve_hitl_request,
+                        activities.apply_hitl_outcome,
+                        activities.save_schedule_change,
+                        activities.apply_native_schedule,
+                        activities.load_schedule_occurrence,
+                    ],
+                    max_concurrent_activities=8,
+                    graceful_shutdown_timeout=graceful,
+                )
+            )
+            await stack.enter_async_context(
+                Worker(
+                    services.temporal,
+                    task_queue=queues["leta_runtime"],
+                    activities=[activities.run_agent],
+                    max_concurrent_activities=4,
+                    graceful_shutdown_timeout=graceful,
+                )
+            )
+            await stack.enter_async_context(
+                Worker(
+                    services.temporal,
+                    task_queue=queues["leta_bridge"],
+                    activities=[
+                        activities.deliver_input,
+                        activities.refresh_leta_agents,
+                        activities.cleanup_box,
+                        activities.cleanup_leta,
+                        activities.delete_workspace_agents,
+                    ],
+                    max_concurrent_activities=8,
+                    graceful_shutdown_timeout=graceful,
+                )
+            )
+            logging.getLogger(__name__).info("Leta workers started")
+            await stop.wait()
+    finally:
+        shutdown()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

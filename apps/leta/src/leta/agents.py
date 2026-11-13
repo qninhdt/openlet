@@ -4,7 +4,7 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 
 from openlet_sdk.config import JSON, ReasoningEffort
 from psycopg.types.json import Jsonb
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .db import Connection, Pool, Row, receipt, save_receipt
 
@@ -29,14 +29,32 @@ class ConfigureAgent(Input):
     model_id: str | None = None
     reasoning_effort: ReasoningEffort = None
 
+    @model_validator(mode="after")
+    def required_values(self) -> "ConfigureAgent":
+        if any(
+            getattr(self, name) is None
+            for name in self.model_fields_set & {"name", "description", "system_prompt"}
+        ):
+            raise ValueError("name, description and system_prompt cannot be null")
+        if (
+            "model_id" in self.model_fields_set
+            and self.model_id is None
+            and self.reasoning_effort is not None
+        ):
+            raise ValueError("reasoning effort requires an explicit model")
+        return self
 
-class RootCreation(Input):
+
+class RootRequest(Input):
     workspace_id: UUID
     owner_id: UUID
+    request: CreateLeta
+
+
+class RootCreation(RootRequest):
     leta_id: UUID
     storage_id: UUID
     root_node_id: UUID
-    request: CreateLeta
 
 
 def stable(scope: UUID, name: str) -> UUID:
@@ -77,6 +95,11 @@ async def gate(conn: Connection, leta: UUID, box: UUID | None = None) -> Row:
 
 
 async def prepare(db: Pool, creation: RootCreation) -> dict[str, JSON]:
+    original = RootRequest(
+        workspace_id=creation.workspace_id,
+        owner_id=creation.owner_id,
+        request=creation.request,
+    )
     async with db.connection() as conn, conn.transaction():
         await conn.execute(
             "SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",
@@ -87,7 +110,7 @@ async def prepare(db: Pool, creation: RootCreation) -> dict[str, JSON]:
             f"user:{creation.owner_id}",
             "leta.create",
             creation.request.request_id,
-            creation.request,
+            original,
         )
         if saved is not None:
             return cast(dict[str, JSON], saved)
@@ -115,7 +138,7 @@ async def prepare(db: Pool, creation: RootCreation) -> dict[str, JSON]:
             f"user:{creation.owner_id}",
             "leta.create",
             request.request_id,
-            request,
+            original,
             result,
         )
         return result

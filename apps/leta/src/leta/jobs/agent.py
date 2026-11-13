@@ -6,6 +6,8 @@ from uuid import UUID
 from temporalio import workflow
 from temporalio.exceptions import ActivityError, ApplicationError, CancelledError
 
+from .retry import RETRY
+
 with workflow.unsafe.imports_passed_through():
     from openlet_sdk.config import JSON
     from pydantic import BaseModel
@@ -44,6 +46,7 @@ class Agent:
         result = await workflow.execute_local_activity(
             "admit_input",
             message,
+            retry_policy=RETRY,
             start_to_close_timeout=timedelta(seconds=15),
             result_type=dict[str, JSON],
         )
@@ -53,6 +56,8 @@ class Agent:
 
     @receive.validator
     def validate_receive(self, message: Message) -> None:
+        if message.recipient_agent_id != self.input.agent_id:
+            raise ValueError("recipient does not match workflow")
         if self.stopped or self.stopping or self.rotating:
             raise ApplicationError(
                 "agent execution is rotating or stopping", type="admission_closed"
@@ -80,6 +85,7 @@ class Agent:
             await workflow.execute_local_activity(
                 "finish_run",
                 args=[run_id, "cancelled", None],
+                retry_policy=RETRY,
                 start_to_close_timeout=timedelta(seconds=15),
             )
         self.rotate()
@@ -93,6 +99,7 @@ class Agent:
         return await workflow.execute_local_activity(
             "load_agent_control",
             self.input.agent_id,
+            retry_policy=RETRY,
             start_to_close_timeout=timedelta(seconds=15),
             result_type=dict[str, JSON],
         )
@@ -127,6 +134,7 @@ class Agent:
                 "run_agent",
                 RunInput(agent_id=input.agent_id, run_id=self.run_id),
                 task_queue=input.runtime_queue,
+                retry_policy=RETRY,
                 start_to_close_timeout=timedelta(days=365),
                 heartbeat_timeout=timedelta(seconds=10),
                 cancellation_type=workflow.ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
@@ -159,6 +167,7 @@ class Agent:
                 await workflow.execute_local_activity(
                     "finish_run",
                     args=[self.run_id, status, error],
+                    retry_policy=RETRY,
                     start_to_close_timeout=timedelta(seconds=15),
                 )
             self.active = None

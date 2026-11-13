@@ -4,6 +4,8 @@ from datetime import timedelta
 from temporalio import workflow
 from temporalio.exceptions import ApplicationError
 
+from .retry import RETRY
+
 with workflow.unsafe.imports_passed_through():
     import json
 
@@ -27,9 +29,14 @@ class HitlRequest:
         self.opened: dict[str, JSON] | None = None
         self.decision: dict[str, JSON] | None = None
         self.lock = asyncio.Lock()
+        self.effects_settled = False
 
     @workflow.update
-    async def open(self) -> dict[str, JSON]:
+    async def open(self, request: OpenRequest) -> dict[str, JSON]:
+        if request != self.input.request:
+            raise ApplicationError(
+                "request ID was already used with different input", non_retryable=True
+            )
         await workflow.wait_condition(lambda: self.opened is not None)
         assert self.opened is not None
         return self.opened
@@ -57,11 +64,32 @@ class HitlRequest:
             result = await workflow.execute_local_activity(
                 "resolve_hitl_request",
                 decision,
+                retry_policy=RETRY,
                 start_to_close_timeout=timedelta(seconds=15),
                 result_type=dict[str, JSON],
             )
             self.decision = result
             return result
+
+    @workflow.update
+    async def settle_effects(self) -> None:
+        await workflow.wait_condition(lambda: self.opened is not None)
+        async with self.lock:
+            if self.decision is None:
+                request = self.input.request
+                self.decision = await workflow.execute_local_activity(
+                    "resolve_hitl_request",
+                    Decision(
+                        request_id=request.id,
+                        actor=Actor("agent", request.requester_agent_id),
+                        status="cancelled",
+                        resolved_at=workflow.now(),
+                    ),
+                    retry_policy=RETRY,
+                    start_to_close_timeout=timedelta(seconds=15),
+                    result_type=dict[str, JSON],
+                )
+        await workflow.wait_condition(lambda: self.effects_settled)
 
     @workflow.run
     async def run(self, input: HitlInput) -> None:
@@ -69,10 +97,15 @@ class HitlRequest:
         opened = await workflow.execute_activity(
             "open_hitl_request",
             input.request,
+            retry_policy=RETRY,
             start_to_close_timeout=timedelta(seconds=30),
             result_type=dict[str, JSON],
         )
         self.opened = opened
+        if opened["status"] == "already_granted":
+            self.effects_settled = True
+            await workflow.wait_condition(workflow.all_handlers_finished)
+            return
         if opened["status"] != "pending":
             self.decision = opened
         if self.decision is None:
@@ -98,9 +131,11 @@ class HitlRequest:
             result["outcome"] = await workflow.execute_activity(
                 "apply_hitl_outcome",
                 input.request.id,
+                retry_policy=RETRY,
                 start_to_close_timeout=timedelta(minutes=2),
                 result_type=dict[str, JSON],
             )
+        self.effects_settled = True
         message = Message(
             id=stable(input.request.id, "result"),
             recipient_agent_id=input.request.requester_agent_id,
@@ -123,6 +158,7 @@ class HitlRequest:
             "deliver_input",
             message,
             task_queue=input.bridge_queue,
+            retry_policy=RETRY,
             start_to_close_timeout=timedelta(minutes=2),
         )
         await workflow.wait_condition(workflow.all_handlers_finished)

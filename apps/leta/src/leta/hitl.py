@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Literal, cast
 from uuid import UUID
 
+import grpc
 from openlet_api.letfs.v1 import letfs_pb2 as fs
 from openlet_api.letfs.v1.letfs_pb2_grpc import LetFSServiceStub
 from openlet_sdk.config import JSON
@@ -80,7 +81,7 @@ async def get(db: Pool, id: UUID) -> dict[str, JSON]:
 
 
 async def open_request(
-    db: Pool, auth: Authorization, request: OpenRequest
+    db: Pool, auth: Authorization, files: LetFSServiceStub, request: OpenRequest
 ) -> dict[str, JSON]:
     agent = await get_agent(db, request.requester_agent_id)
     await auth.require(
@@ -89,6 +90,23 @@ async def open_request(
         cast(UUID, agent["workspace_id"]),
         "participate",
     )
+    if request.type == "approval":
+        await files.GetStorage(
+            fs.StorageRequest(
+                workspace_id=str(agent["workspace_id"]),
+                storage_id=str(request.payload["storage_id"]),
+            ),
+            metadata=Actor("user", request.recipient_user_id).metadata,
+            timeout=15,
+        )
+        permission = "write" if request.payload["role"] == "editor" else "read"
+        if await auth.allowed(
+            Actor("agent", cast(UUID, agent["leta_id"])),
+            "storage",
+            UUID(str(request.payload["storage_id"])),
+            permission,
+        ):
+            return {"id": str(request.id), "status": "already_granted"}
     if request.type == "approval":
         await auth.require(
             Actor("user", request.recipient_user_id),
@@ -266,19 +284,31 @@ async def apply(
             if not await auth.allowed(
                 Actor("agent", root), "storage", storage, permission
             ):
-                await stub.SetStorageAccess(
-                    fs.SetStorageAccessRequest(
-                        workspace_id=str(agent["workspace_id"]),
-                        storage_id=str(storage),
-                        actor=fs.ActorRef(agent_id=str(root)),
-                        role=fs.STORAGE_ROLE_EDITOR
-                        if permission == "write"
-                        else fs.STORAGE_ROLE_VIEWER,
-                    ),
-                    metadata=user.metadata,
-                    timeout=30,
-                )
-            outcome = {"status": "granted"}
+                try:
+                    await stub.SetStorageAccess(
+                        fs.SetStorageAccessRequest(
+                            workspace_id=str(agent["workspace_id"]),
+                            storage_id=str(storage),
+                            actor=fs.ActorRef(agent_id=str(root)),
+                            role=fs.STORAGE_ROLE_EDITOR
+                            if permission == "write"
+                            else fs.STORAGE_ROLE_VIEWER,
+                        ),
+                        metadata=user.metadata,
+                        timeout=30,
+                    )
+                except grpc.aio.AioRpcError as error:
+                    if error.code() not in (
+                        grpc.StatusCode.NOT_FOUND,
+                        grpc.StatusCode.PERMISSION_DENIED,
+                    ):
+                        raise
+                    reason = "storage_unavailable"
+            outcome = (
+                {"status": "skipped", "reason": reason}
+                if reason
+                else {"status": "granted"}
+            )
         async with db.connection() as conn:
             await conn.execute(
                 "UPDATE hitl_requests SET outcome=%s WHERE id=%s", (Jsonb(outcome), id)

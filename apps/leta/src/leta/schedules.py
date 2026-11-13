@@ -5,7 +5,8 @@ from zoneinfo import ZoneInfo
 
 from openlet_sdk.config import JSON
 from psycopg.types.json import Jsonb
-from pydantic import Field, model_validator
+from pydantic import Field, field_serializer, model_validator
+from temporalio.api.workflowservice.v1 import ListScheduleMatchingTimesRequest
 from temporalio.client import (
     Client,
     Schedule,
@@ -30,7 +31,7 @@ from .db import Pool, receipt, save_receipt
 
 class Timing(Input):
     at: datetime | None = None
-    after_seconds: int | None = Field(default=None, gt=0)
+    after_seconds: int | None = Field(default=None, ge=0)
     every_seconds: int | None = Field(default=None, ge=1)
     calendar: dict[str, list[int]] | None = None
     starts_at: datetime | None = None
@@ -91,6 +92,10 @@ class Change(Timing):
     paused: bool | None = None
     supplied: set[str] = Field(default_factory=set)
 
+    @field_serializer("supplied")
+    def serialize_fields(self, fields: set[str]) -> list[str]:
+        return sorted(fields)
+
     @model_validator(mode="after")
     def remember_fields(self) -> "Change":
         if not self.supplied:
@@ -105,7 +110,9 @@ class CanonicalChange(Input):
 
 def normalize(timing: Timing, now: datetime) -> tuple[str, dict[str, JSON]] | None:
     if timing.at is not None or timing.after_seconds is not None:
-        at = timing.at or (now + timedelta(seconds=timing.after_seconds or 0))
+        at = (
+            timing.at or (now + timedelta(seconds=timing.after_seconds or 0))
+        ).replace(microsecond=0)
         return "at", {"at": at.astimezone(timezone.utc).isoformat()}
     spec: dict[str, JSON] = {"timezone": timing.timezone}
     if timing.starts_at:
@@ -132,6 +139,57 @@ async def get(db: Pool, id: UUID) -> dict[str, JSON]:
     if row is None:
         raise LookupError("schedule not found")
     return json_row(row)
+
+
+async def upcoming(client: Client, value: dict[str, JSON]) -> dict[str, JSON]:
+    if value["deleted_at"] is not None:
+        return {"upcoming": [], "forecast_status": "deleted"}
+    try:
+        result = await client.get_schedule_handle(f"schedule/{value['id']}").describe(
+            rpc_timeout=timedelta(seconds=10)
+        )
+    except RPCError:
+        return {"upcoming": None, "forecast_status": "unavailable"}
+    return {
+        "upcoming": [time.isoformat() for time in result.info.next_action_times[:5]],
+        "forecast_status": "available",
+    }
+
+
+async def calendar(
+    client: Client, value: dict[str, JSON], start: datetime, end: datetime
+) -> list[str]:
+    if (
+        start.tzinfo is None
+        or end.tzinfo is None
+        or not start < end <= start + timedelta(days=366)
+    ):
+        raise ValueError(
+            "provide a timezone-aware increasing range of at most 366 days"
+        )
+    if value["deleted_at"] is not None:
+        return []
+    if value["type"] == "at":
+        at = datetime.fromisoformat(str(cast(dict[str, JSON], value["spec"])["at"]))
+        return [at.isoformat()] if start < at <= end else []
+    times: list[str] = []
+    for _ in range(32):
+        query = ListScheduleMatchingTimesRequest(
+            namespace=client.namespace, schedule_id=f"schedule/{value['id']}"
+        )
+        query.start_time.FromDatetime(start)
+        query.end_time.FromDatetime(end)
+        result = await client.workflow_service.list_schedule_matching_times(query)
+        if not result.start_time:
+            return times
+        batch = [time.ToDatetime(tzinfo=timezone.utc) for time in result.start_time]
+        times.extend(time.isoformat() for time in batch if start < time <= end)
+        if len(times) > 1000:
+            raise ValueError("narrow calendar range to at most 1000 occurrences")
+        if batch[-1] >= end:
+            return times
+        start = batch[-1]
+    raise ValueError("narrow calendar range to at most 32 native queries")
 
 
 async def save(db: Pool, canonical: CanonicalChange) -> dict[str, JSON]:
@@ -312,6 +370,16 @@ async def apply(
     result: dict[str, JSON],
 ) -> dict[str, JSON]:
     change = canonical.request
+    async with db.connection() as conn:
+        saved = await receipt(
+            conn,
+            f"agent:{change.creator_agent_id}",
+            "schedule.change",
+            change.request_id,
+            change,
+        )
+    if saved is not None:
+        return cast(dict[str, JSON], saved)
     handle = client.get_schedule_handle(f"schedule/{change.schedule_id}")
     if change.action == "delete":
         try:
@@ -332,7 +400,7 @@ async def apply(
                 str(result["type"]), cast(dict[str, JSON], result["spec"])
             ),
             state=ScheduleState(paused=bool(result["paused"])),
-            policy=SchedulePolicy(overlap=ScheduleOverlapPolicy.ALLOW_ALL),
+            policy=SchedulePolicy(overlap=ScheduleOverlapPolicy.BUFFER_ONE),
         )
         try:
             await client.create_schedule(f"schedule/{change.schedule_id}", schedule)

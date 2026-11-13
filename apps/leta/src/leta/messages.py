@@ -3,11 +3,16 @@ from typing import Literal, cast
 from uuid import UUID
 
 from openlet_sdk.config import JSON
+from opentelemetry import metrics
 from pydantic import Field
 
 from .agents import Input, gate, get_agent, stable
 from .auth import Actor, Authorization
 from .db import Pool, Row
+
+inbox_count = metrics.get_meter("openlet.leta").create_counter(
+    "openlet.leta.inbox.messages"
+)
 
 
 class Message(Input):
@@ -67,7 +72,13 @@ async def admit(db: Pool, auth: Authorization, message: Message) -> dict[str, JS
                 sender_id = cast(UUID, source["representative_agent_id"])
             else:
                 sender_id = message.source_id
-            sender = await get_agent(db, sender_id)
+            sender = await (
+                await conn.execute(
+                    "SELECT id,leta_id,box_id FROM agents WHERE id=%s", (sender_id,)
+                )
+            ).fetchone()
+            if sender is None:
+                raise LookupError("sender not found")
             await gate(
                 conn, cast(UUID, sender["leta_id"]), cast(UUID | None, sender["box_id"])
             )
@@ -142,7 +153,14 @@ async def admit(db: Pool, auth: Authorization, message: Message) -> dict[str, JS
                 message.content,
             ),
         )
-        return {"id": str(message.id), "seq": cast(int, counter["inbox_seq"])}
+    inbox_count.add(
+        1,
+        {
+            "direction": "accepted",
+            "agent_role": "leti" if recipient["box_id"] else "root",
+        },
+    )
+    return {"id": str(message.id), "seq": cast(int, counter["inbox_seq"])}
 
 
 async def pending(db: Pool, agent_id: UUID, after: int) -> list[Row]:
@@ -234,13 +252,16 @@ async def list_inbox(
     async with db.connection() as conn:
         rows = await (
             await conn.execute(
-                """SELECT DISTINCT ON (conversation_id) * FROM agent_messages WHERE recipient_agent_id=%s
-            AND seq>%s AND (NOT %s OR read_at IS NULL) AND (%s::uuid IS NULL OR source_id=%s)
-            ORDER BY conversation_id,seq LIMIT 20""",
-                (agent, after, unread, source, source),
+                """SELECT * FROM (SELECT DISTINCT ON (conversation_id) * FROM agent_messages WHERE recipient_agent_id=%s
+            AND (NOT %s OR read_at IS NULL) AND (%s::uuid IS NULL OR source_id=%s)
+            ORDER BY conversation_id,seq) notifications WHERE seq>%s ORDER BY seq LIMIT 20""",
+                (agent, unread, source, source, after),
             )
         ).fetchall()
-    return input_batch(rows, root=True)
+    return {
+        **input_batch(rows, root=True),
+        "next_cursor": str(rows[-1]["seq"]) if len(rows) == 20 else None,
+    }
 
 
 async def deliver_user(

@@ -6,7 +6,7 @@ from uuid import UUID
 from langchain.tools import ToolRuntime, tool
 from langchain_core.messages import AIMessage
 from langchain_core.tools import BaseTool
-from mirage import Session
+from mirage import ContentType, Session
 from openlet_sdk.config import JSON
 from pydantic import Field
 from temporalio.client import WithStartWorkflowOperation
@@ -17,7 +17,7 @@ from ..agents import get_agent, json_row, stable
 from ..auth import Actor
 from ..boxes import BoxCreation, CreateBox, LetiDefinition
 from ..config import Services
-from ..db import Row
+from ..db import Row, request_hash
 from ..filesystem.letfs import current_operation
 from ..filesystem.workspace import Filesystem, scope, shell
 from ..filesystem.workspace import path as file_path
@@ -302,7 +302,10 @@ async def open_hitl(ctx: Context, request: hitl.OpenRequest) -> JSON:
         id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
     )
     return await ctx.services.temporal.execute_update_with_start_workflow(
-        HitlRequest.open, start_workflow_operation=start, id=str(request.id)
+        HitlRequest.open,
+        request,
+        start_workflow_operation=start,
+        id=request_hash(request).hex(),
     )
 
 
@@ -460,7 +463,7 @@ async def change_schedule(
     return await ctx.services.temporal.execute_update_with_start_workflow(
         ScheduleChanges.change,
         change,
-        id=str(change.request_id),
+        id=request_hash(change).hex(),
         start_workflow_operation=start,
     )
 
@@ -623,7 +626,11 @@ async def schedule_delete(
 @tool
 async def schedule_get(runtime: ToolRuntime[Context, State], schedule_id: UUID) -> JSON:
     """Get a schedule instruction, timing and upcoming forecasts."""
-    return await own_schedule(runtime.context, schedule_id)
+    value = await own_schedule(runtime.context, schedule_id)
+    return {
+        **value,
+        **await schedules.upcoming(runtime.context.services.temporal, value),
+    }
 
 
 async def list_schedules(
@@ -702,7 +709,14 @@ async def file_list(
     """List files and directories; /mnt lists accessible storages."""
     vfs = session(runtime).vfs
     if file_path(path) == "/mnt":
-        return cast(JSON, await vfs.readdir("/mnt"))
+        return {
+            "items": [
+                {"path": f"/mnt/{name}", "kind": "directory"}
+                for name in await vfs.readdir("/mnt")
+            ],
+            "next_cursor": None,
+            "truncated": False,
+        }
     result, _ = await vfs.dispatch("list_page", scope(path), cursor=cursor, depth=depth)
     return cast(JSON, result)
 
@@ -714,7 +728,17 @@ async def file_read(
     start_line: Annotated[int, Field(ge=1)] = 1,
 ) -> JSON:
     """Read a text window, image preview or uploaded-document artifacts; follow returned continuations."""
-    data = await session(runtime).vfs.read(file_path(path))
+    vfs = session(runtime).vfs
+    metadata = await vfs.stat(file_path(path))
+    media = str(metadata.extra.get("media_type", ""))
+    if media and not (
+        media.startswith("text/") or metadata.content == ContentType.TEXT
+    ):
+        result, _ = await vfs.dispatch(
+            "preview", scope(path), image=media.startswith("image/")
+        )
+        return cast(JSON, result)
+    data = await vfs.read(file_path(path))
     lines = data.decode().splitlines()
     text = "\n".join(
         f"{i + 1}: {text}"
@@ -782,7 +806,7 @@ async def file_semantic_search(
             "semantic_search", scope(item), query=query
         )
         results.append(cast(JSON, result))
-    return results
+    return {"results": results}
 
 
 @tool

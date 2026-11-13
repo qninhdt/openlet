@@ -13,6 +13,7 @@ from redis.asyncio import Redis
 from temporalio.client import Client
 from temporalio.contrib.opentelemetry import TracingInterceptor
 from temporalio.contrib.pydantic import pydantic_data_converter
+from temporalio.runtime import Runtime
 
 from .auth import Authorization
 from .db import Pool, pool
@@ -30,6 +31,8 @@ def validate(config: Config) -> None:
 
 
 def model(config: Config, model_id: str | None, effort: ReasoningEffort) -> ModelEntry:
+    if model_id is None:
+        effort = config["models"]["leta"]["default"]["reasoning_effort"]
     selected = model_id or config["models"]["leta"]["default"]["model_id"]
     for item in config["models"]["leta"]["catalog"]:
         if item["model_id"] == selected:
@@ -61,7 +64,9 @@ def redis_url(config: Config) -> str:
 
 
 @asynccontextmanager
-async def connect(config: Config) -> AsyncIterator[Services]:
+async def connect(
+    config: Config, *, native: Runtime | None = None
+) -> AsyncIterator[Services]:
     async with AsyncExitStack() as stack:
         db = await stack.enter_async_context(pool())
         auth = Authorization(config)
@@ -88,6 +93,7 @@ async def connect(config: Config) -> AsyncIterator[Services]:
             namespace=settings["namespace"],
             tls=settings["tls"],
             data_converter=pydantic_data_converter,
+            runtime=native,
             interceptors=[TracingInterceptor()],
         )
         yield Services(

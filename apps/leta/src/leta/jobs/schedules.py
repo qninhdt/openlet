@@ -6,6 +6,8 @@ from uuid import UUID
 from temporalio import workflow
 from temporalio.exceptions import ApplicationError
 
+from .retry import RETRY
+
 with workflow.unsafe.imports_passed_through():
     from openlet_sdk.config import JSON
     from pydantic import BaseModel
@@ -25,6 +27,7 @@ class ScheduleChanges:
         self.lock = asyncio.Lock()
         self.deleted = False
         self.rotating = False
+        self.input: ScheduleInput | None = None
 
     @workflow.update
     async def change(self, request: Change) -> dict[str, JSON]:
@@ -33,6 +36,7 @@ class ScheduleChanges:
             result = await workflow.execute_local_activity(
                 "save_schedule_change",
                 canonical,
+                retry_policy=RETRY,
                 start_to_close_timeout=timedelta(seconds=15),
                 result_type=dict[str, JSON],
             )
@@ -40,6 +44,7 @@ class ScheduleChanges:
                 await workflow.execute_activity(
                     "apply_native_schedule",
                     args=[canonical, result["result"]],
+                    retry_policy=RETRY,
                     start_to_close_timeout=timedelta(minutes=2),
                 )
             self.deleted = request.action == "delete"
@@ -48,6 +53,8 @@ class ScheduleChanges:
 
     @change.validator
     def validate_change(self, request: Change) -> None:
+        if self.input is None or request.schedule_id != self.input.schedule_id:
+            raise ValueError("schedule does not match workflow")
         if self.rotating or self.deleted:
             raise ApplicationError(
                 "schedule execution is closed", type="admission_closed"
@@ -55,6 +62,7 @@ class ScheduleChanges:
 
     @workflow.run
     async def run(self, input: ScheduleInput) -> None:
+        self.input = input
         await workflow.wait_condition(lambda: self.deleted or self.rotating)
         await workflow.wait_condition(workflow.all_handlers_finished)
         if not self.deleted:
@@ -74,6 +82,7 @@ class ScheduleDelivery:
         message = await workflow.execute_local_activity(
             "load_schedule_occurrence",
             args=[UUID(schedule_id), nominal],
+            retry_policy=RETRY,
             start_to_close_timeout=timedelta(seconds=15),
             result_type=cast(type[Message | None], Message | None),
         )
@@ -83,5 +92,6 @@ class ScheduleDelivery:
                 "deliver_input",
                 message,
                 task_queue=str(queues["bridge_queue"]),
+                retry_policy=RETRY,
                 start_to_close_timeout=timedelta(minutes=2),
             )
