@@ -106,7 +106,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /:/rootfs:ro,rslave
       - /proc:/host/proc:ro
-      - /sys:/host/sys:ro
+      - /sys:/sys:ro
       - /var/lib/docker:/var/lib/docker:ro
     environment:
       COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:?required}

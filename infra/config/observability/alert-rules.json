@@ -25,7 +25,7 @@
         "datasourceUid": "PROMETHEUS_UID",
         "model": {
           "refId": "A",
-          "expr": "min(up{job=~\"postgres|redis|temporal|spicedb|envoy|qdrant\"})",
+          "expr": "min(up{job=~\"integrations/(postgres|redis)|temporal|spicedb|envoy|qdrant|litellm\"})",
           "instant": true,
           "range": false,
           "intervalMs": 1000,

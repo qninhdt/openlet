@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
-from langfuse import Langfuse
+from langfuse import Langfuse, is_default_export_span
 from opentelemetry import metrics, trace
 from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
@@ -171,8 +171,6 @@ def initialize(
 
 
 def langfuse_span(span: ReadableSpan) -> bool:
-    from langfuse import is_default_export_span
-
     attributes = span.attributes or {}
     return is_default_export_span(span) or (
         span.kind == trace.SpanKind.CLIENT

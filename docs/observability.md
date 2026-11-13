@@ -45,7 +45,7 @@ to Langfuse; it does not forward Python observations a second time.
 
 An agent invocation gets a fresh AI trace and uses the agent ID as session ID.
 Model/tool observations use the native LangChain callback; no observation is
-created per streamed token. Ingest uses the official Langfuse OpenAI wrapper.
+created per streamed token. Ingest uses native LiteLLM and Instructor; each paid completion and embedding batch has one Langfuse observation.
 File parsing/publication, queue capacity and storage health belong in Grafana;
 model inputs/outputs, prompt versions, token/cost and RAG results belong in
 Langfuse. Query embedding exports dimensions/counts, never vectors. Retrieval
@@ -59,8 +59,7 @@ an AI trace when both branches contain it.
 ## Prompts
 
 Create text prompts `leta/common`, `leta/root`, `leta/leti`, `leta/compaction` and
-`letfs/enrichment`. The Leta contents in the plan remain drafts and must be
-reviewed before publication. Role prompts use Langfuse native composition with a
+`letfs/enrichment`. The Leta product instructions are maintained in the approved plan; publication versions and acceptance evidence are recorded in the inference execution report. Role prompts use Langfuse native composition with a
 pinned numeric common version; runtime fetches the role once and does not append
 common again. User/agent assignments remain in SQL; tools remain in code.
 
@@ -90,7 +89,30 @@ startup. Configure notification policies/contact points in Cloud before enabling
 notifications. Initial defaults cover failed scrapes, disk pressure, exporter
 failures and Temporal scheduling delay; tune with observed workload.
 
-Use native Langfuse trace/session views, Agent Graphs, prompt metrics, Playground,
+All metrics pass through the native `prometheus.relabel.essential` allowlist in
+Alloy before remote write. It keeps the dashboard/alert families, Openlet runtime
+and processing metrics, service request/error/latency, process/host/container
+resources and dependency health. Full Temporal server polling/persistence/shard
+histograms and unused dependency internals are excluded: they exceeded Cloud's
+active-series limit even while idle. The filter does not change traces, logs,
+Langfuse observations or sampling. Add a metric family when a dashboard or a real
+investigation needs it, rather than enabling every dependency metric.
+
+After changing the filter, distinguish newly forwarded series from Cloud's active
+series: old series remain active until the Cloud window expires. Inspect
+`grafanacloud_instance_active_series` using the **Grafana Cloud Usage** data source,
+not the application Prometheus data source. Check Alloy remote-write 429s too;
+a successful scrape alone does not prove Cloud ingestion.
+
+Also inspect `grafanacloud_instance_memory_series` against
+`grafanacloud_instance_metrics_limits{limit_name="max_global_series_per_user"}`
+and `grafanacloud_instance_samples_discarded{reason="per_user_series_limit"}`.
+Old inactive series can still occupy ingester memory after the active count
+falls. Until head compaction frees them, new series can be discarded even when
+remote write succeeds. This can take hours; do not interpret a reduced active
+count as proof of complete ingestion or create a new account to work around it.
+
+Use native Langfuse trace/session views, Agent Graphs, prompt metrics,
 model latency/token/cache/cost and Usage dashboards. Start demo sampling at 1.0.
 Do not reduce the shared OTel provider ratio to reduce only Tempo volume: that
 also drops observations before Langfuse can export them. No separate sampler or
@@ -118,3 +140,17 @@ remote-write WAL/log positions. Docker logs rotate locally. SDK/export queues
 are bounded and may drop during outages. PostgreSQL backup includes Leta domain
 and native checkpoint tables; Redis contains disposable events/cache. Follow
 [backup/restore](operations.md), keeping matching Temporal and SpiceDB state.
+
+LiteLLM exposes native Prometheus metrics to the authenticated Alloy scrape.
+The gateway computes request costs, including streaming usage. Applications attach
+those native totals to existing Langfuse observations; they do not maintain a price
+catalog. Unknown cost is omitted, and zero is kept. Configure verified supplier
+rates in LiteLLM: registry manufacturer estimates do not establish Vilao billing.
+Cached and reasoning token detail counts are subsets, represented as disjoint
+Langfuse usage categories to avoid adding them twice.
+
+For agent semantic searches, native Langfuse baggage carries the session and
+workspace/agent/root/box/run IDs on the existing internal RPC. LetFS attaches
+only these UUID attribution labels to its retriever/embedding/rerank spans.
+This adds no RPC or lookup; permission checks continue to use the actor.
+Baggage is scoped to SemanticSearch and is not forwarded to model providers.

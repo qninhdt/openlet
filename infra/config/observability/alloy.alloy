@@ -101,10 +101,20 @@ otelcol.processor.transform "metrics" {
 }
 
 otelcol.exporter.prometheus "cloud" {
-  forward_to = [prometheus.remote_write.cloud.receiver]
+  forward_to = [prometheus.relabel.essential.receiver]
   include_scope_labels = false
   include_target_info = false
   resource_to_telemetry_conversion = false
+}
+
+// Keep operational metrics used by Openlet dashboards; avoid full dependency internals.
+prometheus.relabel "essential" {
+  forward_to = [prometheus.remote_write.cloud.receiver]
+  rule {
+    source_labels = ["__name__"]
+    regex = "up|openlet_.*|rpc_(server|client)_call_duration_seconds.*|http_server_(duration_milliseconds|request_duration_seconds).*|process_(memory_usage_bytes|resident_memory_bytes|cpu_time_seconds_total|cpu_seconds_total|thread_count|open_fds|max_fds|start_time_seconds)|go_(memory_used_bytes|goroutine_count|goroutines)|temporal_(activity_(schedule_to_start_latency_seconds|execution_latency_seconds).*|activity_execution_failed_total|worker_task_slots_(available|used))|service_(requests|errors|error_with_type)|node_(cpu_seconds_total|load1|load5|load15|memory_(MemTotal|MemAvailable)_bytes|filesystem_(avail_bytes|size_bytes|readonly)|disk_(read|written)_bytes_total|network_(receive|transmit)_(bytes|errs|drop)_total)|container_(cpu_usage_seconds_total|memory_working_set_bytes|network_(receive|transmit)_bytes_total)|pg_(up|stat_database_(numbackends|xact_commit|xact_rollback|deadlocks|blks_hit|blks_read)|locks_count|database_size_bytes)|redis_(up|memory_used_bytes|memory_max_bytes|evicted_keys_total|connected_clients|commands_processed_total|rejected_connections_total)|grpc_server_handled_total|spicedb_cache_(hits|misses)_total|rest_responses_total|collections_total|envoy_http_downstream_rq_(total|[245]xx)|otelcol_exporter_.*|prometheus_remote_storage_(samples_failed_total|samples_pending)|litellm_(requests_metric|request_total_latency_metric.*|input_tokens_metric|output_tokens_metric|spend_metric|deployment_failure_responses|deployment_success_responses).*"
+    action = "keep"
+  }
 }
 
 prometheus.remote_write "cloud" {
@@ -121,10 +131,13 @@ prometheus.exporter.self "alloy" {}
 prometheus.exporter.unix "host" {
   rootfs_path = "/rootfs"
   procfs_path = "/host/proc"
-  sysfs_path = "/host/sys"
+  sysfs_path = "/sys"
 }
 prometheus.exporter.cadvisor "containers" {
   docker_host = "unix:///var/run/docker.sock"
+  docker_only = true
+  store_container_labels = false
+  enabled_metrics = ["cpu", "memory", "network"]
   storage_duration = "5m"
 }
 prometheus.exporter.postgres "postgres" {
@@ -138,13 +151,22 @@ prometheus.scrape "native" {
     {__address__ = "envoy:9901", __metrics_path__ = "/stats/prometheus", job = "envoy"},
   ]
   scrape_interval = "60s"
-  forward_to = [prometheus.remote_write.cloud.receiver]
+  forward_to = [prometheus.relabel.essential.receiver]
+}
+prometheus.scrape "litellm" {
+  targets = [{__address__ = "litellm:4000", job = "litellm"}]
+  authorization {
+    type = "Bearer"
+    credentials = sys.env("LITELLM_MASTER_KEY")
+  }
+  scrape_interval = "60s"
+  forward_to = [prometheus.relabel.essential.receiver]
 }
 prometheus.scrape "qdrant" {
   targets = [{__address__ = sys.env("QDRANT_METRICS_ADDRESS"), job = "qdrant"}]
   http_headers = {"api-key" = [sys.env("QDRANT_API_KEY")]}
   scrape_interval = "60s"
-  forward_to = [prometheus.remote_write.cloud.receiver]
+  forward_to = [prometheus.relabel.essential.receiver]
 }
 prometheus.exporter.redis "cache" {
   redis_addr = sys.env("REDIS_ADDRESS")
@@ -153,27 +175,27 @@ prometheus.exporter.redis "cache" {
 prometheus.scrape "redis" {
   targets = [] // Redis targets are enabled by configure.py with the Leta profile.
   scrape_interval = "60s"
-  forward_to = [prometheus.remote_write.cloud.receiver]
+  forward_to = [prometheus.relabel.essential.receiver]
 }
 prometheus.scrape "alloy" {
   targets = prometheus.exporter.self.alloy.targets
   scrape_interval = "60s"
-  forward_to = [prometheus.remote_write.cloud.receiver]
+  forward_to = [prometheus.relabel.essential.receiver]
 }
 prometheus.scrape "host" {
   targets = prometheus.exporter.unix.host.targets
   scrape_interval = "60s"
-  forward_to = [prometheus.remote_write.cloud.receiver]
+  forward_to = [prometheus.relabel.essential.receiver]
 }
 prometheus.scrape "containers" {
   targets = prometheus.exporter.cadvisor.containers.targets
   scrape_interval = "60s"
-  forward_to = [prometheus.remote_write.cloud.receiver]
+  forward_to = [prometheus.relabel.essential.receiver]
 }
 prometheus.scrape "postgres" {
   targets = prometheus.exporter.postgres.postgres.targets
   scrape_interval = "60s"
-  forward_to = [prometheus.remote_write.cloud.receiver]
+  forward_to = [prometheus.relabel.essential.receiver]
 }
 
 discovery.docker "openlet" {
