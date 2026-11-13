@@ -24,6 +24,12 @@ Agent chọn việc cần làm: ai nhận, nội dung, path, đoạn cần thay,
 
 Giữ catalog tĩnh 28/22; root có thêm inbox_list/inbox_read/box_create/box_list/box_get/box_delete. Không thêm version registry, deadline manager, cursor state table, generic action dispatcher hoặc tool discovery để thực hiện những thay đổi này.
 
+Implementation dùng `@tool` và `ToolRuntime` của LangChain/LangGraph: schema sinh
+từ Python type hints/Pydantic và docstring, execution qua native ToolNode trong
+graph. Không runtime JSON catalog, JSON Schema validator hoặc dispatch theo tên.
+JSON snapshot dưới đây chỉ là proposal/token measurement cũ; không được load
+vào application. Python declarations là nguồn schema runtime duy nhất.
+
 ### Naming
 
 Tên tool theo quyết định người dùng: `<resource_or_namespace>_<action>`, snake_case và resource dùng số ít. Namespaces: inbox, workspace, workspace_member, box, hitl, schedule, history, file, exec. Giữ cách viết file_semantic_search; exec_shell và exec_python dùng chung namespace exec. workspace_member_list có resource workspace_member và action list. inbox_send gửi tới các recipient được phép như trước; hitl_request vẫn xin quyền viewer/editor cho storage với storage_id/recipient_user_id cụ thể.
