@@ -1,7 +1,6 @@
 # Observability toàn Openlet: thiết kế đã chốt
 
-Đang rà readiness trước implementation hai plan Leta và observability.
-Evaluation hoãn, không là dependency hoặc rollout gate; chưa bắt đầu runtime implementation.
+Đang implementation cùng Leta. Collector/Cloud config, native SDK instrumentation, RAG/ingest observations và managed prompts đã có code; evaluation hoãn. Xem [execution record](../261111-2010-leta-rewrite/execution.md) cho checks và acceptance còn lại; chưa deploy Cloud.
 
 Người dùng chốt toàn bộ thiết kế observability 2026-11-13, gồm RAG và file processing: **Langfuse Cloud Hobby/Free**, demo và 1–10 Openlet testers, tích hợp theo docs chuẩn; evaluation là chủ đề thiết kế tiếp theo, chưa triển khai. Agent tồn tại lâu nhưng graph invocation thường hoàn thành rồi dừng/chờ công việc mới. Không dùng skill/subagent hoặc thay domain/Temporal/schema đã chốt. Người dùng đã chốt Grafana Cloud Free: local chỉ Alloy, Cloud Mimir/Tempo/Loki/Grafana thay toàn bộ monitoring backends self-host.
 
@@ -17,12 +16,12 @@ Scope: topology, native instrumentation/correlation, metrics/dashboard, prompt/v
 |---|---|---|
 | Native core telemetry | Baseline có local proof | [Core](../261111-1727-platform-letfs-rewrite/telemetry.md), [evidence](../reports/implementation-261112-native-telemetry.md) |
 | Hosting/tier | Người dùng chọn Grafana Cloud Free + Langfuse Hobby | Local chỉ Alloy, native container logs lên Cloud Loki; không backend self-host |
-| Monitoring | Thiết kế đã duyệt, chưa triển khai | [System design](system.md) |
-| Tracing/prompts | Integration đã duyệt, prompt content vẫn draft | [Langfuse design](langfuse.md) |
-| RAG/file processing | Thiết kế đã duyệt, chưa triển khai | [Retrieval và ingestion](langfuse.md#rag-online) |
+| Monitoring | Đã có config/dashboard assets; local Alloy validate/routing proof pass, Cloud chưa kiểm | [System design](system.md) |
+| Tracing/prompts | Integration có native runtime export proof; prompt content vẫn draft/chưa publish | [Langfuse design](langfuse.md) |
+| RAG/file processing | Đã có implementation và local export/routing proof | [Retrieval và ingestion](langfuse.md#rag-online) |
 | Feature research | 27+15 pages đã nghiên cứu | [Audit](feature-audit.md), cập nhật scope mới |
 | Evaluation | Hoãn theo quyết định người dùng | Không thuộc scope implementation hai plan hiện tại |
-| Runtime/deploy | Chưa bắt đầu | Chỉ sửa docs/proposal |
+| Runtime/deploy | Shared API E2E 5/5 pass; Cloud/deploy acceptance còn lại | [Execution](../261111-2010-leta-rewrite/execution.md) |
 
 ## Thiết kế đã chốt
 
@@ -50,7 +49,7 @@ Dependencies: [Leta](../261111-2010-leta-rewrite/plan.md), [core](../261111-1727
 
 Research đọc official docs, 27 observability/15 prompt-management features, current source qua CodeGraph, public SDKs LF 5.2.0/LangChain 1.5.0/Temporal Python 1.35.0. Hiệu chỉnh kiểm lại native callback/shared OTel/prompt propagation/cache/Free pricing; thay proposal per-call traces/capture sampling/snapshot/evaluation trước đó.
 
-Offline proof cũ chỉ xác nhận vài primitives, không là proof integration mới. Chưa Cloud ingestion/auth, graph/provider streaming, backend deploy, overhead hoặc quota thực đo. Thiết kế đã duyệt, chưa implementation.
+Offline proof cũ chỉ xác nhận vài primitives, không là proof integration mới. Graph/provider streaming và native Langfuse export đã có local runtime proof; chưa Cloud ingestion/auth, backend deploy, overhead hoặc quota thực đo. Thiết kế đã duyệt và đã có implementation; Cloud acceptance vẫn cần deployment thật.
 
 Free có 50k units/tháng, 30 ngày access, 2 dashboard seats; Openlet testers là khái niệm khác. Cold process/cache rỗng khi prompt API down chưa chạy được model call; chấp nhận cho demo, chưa fallback release system.
 
