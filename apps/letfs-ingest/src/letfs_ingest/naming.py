@@ -11,23 +11,43 @@ from openlet_api.letfs.v1.internal_pb2 import ProcessingArtifact
 from .providers import Metadata
 
 
-def artifact_paths(artifacts: Iterable[ProcessingArtifact], metadata: Mapping[str, Metadata]) -> dict[str, str]:
-    names, reserved = {}, defaultdict(set)
+def artifact_paths(
+    artifacts: Iterable[ProcessingArtifact], metadata: Mapping[str, Metadata]
+) -> dict[str, str]:
+    names: dict[str, str] = {}
+    reserved: defaultdict[PurePosixPath, set[str]] = defaultdict(set)
     ordered = sorted(artifacts, key=lambda item: (item.path.count("/"), item.path))
     for item in ordered:
         path = PurePosixPath(item.path)
         if path.name == "README.md":
             name = path.name
         else:
-            title = metadata[item.path if item.node.HasField("file") else f"{item.path}/README.md"].title
-            slug = re.sub(r"[^\w-]+", "-", unicodedata.normalize("NFKC", title).casefold()).strip("-_")
-            slug = slug.encode("utf-8")[:160].decode("utf-8", errors="ignore").rstrip("-_") or "artifact"
-            number = re.match(r"\d+-", path.name) if not item.node.HasField("file") or path.suffix == ".md" else None
-            name = (number[0] if number else "") + slug + (path.suffix if item.node.HasField("file") else "")
+            title = metadata[
+                item.path if item.node.HasField("file") else f"{item.path}/README.md"
+            ].title
+            slug = re.sub(
+                r"[^\w-]+", "-", unicodedata.normalize("NFKC", title).casefold()
+            ).strip("-_")
+            slug = (
+                slug.encode("utf-8")[:160].decode("utf-8", errors="ignore").rstrip("-_")
+                or "artifact"
+            )
+            number = (
+                re.match(r"\d+-", path.name)
+                if not item.node.HasField("file") or path.suffix == ".md"
+                else None
+            )
+            name = (
+                (number[0] if number else "")
+                + slug
+                + (path.suffix if item.node.HasField("file") else "")
+            )
         names[item.path] = name
         reserved[path.parent].add(name)
 
-    paths, used, next_suffix = {".": "."}, defaultdict(set), defaultdict(lambda: 2)
+    paths = {".": "."}
+    used: defaultdict[PurePosixPath, set[str]] = defaultdict(set)
+    next_suffix: defaultdict[tuple[PurePosixPath, str], int] = defaultdict(lambda: 2)
     for item in ordered:
         path = PurePosixPath(item.path)
         name = names[item.path]
@@ -52,13 +72,24 @@ def rewrite_artifact_links(body: str, old_path: str, paths: Mapping[str, str]) -
         raw = match["target"]
         angled = raw.startswith("<")
         target = urlsplit(raw[1:-1] if angled else raw)
-        if target.scheme or target.netloc or not target.path or target.path.startswith("/"):
+        if (
+            target.scheme
+            or target.netloc
+            or not target.path
+            or target.path.startswith("/")
+        ):
             return match[0]
-        resolved = posixpath.normpath(posixpath.join(posixpath.dirname(old_path), unquote(target.path)))
+        resolved = posixpath.normpath(
+            posixpath.join(posixpath.dirname(old_path), unquote(target.path))
+        )
         if resolved not in paths:
             return match[0]
-        relative = posixpath.relpath(paths[resolved], posixpath.dirname(paths[old_path]) or ".")
-        url = urlunsplit(("", "", quote(relative, safe="/-._~"), target.query, target.fragment))
+        relative = posixpath.relpath(
+            paths[resolved], posixpath.dirname(paths[old_path]) or "."
+        )
+        url = urlunsplit(
+            ("", "", quote(relative, safe="/-._~"), target.query, target.fragment)
+        )
         return "](" + (f"<{url}>" if angled else url)
 
     # The exporter emits inline links/images; leave external and unknown destinations intact.

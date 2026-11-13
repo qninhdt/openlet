@@ -39,6 +39,9 @@ jobs:
               - 'e2e/**'
               - 'pnpm*'
               - 'package.json'
+              - '.prettierrc'
+              - '.editorconfig'
+              - 'Makefile'
             infra:
               - 'infra/**'
               - 'scripts/**'
@@ -89,7 +92,7 @@ jobs:
         run: |
           npm install --global pnpm@12.18.0
           pnpm install --frozen-lockfile
-          pnpm typecheck
+          make check-js
       - if: steps.paths.outputs.infra == 'true'
         run: |
           bash -n scripts/*.sh

@@ -8,8 +8,9 @@ COMPOSE_PROJECT_NAME ?= openlet
 export OPENLET_CONFIG OPENLET_GENERATED OPENLET_BACKUPS COMPOSE_PROJECT_NAME
 export COMPOSE_FILE := $(CURDIR)/infra/compose.yaml:$(OPENLET_GENERATED)/compose.runtime.yaml
 GO_PACKAGES := ./apps/platform/... ./apps/letfs/... ./packages/sdk-go/...
+PYTHON_PATHS := scripts apps/leta apps/letfs-ingest packages/sdk-python/src/openlet_sdk packages/sdk-python/tests
 
-.PHONY: tools generate check check-go check-python test test-go test-python integration e2e configure images up down logs backup restore deploy
+.PHONY: tools generate check check-go check-python check-js format test test-go test-python integration e2e configure images up down logs backup restore deploy
 
 tools:
 	go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
@@ -20,12 +21,17 @@ generate:
 	mkdir -p .local
 	cd packages/contracts && buf generate
 	buf build packages/contracts --as-file-descriptor-set -o .local/contracts.pb
-	uv run --no-env-file --locked python -c 'from google.protobuf.descriptor_pb2 import FileDescriptorSet; from grpc_tools.protoc import main; from pathlib import Path; files=FileDescriptorSet.FromString(Path(".local/contracts.pb").read_bytes()).file; raise SystemExit(main(["grpc_tools.protoc", "--descriptor_set_in=.local/contracts.pb", "--python_out=packages/sdk-python/src", "--pyi_out=packages/sdk-python/src", "--grpc_python_out=packages/sdk-python/src", *[file.name for file in files if file.name.startswith(("openlet_api/", "buf/validate/"))]]))'
+	uv run --no-env-file --locked python -c 'from google.protobuf.descriptor_pb2 import FileDescriptorSet; from grpc_tools.protoc import main; from pathlib import Path; files=FileDescriptorSet.FromString(Path(".local/contracts.pb").read_bytes()).file; raise SystemExit(main(["grpc_tools.protoc", "--descriptor_set_in=.local/contracts.pb", "--python_out=packages/sdk-python/src", "--pyi_out=packages/sdk-python/src", "--grpc_python_out=packages/sdk-python/src", "--mypy_grpc_out=async_only,generate_concrete_servicer_stubs:packages/sdk-python/src", *[file.name for file in files if file.name.startswith(("openlet_api/", "buf/validate/"))]]))'
 	buf build packages/contracts --as-file-descriptor-set --path packages/contracts/proto/openlet_api/platform/v1/platform.proto --path packages/contracts/proto/openlet_api/letfs/v1/letfs.proto -o packages/contracts/generated/public.pb
 
-check: check-go check-python
+format:
+	gofmt -w apps/platform apps/letfs packages/sdk-go
+	uv run --no-env-file --locked ruff check --select I --fix $(PYTHON_PATHS)
+	uv run --no-env-file --locked ruff format $(PYTHON_PATHS)
+	pnpm format
+
+check: check-go check-python check-js
 	buf lint packages/contracts
-	pnpm --filter @openlet/e2e typecheck
 	bash -n scripts/*.sh
 
 check-go:
@@ -33,8 +39,13 @@ check-go:
 	go vet $(GO_PACKAGES)
 
 check-python:
-	uv run --no-env-file --locked --all-packages --extra cpu ruff check scripts apps/leta apps/letfs-ingest packages/sdk-python/src/openlet_sdk
+	uv run --no-env-file --locked --all-packages --extra cpu ruff check $(PYTHON_PATHS)
+	uv run --no-env-file --locked ruff format --check $(PYTHON_PATHS)
 	uv run --no-env-file --locked --all-packages --extra cpu pyright
+
+check-js:
+	pnpm format:check
+	pnpm typecheck
 
 test: test-go test-python
 

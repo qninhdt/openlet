@@ -1,7 +1,7 @@
 import asyncio
 import hashlib
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import cast
 from uuid import UUID
@@ -91,7 +91,7 @@ async def setup() -> None:
 
 
 @asynccontextmanager
-async def effect(db: Pool, root: UUID) -> AsyncIterator[None]:
+async def effect(db: Pool, root: UUID) -> AsyncGenerator[None]:
     async with db.connection() as connection:
         await connection.execute(
             "SELECT pg_advisory_lock(hashtextextended(%s,1))", (str(root),)

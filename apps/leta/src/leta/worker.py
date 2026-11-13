@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import signal
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Literal, cast
@@ -55,7 +55,7 @@ async def deliver(s: Services, message: Message) -> dict[str, JSON]:
         task_queue=queue["leta"],
         id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
     )
-    return await s.temporal.execute_update_with_start_workflow(
+    return await s.temporal.execute_update_with_start_workflow(  # pyright: ignore[reportUnknownMemberType]  # Upstream SDK has an untyped overload or kwargs.
         Agent.receive,
         message,
         id=request_hash(message).hex(),
@@ -109,7 +109,7 @@ async def operation(
     except WorkflowAlreadyStartedError:
         handle = s.temporal.get_workflow_handle(id, result_type=dict[str, JSON])
     try:
-        result = await handle.execute_update(
+        result = await handle.execute_update(  # pyright: ignore[reportUnknownMemberType]  # Upstream SDK has an untyped overload or kwargs.
             "open", command, result_type=dict[str, JSON]
         )
     except RPCError as error:
@@ -120,7 +120,7 @@ async def operation(
 
 
 @asynccontextmanager
-async def pulsing() -> AsyncIterator[None]:
+async def pulsing() -> AsyncGenerator[None]:
     async def pulse() -> None:
         while True:
             activity.heartbeat()
@@ -318,7 +318,7 @@ class Activities:
             ).fetchall()
         for row in rows:
             try:
-                await self.s.temporal.get_workflow_handle(
+                await self.s.temporal.get_workflow_handle(  # pyright: ignore[reportUnknownMemberType]  # Temporal has an untyped overload for args.
                     f"agent/{row['id']}"
                 ).execute_update("refresh_control")
             except RPCError as error:
@@ -411,7 +411,7 @@ class Activities:
         for row in requests:
             handle = self.s.temporal.get_workflow_handle(f"hitl/{row['id']}")
             try:
-                await handle.execute_update("settle_effects")
+                await handle.execute_update("settle_effects")  # pyright: ignore[reportUnknownMemberType]  # Upstream SDK has an untyped overload or kwargs.
             except WorkflowUpdateFailedError:
                 request = await hitl.get(self.s.db, cast(UUID, row["id"]))
                 if request["status"] == "pending":
@@ -421,9 +421,8 @@ class Activities:
                     raise
         for id in ids:
             try:
-                await self.s.temporal.get_workflow_handle(f"agent/{id}").execute_update(
-                    "stop"
-                )
+                handle = self.s.temporal.get_workflow_handle(f"agent/{id}")
+                await handle.execute_update("stop")  # pyright: ignore[reportUnknownMemberType]  # Temporal has an untyped overload for args.
             except RPCError as error:
                 if error.status != RPCStatusCode.NOT_FOUND:
                     raise
@@ -588,7 +587,7 @@ async def main() -> None:
     validate(config)
     shutdown = initialize("openlet-leta-worker", config["runtime"], config["telemetry"])
     PsycopgInstrumentor().instrument()
-    RedisInstrumentor().instrument()
+    RedisInstrumentor().instrument()  # pyright: ignore[reportUnknownMemberType]  # Upstream SDK has an untyped overload or kwargs.
     stop = asyncio.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
         asyncio.get_running_loop().add_signal_handler(sig, stop.set)

@@ -18,15 +18,19 @@ ROOT = Path(__file__).resolve().parents[1]
 class ListenerFilter(TypedDict):
     typed_config: dict[str, object]
 
+
 class FilterChain(TypedDict):
     filters: list[ListenerFilter]
+
 
 class Listener(TypedDict):
     filter_chains: list[FilterChain]
 
+
 class StaticResources(TypedDict):
     listeners: list[Listener]
     clusters: list[dict[str, object]]
+
 
 class EnvoyConfig(TypedDict):
     static_resources: StaticResources
@@ -39,45 +43,118 @@ def render(name: str, values: Mapping[str, object]) -> dict[str, object]:
     return cast(dict[str, object], yaml.safe_load(text))
 
 
-def configure_tracing(envoy: EnvoyConfig, settings: TelemetrySettings, environment: str) -> None:
+def configure_tracing(
+    envoy: EnvoyConfig, settings: TelemetrySettings, environment: str
+) -> None:
     endpoint = settings["otlp_endpoint"]
     if not endpoint:
         return
     url = urlparse(endpoint)
     ratio = settings["trace_sample_ratio"]
-    if url.scheme not in ("http", "https") or not url.hostname or url.username or url.query or url.fragment or not math.isfinite(ratio) or not 0 <= ratio <= 1 or settings["metrics_export_interval_seconds"] < 1:
+    if (
+        url.scheme not in ("http", "https")
+        or not url.hostname
+        or url.username
+        or url.query
+        or url.fragment
+        or not math.isfinite(ratio)
+        or not 0 <= ratio <= 1
+        or settings["metrics_export_interval_seconds"] < 1
+    ):
         raise ValueError("invalid telemetry endpoint, sample ratio or metrics interval")
-    hcm = envoy["static_resources"]["listeners"][0]["filter_chains"][0]["filters"][0]["typed_config"]
+    hcm = envoy["static_resources"]["listeners"][0]["filter_chains"][0]["filters"][0][
+        "typed_config"
+    ]
     hcm["tracing"] = {
         # Do not capture request paths or query strings in gateway spans.
         "max_path_tag_length": 0,
-        "provider": {"name": "envoy.tracers.opentelemetry", "typed_config": {
-            "@type": "type.googleapis.com/envoy.config.trace.v3.OpenTelemetryConfig",
-            "service_name": "openlet-gateway",
-            "grpc_service": {"envoy_grpc": {"cluster_name": "otel"}, "timeout": "3s"},
-            "resource_detectors": [{"name": "envoy.tracers.opentelemetry.resource_detectors.static_config", "typed_config": {
-                "@type": "type.googleapis.com/envoy.extensions.tracers.opentelemetry.resource_detectors.v3.StaticConfigResourceDetectorConfig",
-                "attributes": {"deployment.environment.name": environment}}},
-                {"name": "envoy.tracers.opentelemetry.resource_detectors.environment", "typed_config": {
-                    "@type": "type.googleapis.com/envoy.extensions.tracers.opentelemetry.resource_detectors.v3.EnvironmentResourceDetectorConfig"}}],
-            "sampler": {"name": "envoy.tracers.opentelemetry.samplers.parent_based", "typed_config": {
-                "@type": "type.googleapis.com/envoy.extensions.tracers.opentelemetry.samplers.v3.ParentBasedSamplerConfig",
-                "wrapped_sampler": {"name": "envoy.tracers.opentelemetry.samplers.trace_id_ratio_based", "typed_config": {
-                    "@type": "type.googleapis.com/envoy.extensions.tracers.opentelemetry.samplers.v3.TraceIdRatioBasedSamplerConfig",
-                    "sampling_percentage": {"numerator": round(ratio * 1_000_000), "denominator": "MILLION"}}}}},
-        }},
+        "provider": {
+            "name": "envoy.tracers.opentelemetry",
+            "typed_config": {
+                "@type": "type.googleapis.com/envoy.config.trace.v3.OpenTelemetryConfig",
+                "service_name": "openlet-gateway",
+                "grpc_service": {
+                    "envoy_grpc": {"cluster_name": "otel"},
+                    "timeout": "3s",
+                },
+                "resource_detectors": [
+                    {
+                        "name": "envoy.tracers.opentelemetry.resource_detectors.static_config",
+                        "typed_config": {
+                            "@type": "type.googleapis.com/envoy.extensions.tracers.opentelemetry.resource_detectors.v3.StaticConfigResourceDetectorConfig",
+                            "attributes": {"deployment.environment.name": environment},
+                        },
+                    },
+                    {
+                        "name": "envoy.tracers.opentelemetry.resource_detectors.environment",
+                        "typed_config": {
+                            "@type": "type.googleapis.com/envoy.extensions.tracers.opentelemetry.resource_detectors.v3.EnvironmentResourceDetectorConfig"
+                        },
+                    },
+                ],
+                "sampler": {
+                    "name": "envoy.tracers.opentelemetry.samplers.parent_based",
+                    "typed_config": {
+                        "@type": "type.googleapis.com/envoy.extensions.tracers.opentelemetry.samplers.v3.ParentBasedSamplerConfig",
+                        "wrapped_sampler": {
+                            "name": "envoy.tracers.opentelemetry.samplers.trace_id_ratio_based",
+                            "typed_config": {
+                                "@type": "type.googleapis.com/envoy.extensions.tracers.opentelemetry.samplers.v3.TraceIdRatioBasedSamplerConfig",
+                                "sampling_percentage": {
+                                    "numerator": round(ratio * 1_000_000),
+                                    "denominator": "MILLION",
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        },
     }
-    cluster = {
-        "name": "otel", "type": "STRICT_DNS", "connect_timeout": "3s", "http2_protocol_options": {},
-        "load_assignment": {"cluster_name": "otel", "endpoints": [{"lb_endpoints": [{"endpoint": {
-            "address": {"socket_address": {"address": url.hostname, "port_value": url.port or (443 if url.scheme == "https" else 80)}}}}]}]},
+    cluster: dict[str, object] = {
+        "name": "otel",
+        "type": "STRICT_DNS",
+        "connect_timeout": "3s",
+        "http2_protocol_options": {},
+        "load_assignment": {
+            "cluster_name": "otel",
+            "endpoints": [
+                {
+                    "lb_endpoints": [
+                        {
+                            "endpoint": {
+                                "address": {
+                                    "socket_address": {
+                                        "address": url.hostname,
+                                        "port_value": url.port
+                                        or (443 if url.scheme == "https" else 80),
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                }
+            ],
+        },
     }
     if url.scheme == "https":
-        cluster["transport_socket"] = {"name": "envoy.transport_sockets.tls", "typed_config": {
-            "@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
-            "sni": url.hostname, "common_tls_context": {"validation_context": {
-                "trusted_ca": {"filename": "/etc/ssl/certs/ca-certificates.crt"},
-                "match_typed_subject_alt_names": [{"san_type": "DNS", "matcher": {"exact": url.hostname}}]}}}}
+        cluster["transport_socket"] = {
+            "name": "envoy.transport_sockets.tls",
+            "typed_config": {
+                "@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
+                "sni": url.hostname,
+                "common_tls_context": {
+                    "validation_context": {
+                        "trusted_ca": {
+                            "filename": "/etc/ssl/certs/ca-certificates.crt"
+                        },
+                        "match_typed_subject_alt_names": [
+                            {"san_type": "DNS", "matcher": {"exact": url.hostname}}
+                        ],
+                    }
+                },
+            },
+        }
     envoy["static_resources"]["clusters"].append(cluster)
 
 
@@ -94,119 +171,299 @@ def configure(output: Path, test: bool = False) -> None:
     jwks = urlparse(auth["jwks_url"])
     if jwks.scheme not in ("http", "https") or not jwks.hostname:
         raise ValueError("JWKS URL must be HTTP(S)")
-    envoy = cast(EnvoyConfig, render("envoy", dict(LISTEN_HOST=host, LISTEN_PORT=int(port),
-        PLATFORM_HOST=ph, PLATFORM_PORT=int(pp), LETFS_HOST=fh, LETFS_PORT=int(fp),
-        ISSUER=auth["issuer"], AUDIENCE=auth["audience"], JWKS_URL=auth["jwks_url"],
-        JWKS_HOST=jwks.hostname, JWKS_PORT=jwks.port or (443 if jwks.scheme == "https" else 80))))
+    envoy = cast(
+        EnvoyConfig,
+        render(
+            "envoy",
+            dict(
+                LISTEN_HOST=host,
+                LISTEN_PORT=int(port),
+                PLATFORM_HOST=ph,
+                PLATFORM_PORT=int(pp),
+                LETFS_HOST=fh,
+                LETFS_PORT=int(fp),
+                ISSUER=auth["issuer"],
+                AUDIENCE=auth["audience"],
+                JWKS_URL=auth["jwks_url"],
+                JWKS_HOST=jwks.hostname,
+                JWKS_PORT=jwks.port or (443 if jwks.scheme == "https" else 80),
+            ),
+        ),
+    )
     if jwks.scheme == "https":
         envoy["static_resources"]["clusters"][2]["transport_socket"] = {
-            "name": "envoy.transport_sockets.tls", "typed_config": {
+            "name": "envoy.transport_sockets.tls",
+            "typed_config": {
                 "@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
-                "sni": jwks.hostname, "common_tls_context": {"validation_context": {
-                    "trusted_ca": {"filename": "/etc/ssl/certs/ca-certificates.crt"},
-                    "match_typed_subject_alt_names": [{"san_type": "DNS", "matcher": {"exact": jwks.hostname}}]}}}}
-    leta_enabled = 'leta' in os.environ.get('COMPOSE_PROFILES', '').split(',')
+                "sni": jwks.hostname,
+                "common_tls_context": {
+                    "validation_context": {
+                        "trusted_ca": {
+                            "filename": "/etc/ssl/certs/ca-certificates.crt"
+                        },
+                        "match_typed_subject_alt_names": [
+                            {"san_type": "DNS", "matcher": {"exact": jwks.hostname}}
+                        ],
+                    }
+                },
+            },
+        }
+    leta_enabled = "leta" in os.environ.get("COMPOSE_PROFILES", "").split(",")
     if leta_enabled:
-        lh, lp = svc['leta']['http_target'].rsplit(':', 1)
-        envoy['static_resources']['clusters'].append({
-            'name': 'leta', 'type': 'STRICT_DNS', 'connect_timeout': '5s',
-            'load_assignment': {'cluster_name': 'leta', 'endpoints': [{'lb_endpoints': [{'endpoint': {
-                'address': {'socket_address': {'address': lh, 'port_value': int(lp)}}}}]}]}})
-        hcm = envoy['static_resources']['listeners'][0]['filter_chains'][0]['filters'][0]['typed_config']
-        routing = cast(dict[str, object], hcm['route_config'])
-        hosts = cast(list[dict[str, object]], routing['virtual_hosts'])
-        routes = cast(list[dict[str, object]], hosts[0]['routes'])
-        routes.insert(0, {'name': 'leta', 'match': {'safe_regex': {'google_re2': {}, 'regex': '/v1/(workspaces/[^/]+/letas|hitl-requests)(/.*)?'}},
-            'route': {'cluster': 'leta', 'timeout': '0s', 'idle_timeout': '0s'},
-            'typed_per_filter_config': {'envoy.filters.http.grpc_json_transcoder': {
-                '@type': 'type.googleapis.com/envoy.extensions.filters.http.grpc_json_transcoder.v3.GrpcJsonTranscoder',
-                'proto_descriptor': '/etc/openlet/public.pb', 'services': []}}})
+        lh, lp = svc["leta"]["http_target"].rsplit(":", 1)
+        envoy["static_resources"]["clusters"].append(
+            {
+                "name": "leta",
+                "type": "STRICT_DNS",
+                "connect_timeout": "5s",
+                "load_assignment": {
+                    "cluster_name": "leta",
+                    "endpoints": [
+                        {
+                            "lb_endpoints": [
+                                {
+                                    "endpoint": {
+                                        "address": {
+                                            "socket_address": {
+                                                "address": lh,
+                                                "port_value": int(lp),
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                },
+            }
+        )
+        hcm = envoy["static_resources"]["listeners"][0]["filter_chains"][0]["filters"][
+            0
+        ]["typed_config"]
+        routing = cast(dict[str, object], hcm["route_config"])
+        hosts = cast(list[dict[str, object]], routing["virtual_hosts"])
+        routes = cast(list[dict[str, object]], hosts[0]["routes"])
+        routes.insert(
+            0,
+            {
+                "name": "leta",
+                "match": {
+                    "safe_regex": {
+                        "google_re2": {},
+                        "regex": "/v1/(workspaces/[^/]+/letas|hitl-requests)(/.*)?",
+                    }
+                },
+                "route": {"cluster": "leta", "timeout": "0s", "idle_timeout": "0s"},
+                "typed_per_filter_config": {
+                    "envoy.filters.http.grpc_json_transcoder": {
+                        "@type": "type.googleapis.com/envoy.extensions.filters.http.grpc_json_transcoder.v3.GrpcJsonTranscoder",
+                        "proto_descriptor": "/etc/openlet/public.pb",
+                        "services": [],
+                    }
+                },
+            },
+        )
     configure_tracing(envoy, c["telemetry"], c["runtime"]["environment"])
-    native = render("temporal", dict(POSTGRES=f'{pg["host"]}:{pg["port"]}',
-        DATABASE=temporal["database"]["name"], VISIBILITY_DATABASE=temporal["visibility_database"],
-        USER=temporal["database"]["user"], PASSWORD=secret(temporal["database"]["password"])))
+    native = render(
+        "temporal",
+        dict(
+            POSTGRES=f"{pg['host']}:{pg['port']}",
+            DATABASE=temporal["database"]["name"],
+            VISIBILITY_DATABASE=temporal["visibility_database"],
+            USER=temporal["database"]["user"],
+            PASSWORD=secret(temporal["database"]["password"]),
+        ),
+    )
     db = deploy["spicedb"]["database"]
-    uri = f'postgres://{quote(db["user"], safe="")}:{quote(secret(db["password"]), safe="")}@{pg["host"]}:{pg["port"]}/{db["name"]}?sslmode={pg["sslmode"]}'
-    graph_env = {"SPICEDB_DATASTORE_CONN_URI": uri, "SPICEDB_GRPC_PRESHARED_KEY": secret(dep["spicedb"]["key"])}
-    sql_env = {"SQL_HOST": pg["host"], "SQL_PORT": str(pg["port"]),
-        "SQL_USER": temporal["database"]["user"], "SQL_PASSWORD": secret(temporal["database"]["password"]),
-        "SQL_PLUGIN": "postgres12"}
-    runtime: dict[str, dict[str, dict[str, object]]] = {"services": {
-        "postgres": {"environment": {"POSTGRES_USER": deploy["postgres"]["admin_user"],
-            "POSTGRES_PASSWORD": secret(deploy["postgres"]["admin_password"]) }},
-        "spicedb": {"environment": graph_env}, "spicedb-migrate": {"environment": graph_env},
-        "temporal-migrate": {"environment": {**sql_env,
-            "TEMPORAL_DATABASE": temporal["database"]["name"], "TEMPORAL_VISIBILITY_DATABASE": temporal["visibility_database"]}},
-        "qdrant": {"environment": {"QDRANT__SERVICE__API_KEY": secret(dep["qdrant"]["api_key"])}}}}
+    uri = f"postgres://{quote(db['user'], safe='')}:{quote(secret(db['password']), safe='')}@{pg['host']}:{pg['port']}/{db['name']}?sslmode={pg['sslmode']}"
+    graph_env = {
+        "SPICEDB_DATASTORE_CONN_URI": uri,
+        "SPICEDB_GRPC_PRESHARED_KEY": secret(dep["spicedb"]["key"]),
+    }
+    sql_env = {
+        "SQL_HOST": pg["host"],
+        "SQL_PORT": str(pg["port"]),
+        "SQL_USER": temporal["database"]["user"],
+        "SQL_PASSWORD": secret(temporal["database"]["password"]),
+        "SQL_PLUGIN": "postgres12",
+    }
+    runtime: dict[str, dict[str, dict[str, object]]] = {
+        "services": {
+            "postgres": {
+                "environment": {
+                    "POSTGRES_USER": deploy["postgres"]["admin_user"],
+                    "POSTGRES_PASSWORD": secret(deploy["postgres"]["admin_password"]),
+                }
+            },
+            "spicedb": {"environment": graph_env},
+            "spicedb-migrate": {"environment": graph_env},
+            "temporal-migrate": {
+                "environment": {
+                    **sql_env,
+                    "TEMPORAL_DATABASE": temporal["database"]["name"],
+                    "TEMPORAL_VISIBILITY_DATABASE": temporal["visibility_database"],
+                }
+            },
+            "qdrant": {
+                "environment": {
+                    "QDRANT__SERVICE__API_KEY": secret(dep["qdrant"]["api_key"])
+                }
+            },
+        }
+    }
+
     def environment(references: Iterable[str]) -> dict[str, str]:
-        return {"OPENLET_CONFIG": "/etc/openlet/openlet.yaml", "COMPOSE_PROFILES": os.environ.get("COMPOSE_PROFILES", ""),
-            **({"OTEL_RESOURCE_ATTRIBUTES": os.environ["OTEL_RESOURCE_ATTRIBUTES"]} if os.environ.get("OTEL_RESOURCE_ATTRIBUTES") else {}),
-            **{value[2:-1]: secret(value) for value in references}}
+        return {
+            "OPENLET_CONFIG": "/etc/openlet/openlet.yaml",
+            "COMPOSE_PROFILES": os.environ.get("COMPOSE_PROFILES", ""),
+            **(
+                {"OTEL_RESOURCE_ATTRIBUTES": os.environ["OTEL_RESOURCE_ATTRIBUTES"]}
+                if os.environ.get("OTEL_RESOURCE_ATTRIBUTES")
+                else {}
+            ),
+            **{value[2:-1]: secret(value) for value in references},
+        }
 
     refs = {
-        "platform": [svc["platform"]["database"]["password"], dep["spicedb"]["key"], auth["secret_key"]],
-        "letfs": [svc["letfs"]["database"]["password"], dep["spicedb"]["key"], dep["s3"]["access_key_id"], dep["s3"]["secret_access_key"], dep["qdrant"]["api_key"], c["models"]["provider"]["api_key"]],
+        "platform": [
+            svc["platform"]["database"]["password"],
+            dep["spicedb"]["key"],
+            auth["secret_key"],
+        ],
+        "letfs": [
+            svc["letfs"]["database"]["password"],
+            dep["spicedb"]["key"],
+            dep["s3"]["access_key_id"],
+            dep["s3"]["secret_access_key"],
+            dep["qdrant"]["api_key"],
+            c["models"]["provider"]["api_key"],
+        ],
         "ingest-cpu": [],
         "ingest-io": [dep["qdrant"]["api_key"], c["models"]["provider"]["api_key"]],
-        "databases": [deploy["postgres"]["admin_password"], svc["platform"]["database"]["password"], svc["letfs"]["database"]["password"], temporal["database"]["password"], db["password"]],
-        "resources": [dep["spicedb"]["key"], dep["qdrant"]["api_key"], dep["s3"]["access_key_id"], dep["s3"]["secret_access_key"]],
+        "databases": [
+            deploy["postgres"]["admin_password"],
+            svc["platform"]["database"]["password"],
+            svc["letfs"]["database"]["password"],
+            temporal["database"]["password"],
+            db["password"],
+        ],
+        "resources": [
+            dep["spicedb"]["key"],
+            dep["qdrant"]["api_key"],
+            dep["s3"]["access_key_id"],
+            dep["s3"]["secret_access_key"],
+        ],
     }
     if leta_enabled:
-        refs['databases'].append(svc['leta']['database']['password'])
-        refs['leta-api'] = [svc['leta']['database']['password'], dep['spicedb']['key'], dep['redis']['password']]
-        lf = c.get('langfuse')
+        refs["databases"].append(svc["leta"]["database"]["password"])
+        refs["leta-api"] = [
+            svc["leta"]["database"]["password"],
+            dep["spicedb"]["key"],
+            dep["redis"]["password"],
+        ]
+        lf = c.get("langfuse")
         if lf is None:
-            raise ValueError('leta profile requires Langfuse settings')
-        refs['leta-worker'] = [*refs['leta-api'], c['models']['provider']['api_key'], lf['public_key'], lf['secret_key']]
-        refs['leta-migrate'] = [svc['leta']['database']['password']]
-        runtime['services']['redis'] = {'environment': {'REDIS_PASSWORD': secret(dep['redis']['password'])}}
+            raise ValueError("leta profile requires Langfuse settings")
+        refs["leta-worker"] = [
+            *refs["leta-api"],
+            c["models"]["provider"]["api_key"],
+            lf["public_key"],
+            lf["secret_key"],
+        ]
+        refs["leta-migrate"] = [svc["leta"]["database"]["password"]]
+        runtime["services"]["redis"] = {
+            "environment": {"REDIS_PASSWORD": secret(dep["redis"]["password"])}
+        }
     if "langfuse" in c:
-        refs["ingest-io"].extend([c["langfuse"]["public_key"], c["langfuse"]["secret_key"]])
+        refs["ingest-io"].extend(
+            [c["langfuse"]["public_key"], c["langfuse"]["secret_key"]]
+        )
     if "observability" in os.environ.get("COMPOSE_PROFILES", "").split(","):
         cloud = c.get("observability")
         lf = c.get("langfuse")
         if cloud is None or lf is None:
-            raise ValueError("observability profile requires Grafana Cloud and Langfuse settings")
+            raise ValueError(
+                "observability profile requires Grafana Cloud and Langfuse settings"
+            )
         refs["databases"].append(cloud["postgres_password"])
-        runtime["services"]["alloy"] = {"environment": {
-            "OPENLET_ENVIRONMENT": c["runtime"]["environment"],
-            "GRAFANA_METRICS_ENDPOINT": cloud["metrics"]["endpoint"],
-            "GRAFANA_METRICS_USER": cloud["metrics"]["user"],
-            "GRAFANA_TRACES_ENDPOINT": cloud["traces"]["endpoint"],
-            "GRAFANA_TRACES_USER": cloud["traces"]["user"],
-            "GRAFANA_LOGS_ENDPOINT": cloud["logs"]["endpoint"],
-            "GRAFANA_LOGS_USER": cloud["logs"]["user"],
-            "GRAFANA_CLOUD_TOKEN": secret(cloud["token"]),
-            "LANGFUSE_PUBLIC_KEY": secret(lf["public_key"]),
-            "LANGFUSE_SECRET_KEY": secret(lf["secret_key"]),
-            "LANGFUSE_OTLP_ENDPOINT": lf["base_url"].rstrip("/") + "/api/public/otel",
-            "QDRANT_API_KEY": secret(dep["qdrant"]["api_key"]),
-            "QDRANT_METRICS_ADDRESS": dep["qdrant"]["address"].rsplit(":", 1)[0] + ":6333",
-            "REDIS_ADDRESS": dep["redis"]["address"],
-            "REDIS_PASSWORD": secret(dep["redis"]["password"]) if "leta" in os.environ.get("COMPOSE_PROFILES", "").split(",") else "",
-            "POSTGRES_METRICS_DSN": f'postgresql://{quote(cloud["postgres_user"], safe="")}:{quote(secret(cloud["postgres_password"]), safe="")}@{pg["host"]}:{pg["port"]}/postgres?sslmode={pg["sslmode"]}',
-        }}
+        runtime["services"]["alloy"] = {
+            "environment": {
+                "OPENLET_ENVIRONMENT": c["runtime"]["environment"],
+                "GRAFANA_METRICS_ENDPOINT": cloud["metrics"]["endpoint"],
+                "GRAFANA_METRICS_USER": cloud["metrics"]["user"],
+                "GRAFANA_TRACES_ENDPOINT": cloud["traces"]["endpoint"],
+                "GRAFANA_TRACES_USER": cloud["traces"]["user"],
+                "GRAFANA_LOGS_ENDPOINT": cloud["logs"]["endpoint"],
+                "GRAFANA_LOGS_USER": cloud["logs"]["user"],
+                "GRAFANA_CLOUD_TOKEN": secret(cloud["token"]),
+                "LANGFUSE_PUBLIC_KEY": secret(lf["public_key"]),
+                "LANGFUSE_SECRET_KEY": secret(lf["secret_key"]),
+                "LANGFUSE_OTLP_ENDPOINT": lf["base_url"].rstrip("/")
+                + "/api/public/otel",
+                "QDRANT_API_KEY": secret(dep["qdrant"]["api_key"]),
+                "QDRANT_METRICS_ADDRESS": dep["qdrant"]["address"].rsplit(":", 1)[0]
+                + ":6333",
+                "REDIS_ADDRESS": dep["redis"]["address"],
+                "REDIS_PASSWORD": secret(dep["redis"]["password"])
+                if "leta" in os.environ.get("COMPOSE_PROFILES", "").split(",")
+                else "",
+                "POSTGRES_METRICS_DSN": f"postgresql://{quote(cloud['postgres_user'], safe='')}:{quote(secret(cloud['postgres_password']), safe='')}@{pg['host']}:{pg['port']}/postgres?sslmode={pg['sslmode']}",
+            }
+        }
     for service, references in refs.items():
         runtime["services"][service] = {"environment": environment(references)}
     if leta_enabled:
-        runtime['services']['leta-api']['healthcheck'] = {'test': ['CMD', '/app/.venv/bin/python', '-c',
-            'import urllib.request; urllib.request.urlopen("http://127.0.0.1:' + svc['leta']['http_listen'].rsplit(':', 1)[1] + '/ready",timeout=3)']}
-    runtime["services"]["database-backup"] = {"environment": {
-        "PGHOST": pg["host"], "PGPORT": str(pg["port"]),
-        "PGUSER": deploy["postgres"]["admin_user"], "PGPASSWORD": secret(deploy["postgres"]["admin_password"])}}
-    for owner, service in [('platform', svc['platform']), ('letfs', svc['letfs']), *([('leta', svc['leta'])] if leta_enabled else [])]:
-        database = service["database"]
-        dsn = f'postgres://{quote(database["user"], safe="")}:{quote(secret(database["password"]), safe="")}@{pg["host"]}:{pg["port"]}/{database["name"]}?sslmode={pg["sslmode"]}'
-        runtime["services"][f"{owner}-migrate"] = {"environment": {
-            "GOOSE_DRIVER": "postgres", "GOOSE_DBSTRING": dsn, "GOOSE_MIGRATION_DIR": "/migrations"}}
-        if owner == "leta":
-            cast(dict[str, str], runtime["services"]["leta-migrate"]["environment"]).update(environment([service["database"]["password"]]))
+        runtime["services"]["leta-api"]["healthcheck"] = {
+            "test": [
+                "CMD",
+                "/app/.venv/bin/python",
+                "-c",
+                'import urllib.request; urllib.request.urlopen("http://127.0.0.1:'
+                + svc["leta"]["http_listen"].rsplit(":", 1)[1]
+                + '/ready",timeout=3)',
+            ]
+        }
+    runtime["services"]["database-backup"] = {
+        "environment": {
+            "PGHOST": pg["host"],
+            "PGPORT": str(pg["port"]),
+            "PGUSER": deploy["postgres"]["admin_user"],
+            "PGPASSWORD": secret(deploy["postgres"]["admin_password"]),
+        }
+    }
+    for owner, database, listen in [
+        ("platform", svc["platform"]["database"], svc["platform"]["grpc_listen"]),
+        ("letfs", svc["letfs"]["database"], svc["letfs"]["grpc_listen"]),
+        *([("leta", svc["leta"]["database"], None)] if leta_enabled else []),
+    ]:
+        dsn = f"postgres://{quote(database['user'], safe='')}:{quote(secret(database['password']), safe='')}@{pg['host']}:{pg['port']}/{database['name']}?sslmode={pg['sslmode']}"
+        runtime["services"][f"{owner}-migrate"] = {
+            "environment": {
+                "GOOSE_DRIVER": "postgres",
+                "GOOSE_DBSTRING": dsn,
+                "GOOSE_MIGRATION_DIR": "/migrations",
+            }
+        }
+        if listen is None:
+            cast(
+                dict[str, str], runtime["services"]["leta-migrate"]["environment"]
+            ).update(environment([database["password"]]))
             continue
-        runtime["services"][owner]["healthcheck"] = {"test": ["CMD", "grpc-health-probe", f'-addr=127.0.0.1:{service["grpc_listen"].rsplit(":", 1)[1]}']}
+        runtime["services"][owner]["healthcheck"] = {
+            "test": [
+                "CMD",
+                "grpc-health-probe",
+                f"-addr=127.0.0.1:{listen.rsplit(':', 1)[1]}",
+            ]
+        }
     runtime["services"]["envoy"] = {
         "ports": [f"127.0.0.1:{port}:{port}"],
-        "environment": {"OTEL_RESOURCE_ATTRIBUTES": os.environ.get("OTEL_RESOURCE_ATTRIBUTES", "")},
-        "healthcheck": {"test": ["CMD", "bash", "-c", f"exec 3<>/dev/tcp/127.0.0.1/{port}"]},
+        "environment": {
+            "OTEL_RESOURCE_ATTRIBUTES": os.environ.get("OTEL_RESOURCE_ATTRIBUTES", "")
+        },
+        "healthcheck": {
+            "test": ["CMD", "bash", "-c", f"exec 3<>/dev/tcp/127.0.0.1/{port}"]
+        },
     }
     os.umask(0o077)
     output.mkdir(parents=True, exist_ok=True)
@@ -218,12 +475,29 @@ def configure(output: Path, test: bool = False) -> None:
             "targets = prometheus.exporter.redis.cache.targets",
         )
     (output / "alloy.alloy").write_text(alloy)
-    outputs: list[tuple[str, object]] = [("envoy", envoy), ("temporal", native), ("compose.runtime", runtime)]
+    outputs: list[tuple[str, object]] = [
+        ("envoy", envoy),
+        ("temporal", native),
+        ("compose.runtime", runtime),
+    ]
     if test:
-        outputs.append(("compose.test.runtime", {"services": {"s3": {"environment": {
-            "RUSTFS_ACCESS_KEY": secret(dep["s3"]["access_key_id"]),
-            "RUSTFS_SECRET_KEY": secret(dep["s3"]["secret_access_key"]),
-        }}}}))
+        outputs.append(
+            (
+                "compose.test.runtime",
+                {
+                    "services": {
+                        "s3": {
+                            "environment": {
+                                "RUSTFS_ACCESS_KEY": secret(dep["s3"]["access_key_id"]),
+                                "RUSTFS_SECRET_KEY": secret(
+                                    dep["s3"]["secret_access_key"]
+                                ),
+                            }
+                        }
+                    }
+                },
+            )
+        )
     for name, data in outputs:
         content = yaml.safe_dump(data, sort_keys=False)
         if name.startswith("compose."):
@@ -236,6 +510,10 @@ def configure(output: Path, test: bool = False) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=ROOT / ".local/generated")
-    parser.add_argument("--test", action="store_true", help="Render native S3 credentials for the test Compose stack")
+    parser.add_argument(
+        "--test",
+        action="store_true",
+        help="Render native S3 credentials for the test Compose stack",
+    )
     args = parser.parse_args()
     configure(args.output, test=args.test)

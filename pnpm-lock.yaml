@@ -164,7 +164,11 @@ settings:
 
 importers:
 
-  .: {}
+  .:
+    devDependencies:
+      prettier:
+        specifier: 3.10.1
+        version: 3.10.1
 
   e2e:
     devDependencies:
@@ -362,6 +366,11 @@ packages:
     engines: {node: '>=20'}
     hasBin: true
 
+  prettier@3.10.1:
+    resolution: {integrity: sha512-70vp3ZUYoPlFbF9uiTdXHUUCGEIp7d4+6p+8DYbkm2jP7x/3i/paXVF6dopSI3zd/CEitrZN1rc4i85xWmmXlg==}
+    engines: {node: '>=14'}
+    hasBin: true
+
   tslib@2.9.1:
     resolution: {integrity: sha512-a4Ux9VKuIMHsOS7ENbEq6hK2ZGYIT27Rtl0E4eD9KqwxhKiQeMZE/9xb3IdYwWaSOyIBQLExhQgXDTYoiCxnWA==}
 
@@ -492,6 +501,8 @@ snapshots:
   playwright@1.65.0:
     dependencies:
       playwright-core: 1.65.0
+
+  prettier@3.10.1: {}
 
   tslib@2.9.1: {}
 

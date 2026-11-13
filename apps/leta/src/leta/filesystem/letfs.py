@@ -1,3 +1,11 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from openlet_api.letfs.v1.letfs_pb2_grpc import LetFSServiceAsyncStub
+
+
 import base64
 import errno
 import posixpath
@@ -15,7 +23,6 @@ from mirage.utils.key_prefix import mounted_path
 from mirage.vfs.call import vfs_call
 from mirage.vfs.types import Effect, Target
 from openlet_api.letfs.v1 import letfs_pb2 as fs
-from openlet_api.letfs.v1.letfs_pb2_grpc import LetFSServiceStub
 from openlet_sdk.config import JSON
 
 from ..agents import stable
@@ -55,7 +62,7 @@ class LetFS(BaseVFS):
 
     def __init__(
         self,
-        stub: LetFSServiceStub,
+        stub: LetFSServiceAsyncStub,
         actor: Actor,
         workspace: UUID,
         storage: UUID,
@@ -355,22 +362,7 @@ class LetFS(BaseVFS):
                     timeout=15,
                 )
             )
-        else:
-            response = await self.call(
-                self.stub.ListNodes(
-                    fs.ListNodesRequest(
-                        workspace_id=str(self.workspace),
-                        storage_id=str(self.storage),
-                        parent=self.locator(path),
-                        page_size=20,
-                        page_token=cursor,
-                    ),
-                    metadata=self.actor.metadata,
-                    timeout=15,
-                )
-            )
-        items: list[JSON] = []
-        if depth > 1:
+            items: list[JSON] = []
             for entry in response.entries:
                 items.append(
                     {
@@ -388,6 +380,20 @@ class LetFS(BaseVFS):
                 "truncated": response.truncated,
                 "next_cursor": None,
             }
+        response = await self.call(
+            self.stub.ListNodes(
+                fs.ListNodesRequest(
+                    workspace_id=str(self.workspace),
+                    storage_id=str(self.storage),
+                    parent=self.locator(path),
+                    page_size=20,
+                    page_token=cursor,
+                ),
+                metadata=self.actor.metadata,
+                timeout=15,
+            )
+        )
+        items = []
         for node in response.nodes:
             items.append(
                 {
@@ -622,7 +628,8 @@ class LetFS(BaseVFS):
         parents: dict[str, fs.Node] = {}
         hits: list[JSON] = []
         for hit in response.hits:
-            node, parts = hit.node, []
+            node = hit.node
+            parts: list[str] = []
             while node.id != str(self.root):
                 parts.append(node.name)
                 parent = node.parent_id

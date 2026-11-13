@@ -13,7 +13,11 @@ def own_body(text: str) -> str:
                 fields = json.loads(header)
             except ValueError:
                 return text
-            if isinstance(fields, dict) and "children" in fields and "semantic_type" in fields:
+            if (
+                isinstance(fields, dict)
+                and "children" in fields
+                and "semantic_type" in fields
+            ):
                 return body
     return text
 
@@ -21,4 +25,9 @@ def own_body(text: str) -> str:
 def render(metadata: Metadata, body: str, children: dict[str, dict[str, JSON]]) -> str:
     fields = metadata.model_dump()
     fields["children"] = children
-    return "---\n" + json.dumps(fields, ensure_ascii=False, indent=2) + "\n---\n\n" + own_body(body)
+    return (
+        "---\n"
+        + json.dumps(fields, ensure_ascii=False, indent=2)
+        + "\n---\n\n"
+        + own_body(body)
+    )

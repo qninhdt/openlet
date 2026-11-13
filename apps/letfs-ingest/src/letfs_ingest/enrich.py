@@ -26,11 +26,21 @@ async def image_bytes(http: httpx.AsyncClient, url: str, limit: int) -> bytes:
     return bytes(data)
 
 
-async def enrich(source: internal.ProcessingInput, identity: ProcessingIdentity, ai: Models, http: httpx.AsyncClient, max_blob_bytes: int) -> internal.CommitEnrichmentRequest:
+async def enrich(
+    source: internal.ProcessingInput,
+    identity: ProcessingIdentity,
+    ai: Models,
+    http: httpx.AsyncClient,
+    max_blob_bytes: int,
+) -> internal.CommitEnrichmentRequest:
     files = {item.path: item for item in source.artifacts if item.node.HasField("file")}
     metadata: dict[str, Metadata] = {}
     children: defaultdict[PurePosixPath, list[str]] = defaultdict(list)
-    readmes = sorted((path for path in files if PurePosixPath(path).name == "README.md"), key=lambda path: path.count("/"), reverse=True)
+    readmes = sorted(
+        (path for path in files if PurePosixPath(path).name == "README.md"),
+        key=lambda path: path.count("/"),
+        reverse=True,
+    )
     for path in files:
         location = PurePosixPath(path)
         if location.name != "README.md":
@@ -41,9 +51,17 @@ async def enrich(source: internal.ProcessingInput, identity: ProcessingIdentity,
     async def describe(path: str, summaries: str = "") -> None:
         item = files[path]
         async with ai.slots:
-            image = await image_bytes(http, item.download_url, max_blob_bytes) if item.node.file.media_type.startswith("image/") else None
+            image = (
+                await image_bytes(http, item.download_url, max_blob_bytes)
+                if item.node.file.media_type.startswith("image/")
+                else None
+            )
             metadata[path] = await ai.describe(
-                path, own_body(item.text_content), item.node.file.media_type, summaries, image,
+                path,
+                own_body(item.text_content),
+                item.node.file.media_type,
+                summaries,
+                image,
             )
         activity.heartbeat()
 
@@ -55,13 +73,14 @@ async def enrich(source: internal.ProcessingInput, identity: ProcessingIdentity,
         parent = PurePosixPath(path).parent
         summaries = {
             PurePosixPath(child).relative_to(parent).as_posix(): {
-                key: metadata[child].model_dump()[key] for key in ("title", "description", "semantic_type")
+                key: metadata[child].model_dump()[key]
+                for key in ("title", "description", "semantic_type")
             }
             for child in children[parent]
         }
         await describe(path, json.dumps(summaries, ensure_ascii=False))
     paths = artifact_paths(source.artifacts, metadata)
-    updates = []
+    updates: list[internal.EnrichedArtifact] = []
     for item in source.artifacts:
         path = item.path
         update = internal.EnrichedArtifact(node_id=item.node.id)
@@ -71,12 +90,17 @@ async def enrich(source: internal.ProcessingInput, identity: ProcessingIdentity,
             update.metadata.CopyFrom(pb.FileMetadata(**metadata[path].model_dump()))
             if PurePosixPath(path).suffix == ".md":
                 is_readme = PurePosixPath(path).name == "README.md"
-                body = rewrite_artifact_links(own_body(item.text_content) if is_readme else item.text_content, path, paths)
+                body = rewrite_artifact_links(
+                    own_body(item.text_content) if is_readme else item.text_content,
+                    path,
+                    paths,
+                )
                 if is_readme:
                     parent = PurePosixPath(paths[path]).parent
                     summaries = {
                         PurePosixPath(paths[child]).relative_to(parent).as_posix(): {
-                            key: metadata[child].model_dump()[key] for key in ("title", "description", "semantic_type")
+                            key: metadata[child].model_dump()[key]
+                            for key in ("title", "description", "semantic_type")
                         }
                         for child in children[PurePosixPath(path).parent]
                     }
@@ -86,10 +110,22 @@ async def enrich(source: internal.ProcessingInput, identity: ProcessingIdentity,
     root = metadata.get("README.md")
     if root is None:
         async with ai.slots:
-            image = await image_bytes(http, source.download_url, max_blob_bytes) if source.media_type.startswith("image/") else None
-            root = await ai.describe(source.source_name, "", source.media_type, "\n".join(
-                f"{path}: {value.description}" for path, value in metadata.items()
-            ), image)
+            image = (
+                await image_bytes(http, source.download_url, max_blob_bytes)
+                if source.media_type.startswith("image/")
+                else None
+            )
+            root = await ai.describe(
+                source.source_name,
+                "",
+                source.media_type,
+                "\n".join(
+                    f"{path}: {value.description}" for path, value in metadata.items()
+                ),
+                image,
+            )
     return internal.CommitEnrichmentRequest(
-        **identity, artifacts=updates, source_metadata=pb.FileMetadata(**root.model_dump()),
+        **identity,
+        artifacts=updates,
+        source_metadata=pb.FileMetadata(**root.model_dump()),
     )

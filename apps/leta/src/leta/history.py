@@ -48,7 +48,7 @@ async def read(
     return {
         **json_row(row),
         "content": "\n".join(lines),
-        "next_start_line": start_line + len(lines)
-        if start_line + len(lines) <= len(body)
-        else None,
+        "next_start_line": (
+            start_line + len(lines) if start_line + len(lines) <= len(body) else None
+        ),
     }

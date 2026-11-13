@@ -2,13 +2,14 @@ from typing import cast
 from uuid import uuid4
 
 from langchain_core.messages import AIMessage, ToolMessage
-from langgraph.graph import END, START, StateGraph
+from langgraph.graph import END, START, StateGraph  # pyright: ignore[reportMissingTypeStubs]  # Upstream has annotations but no py.typed marker.
 from langgraph.prebuilt import ToolNode
 from leta.config import Services
 from leta.filesystem.workspace import Filesystem
 from leta.runtime.inbox import State
 from leta.runtime.tools import Context, tools
 from mirage import Workspace
+from pydantic import BaseModel
 
 
 def test_native_tools_expose_only_agent_arguments() -> None:
@@ -24,8 +25,11 @@ def test_native_tools_expose_only_agent_arguments() -> None:
         "box_list",
         "box_delete",
     }
+    fields: dict[str, set[str]] = {}
     for tool in root.values():
-        fields = tool.tool_call_schema.model_json_schema()["properties"]
+        schema = tool.tool_call_schema
+        assert isinstance(schema, type) and issubclass(schema, BaseModel)
+        fields[tool.name] = set(schema.model_fields)
         assert (
             not {
                 "runtime",
@@ -34,26 +38,20 @@ def test_native_tools_expose_only_agent_arguments() -> None:
                 "actor",
                 "workspace_id",
             }
-            & fields.keys()
+            & fields[tool.name]
         )
-    assert (
-        "target_box_id"
-        in root["schedule_create"].tool_call_schema.model_json_schema()["properties"]
-    )
-    assert (
-        "target_box_id"
-        not in leti["schedule_create"].tool_call_schema.model_json_schema()[
-            "properties"
-        ]
-    )
+    assert "target_box_id" in fields["schedule_create"]
+    schedule = leti["schedule_create"].tool_call_schema
+    assert isinstance(schedule, type) and issubclass(schedule, BaseModel)
+    assert "target_box_id" not in schedule.model_fields
 
 
 async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None:
     builder = StateGraph(State, context_schema=Context)
-    builder.add_node("tools", ToolNode(tools(root=False)))
+    builder.add_node("tools", ToolNode(tools(root=False)))  # pyright: ignore[reportUnknownMemberType]  # Native overload leaves cache-policy generics unspecified.
     builder.add_edge(START, "tools")
     builder.add_edge("tools", END)
-    graph = builder.compile()
+    graph = builder.compile()  # pyright: ignore[reportUnknownMemberType]  # Native overload leaves checkpoint generics unspecified.
     workspace = Workspace({}, network=False)
     try:
         context = Context(
@@ -63,7 +61,7 @@ async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None
             filesystem=cast(Filesystem, None),
             session=await workspace.session("tools"),
         )
-        result = await graph.ainvoke(
+        result = await graph.ainvoke(  # pyright: ignore[reportUnknownMemberType]  # Native overload leaves Command generics unspecified.
             {
                 "messages": [
                     AIMessage(

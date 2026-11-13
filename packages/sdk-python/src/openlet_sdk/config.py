@@ -4,7 +4,9 @@ from typing import Literal, NotRequired, TypedDict, cast
 import yaml
 
 type JSON = None | bool | int | float | str | list[JSON] | dict[str, JSON]
-type ReasoningEffort = Literal['none', 'minimal', 'low', 'medium', 'high', 'xhigh'] | None
+type ReasoningEffort = (
+    Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None
+)
 
 
 class RuntimeSettings(TypedDict):
@@ -262,19 +264,19 @@ class Config(TypedDict):
 
 
 def load() -> Config:
-    with open(os.environ['OPENLET_CONFIG']) as stream:
+    with open(os.environ["OPENLET_CONFIG"]) as stream:
         value: object = yaml.safe_load(stream)
     if not isinstance(value, dict):
-        raise ValueError('configuration must be a YAML mapping')
+        raise ValueError("configuration must be a YAML mapping")
     # The owning process validates the settings it consumes, not other services.
     return cast(Config, value)
 
 
 def secret(value: str) -> str:
-    if not (value.startswith('${') and value.endswith('}')):
-        raise ValueError('secret must reference a whole ${ENV_VARIABLE} scalar')
+    if not (value.startswith("${") and value.endswith("}")):
+        raise ValueError("secret must reference a whole ${ENV_VARIABLE} scalar")
     key = value[2:-1]
     result = os.environ[key]
     if not result:
-        raise ValueError(f'empty required environment variable {key}')
+        raise ValueError(f"empty required environment variable {key}")
     return result

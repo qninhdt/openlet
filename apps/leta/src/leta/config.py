@@ -1,12 +1,40 @@
-from collections.abc import AsyncIterator
-from contextlib import AsyncExitStack, asynccontextmanager
-from dataclasses import dataclass
-from urllib.parse import quote
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from openlet_api.letfs.v1.internal_pb2_grpc import LetFSInternalServiceStub
 from openlet_api.letfs.v1.letfs_pb2_grpc import LetFSServiceStub
 from openlet_api.platform.v1.internal_pb2_grpc import PlatformInternalServiceStub
 from openlet_api.platform.v1.platform_pb2_grpc import PlatformServiceStub
+
+if TYPE_CHECKING:
+    from openlet_api.letfs.v1.internal_pb2_grpc import LetFSInternalServiceAsyncStub
+    from openlet_api.letfs.v1.letfs_pb2_grpc import LetFSServiceAsyncStub
+    from openlet_api.platform.v1.internal_pb2_grpc import (
+        PlatformInternalServiceAsyncStub,
+    )
+    from openlet_api.platform.v1.platform_pb2_grpc import PlatformServiceAsyncStub
+else:
+    # Generated async stub types share the runtime stub class.
+    from openlet_api.letfs.v1.internal_pb2_grpc import (
+        LetFSInternalServiceStub as LetFSInternalServiceAsyncStub,
+    )
+    from openlet_api.letfs.v1.letfs_pb2_grpc import (
+        LetFSServiceStub as LetFSServiceAsyncStub,
+    )
+    from openlet_api.platform.v1.internal_pb2_grpc import (
+        PlatformInternalServiceStub as PlatformInternalServiceAsyncStub,
+    )
+    from openlet_api.platform.v1.platform_pb2_grpc import (
+        PlatformServiceStub as PlatformServiceAsyncStub,
+    )
+
+
+from collections.abc import AsyncGenerator
+from contextlib import AsyncExitStack, asynccontextmanager
+from dataclasses import dataclass
+from urllib.parse import quote
+
 from openlet_sdk.config import Config, ModelEntry, ReasoningEffort, load, secret
 from openlet_sdk.rpc import channel
 from redis.asyncio import Redis
@@ -50,10 +78,10 @@ class Services:
     config: Config
     db: Pool
     auth: Authorization
-    files: LetFSServiceStub
-    storage: LetFSInternalServiceStub
-    platform: PlatformServiceStub
-    internal: PlatformInternalServiceStub
+    files: LetFSServiceAsyncStub
+    storage: LetFSInternalServiceAsyncStub
+    platform: PlatformServiceAsyncStub
+    internal: PlatformInternalServiceAsyncStub
     temporal: Client
     redis: Redis
 
@@ -66,7 +94,7 @@ def redis_url(config: Config) -> str:
 @asynccontextmanager
 async def connect(
     config: Config, *, native: Runtime | None = None
-) -> AsyncIterator[Services]:
+) -> AsyncGenerator[Services]:
     async with AsyncExitStack() as stack:
         db = await stack.enter_async_context(pool())
         auth = Authorization(config)
@@ -83,7 +111,7 @@ async def connect(
                 max_bytes=config["grpc"]["max_receive_bytes"],
             )
         )
-        redis = Redis.from_url(
+        redis = Redis.from_url(  # pyright: ignore[reportUnknownMemberType]  # Upstream SDK has an untyped overload or kwargs.
             redis_url(config), socket_connect_timeout=5, socket_timeout=10
         )
         stack.push_async_callback(redis.aclose)

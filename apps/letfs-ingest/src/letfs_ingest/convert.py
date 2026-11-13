@@ -31,7 +31,7 @@ def preflight(source: Path, media: str, config: Config) -> None:
     if source.stat().st_size > config["services"]["letfs"]["max_blob_bytes"]:
         raise InvalidDocument("input exceeds blob limit")
     if media == "application/pdf":
-        import pypdfium2
+        import pypdfium2  # pyright: ignore[reportMissingTypeStubs]  # Upstream package does not publish type stubs.
 
         try:
             pdf = pypdfium2.PdfDocument(source)
@@ -50,7 +50,10 @@ def preflight(source: Path, media: str, config: Config) -> None:
     else:
         try:
             with ZipFile(source) as archive:
-                if sum(entry.file_size for entry in archive.infolist()) > limits["max_office_expanded_bytes"]:
+                if (
+                    sum(entry.file_size for entry in archive.infolist())
+                    > limits["max_office_expanded_bytes"]
+                ):
                     raise InvalidDocument("Office document exceeds expanded size limit")
         except BadZipFile as error:
             raise InvalidDocument("invalid Office archive") from error
@@ -59,9 +62,14 @@ def preflight(source: Path, media: str, config: Config) -> None:
 
             workbook = load_workbook(source, read_only=True)
             try:
-                if len(workbook.worksheets) > limits["max_sheets"] or sum(
-                    sheet.max_row * sheet.max_column for sheet in workbook.worksheets
-                ) > limits["max_spreadsheet_cells"]:
+                if (
+                    len(workbook.worksheets) > limits["max_sheets"]
+                    or sum(
+                        sheet.max_row * sheet.max_column
+                        for sheet in workbook.worksheets
+                    )
+                    > limits["max_spreadsheet_cells"]
+                ):
                     raise InvalidDocument("spreadsheet exceeds sheet/cell limit")
             finally:
                 workbook.close()
@@ -83,14 +91,27 @@ def converter(config: Config) -> DocumentConverter:
     settings = config["services"]["letfs_ingest"]["cpu"]
     options = PdfPipelineOptions(
         artifacts_path=settings["docling_models_path"],
-        accelerator_options=AcceleratorOptions(device="cpu", num_threads=settings["threads"]),
-        do_ocr=True, ocr_options=RapidOcrOptions(backend="onnxruntime", lang=["iso:en"]),
-        generate_picture_images=True, ocr_batch_size=1, layout_batch_size=1,
-        table_batch_size=1, queue_max_size=2,
-        document_timeout=config["services"]["letfs"]["processing"]["parse_timeout_seconds"],
+        accelerator_options=AcceleratorOptions(
+            device="cpu", num_threads=settings["threads"]
+        ),
+        do_ocr=True,
+        ocr_options=RapidOcrOptions(backend="onnxruntime", lang=["iso:en"]),
+        generate_picture_images=True,
+        ocr_batch_size=1,
+        layout_batch_size=1,
+        table_batch_size=1,
+        queue_max_size=2,
+        document_timeout=config["services"]["letfs"]["processing"][
+            "parse_timeout_seconds"
+        ],
     )
     return DocumentConverter(
-        allowed_formats=[InputFormat.PDF, InputFormat.DOCX, InputFormat.PPTX, InputFormat.XLSX],
+        allowed_formats=[
+            InputFormat.PDF,
+            InputFormat.DOCX,
+            InputFormat.PPTX,
+            InputFormat.XLSX,
+        ],
         format_options={
             InputFormat.PDF: PdfFormatOption(pipeline_options=options),
             InputFormat.DOCX: WordFormatOption(backend=Word),
@@ -111,7 +132,9 @@ def convert(source: Path, output: Path, media: str, config: Config) -> None:
     Image.MAX_IMAGE_PIXELS = limits["max_page_pixels"]
     warnings.simplefilter("error", Image.DecompressionBombWarning)
     result = converter(config).convert(
-        source, raises_on_error=False, max_num_pages=limits["max_pages"],
+        source,
+        raises_on_error=False,
+        max_num_pages=limits["max_pages"],
         max_file_size=config["services"]["letfs"]["max_blob_bytes"],
     )
     if result.status != ConversionStatus.SUCCESS:
@@ -119,11 +142,19 @@ def convert(source: Path, output: Path, media: str, config: Config) -> None:
     if media.endswith("spreadsheetml.sheet"):
         spreadsheets(result.document, source, output)
     else:
-        document(result.document, output, settings["min_section_tokens"], settings["split_tokens"], presentation=media.endswith("presentationml.presentation"))
+        document(
+            result.document,
+            output,
+            settings["min_section_tokens"],
+            settings["split_tokens"],
+            presentation=media.endswith("presentationml.presentation"),
+        )
     entries = list(output.rglob("*"))
-    if len(entries) > config["services"]["letfs"]["processing"]["max_artifacts"] or sum(
-        path.stat().st_size for path in entries if path.is_file()
-    ) > limits["max_output_bytes"]:
+    if (
+        len(entries) > config["services"]["letfs"]["processing"]["max_artifacts"]
+        or sum(path.stat().st_size for path in entries if path.is_file())
+        > limits["max_output_bytes"]
+    ):
         raise InvalidDocument("parser output exceeds budget")
 
 

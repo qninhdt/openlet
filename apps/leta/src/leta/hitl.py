@@ -1,10 +1,17 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from openlet_api.letfs.v1.letfs_pb2_grpc import LetFSServiceAsyncStub
+
+
 from datetime import datetime
 from typing import Literal, cast
 from uuid import UUID
 
 import grpc
 from openlet_api.letfs.v1 import letfs_pb2 as fs
-from openlet_api.letfs.v1.letfs_pb2_grpc import LetFSServiceStub
 from openlet_sdk.config import JSON
 from psycopg.types.json import Jsonb
 from pydantic import Field, model_validator
@@ -81,7 +88,7 @@ async def get(db: Pool, id: UUID) -> dict[str, JSON]:
 
 
 async def open_request(
-    db: Pool, auth: Authorization, files: LetFSServiceStub, request: OpenRequest
+    db: Pool, auth: Authorization, files: LetFSServiceAsyncStub, request: OpenRequest
 ) -> dict[str, JSON]:
     agent = await get_agent(db, request.requester_agent_id)
     await auth.require(
@@ -255,7 +262,7 @@ async def resolve(db: Pool, auth: Authorization, decision: Decision) -> dict[str
 
 
 async def apply(
-    db: Pool, auth: Authorization, stub: LetFSServiceStub, id: UUID
+    db: Pool, auth: Authorization, stub: LetFSServiceAsyncStub, id: UUID
 ) -> dict[str, JSON]:
     request = await get(db, id)
     agent = await get_agent(db, UUID(str(request["requester_agent_id"])))

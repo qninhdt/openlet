@@ -1,6 +1,7 @@
 import asyncio
 import json
-from collections.abc import AsyncIterator
+import logging
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Annotated, Literal, cast
@@ -53,12 +54,12 @@ from .worker import deliver, operation
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     config = load()
     validate(config)
     shutdown = initialize("openlet-leta-api", config["runtime"], config["telemetry"])
     PsycopgInstrumentor().instrument()
-    RedisInstrumentor().instrument()
+    RedisInstrumentor().instrument()  # pyright: ignore[reportUnknownMemberType]  # Upstream SDK has an untyped overload or kwargs.
     try:
         async with connect(config) as services:
             app.state.services = services
@@ -151,6 +152,7 @@ async def temporal_failed(request: Request, error: RPCError) -> JSONResponse:
 async def admission_failed(
     request: Request, error: WorkflowUpdateFailedError
 ) -> JSONResponse:
+    logging.getLogger(__name__).warning("Temporal admission rejected", exc_info=error)
     return JSONResponse(
         {"detail": "request was not admitted; retry with the same request ID"},
         status_code=409,
@@ -166,7 +168,7 @@ async def health() -> dict[str, str]:
 async def ready(s: Service) -> dict[str, str]:
     async with s.db.connection() as conn:
         await conn.execute("SELECT 1 FROM agents LIMIT 1")
-    await s.redis.ping()
+    await s.redis.ping()  # pyright: ignore[reportUnknownMemberType]  # Upstream SDK has an untyped overload or kwargs.
     return {"status": "ok"}
 
 
@@ -402,7 +404,7 @@ async def get_run(leta_id: UUID, agent_id: UUID, run_id: UUID, s: Service) -> JS
 )
 async def cancel_run(leta_id: UUID, agent_id: UUID, run_id: UUID, s: Service) -> JSON:
     await get_run(leta_id, agent_id, run_id, s)
-    await s.temporal.get_workflow_handle(f"agent/{agent_id}").execute_update(
+    await s.temporal.get_workflow_handle(f"agent/{agent_id}").execute_update(  # pyright: ignore[reportUnknownMemberType]  # Upstream SDK has an untyped overload or kwargs.
         "cancel_current", run_id
     )
     return {"run_id": str(run_id), "status": "cancelled"}
@@ -598,7 +600,7 @@ async def answer_request(
     request_id: UUID, body: Answer, s: Service, actor: User
 ) -> JSON:
     await incoming_request(request_id, s, actor)
-    return await s.temporal.get_workflow_handle(f"hitl/{request_id}").execute_update(
+    return await s.temporal.get_workflow_handle(f"hitl/{request_id}").execute_update(  # pyright: ignore[reportUnknownMemberType]  # Upstream SDK has an untyped overload or kwargs.
         "decide",
         hitl.Decision(
             request_id=request_id,
@@ -641,7 +643,7 @@ async def cancel_request(
     leta_id: UUID, request_id: UUID, s: Service, actor: User
 ) -> JSON:
     await get_request(leta_id, request_id, s)
-    return await s.temporal.get_workflow_handle(f"hitl/{request_id}").execute_update(
+    return await s.temporal.get_workflow_handle(f"hitl/{request_id}").execute_update(  # pyright: ignore[reportUnknownMemberType]  # Upstream SDK has an untyped overload or kwargs.
         "decide",
         hitl.Decision(
             request_id=request_id,
@@ -701,7 +703,7 @@ async def ask(
         task_queue=queues["leta"],
         id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
     )
-    return await s.temporal.execute_update_with_start_workflow(
+    return await s.temporal.execute_update_with_start_workflow(  # pyright: ignore[reportUnknownMemberType]  # Upstream SDK has an untyped overload or kwargs.
         HitlRequest.open,
         request,
         start_workflow_operation=start,
@@ -736,7 +738,7 @@ async def submit_schedule(s: Services, command: schedules.Change) -> JSON:
             id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
         )
     )
-    return await s.temporal.execute_update_with_start_workflow(
+    return await s.temporal.execute_update_with_start_workflow(  # pyright: ignore[reportUnknownMemberType]  # Upstream SDK has an untyped overload or kwargs.
         ScheduleChanges.change,
         command,
         id=request_hash(command).hex(),

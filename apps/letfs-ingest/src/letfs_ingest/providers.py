@@ -69,14 +69,19 @@ def sample(text: str, characters: int) -> str:
     windows = min(8, characters // 64)
     width = (characters - len(marker) * (windows - 1)) // windows
     return marker.join(
-        text[start:start + width]
-        for start in (round(index * (len(text) - width) / (windows - 1)) for index in range(windows))
+        text[start : start + width]
+        for start in (
+            round(index * (len(text) - width) / (windows - 1))
+            for index in range(windows)
+        )
     )
 
 
 def evidence(text: str, media: str, characters: int) -> str:
     if media == "text/csv":
-        text = "\n".join(", ".join(row) for row in islice(csv.reader(io.StringIO(text)), 9))
+        text = "\n".join(
+            ", ".join(row) for row in islice(csv.reader(io.StringIO(text)), 9)
+        )
     return sample(text, characters)
 
 
@@ -86,8 +91,12 @@ def vision(data: bytes, settings: EnrichmentSettings) -> str:
             raise ValueError("image exceeds pixel limit")
         image.thumbnail((settings["image_max_side"], settings["image_max_side"]))
         with io.BytesIO() as output:
-            image.convert("RGB").save(output, format="JPEG", quality=settings["image_jpeg_quality"])
-            return "data:image/jpeg;base64," + base64.b64encode(output.getvalue()).decode("ascii")
+            image.convert("RGB").save(
+                output, format="JPEG", quality=settings["image_jpeg_quality"]
+            )
+            return "data:image/jpeg;base64," + base64.b64encode(
+                output.getvalue()
+            ).decode("ascii")
 
 
 class Models:
@@ -97,28 +106,59 @@ class Models:
         self.prompt_label = prompt_label
         provider = self.settings["provider"]
         self.client = AsyncOpenAI(
-            base_url=provider["base_url"], api_key=secret(provider["api_key"]),
-            max_retries=0, timeout=provider["timeout_seconds"],
+            base_url=provider["base_url"],
+            api_key=secret(provider["api_key"]),
+            max_retries=0,
+            timeout=provider["timeout_seconds"],
         )
-        self.slots = asyncio.Semaphore(config["services"]["letfs_ingest"]["io"]["model_concurrency"])
+        self.slots = asyncio.Semaphore(
+            config["services"]["letfs_ingest"]["io"]["model_concurrency"]
+        )
 
-    async def describe(self, name: str, text: str, media: str, children: str, image: bytes | None = None) -> Metadata:
+    async def describe(
+        self,
+        name: str,
+        text: str,
+        media: str,
+        children: str,
+        image: bytes | None = None,
+    ) -> Metadata:
         settings = self.settings["enrichment"]
         budget = settings["max_input_characters"]
         own = evidence(text, media, budget)
-        content: list[ChatCompletionContentPartParam] = [{"type": "text", "text": sample(
-            f"Name: {name}\nMedia type: {media}\nContent:\n{own}\nChild summaries:\n{children}", budget,
-        )}]
+        content: list[ChatCompletionContentPartParam] = [
+            {
+                "type": "text",
+                "text": sample(
+                    f"Name: {name}\nMedia type: {media}\nContent:\n{own}\nChild summaries:\n{children}",
+                    budget,
+                ),
+            }
+        ]
         if image is not None:
-            content.append({"type": "image_url", "image_url": {"url": await asyncio.to_thread(vision, image, settings)}})
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": await asyncio.to_thread(vision, image, settings)
+                    },
+                }
+            )
         extra: dict[str, JSON] = {}
         if settings["reasoning_effort"] is not None:
             extra["reasoning"] = {"effort": settings["reasoning_effort"]}
-        prompt = await asyncio.to_thread(self.langfuse.get_prompt, "letfs/enrichment", label=self.prompt_label, type="text")
+        prompt = await asyncio.to_thread(
+            self.langfuse.get_prompt,
+            "letfs/enrichment",
+            label=self.prompt_label,
+            type="text",
+        )
         with propagate_attributes(prompt=prompt):
             result = await self.client.chat.completions.parse(
-                model=settings["model"], max_completion_tokens=settings["max_output_tokens"],
-                response_format=Metadata, extra_body=extra,
+                model=settings["model"],
+                max_completion_tokens=settings["max_output_tokens"],
+                response_format=Metadata,
+                extra_body=extra,
                 messages=[
                     {"role": "system", "content": prompt.compile()},
                     {"role": "user", "content": content},
@@ -133,7 +173,10 @@ class Models:
         model = self.settings["embedding"]
         async with self.slots:
             response = await self.client.embeddings.create(
-                model=model["model"], input=texts, dimensions=model["dimensions"], encoding_format="float",
+                model=model["model"],
+                input=texts,
+                dimensions=model["dimensions"],
+                encoding_format="float",
             )
         ordered = sorted(response.data, key=lambda item: item.index)
         if [item.index for item in ordered] != list(range(len(texts))):

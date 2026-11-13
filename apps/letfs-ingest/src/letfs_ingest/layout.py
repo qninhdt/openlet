@@ -10,11 +10,14 @@ def section_name(number: int, count: int, heading: str) -> str:
     return f"{number:0{len(str(count))}d}-{slug}"
 
 
-def sections(items: Sequence[tuple[NodeItem, int]], minimum_tokens: int, split_tokens: int) -> list[tuple[int, int, str]]:
+def sections(
+    items: Sequence[tuple[NodeItem, int]], minimum_tokens: int, split_tokens: int
+) -> list[tuple[int, int, str]]:
     from docling_core.types.doc.items.table.table import TableItem
     from docling_core.types.doc.items.text import SectionHeaderItem
 
-    weights, headings = [], []
+    weights: list[int] = []
+    headings: list[tuple[int, int, str]] = []
     table_depth = None
     for position, (item, depth) in enumerate(items):
         inside_table = table_depth is not None and depth > table_depth
@@ -34,10 +37,14 @@ def sections(items: Sequence[tuple[NodeItem, int]], minimum_tokens: int, split_t
     def groups(start: int, stop: int, required: int) -> list[tuple[int, int, str]]:
         candidates = [heading for heading in headings if start <= heading[0] < stop]
         for level in sorted({heading[1] for heading in candidates}):
-            same_level = [(position, title) for position, depth, title in candidates if depth == level]
+            same_level = [
+                (position, title)
+                for position, depth, title in candidates
+                if depth == level
+            ]
             if len(same_level) < required:
                 continue
-            merged = []
+            merged: list[tuple[int, int, str]] = []
             for index, (position, title) in enumerate(same_level):
                 end = same_level[index + 1][0] if index + 1 < len(same_level) else stop
                 if merged and size(*merged[-1][:2]) < minimum_tokens:
@@ -54,13 +61,18 @@ def sections(items: Sequence[tuple[NodeItem, int]], minimum_tokens: int, split_t
     if totals[-1] <= split_tokens or len(mains) < 2:
         return [(0, len(items), "README.md")]
     children = [groups(start + 1, stop, 1) for start, stop, _ in mains]
-    nested = sum(
-        size(start, stop) > split_tokens
-        and sum(size(a, b) >= minimum_tokens for a, b, _ in child) >= 2
-        for (start, stop, _), child in zip(mains, children, strict=True)
-    ) > len(mains) / 2
+    nested = (
+        sum(
+            size(start, stop) > split_tokens
+            and sum(size(a, b) >= minimum_tokens for a, b, _ in child) >= 2
+            for (start, stop, _), child in zip(mains, children, strict=True)
+        )
+        > len(mains) / 2
+    )
     result = [(0, mains[0][0], "README.md")]
-    for number, ((start, stop, title), child) in enumerate(zip(mains, children, strict=True), 1):
+    for number, ((start, stop, title), child) in enumerate(
+        zip(mains, children, strict=True), 1
+    ):
         name = section_name(number, len(mains), title)
         if not nested:
             result.append((start, stop, f"{name}.md"))

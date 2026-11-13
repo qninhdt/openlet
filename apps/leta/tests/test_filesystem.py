@@ -29,7 +29,9 @@ async def driver() -> AsyncIterator[LetFS]:
 
     class Files(LetFSServiceServicer):
         async def ReadTree(
-            self, request: fs.ReadTreeRequest, context: grpc.aio.ServicerContext
+            self,
+            request: fs.ReadTreeRequest,
+            context: grpc.aio.ServicerContext[fs.ReadTreeRequest, fs.ReadTreeResponse],
         ) -> fs.ReadTreeResponse:
             assert request.root.path == "reports"
             return fs.ReadTreeResponse(
@@ -37,7 +39,11 @@ async def driver() -> AsyncIterator[LetFS]:
             )
 
         async def TextSearch(
-            self, request: fs.TextSearchRequest, context: grpc.aio.ServicerContext
+            self,
+            request: fs.TextSearchRequest,
+            context: grpc.aio.ServicerContext[
+                fs.TextSearchRequest, fs.TextSearchResponse
+            ],
         ) -> fs.TextSearchResponse:
             assert request.root.path == "reports"
             return fs.TextSearchResponse(
@@ -45,7 +51,11 @@ async def driver() -> AsyncIterator[LetFS]:
             )
 
         async def SemanticSearch(
-            self, request: fs.SemanticSearchRequest, context: grpc.aio.ServicerContext
+            self,
+            request: fs.SemanticSearchRequest,
+            context: grpc.aio.ServicerContext[
+                fs.SemanticSearchRequest, fs.SemanticSearchResponse
+            ],
         ) -> fs.SemanticSearchResponse:
             assert request.root.root_node_id == root
             return fs.SemanticSearchResponse(
@@ -53,7 +63,9 @@ async def driver() -> AsyncIterator[LetFS]:
             )
 
         async def Stat(
-            self, request: fs.NodeRequest, context: grpc.aio.ServicerContext
+            self,
+            request: fs.NodeRequest,
+            context: grpc.aio.ServicerContext[fs.NodeRequest, fs.Node],
         ) -> fs.Node:
             assert request.target.root_node_id == root
             return nodes[request.target.node_id]

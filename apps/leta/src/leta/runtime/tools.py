@@ -301,7 +301,7 @@ async def open_hitl(ctx: Context, request: hitl.OpenRequest) -> JSON:
         task_queue=queues["leta"],
         id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
     )
-    return await ctx.services.temporal.execute_update_with_start_workflow(
+    return await ctx.services.temporal.execute_update_with_start_workflow(  # pyright: ignore[reportUnknownMemberType]  # Upstream SDK has an untyped overload or kwargs.
         HitlRequest.open,
         request,
         start_workflow_operation=start,
@@ -379,7 +379,7 @@ async def hitl_cancel(
     """Cancel a pending human request; does not revoke granted access."""
     ctx = runtime.context
     await own_hitl(ctx, request_id)
-    return await ctx.services.temporal.get_workflow_handle(
+    return await ctx.services.temporal.get_workflow_handle(  # pyright: ignore[reportUnknownMemberType]  # Temporal has an untyped overload for args.
         f"hitl/{request_id}"
     ).execute_update(
         "decide",
@@ -460,7 +460,7 @@ async def change_schedule(
             id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
         )
     )
-    return await ctx.services.temporal.execute_update_with_start_workflow(
+    return await ctx.services.temporal.execute_update_with_start_workflow(  # pyright: ignore[reportUnknownMemberType]  # Upstream SDK has an untyped overload or kwargs.
         ScheduleChanges.change,
         change,
         id=request_hash(change).hex(),

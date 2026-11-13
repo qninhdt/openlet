@@ -11,7 +11,9 @@ def prepare(config: Config) -> None:
     destination = Path(config["services"]["letfs_ingest"]["cpu"]["docling_models_path"])
     destination.mkdir(parents=True, exist_ok=True)
     download_models(
-        destination, with_code_formula=False, with_picture_classifier=False,
+        destination,
+        with_code_formula=False,
+        with_picture_classifier=False,
         rapidocr_models=["onnxruntime:iso:en"],
     )
 
@@ -26,7 +28,9 @@ def check(config: Config) -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Prepare or verify Docling assets before worker startup.")
+    parser = argparse.ArgumentParser(
+        description="Prepare or verify Docling assets before worker startup."
+    )
     parser.add_argument("action", choices=("prepare", "check"))
     action = parser.parse_args().action
     (prepare if action == "prepare" else check)(load())

@@ -1,3 +1,13 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from openlet_api.platform.v1.internal_pb2_grpc import (
+        PlatformInternalServiceAsyncStub,
+    )
+
+
 from collections.abc import AsyncIterator, Awaitable
 from dataclasses import dataclass
 from typing import Literal, cast
@@ -23,7 +33,6 @@ from authzed.api.v1 import (
 from authzed.api.v1.permission_service_pb2_grpc import PermissionsServiceStub
 from fastapi import HTTPException, Request
 from openlet_api.platform.v1 import internal_pb2 as platform
-from openlet_api.platform.v1.internal_pb2_grpc import PlatformInternalServiceStub
 from openlet_sdk.config import JSON, Config, secret
 from openlet_sdk.rpc import channel
 
@@ -113,7 +122,7 @@ class Authorization:
 
     async def members(
         self,
-        platform_client: PlatformInternalServiceStub,
+        platform_client: PlatformInternalServiceAsyncStub,
         workspace: UUID,
         cursor: str = "",
     ) -> dict[str, JSON]:

@@ -1,24 +1,25 @@
 import csv
 import re
 from pathlib import Path
+from typing import cast
 
 import pytest
-import yaml
-from docling_core.types.doc import DocItemLabel, DoclingDocument, ImageRef
+from docling_core.types.doc.common.reference import ImageRef
+from docling_core.types.doc.document import DoclingDocument
+from docling_core.types.doc.labels import DocItemLabel
 from letfs_ingest.convert import InvalidDocument, convert, preflight
 from letfs_ingest.export import document
+from openlet_sdk.config import Config
 from openpyxl import Workbook
 from PIL import Image
 
 
-@pytest.fixture
-def config():
-    return yaml.safe_load(Path("infra/config/openlet.example.yaml").read_text())
-
-
-def test_spreadsheet_preserves_ordinary_tables_formulas_and_outside_cells(tmp_path, config):
+def test_spreadsheet_preserves_ordinary_tables_formulas_and_outside_cells(
+    tmp_path: Path, config: Config
+) -> None:
     workbook = Workbook()
     sheet = workbook.active
+    assert sheet is not None
     sheet.title = "Sales"
     sheet.append(["Quarter", "Revenue"])
     sheet.append(["Q1", 100])
@@ -37,24 +38,36 @@ def test_spreadsheet_preserves_ordinary_tables_formulas_and_outside_cells(tmp_pa
     workbook.save(source)
     output = tmp_path / "artifacts"
     output.mkdir()
-    convert(source, output, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", config)
+    convert(
+        source,
+        output,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        config,
+    )
     assert "Sales" in (output / "README.md").read_text()
     assert "D5: Forecast note" in (output / "sheet-1/README.md").read_text()
     assert "D7: =1+2" in (output / "sheet-1/README.md").read_text()
     with (output / "sheet-1/table-1.csv").open() as stream:
-        assert list(csv.reader(stream)) == [["Quarter", "Revenue"], ["Q1", "100"], ["Q2", "250"]]
+        assert list(csv.reader(stream)) == [
+            ["Quarter", "Revenue"],
+            ["Q1", "100"],
+            ["Q2", "250"],
+        ]
     assert "Research" in (output / "sheet-1/table-2.csv").read_text()
     assert "Research" not in (output / "sheet-1/README.md").read_text()
     assert (output / "sheet-2/README.md").read_text() == "# Empty"
     assert list(output.rglob("*.png"))
 
 
-def test_document_sections_keep_full_text_and_relative_images(tmp_path):
+def test_document_sections_keep_full_text_and_relative_images(tmp_path: Path) -> None:
     doc = DoclingDocument(name="report")
     doc.add_text(label=DocItemLabel.TEXT, text="Introduction")
     for number in range(3):
         doc.add_heading(text=f"Section {number}", level=1)
-        doc.add_text(label=DocItemLabel.TEXT, text=f"Evidence {number}: " + "complete content " * 200)
+        doc.add_text(
+            label=DocItemLabel.TEXT,
+            text=f"Evidence {number}: " + "complete content " * 200,
+        )
     image = Image.new("RGB", (8, 8), "red")
     ref = ImageRef.from_pil(image, dpi=72)
     doc.add_picture(image=ref)
@@ -64,13 +77,17 @@ def test_document_sections_keep_full_text_and_relative_images(tmp_path):
     for number in range(3):
         assert combined.count(f"Evidence {number}:") == 1
     for path in markdown:
-        for target in re.findall(r'\]\(([^)]+)\)', path.read_text()):
+        for target in re.findall(r"\]\(([^)]+)\)", path.read_text()):
             assert (path.parent / target).is_file(), (path, target)
     assert list(tmp_path.rglob("*.png"))
 
 
-@pytest.mark.parametrize("threshold,files,folders", [(10000, 1, 0), (400, 3, 0), (50, 7, 2)])
-def test_document_layout_preserves_nested_sections_once(tmp_path, threshold, files, folders):
+@pytest.mark.parametrize(
+    "threshold,files,folders", [(10000, 1, 0), (400, 3, 0), (50, 7, 2)]
+)
+def test_document_layout_preserves_nested_sections_once(
+    tmp_path: Path, threshold: int, files: int, folders: int
+) -> None:
     doc = DoclingDocument(name="handbook")
     doc.add_heading("Handbook", level=1)
     doc.add_text(label=DocItemLabel.TEXT, text="Preamble retained.")
@@ -79,7 +96,10 @@ def test_document_layout_preserves_nested_sections_once(tmp_path, threshold, fil
         doc.add_text(label=DocItemLabel.TEXT, text=f"Introduction {part}.")
         for section in range(2):
             doc.add_heading(f"Topic {part}-{section}", level=3)
-            doc.add_text(label=DocItemLabel.TEXT, text=f"Evidence {part}-{section}. " + "Substantial prose. " * 25)
+            doc.add_text(
+                label=DocItemLabel.TEXT,
+                text=f"Evidence {part}-{section}. " + "Substantial prose. " * 25,
+            )
     document(doc, tmp_path, 10, threshold)
     outputs = list(tmp_path.rglob("*.md"))
     assert len(outputs) == files
@@ -90,9 +110,12 @@ def test_document_layout_preserves_nested_sections_once(tmp_path, threshold, fil
 
 
 @pytest.mark.parametrize("wrapper", ["sdt", "ins"])
-def test_word_keeps_wrapped_runs_and_links_csv_in_place(tmp_path, config, wrapper):
+def test_word_keeps_wrapped_runs_and_links_csv_in_place(
+    tmp_path: Path, config: Config, wrapper: str
+) -> None:
     from docx import Document
     from docx.oxml import OxmlElement
+    from lxml import etree
 
     word = Document()
     word.add_paragraph("Before table.")
@@ -104,28 +127,43 @@ def test_word_keeps_wrapped_runs_and_links_csv_in_place(tmp_path, config, wrappe
     paragraph = cell.paragraphs[0]
     paragraph.add_run("Visible ")
     run = paragraph.add_run("controlled content")
-    element = OxmlElement(f"w:{wrapper}")
+    element = cast(etree._Element, OxmlElement(f"w:{wrapper}"))  # pyright: ignore[reportPrivateUsage]  # lxml's public XML element type uses an underscore.
     if wrapper == "sdt":
-        nested = OxmlElement("w:sdtContent")
+        nested = cast(etree._Element, OxmlElement("w:sdtContent"))  # pyright: ignore[reportPrivateUsage]
         element.append(nested)
     else:
         nested = element
-    run._r.addprevious(element)
-    nested.append(run._r)
+    # python-docx exposes no public API for inserting compatibility markup.
+    run_xml = cast(etree._Element, run._r)  # pyright: ignore[reportPrivateUsage]
+    run_xml.addprevious(element)
+    nested.append(run_xml)
     paragraph.add_run(" retained.")
     word.add_paragraph("After table.")
     source = tmp_path / "contract.docx"
-    word.save(source)
+    word.save(str(source))
     output = tmp_path / "output"
     output.mkdir()
-    convert(source, output, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", config)
+    convert(
+        source,
+        output,
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        config,
+    )
     markdown = (output / "README.md").read_text()
-    assert markdown.index("Before table.") < markdown.index("[Table](table-1.csv)") < markdown.index("After table.")
-    assert "Visible controlled content retained." in (output / "table-1.csv").read_text()
+    assert (
+        markdown.index("Before table.")
+        < markdown.index("[Table](table-1.csv)")
+        < markdown.index("After table.")
+    )
+    assert (
+        "Visible controlled content retained." in (output / "table-1.csv").read_text()
+    )
     assert "controlled content" not in markdown
 
 
-def test_powerpoint_keeps_untitled_slides_and_compatibility_shapes(tmp_path, config):
+def test_powerpoint_keeps_untitled_slides_and_compatibility_shapes(
+    tmp_path: Path, config: Config
+) -> None:
     from lxml import etree
     from pptx import Presentation
     from pptx.util import Inches
@@ -138,32 +176,47 @@ def test_powerpoint_keeps_untitled_slides_and_compatibility_shapes(tmp_path, con
     a14 = "http://schemas.microsoft.com/office/drawing/2010/main"
     wrapper = etree.Element(f"{{{mc}}}AlternateContent", nsmap={"mc": mc, "a14": a14})
     branch = etree.SubElement(wrapper, f"{{{mc}}}Choice", Requires="a14")
-    shape._element.addprevious(wrapper)
-    branch.append(shape._element)
+    cast(etree._Element, shape.element).addprevious(wrapper)  # pyright: ignore[reportPrivateUsage]  # lxml's public XML element type uses an underscore.
+    branch.append(shape.element)
     picture = tmp_path / "figure.png"
     Image.new("RGB", (10, 10), "green").save(picture)
     shape = slide.shapes.add_picture(str(picture), Inches(2), Inches(3))
-    fallback = etree.Element(f"{{{mc}}}AlternateContent", nsmap={"mc": mc, "unknown": "urn:unsupported"})
+    fallback = etree.Element(
+        f"{{{mc}}}AlternateContent", nsmap={"mc": mc, "unknown": "urn:unsupported"}
+    )
     etree.SubElement(fallback, f"{{{mc}}}Choice", Requires="unknown")
     branch = etree.SubElement(fallback, f"{{{mc}}}Fallback")
-    shape._element.addprevious(fallback)
-    branch.append(shape._element)
+    cast(etree._Element, shape.element).addprevious(fallback)  # pyright: ignore[reportPrivateUsage]
+    branch.append(shape.element)
     slide = deck.slides.add_slide(deck.slide_layouts[6])
-    slide.shapes.add_textbox(Inches(1), Inches(1), Inches(4), Inches(1)).text = "Untitled second slide"
+    slide.shapes.add_textbox(
+        Inches(1), Inches(1), Inches(4), Inches(1)
+    ).text = "Untitled second slide"
     source = tmp_path / "brief.pptx"
-    deck.save(source)
+    deck.save(str(source))
     output = tmp_path / "output"
     output.mkdir()
-    convert(source, output, "application/vnd.openxmlformats-officedocument.presentationml.presentation", config)
+    convert(
+        source,
+        output,
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        config,
+    )
     markdown = (output / "README.md").read_text()
     assert "<!-- slide 1 -->" in markdown and "<!-- slide 2 -->" in markdown
-    assert markdown.index("Compatibility text survives") < markdown.index("<!-- slide 2 -->") < markdown.index("Untitled second slide")
+    assert (
+        markdown.index("Compatibility text survives")
+        < markdown.index("<!-- slide 2 -->")
+        < markdown.index("Untitled second slide")
+    )
     assert list(output.glob("*.png"))
-    for target in re.findall(r'\]\(([^)]+)\)', markdown):
+    for target in re.findall(r"\]\(([^)]+)\)", markdown):
         assert (output / target).is_file()
 
 
-def test_input_limits_reject_expanded_office_and_oversized_spreadsheet(tmp_path, config):
+def test_input_limits_reject_expanded_office_and_oversized_spreadsheet(
+    tmp_path: Path, config: Config
+) -> None:
     from zipfile import ZipFile
 
     source = tmp_path / "large.docx"
@@ -172,13 +225,23 @@ def test_input_limits_reject_expanded_office_and_oversized_spreadsheet(tmp_path,
     limits = config["services"]["letfs_ingest"]["cpu"]["limits"]
     limits["max_office_expanded_bytes"] = 1024
     with pytest.raises(InvalidDocument, match="expanded size"):
-        preflight(source, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", config)
+        preflight(
+            source,
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            config,
+        )
     limits["max_office_expanded_bytes"] = 536870912
     limits["max_spreadsheet_cells"] = 3
     workbook = Workbook()
-    workbook.active.append(["Name", "Amount"])
-    workbook.active.append(["Sales", 40])
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.append(["Name", "Amount"])
+    sheet.append(["Sales", 40])
     source = tmp_path / "large.xlsx"
     workbook.save(source)
     with pytest.raises(InvalidDocument, match="sheet/cell"):
-        preflight(source, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", config)
+        preflight(
+            source,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            config,
+        )
