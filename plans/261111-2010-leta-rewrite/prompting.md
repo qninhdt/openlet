@@ -486,6 +486,8 @@ Khi làm text renderer, chỉ đổi cách hiển thị từ các fields này sa
 
 Compaction đã chốt summary + bounded tail/native saver. Chỉ đề xuất instruction chất lượng cho summarizer; không thêm summary table, second memory agent hoặc cơ chế rebuild. Tích hợp tại native middleware đã chọn, kiểm đủ budget cho instruction + prefix + summary output; không summary/re-summary loop. Summary là dữ liệu continuation, không được nâng thành system instruction. Recent tail giữ native tool-call/result pairing, không yêu cầu summarizer chép lại cả tail.
 
+Instruction `leta/compaction` dưới đây được nối thành user message cuối của request giữ nguyên model/effort, system/tools và original message prefix của agent. Nó không thay system prompt hoặc biến native history thành một string/XML prompt mới. Đây là yêu cầu cache-friendly đã chốt; managed prompt version/link vẫn gắn với generation tóm tắt.
+
 ```text
 Create a continuation summary of the older working context for this Openlet
 agent. Summarize only; do not carry out tasks or call tools. The input can include

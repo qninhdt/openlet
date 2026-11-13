@@ -114,6 +114,15 @@ giữa side effect và checkpoint. Sau đó workspace cleanup vẫn hoàn tất.
    dashboard rendering, notifications và usage. Chưa thực hiện deployment.
 2. Nội dung system prompts vẫn draft, chưa được duyệt/publish. Test prompt
    fixtures chỉ phục vụ deterministic CI, không phải production prompts.
+3. Cache-friendly compaction chưa đạt: callback hiện tại đổi system prompt,
+   flatten messages thành XML và không giữ tools; current time cũng được ghi
+   lại trong system tại mỗi boundary. Cần sửa request theo owning design và
+   kiểm actual wire prefix/cache usage; các proof checkpoint/pruning trước đó
+   không xác nhận phần này.
+4. Provider-owned catalog, một model reference có effort suffix, manual pricing,
+   model-list API và ba output modes là scope tiếp theo, chưa có implementation.
+   [Source review và đề xuất retry](../reports/design-261113-2202-provider-catalog-compaction-retries.md)
+   phân biệt phần người dùng đã chốt với retry policy còn đề xuất.
 
 ## Ranh giới vận hành
 
