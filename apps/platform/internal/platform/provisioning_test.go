@@ -7,12 +7,33 @@ import (
 	"time"
 
 	sdk "github.com/qninhdt/openlet/packages/sdk-go"
+	pb "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/platform/v1"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 )
+
+func TestProvisionWorkspaceReturnsFinalStorageRevision(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	env.RegisterActivityWithOptions(func(context.Context, ProvisionInput) (*ProvisionResult, error) { return nil, nil }, activity.RegisterOptions{Name: "AdmitWorkspace"})
+	env.RegisterActivityWithOptions(func(context.Context, ProvisionInput) (string, error) { return "", nil }, activity.RegisterOptions{Name: "ProvisionWorkspaceAccess"})
+	env.RegisterActivityWithOptions(func(context.Context, sdk.InitialStoragesInput) (string, error) { return "", nil }, activity.RegisterOptions{Name: "ProvisionInitialStorages"})
+	env.RegisterActivityWithOptions(func(context.Context, string) (*pb.Workspace, error) { return nil, nil }, activity.RegisterOptions{Name: "ActivateWorkspace"})
+	in := ProvisionInput{WorkspaceID: "workspace", LetFSQueue: "letfs"}
+	env.OnActivity("AdmitWorkspace", mock.Anything, in).Return(&ProvisionResult{}, nil).Once()
+	env.OnActivity("ProvisionWorkspaceAccess", mock.Anything, in).Return("membership-revision", nil).Once()
+	env.OnActivity("ProvisionInitialStorages", mock.Anything, sdk.InitialStoragesInput{WorkspaceID: in.WorkspaceID, ZedToken: "membership-revision"}).Return("storage-revision", nil).Once()
+	env.OnActivity("ActivateWorkspace", mock.Anything, in.WorkspaceID).Return(&pb.Workspace{Id: in.WorkspaceID}, nil).Once()
+	env.ExecuteWorkflow(ProvisionWorkspace, in)
+	require.NoError(t, env.GetWorkflowError())
+	var result ProvisionResult
+	require.NoError(t, env.GetWorkflowResult(&result))
+	require.Equal(t, "storage-revision", result.ZedToken)
+	env.AssertExpectations(t)
+}
 
 func TestDeleteWorkspaceObservesBothOwners(t *testing.T) {
 	for _, storageFails := range []bool{false, true} {

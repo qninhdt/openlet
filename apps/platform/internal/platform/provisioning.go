@@ -64,7 +64,7 @@ func ProvisionWorkspace(ctx workflow.Context, in ProvisionInput) (*ProvisionResu
 		return nil, err
 	}
 	storageCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{TaskQueue: in.LetFSQueue, StartToCloseTimeout: 2 * time.Minute, RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 10}})
-	if err := workflow.ExecuteActivity(storageCtx, "ProvisionInitialStorages", sdk.InitialStoragesInput{WorkspaceID: in.WorkspaceID, UserID: in.UserID, SharedStorageID: in.SharedStorageID, SharedRootID: in.SharedRootID, PrivateStorageID: in.PrivateStorageID, PrivateRootID: in.PrivateRootID, Quota: in.Quota, ZedToken: result.ZedToken}).Get(ctx, nil); err != nil {
+	if err := workflow.ExecuteActivity(storageCtx, "ProvisionInitialStorages", sdk.InitialStoragesInput{WorkspaceID: in.WorkspaceID, UserID: in.UserID, SharedStorageID: in.SharedStorageID, SharedRootID: in.SharedRootID, PrivateStorageID: in.PrivateStorageID, PrivateRootID: in.PrivateRootID, Quota: in.Quota, ZedToken: result.ZedToken}).Get(ctx, &result.ZedToken); err != nil {
 		return nil, err
 	}
 	if err := workflow.ExecuteActivity(ctx, "ActivateWorkspace", in.WorkspaceID).Get(ctx, &result.Workspace); err != nil {
