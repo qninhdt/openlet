@@ -12,13 +12,13 @@ Representative là một Leti bình thường được chọn làm endpoint root
 
 ## 2. Graph và messaging
 
-| Sender | Recipient |
-|---|---|
-| Root | Representative qua endpoint của box cùng root |
-| Representative | Root và các Leti có cạnh trực tiếp |
-| Leti khác | Các Leti có cạnh trực tiếp trong cùng box |
+| Sender         | Recipient                                     |
+| -------------- | --------------------------------------------- |
+| Root           | Representative qua endpoint của box cùng root |
+| Representative | Root và các Leti có cạnh trực tiếp            |
+| Leti khác      | Các Leti có cạnh trực tiếp trong cùng box     |
 
-Cạnh hai chiều, lưu một row low/high. Không ép DAG; cycle/mesh hợp lệ. Graph là quyền gửi message, không compile thành một LangGraph chứa các Leti nodes. Backend kiểm route/liveness trong inbox admission transaction; model nhận bounded allowed roster từ workspace_get.
+Cạnh hai chiều, lưu một row low/high. Không ép DAG; cycle/mesh hợp lệ. Graph là quyền gửi message, không compile thành một LangGraph chứa các Leti nodes. Backend kiểm route/liveness trong inbox admission transaction; workspace_get vẫn trả allowed recipients. Leti còn nhận [box context tối thiểu](../261114-0035-inference-prompts-compaction/design.md#11-runtime-optimization-và-box-context) qua native Langfuse placeholder, load một lần/activity. Box description đã có trong DTO/SQL; không thêm field/migration chỉ để dựng context.
 
 Chỉ inbox_send tạo delivery. Không auto-broadcast, auto-forward final output hoặc tự chạy toàn graph. Leti không direct human chat/cross-box messaging. HITL riêng: hitl_ask có thể hỏi bất kỳ current human workspace member theo exact-recipient contract, không mở chat route mới. Root nhận inbox notifications, Leti nhận bounded full inbox batch; agents trao đổi nội dung hoặc file references rõ ràng, không chia sẻ context ngầm.
 

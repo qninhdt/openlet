@@ -1,9 +1,11 @@
 # Viết lại Leta: plan và các quyết định đã duyệt
 
-Lượt tiếp theo: [inference, prompt management và cache-friendly compaction](../261114-0035-inference-prompts-compaction/plan.md),
+Lượt tiếp theo: [inference, runtime, prompts và compaction](../261114-0035-inference-prompts-compaction/plan.md),
 đối chiếu đủ 17 commit `d69be44..026c044`. Plan mới gom thiết kế/commit boundaries,
-proposal bị supersede và ba gate cụ thể; chưa application migration. Prompt
-management chốt native features, **Playground/evaluation hoãn**.
+proposal bị supersede và verification còn lại; chưa application migration.
+Đã chốt separate model/effort fields, manual enrichment output mode, runtime
+reuse/benchmark, Leti box context và native LF variables/composition/publication.
+LangChain invalid-tool-call issue chỉ TODO; **Playground/evaluation hoãn**.
 
 Cập nhật 2026-11-13. Đang implementation theo thiết kế đã duyệt: native runtime/API/worker, domain schema, Cloud observability và delivery wiring đã có code. Xem [execution record](execution.md) cho commit boundaries, checks và Redis/Mirage integration sau allowlist đã được người dùng duyệt; shared API E2E 5/5 đã pass; Cloud/deploy acceptance còn lại. Inventory 6 workflows/22 activities/3 queues, schema 11 bảng/86 cột giữ nguyên. Archive chỉ context; không dùng skills/subagents.
 

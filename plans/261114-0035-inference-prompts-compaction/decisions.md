@@ -44,7 +44,7 @@ results mới là evidence; không suy isolated proof thành full-stack acceptan
 | Task defaults         | Langfuse Prompt Config                                                          | `models.leta.default`, enrichment model YAML, `default_for` custom metadata    |
 | Parameters            | Native effort/temperature/top_p/top_k/output khi cần và support                 | Null-filled universal options; backend provider-specific reasoning mapping     |
 | Leta choices          | Supported subset từ gateway, explicit user selection/inheritance ở product      | Hardcoded list; mất model/effort selection chỉ vì đổi gateway                  |
-| Structured extraction | Instructor JSON_SCHEMA → TOOLS → MD_JSON theo deployed facts                    | Manual per-task mode catalog; JSON fixer/validation loop tự chế                |
+| Structured extraction | YAML output_mode: `tools`, `json_schema`, `text`; Vilao dùng Instructor TOOLS   | Automatic capability discovery/downgrade; JSON fixer/validator thứ hai         |
 | Dependencies          | Instructor official Git exact commit `aeb7e2558166caeec497e541bcfc6b4eaa2cf53b` | Downgrade OpenAI3.3; forced resolver override; moving main                     |
 | Retry                 | Proxy transport; Instructor bounded correction; Temporal durable recovery       | SDK+app transport loops, local Router cạnh Proxy                               |
 | Embedding             | Native SDKs, float encoding/dimensions; index/query cùng embedding space        | Đổi model vô tư vì dimensions giống; chat fallback cho embedding               |
@@ -55,9 +55,9 @@ results mới là evidence; không suy isolated proof thành full-stack acceptan
 | Observability         | Existing OTel/Alloy → Grafana Cloud + native LF Cloud, sample1.0 demo           | Self-host monitoring/LF; custom immortal-agent telemetry/sampling architecture |
 | Demo                  | Máy hiện tại, Cloud Free, 1–10 testers                                          | Đòi VPS/domain/DB provisioning riêng bằng tay                                  |
 
-Không còn yêu cầu model name phải có effort suffix. Ngược lại, vẫn còn yêu cầu
-khi chọn model phải chọn được effort; API biểu diễn được ghi là proposal riêng,
-không suy từ quyết định naming bị bỏ.
+Người dùng đã chốt giữ hai field `model_id` và `reasoning_effort` hiện có.
+Không suffix parser. Config Langfuse phẳng là default; effective DB selection
+ghi đè model/effort, Leti giữ root inheritance. Không `default` wrapper.
 
 ## 4. Prompt management vừa chốt, bổ sung ở lượt này
 
@@ -128,20 +128,79 @@ follow-ups; đọc kết luận mới nhất, không lấy blockers cũ làm tr�
 - Secret nằm private root `.env`, không trong report/config committed. Existing
   dirty `.env.example` không bị sửa/stage bởi lượt lập plan.
 
-## 6. Ba khoảng trống không được biến thành quyết định ngầm
+## 6. Quyết định thay thế các proposal trong plan ban đầu
 
-1. [Report2345](../reports/research-261113-2345-inference-configuration-ownership.md)
-   để effort API sau bỏ suffix là open. Code còn separate fields; giữ chúng là
-   recommendation tối thiểu, cần người dùng chốt tại boundary này.
-2. Capability/routing compatibility là approved requirement; cụ thể group
-   intersection/native routing và supplier preference chưa được chọn. Không
-   lấy official capability làm group fact cho deployment Vilao không hỗ trợ.
-3. Code hiện chỉ propagate TraceContext ở Go/Python; cần kiểm native LF trace/
-   session association có đủ cho aggregation không trước thêm propagation.
-   Owning LF design hiện không thêm baggage; narrow baggage từng được đề xuất
-   nhưng chưa accepted/proven. Không tuyên bố session cost đủ cả Go RAG khi
-   chưa kiểm ingestion/aggregation, cũng không mặc định thêm baggage để sửa.
+- Giữ separate model/effort fields đã được duyệt, không còn effort API gate từ
+  [report2345](../reports/research-261113-2345-inference-configuration-ownership.md).
+- Backend không biết deployment được gateway chọn trước request; `/model/info`
+  không giải quyết được mode của mixed-provider group. Người dùng đã chấp nhận
+  một YAML output mode cho enrichment: `tools`, `json_schema`, `text`, tương ứng
+  Instructor `TOOLS`, `JSON_SCHEMA`, `MD_JSON`. Vilao dùng `tools`; không tự thử
+  lần lượt ba modes, không filter model/tool capability hoặc dựng intersection.
+- Instructor trả object đã validate hoặc báo lỗi sau bounded correction. Không
+  duplicate Pydantic validation/JSON fixing trong ứng dụng. Ordinary agent tools
+  tiếp tục native LangChain/LangGraph, không đi qua Instructor.
+- Cost scope bao gồm **LLM, embedding và reranker**: file processing gồm enrichment
+  và batch embeddings; semantic search gồm query embedding và rerank khi bật.
+  LiteLLM tính cost; LF nhận/aggregate; không backend price calculator.
+- Code hiện chỉ propagate TraceContext ở Go/Python; cần kiểm native LF trace/
+  session association có đủ cho aggregation không trước thêm propagation.
+  Owning LF design hiện không thêm baggage; narrow baggage từng được đề xuất
+  nhưng chưa accepted/proven. Không tuyên bố session cost đủ cả Go RAG khi
+  chưa kiểm ingestion/aggregation, cũng không mặc định thêm baggage để sửa.
 
 Supplier prices, verified limits và Cloud inputs còn thiếu là dữ liệu vận hành,
 không phải lý do tạo framework mới. Không bịa values hoặc chạy paid load test
 không cần thiết để lấp các ô này.
+
+## 7. Runtime/prompt review đã chốt ngày 2026-11-14
+
+- Native `create_agent` có history repair cho identifiable `invalid_tool_calls`
+  trước model request tiếp theo, nhưng không tự loop-back khi chỉ có invalid calls.
+  Đối chứng trên LangChain1.5.0/LangGraph1.2.21 xác nhận cả vanilla và middleware
+  graph đều kết thúc sớm; native `after_model` jump có thể dùng history repair.
+- Người dùng **chọn defer workaround**: chỉ TODO ngắn/link
+  [issue33504](https://github.com/langchain-ai/langchain/issues/33504) tại graph
+  construction. Không suy tần suất thực tế từ synthetic probes; chấp nhận giới
+  hạn có thể kết thúc lượt sớm, không thêm parser/retry middleware ở lượt tới.
+- Review chứng minh thêm `after_model` hook đổi pending node thành hook node;
+  runtime hiện chỉ mở Mirage khi `tools` trong `state.next` nên file tool gặp
+  AssertionError. Optimization phải bỏ phụ thuộc tên node, dù workaround hoãn.
+- Graph/middleware một lần mỗi activity; client reuse, control/config refresh
+  bằng native hooks; giảm repeated SQL và batch history transaction mỗi boundary.
+  Giữ sync checkpoint → projection → keep_latest và cooperative cancellation.
+- Benchmark trước/sau trong implementation; scripts/results thô ở thư mục tạm,
+  không thêm benchmark source/CI. Không gọi fixture overhead reduction là tốc độ
+  LLM thực hoặc suy performance từ LoC.
+- Box `description` đã có trong DTO/SQL; không thêm field/migration. Leti nhận
+  box name/purpose, own name, teammate descriptions/representative và routable
+  recipient IDs; không teammate prompts/full edge matrix hoặc time context.
+- Heading `Your instructions`, placeholder `agent_instructions`; Leti thêm
+  `box_context`. Common composition bằng native numeric references. Không concat
+  prompt instructions trong runtime hoặc thêm prompt riêng mỗi box/agent.
+- Implementation bao gồm cập nhật versions/config thật trên LF Cloud, kiểm
+  resolved references/variables, thử qua Openlet và production label/rollback.
+  Actual prompt wording còn cần hoàn thiện/review; local fixtures không thay
+  Cloud publication. Config vẫn phẳng sau khi người dùng rút `default` wrapper.
+
+Các runtime probes/5 focused tests pass là bằng chứng review baseline, chưa phải
+acceptance cho optimization/gateway migration chưa triển khai. Không sửa app code
+hoặc publish Cloud trong lượt cập nhật plan này.
+
+## 8. Chốt whole-Leta review và phạm vi trước implementation
+
+- F01–F19 được chấp nhận trong owning paths, không rewrite domain lần nữa.
+- F04: activity result trả durable inbox_cursor; workflow so admitted seq với
+  cursor để bỏ empty inbox wake, gồm late/out-of-order admission completions.
+  Control/cancel semantics giữ riêng; không DB cursor hoặc activity mới.
+- F07: LetFS search hits trả relative paths; proto/Go/generated SDK cùng đổi,
+  bỏ adapter parent-walk/tree prefetch. Không path cache trong Leta.
+- F18: bounded native stream capture cho output trả agent, giữ full file
+  redirection và command drain/settlement; không custom runner framework.
+- PATCH giữ model_id/reasoning_effort: đổi model không gửi effort thì clear
+  effort cũ; effort-only chỉ hợp lệ khi có explicit model. Đây là intentional
+  correction so với current API, không claim giữ nguyên mọi PATCH behavior.
+- Không còn known architecture/product decision cản bắt đầu implementation.
+  Native SDK/Cloud proofs, workflow history cutover và prompt wording review là
+  verification/content work. Nếu proof buộc vượt scope thì trình đúng khác biệt;
+  không tự thêm compatibility, recovery service, propagation hoặc data reset.

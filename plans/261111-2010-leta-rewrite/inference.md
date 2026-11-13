@@ -34,6 +34,9 @@ Chỉ khai báo parameters thực sự cần và model hỗ trợ; không thêm 
 App đọc config rồi truyền vào client bình thường; Langfuse không tự thực thi
 config. Không cấu hình lại cùng task defaults trong LiteLLM/Openlet YAML.
 Compaction dùng model đang chạy, không có model/default catalog riêng.
+Config LF phẳng, không `default` wrapper. Root dùng các giá trị này khi chưa có
+explicit DB selection; giữ hai fields `model_id` và `reasoning_effort`, DB pair
+ưu tiên và Leti tiếp tục root inheritance. Không parse effort suffix.
 
 ## 2. Một model group, nhiều provider
 
@@ -125,10 +128,11 @@ Proxy sở hữu bounded retry/backoff/fallback. Temporal durable recovery giữ
 Instructor sở hữu bounded validation feedback; không output validator/JSON repair
 hoặc correction loop thứ hai trong Openlet.
 
-Tự chọn Instructor mode theo actual deployment metadata: native response schema
-→ `JSON_SCHEMA`; nếu không có thì function calling → `TOOLS`; còn lại text
-→ `MD_JSON`. Không manual output-mode catalog. Unsupported-format error có thể
-downgrade hữu hạn; 429/5xx là transport failure, không đổi schema mode.
+YAML `models.enrichment.output_mode: tools | json_schema | text` chọn một mode,
+tương ứng Instructor `TOOLS | JSON_SCHEMA | MD_JSON`. Vilao dùng `tools`.
+Backend không biết deployment được group chọn trước request; không autodetect,
+mode downgrade chain hoặc capability intersection/filter. Instructor trả object
+đã validate hoặc báo lỗi sau bounded correction; không validation thứ hai.
 Giữ `drop_params: false`, không silently drop schema/parameters được yêu cầu.
 Routing/fallback phải tương thích tools/schema/context của request. Embedding
 không fallback sang model khác trên index hiện có. Reranker optional; tắt thì
@@ -157,6 +161,10 @@ usage/cost trước khi trả response cho Instructor, gồm các correction att
 embedding giữ đúng observation type. Không cộng response usage đã bị Instructor
 aggregate lần nữa. Không bật gateway export AI observations sang Langfuse lần hai;
 gateway operational telemetry đi Alloy/Grafana.
+Cost coverage gồm mọi LLM, embedding và reranker calls: enrichment/batch embedding
+của file processing, query embedding/optional rerank của semantic search, agent
+và compaction. Reranker giữ native billed units/pricing; missing usage/cost là
+unknown, không zero. Chi tiết attribution/Cloud proof ở plan hợp nhất.
 
 ## 6. Phạm vi implementation và kiểm chứng
 

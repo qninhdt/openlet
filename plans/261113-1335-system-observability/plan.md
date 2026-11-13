@@ -1,9 +1,12 @@
 # Observability toàn Openlet: thiết kế đã chốt
 
 [Plan triển khai tiếp theo 2026-11-14](../261114-0035-inference-prompts-compaction/plan.md)
-gom LiteLLM/cost, Prompt Config/lifecycle và cache-friendly compaction. Chưa
-migration runtime. Cập nhật chốt cuối: **Playground/evaluation hoãn**, thử prompt
-qua Openlet trước promote label; không public gateway/LLM connection lúc này.
+gom LiteLLM, cost của LLM/embedding/reranker trong agent/file processing/search,
+runtime optimization, Prompt Config/lifecycle và cache-friendly compaction.
+Chưa migration runtime. Native LF variables/composition, actual Cloud prompt
+publication và flat config defaults/DB override đã chốt; **Playground/evaluation
+hoãn**. Thử prompt qua Openlet trước promote label; không public gateway/LLM
+connection lúc này.
 
 Đang implementation cùng Leta. Collector/Cloud config, native SDK instrumentation, RAG/ingest observations và managed prompts đã có code; evaluation hoãn. Xem [execution record](../261111-2010-leta-rewrite/execution.md) cho checks và acceptance còn lại; chưa deploy Cloud.
 

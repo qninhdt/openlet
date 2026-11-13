@@ -4,7 +4,6 @@
 
 Ngày 2026-11-11. Đề xuất kiến trúc, chưa implementation. Thay thế bản Temporal trước trong cùng plan. Không dùng skill/subagent, không sửa runtime hoặc copy implementation/tests cũ. [Kiến trúc Leta](design.md), [plan và acceptance](plan.md).
 
-
 Yêu cầu đã chốt thêm: Leta/Leti có thể hoạt động liên tục 24/7 nhiều tháng, nhiều năm, kể cả luôn có việc. Không cần manual restart/reset để tránh history/context tăng. Logical agent giữ identity và context qua nhiều workflow runs và runtime activities.
 
 [Schema chi tiết](schema.md) và [DDL review](schema.sql) xác định physical fields. Các state snapshots/status trong workflow/API bên dưới có thể là SQL projections, không mặc định là columns riêng.
@@ -15,69 +14,74 @@ Giữ Temporal và sáu workflow types. Phân chia nghiệp vụ cấp cao còn 
 
 Vấn đề đã xác minh là nhiều nơi cùng giữ execution progress, ordinary CRUD đi vòng qua lifecycle coordinator, và application tự dựng replay/recovery ngoài thư viện. Temporal cùng LangGraph không tự nó là overengineering. Không bỏ một coordinator đang giải quyết ordering thật rồi thay bằng lock/outbox/scheduler tự chế.
 
-| Type | ID | Vòng đời và trách nhiệm |
-|---|---|---|
-| `Agent` | `agent/{agent_id}` | Lazy, sống khi agent còn hoạt động; admission, wake, dispatch runtime và control |
-| `LetaLifecycle` | `leta/{id}/create`, `leta/{id}/delete`, `leta/{id}/control/{request_id}` | Một create/delete/pause/resume operation rồi kết thúc |
-| `BoxLifecycle` | `box/{id}/create`, `box/{id}/delete` | Một create/delete operation rồi kết thúc |
-| `HitlRequest` | `hitl/{request_id}` | Open → decision/deadline → effect → result delivery rồi kết thúc |
-| `ScheduleChanges` | `schedule-changes/{schedule_id}` | Serialize edits của một schedule; kết thúc khi delete |
-| `ScheduleDelivery` | Native Schedule sinh execution ID | Một occurrence, giao input rồi kết thúc; không đợi inference |
+| Type               | ID                                                                       | Vòng đời và trách nhiệm                                                          |
+| ------------------ | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| `Agent`            | `agent/{agent_id}`                                                       | Lazy, sống khi agent còn hoạt động; admission, wake, dispatch runtime và control |
+| `LetaLifecycle`    | `leta/{id}/create`, `leta/{id}/delete`, `leta/{id}/control/{request_id}` | Một create/delete/pause/resume operation rồi kết thúc                            |
+| `BoxLifecycle`     | `box/{id}/create`, `box/{id}/delete`                                     | Một create/delete operation rồi kết thúc                                         |
+| `HitlRequest`      | `hitl/{request_id}`                                                      | Open → decision/deadline → effect → result delivery rồi kết thúc                 |
+| `ScheduleChanges`  | `schedule-changes/{schedule_id}`                                         | Serialize edits của một schedule; kết thúc khi delete                            |
+| `ScheduleDelivery` | Native Schedule sinh execution ID                                        | Một occurrence, giao input rồi kết thúc; không đợi inference                     |
 
 Native Schedule ID: `schedule/{schedule_id}`. Không có workflow cho từng message, model call, tool, file mutation, agent metadata PATCH hoặc SSE event.
 
 ## 2. State thuộc về đâu
 
-| Owner | State |
-|---|---|
-| PostgreSQL | Resource lifecycle, desired pause, inbox, public history, UI run status, HITL decision/outcome, schedule definitions, mutation receipts |
-| Native LangGraph saver | Working messages/summary, inbox cursor, pending tasks/interrupts và continuation |
-| Temporal | Command ordering, wake/dispatch, activity/timer progress, durable retries |
-| Native Schedule | Timing, timezone, overlap/catchup và occurrence start |
-| Redis | Provisional events và cache; không recovery authority |
+| Owner                       | State                                                                                                                                                                |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PostgreSQL                  | Resource lifecycle, desired pause, inbox, public history, UI run status, HITL decision/outcome, schedule definitions, mutation receipts                              |
+| Native LangGraph saver      | Working messages/summary, inbox cursor, pending tasks/interrupts và continuation                                                                                     |
+| Temporal                    | Command ordering, wake/dispatch, activity/timer progress, durable retries                                                                                            |
+| Native Schedule             | Timing, timezone, overlap/catchup và occurrence start                                                                                                                |
+| Redis                       | Provisional events và cache; không recovery authority                                                                                                                |
 | SpiceDB theo owning service | Agent owner/operator và hai chiều agent.workspace/workspace.agent do Leta; workspace/membership do Platform; storage/grants do LetFS. Không SQL owner/binding mirror |
-| LetFS | Storage/tree/content/version/workspace quota và native mutation idempotency |
+| LetFS                       | Storage/tree/content/version/workspace quota và native mutation idempotency                                                                                          |
 
-Xóa khỏi SQL `runs` và Agent workflow: checkpoint ID/namespace, cursor, continuation, runtime attempt, yield flag, result snapshot và latest-sequence mirror. `runs` chỉ là product status/correlation; runtime đọc checkpoint để biết việc cần làm. Không custom tool-result replay journal hoặc heartbeat chứa transcript.
+Xóa khỏi SQL `runs` và Agent workflow: checkpoint ID/namespace, continuation,
+runtime attempt, yield flag và result snapshot. Checkpoint sở hữu inbox cursor;
+F04 đã chốt cho workflow giữ admitted seq/returned cursor chỉ để reconcile inbox
+wake, không runtime continuation mirror. `runs` chỉ là product status/correlation;
+runtime đọc checkpoint để biết việc cần làm. Không custom tool-result replay
+journal hoặc heartbeat chứa transcript.
 
 ## 3. Activity inventory và worker
 
 `L` = native Local Activity, chỉ SQL ngắn. `E` = regular effect Activity, không chờ Leta workflow khác. `B` = regular bridge Activity, được gọi Temporal Client để chờ Updates/results. `R` = runtime Activity.
 
-| # | Activity | Loại | Trách nhiệm |
-|---|---|---|---|
-| 1 | `admit_input` | L | Validate route/source/liveness; transaction dedupe, cấp recipient seq, INSERT inbox |
-| 2 | `load_agent_control` | L | Đọc active/desired pause và unfinished UI run ID; không checkpoint |
-| 3 | `finish_run` | L | Ghi terminal/pause UI status nếu runtime đã mở run; technical rollover không kết thúc logical run |
-| 4 | `run_agent` | R | Activity chạy dài, heartbeat/writer lock; model/tools/inbox middleware/checkpoints/history và native pruning |
-| 5 | `deliver_input` | B | Update-with-Start recipient; trả committed receipt hoặc inactive skip |
-| 6 | `prepare_leta` | L | Canonical root/storage/storage-root IDs, letas + root agents rows và admitted creation receipt |
-| 7 | `provision_leta` | E | Generic Platform CheckWorkspaceActive, native agent graph batch gồm hai chiều workspace binding, LetFS CreateStorage với saved ordinary UUID rồi conditional activate; không EnsureLetaHome |
-| 8 | `close_leta` | L | Đóng root admission bằng SQL trước teardown |
-| 9 | `cleanup_leta` | B | Settle producers/grants/runners, trash box homes, cleanup access, archive |
-| 10 | `set_leta_paused` | L | Desired pause assignment có request receipt |
-| 11 | `refresh_leta_agents` | B | Notify existing agents đọc current control; không chờ inference |
-| 12 | `prepare_box` | L | Sau home provision: atomic active box/Leti/edges và finalized creation receipt với home_node_id thật |
-| 13 | `provision_box` | E | Chạy trước prepare_box: native CreateDirectories stable path, trả home_node_id; không ghi SQL box placeholder |
-| 14 | `close_box` | L | Đóng admission của box |
-| 15 | `cleanup_box` | B | Settle box producers/grants/runners, trash home, archive |
-| 16 | `open_hitl_request` | E | Kiểm explicit addressed user/current workspace participation, approval thêm storage rights; persist canonical pending hoặc already_granted |
-| 17 | `resolve_hitl_request` | L | Authorized CAS status=pending, ghi terminal status/response/resolved_at cùng transaction |
-| 18 | `apply_hitl_outcome` | E | Grant nếu cần, persist actual outcome; không inbox delivery |
-| 19 | `save_schedule_change` | L | Check finalized receipt/hash; lưu canonical desired definition; metadata-only finalize receipt cùng SQL |
-| 20 | `apply_native_schedule` | E | Apply canonical native effect, sau ACK ghi finalized bytea receipt trong transaction ngắn |
-| 21 | `load_schedule_occurrence` | L | Current SQL source/target/content → bounded input hoặc skip |
-| 22 | `delete_workspace_agents` / wire `DeleteWorkspaceAgents` | B | Platform dispatch; đóng gates và cleanup roots/boxes inline theo workspace, không đợi queued B activity |
+| #   | Activity                                                 | Loại | Trách nhiệm                                                                                                                                                                                 |
+| --- | -------------------------------------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `admit_input`                                            | L    | Validate route/source/liveness; transaction dedupe, cấp recipient seq, INSERT inbox                                                                                                         |
+| 2   | `load_agent_control`                                     | L    | Đọc active/desired pause và unfinished UI run ID; không checkpoint                                                                                                                          |
+| 3   | `finish_run`                                             | L    | Ghi terminal/pause UI status nếu runtime đã mở run; technical rollover không kết thúc logical run                                                                                           |
+| 4   | `run_agent`                                              | R    | Activity chạy dài, heartbeat/writer lock; model/tools/inbox middleware/checkpoints/history và native pruning                                                                                |
+| 5   | `deliver_input`                                          | B    | Update-with-Start recipient; trả committed receipt hoặc inactive skip                                                                                                                       |
+| 6   | `prepare_leta`                                           | L    | Canonical root/storage/storage-root IDs, letas + root agents rows và admitted creation receipt                                                                                              |
+| 7   | `provision_leta`                                         | E    | Generic Platform CheckWorkspaceActive, native agent graph batch gồm hai chiều workspace binding, LetFS CreateStorage với saved ordinary UUID rồi conditional activate; không EnsureLetaHome |
+| 8   | `close_leta`                                             | L    | Đóng root admission bằng SQL trước teardown                                                                                                                                                 |
+| 9   | `cleanup_leta`                                           | B    | Settle producers/grants/runners, trash box homes, cleanup access, archive                                                                                                                   |
+| 10  | `set_leta_paused`                                        | L    | Desired pause assignment có request receipt                                                                                                                                                 |
+| 11  | `refresh_leta_agents`                                    | B    | Notify existing agents đọc current control; không chờ inference                                                                                                                             |
+| 12  | `prepare_box`                                            | L    | Sau home provision: atomic active box/Leti/edges và finalized creation receipt với home_node_id thật                                                                                        |
+| 13  | `provision_box`                                          | E    | Chạy trước prepare_box: native CreateDirectories stable path, trả home_node_id; không ghi SQL box placeholder                                                                               |
+| 14  | `close_box`                                              | L    | Đóng admission của box                                                                                                                                                                      |
+| 15  | `cleanup_box`                                            | B    | Settle box producers/grants/runners, trash home, archive                                                                                                                                    |
+| 16  | `open_hitl_request`                                      | E    | Kiểm explicit addressed user/current workspace participation, approval thêm storage rights; persist canonical pending hoặc already_granted                                                  |
+| 17  | `resolve_hitl_request`                                   | L    | Authorized CAS status=pending, ghi terminal status/response/resolved_at cùng transaction                                                                                                    |
+| 18  | `apply_hitl_outcome`                                     | E    | Grant nếu cần, persist actual outcome; không inbox delivery                                                                                                                                 |
+| 19  | `save_schedule_change`                                   | L    | Check finalized receipt/hash; lưu canonical desired definition; metadata-only finalize receipt cùng SQL                                                                                     |
+| 20  | `apply_native_schedule`                                  | E    | Apply canonical native effect, sau ACK ghi finalized bytea receipt trong transaction ngắn                                                                                                   |
+| 21  | `load_schedule_occurrence`                               | L    | Current SQL source/target/content → bounded input hoặc skip                                                                                                                                 |
+| 22  | `delete_workspace_agents` / wire `DeleteWorkspaceAgents` | B    | Platform dispatch; đóng gates và cleanup roots/boxes inline theo workspace, không đợi queued B activity                                                                                     |
 
 Activities đặt cạnh owning feature functions; đăng ký trực tiếp. Feature function dùng concrete clients/pool, không repository interface hoặc dispatcher framework. SQL lookup nhỏ bên trong một effect không cần activity riêng.
 
 Ba native task queues, ba Worker instances trong **một worker process/deployment**:
 
-| Queue | Chạy gì |
-|---|---|
-| `openlet-leta` | Tất cả workflows, Local SQL và E activities |
-| `openlet-leta-runtime` | `run_agent` |
-| `openlet-leta-bridge` | B activities |
+| Queue                  | Chạy gì                                     |
+| ---------------------- | ------------------------------------------- |
+| `openlet-leta`         | Tất cả workflows, Local SQL và E activities |
+| `openlet-leta-runtime` | `run_agent`                                 |
+| `openlet-leta-bridge`  | B activities                                |
 
 Đây là phân tách slot để tránh vòng đợi thật: runtime tool có thể đợi lifecycle cleanup; cleanup có thể đợi Agent/HITL/Schedule Updates; các Updates đó cần effect activities chạy được. E activities không chờ Leta workflows. B activities không đợi một B activity khác phải chạy để mình hoàn tất. Không slot-reservation framework hoặc service/container mới.
 
@@ -99,14 +103,16 @@ Liveness và mutation phải nằm cùng transaction có khóa gate phù hợp: 
 
 ### State và Updates
 
-Chỉ giữ wake, cached paused, stopping, rotating, active runtime handle/run ID và completion của lượt đang cancel. Đây là scheduling state, không native graph state.
+Giữ control wake, admitted seq/returned cursor cho inbox wake, cached paused,
+stopping, rotating, active runtime handle/run ID và completion của lượt đang
+cancel. Đây là scheduling state, không native graph state.
 
-| Update | Xử lý | ACK |
-|---|---|---|
-| receive | admit_input; sau commit đặt wake=true và kiểm native rollover suggestion | Input đã lưu, không đợi model |
-| refresh_control | Lock ngắn quanh load_agent_control/cache; resume đặt wake=true; kiểm native suggestion | Đã đọc desired control mới nhất |
-| cancel_current(run_id) | Cancel đúng invocation được nhắm tới, bỏ wake cũ, chờ settle | User cancellation đã xử lý; không rollback effects |
-| stop | Latch stopping, main settle active invocation bằng native cancellation, chờ stopped | Không dispatch thêm; cleanup còn xác nhận writer barrier |
+| Update                 | Xử lý                                                                                                                | ACK                                                      |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| receive                | admit_input; cập nhật admitted seq bằng max, wake inbox nếu mới hơn returned cursor; kiểm native rollover suggestion | Input đã lưu, không đợi model                            |
+| refresh_control        | Lock ngắn quanh load_agent_control/cache; resume đặt wake=true; kiểm native suggestion                               | Đã đọc desired control mới nhất                          |
+| cancel_current(run_id) | Cancel đúng invocation được nhắm tới, bỏ wake cũ, chờ settle                                                         | User cancellation đã xử lý; không rollback effects       |
+| stop                   | Latch stopping, main settle active invocation bằng native cancellation, chờ stopped                                  | Không dispatch thêm; cleanup còn xác nhận writer barrier |
 
 Không giữ handler lock qua inference, fanout, stop hoặc inbox delivery. Cancellation chỉ gửi một lần cho active handle; concurrent controls chờ cùng completion. Explicit user cancel/stop giữ ý nghĩa domain; technical rotation không tự ghi UI run cancelled.
 
@@ -115,7 +121,7 @@ Không giữ handler lock qua inference, fanout, stop hoặc inbox delivery. Can
 ```text
 bootstrap control; wake = true
 lặp:
-  chờ stopping hoặc (wake và không paused) hoặc native rotation suggestion
+  chờ stopping hoặc ((control wake hoặc inbox wake) và không paused) hoặc native rotation suggestion
   nếu native suggestion: rotating = true
   nếu rotating:
     đóng receive admission; settle active invocation nếu có
@@ -124,7 +130,7 @@ lặp:
     Continue-As-New chỉ với IDs
   nếu stopping: break
 
-  wake = false
+  clear control wake và đánh dấu dispatch inbox wake hiện tại
   trong control lock ngắn: đọc control/cập nhật cache trước dispatch
   nếu inactive: stopping = true; continue
   nếu paused: cache paused; continue
@@ -138,7 +144,8 @@ lặp:
     bỏ active handle; không finish_run(cancelled) chỉ vì rotation
     nếu stopping: break
     continue
-  xử lý result/explicit user cancellation và finish_run tương ứng
+  xử lý status + returned inbox cursor; reconcile inbox wake đã được current activity nhận
+  xử lý explicit user cancellation và finish_run tương ứng
   bỏ active handle
 
 stopped = true
@@ -148,17 +155,24 @@ return
 
 Các điều kiện được đánh thức bởi workflow task/message/activity events, không timer polling. Kiểm native suggestion tại receive/control và activity completion; workflow đang await activity vẫn xử lý Updates và quan sát suggestion mới. Không Continue-As-New trong Update handler; main thực hiện sau khi handlers đã xong. Mọi receive Update có thể tăng history dù runtime đang chạy; các vòng model/tools và từng heartbeat không tạo workflow-history event riêng cho từng vòng/nhịp.
 
-Đặt stopped trước khi đợi handlers vì stop handler đang đợi stopped. Đặt wake=false trước dispatch: receive khi activity đang chạy đặt lại true, không mất wake khi activity return. Chấp nhận thêm một invocation kiểm tra rỗng, không wake-sequence protocol. Bootstrap/pre-dispatch/refresh dùng cùng control lock ngắn để read cũ không ghi đè resume mới; nhả lock trước runtime/stop wait.
+Đặt stopped trước khi đợi handlers vì stop handler đang đợi stopped. F04 thay
+quyết định chấp nhận empty inbox invocation: admission seq so với durable cursor
+trả từ activity, gồm late/out-of-order admission handlers. Không clear inbox wake
+vô điều kiện khi activity xong hoặc dùng comparison để xóa control wake. Cancel
+vẫn bỏ wake cũ; không tự chạy lại chỉ vì backlog chưa consume. Bootstrap/pre-
+dispatch/refresh dùng cùng control lock ngắn để read cũ không ghi đè resume mới;
+nhả lock trước runtime/stop wait. Chi tiết ở
+[runtime plan](../261114-0035-inference-prompts-compaction/design.md#inbox-wake-handoff-đã-chốt).
 
 Transient runtime/dependency errors dùng native retry/backoff; không làm agent chết sau vài attempts. Permanent model/config/context errors mark lượt failed và cần input/resume hoặc sửa cấu hình; không spin. Input sau cancel đánh thức; input đã lưu còn nguyên tới lần input/resume sau.
 
 ### Bên trong run_agent
 
 1. Heartbeat độc lập và giữ PostgreSQL session advisory writer lock theo agent suốt activity. Lock bận trả retryable cho native backoff; không tự poll. Một agent chỉ có một graph writer.
-2. Đọc liveness và native saver snapshot. Cursor chỉ ở checkpoint. Không có graph work/input mới thì return idle, không mở SQL run rỗng. UI run cũ còn mở nhưng checkpoint đã END được finalize, không gọi lại model.
+2. Đọc liveness và native saver snapshot. Cursor authority ở checkpoint; activity result trả durable cursor để workflow reconcile wake. Không có graph work/input mới thì return idle, không mở SQL run rỗng. UI run cũ còn mở nhưng checkpoint đã END được finalize, không gọi lại model.
 3. Mark UI run running khi thực sự có việc. Thread cố định theo agent; failed UI run không khiến checkpoint hợp lệ bị loại.
 4. Middleware abefore_model lấy bounded inbox batch sau checkpoint cursor trước mỗi model call chính. Batch và cursor cùng state update/checkpoint; root nhận inbox notifications, Leti nhận full batch. Inbox mới không cancel bước model/tool hoặc kết thúc activity. Control/model refresh tại safe boundaries; mount discovery refresh lazily theo filesystem.md, không ListStorages trước mỗi file call. Mirage bounded Redis cache/WRITE invalidation không thêm workflow/activity.
-5. Native create_agent/saver/summarization chạy model/tools với interrupt_after=["model", "tools"] và durability="sync". Mỗi boundary: sync checkpoint → hoàn tất public-history projection → native keep_latest prune dưới writer lock → mới resume pending static breakpoint bằng None trên cùng thread. Durable mutations dùng stable IDs/owning receipts; public history upsert stable IDs, Redis chỉ provisional events.
+5. Native create_agent/saver/summarization chạy model/tools với interrupt_after=["model", "tools"] và durability="sync". Graph/middleware dựng một lần/activity, client reuse; vòng ngoài chỉ điều phối control/resume/durable boundary, không compile lại từng bước. Mỗi boundary: sync checkpoint → hoàn tất public-history projection → native keep_latest prune dưới writer lock → mới resume pending static breakpoint bằng None trên cùng thread. Durable mutations dùng stable IDs/owning receipts; public history upsert stable IDs trong một transaction/boundary, Redis chỉ provisional events. [Optimization/benchmark](../261114-0035-inference-prompts-compaction/design.md#11-runtime-optimization-và-box-context) không thay guarantees này.
 6. Activity tiếp tục khi graph còn việc, heartbeat kể cả lúc chờ model/tool. Graph idle thì return; desired pause thì return paused tại boundary. Không soft slice 5 phút, step cap hoặc kiểm Temporal history trong LangGraph. Model/tool calls có deadline riêng.
 7. Native cancellation được xử lý cooperative: dùng asyncio.shield bảo vệ bước graph đang chạy; bắt cancellation ở activity boundary và đợi task đó tới sync checkpoint/public projection, không để shield thành orphan task. Không bắt đầu bước mới sau yêu cầu cancel. Settle executions/writes, đóng workspace và nhả writer lock trong finally rồi mới re-raise cancellation. WAIT_CANCELLATION_COMPLETED giữ workflow chờ activity ACK thực sự; không TRY_CANCEL/ABANDON. Không thêm yield RPC/Update, SQL flag hoặc notification service. Bước lỗi trước checkpoint vẫn có thể replay theo guarantee đã chốt; cancellation không rollback effects.
 
@@ -182,10 +196,10 @@ Không WorkflowExecutionTimeout/WorkflowRunTimeout giới hạn tuổi đời Ag
 
 Mỗi execution chỉ nhận một command qua `open`; SQL admission result nhỏ cho main chạy tiếp.
 
-| Operation | Admission | Sau admission |
-|---|---|---|
-| create | `prepare_leta` | `provision_leta`, return active/superseded |
-| delete | `close_leta` | `cleanup_leta`, return archived |
+| Operation    | Admission         | Sau admission                                         |
+| ------------ | ----------------- | ----------------------------------------------------- |
+| create       | `prepare_leta`    | `provision_leta`, return active/superseded            |
+| delete       | `close_leta`      | `cleanup_leta`, return archived                       |
 | pause/resume | `set_leta_paused` | `refresh_leta_agents`, return current desired control |
 
 ### Create
@@ -235,11 +249,11 @@ Root Agent/boxes khác tiếp tục hoạt động. Không revoke root grants đ
 
 State: request snapshot nhỏ, decision lock, `effects_settled` và `done`. Open/resolve/cleanup decision dùng cùng lock, tránh open snapshot ghi đè resolved decision.
 
-| Update | Xử lý |
-|---|---|
-| `open` | Trong decision lock: `open_hitl_request`, nhận persisted pending/already_granted; tool trả ngay sau ACK |
-| `resolve` | Trong lock: kiểm actor/action/deadline và `resolve_hitl_request`; trả committed decision |
-| `settle_effects` | Trong lock: cancel nếu pending; nhả lock rồi đợi effects_settled; dùng cho teardown |
+| Update           | Xử lý                                                                                                   |
+| ---------------- | ------------------------------------------------------------------------------------------------------- |
+| `open`           | Trong decision lock: `open_hitl_request`, nhận persisted pending/already_granted; tool trả ngay sau ACK |
+| `resolve`        | Trong lock: kiểm actor/action/deadline và `resolve_hitl_request`; trả committed decision                |
+| `settle_effects` | Trong lock: cancel nếu pending; nhả lock rồi đợi effects_settled; dùng cho teardown                     |
 
 Không giữ lock qua grant, delivery hoặc settle wait. Ask/approval không giữ Python tool stack chờ người dùng và không pause toàn agent.
 
@@ -335,13 +349,13 @@ Không wait inference, không occurrence ledger, không timer workflow tự ch�
 
 Các giá trị sau là cấu hình khởi điểm, chưa đo:
 
-| Nhóm | Native options và behavior |
-|---|---|
-| Local SQL | Start-to-close 5s; retry transient DB; business validation/conflict không retry |
-| Effects/delivery | Bounded RPC deadlines, activity 1–2 phút; transient backoff; inactive là domain outcome |
-| Cleanup/fanout | Activity 30 phút, heartbeat 15s và pulse khi chờ/theo batch; retry idempotently từ SQL |
-| Runtime | Activity chạy dài, không timer slice; technical start-to-close khởi điểm 365 ngày, heartbeat timeout 10s/pulse khoảng 2s, deadline model/tool riêng; transient retries không giới hạn attempts, không total schedule-to-close timeout; WAIT_CANCELLATION_COMPLETED và protected checkpoint/cleanup trước ACK |
-| Workflows | Không whole-workflow retry policy; activity retries giữ effects. Agent/ScheduleChanges rotation theo native suggestion; không lifetime timeout |
+| Nhóm             | Native options và behavior                                                                                                                                                                                                                                                                                   |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Local SQL        | Start-to-close 5s; retry transient DB; business validation/conflict không retry                                                                                                                                                                                                                              |
+| Effects/delivery | Bounded RPC deadlines, activity 1–2 phút; transient backoff; inactive là domain outcome                                                                                                                                                                                                                      |
+| Cleanup/fanout   | Activity 30 phút, heartbeat 15s và pulse khi chờ/theo batch; retry idempotently từ SQL                                                                                                                                                                                                                       |
+| Runtime          | Activity chạy dài, không timer slice; technical start-to-close khởi điểm 365 ngày, heartbeat timeout 10s/pulse khoảng 2s, deadline model/tool riêng; transient retries không giới hạn attempts, không total schedule-to-close timeout; WAIT_CANCELLATION_COMPLETED và protected checkpoint/cleanup trước ACK |
+| Workflows        | Không whole-workflow retry policy; activity retries giữ effects. Agent/ScheduleChanges rotation theo native suggestion; không lifetime timeout                                                                                                                                                               |
 
 Technical runtime timeout không xóa checkpoint hoặc kết thúc tuổi đời agent. Start-to-close hữu hạn là cấu hình attempt, không timer rollover; 365 ngày là guard dài khởi điểm. Bỏ cặp soft slice 5 phút/hard attempt 30 phút cũ; liveness dựa heartbeat và thao tác treo bị deadline model/tool giới hạn. Tắt model SDK retry layer khi Temporal đã retry invocation; giữ native transport retry phù hợp. Permanent model/context/config lỗi hiện rõ, không catch-all success hoặc repair loop.
 
@@ -379,14 +393,14 @@ Idempotency table dùng đúng caller/method/key/request_hash/result bytea/expir
 
 `jobs/agent.py`, `jobs/resources.py`, `jobs/hitl.py`, `jobs/schedules.py` chỉ chứa deterministic orchestration. Activities cạnh owning `agents.py`, `boxes.py`, `hitl.py`, `schedules.py`, `messages.py`, `runtime/agent.py`; worker đăng ký trực tiếp. Không bridges/commands/repositories framework mới.
 
-| Check | Invariant cần chứng minh |
-|---|---|
-| Agent | Receive khi runtime chạy không mất wake/không cancel model; ép rollover khi graph luôn bận, checkpoint/cleanup xong trước cancellation ACK/CAN; cùng logical run/thread, không hai writer |
-| Lifecycle | Xóa Leta/box do người dùng yêu cầu không tạo home muộn; cleanup nội bộ không tự đợi cùng bridge pool. Core workspace delete không đợi agent ACK |
-| HITL | Answer-vs-expiry một winner; tool trả pending; đúng requester; teardown đợi grant nhưng không đợi delivery |
-| Schedule | Native at/interval/calendar smoke; past-at dedupe; metadata không rearm; old command retry sau rollover không ghi đè edit mới; delete chặn late admission |
+| Check            | Invariant cần chứng minh                                                                                                                                                                                                                                   |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Agent            | Receive khi runtime chạy không mất wake/không cancel model; ép rollover khi graph luôn bận, checkpoint/cleanup xong trước cancellation ACK/CAN; cùng logical run/thread, không hai writer                                                                  |
+| Lifecycle        | Xóa Leta/box do người dùng yêu cầu không tạo home muộn; cleanup nội bộ không tự đợi cùng bridge pool. Core workspace delete không đợi agent ACK                                                                                                            |
+| HITL             | Answer-vs-expiry một winner; tool trả pending; đúng requester; teardown đợi grant nhưng không đợi delivery                                                                                                                                                 |
+| Schedule         | Native at/interval/calendar smoke; past-at dedupe; metadata không rearm; old command retry sau rollover không ghi đè edit mới; delete chặn late admission                                                                                                  |
 | Long-lived state | Nhiều model/tools boundaries không cần compaction vẫn prune snapshots cũ sau checkpoint/projection; restart từ latest giữ summary/tail, inbox cursor và pending tool/resume, public history còn nguyên; pause/cancel và transient recovery không mất inbox |
-| System | Một journey chung với Platform/LetFS và workspace cleanup trong cùng dependency environment |
+| System           | Một journey chung với Platform/LetFS và workspace cleanup trong cùng dependency environment                                                                                                                                                                |
 
 Không cần chạy test một năm: ép rollover sớm, dùng graph/model fixture luôn còn việc và restart worker trong một integration check ngắn. Không port tests/replay histories cũ, exact activity order hoặc mọi failure permutation. Native time-skipping cho workflow logic; native Schedule cần smoke thật. Không stack từng test hoặc E2E suite trùng infra plan.
 
