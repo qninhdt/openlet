@@ -2,23 +2,35 @@
 
 ## Status and scope
 
-Proposal for review, following the user's approval of OpenAI-compatible clients,
-`OPENAI_*` environment names, bare Vilao model names, and Instructor-based
-structured extraction. No application code, dependencies, database, deployment
-or Langfuse model definitions were changed. The uncommitted credential-example
-edit was preserved. Previous [live provider research](research-261113-2054-vilao-provider.md)
-remains evidence, with the embedding restriction superseded below.
+Revised proposal for review after the user rejected model aliases and a separate
+compaction model. One catalog contains real provider model IDs for LLMs,
+embeddings and rerankers. Every LLM selection includes its reasoning effort.
+OpenAI-compatible clients, `OPENAI_*` names, bare Vilao request names and
+Instructor-based extraction remain the accepted direction. The dependency
+choice below remains open; do not treat an upstream development commit as an
+approved production dependency.
+
+No application code, dependencies, database, deployment or Langfuse model
+definitions were changed. The uncommitted credential-example edit was preserved.
+Previous [live provider research](research-261113-2054-vilao-provider.md) remains
+evidence, with its embedding restriction superseded below. This revision
+supersedes the earlier `fast`/`reasoning` aliases, independent compaction choice,
+provider-wide retry knob and recommendation to downgrade to OpenAI 3.3.0.
 
 ## Verified follow-up
 
 ### Grafana
 
-The user's screenshot shows `logs:read`, `metrics:read`, `traces:read` on the
-policy. Alloy requires `logs:write`, `metrics:write`, `traces:write`. This explains
-the observed ingestion error `invalid scope requested`. Editing the existing
-policy changes its tokens' permissions; replacement credentials are not needed
-solely to change scopes. Save the policy and repeat ingestion checks afterward.
-No policy change or new Grafana verification ran in this proposal.
+After the user corrected the policy, empty ingestion requests succeeded:
+Prometheus remote write returned HTTP 200, Loki push HTTP 204, and OTLP traces
+HTTP 200. Traces use the regional OTLP gateway, not the previously tested direct
+Tempo HTTP paths. The correct base endpoint is
+`https://otlp-gateway-prod-ap-southeast-1.grafana.net/otlp`, with stack ID
+`1867013` as the Basic username. The collector appends `/v1/traces`.
+
+These checks establish authentication and routing, not export of actual
+application spans, dashboard rendering or alert delivery. No policy was edited
+by this research. See the [readiness record](infra-261113-2008-cloud-cli-readiness.md).
 
 ### Embedding compatibility
 
@@ -61,118 +73,172 @@ declared model/dimensions requires a representative vector/retrieval comparison
 before retaining an existing index. Query and document embeddings must always
 resolve the same catalog entry.
 
-### Dependency conflict
+### OpenAI 3.3.0 versus 3.49.0
 
-An isolated official dependency set resolved and passed live calls:
+OpenAI 3.3.0 passed isolated text/tool/stream/embedding checks with Instructor
+1.17.0, LangChain 1.5.0, langchain-openai 1.7.4 and Langfuse 5.2.0. It retains the
+basic APIs used by Openlet. This does not make the downgrade equivalent:
+
+| Later version | Change relevant to assessing a downgrade |
+|---|---|
+| 3.3.1 | Dependency updates carrying published security fixes, including jiter/PyO3 |
+| 3.4.0 | Incremental SSE decoding without an event-size limit; shared embedding decoding |
+| 3.12.0 | Standard `AsyncStream.aclose()` cleanup |
+| 3.14.0 | Normalized errors while reading streams |
+| 3.19.0 / 3.20.0 | Request-replay eligibility and TLS transport retry fixes |
+| 3.30.0 | Restored async HTTP/1.1 connection reuse |
+| 3.9.0 / 3.36.0 / 3.40.0 / 3.45.0 | Additional cache diagnostics, usage fields and cache controls |
+
+Some later additions concern Responses, Realtime or other APIs Openlet does not
+currently use. Do not claim those are required. Streaming, connections and
+dependency fixes are sufficient reason to withdraw the earlier assertion that
+3.3.0 is a downgrade without relevant losses. Existing cached/reasoning usage
+is not entirely absent from 3.3.0; distinguish newer fields from those already
+present and tested.
+
+### Instructor dependency choice remains open
+
+The published Instructor 1.17.0 requires `jiter>=0.6.1,<0.15`; OpenAI 3.49.0
+requires `jiter>=0.16,<1`. OpenAI 3.3.1 already requires the newer floor, so using
+3.3.1 instead of 3.3.0 does not resolve that conflict. Downgrading Instructor
+among the inspected older releases does not resolve it either.
+
+Official Instructor main has widened the bound to `jiter<0.19`. An isolated
+environment pinned to commit
+`aeb7e2558166caeec497e541bcfc6b4eaa2cf53b` resolved:
 
 | Dependency | Version |
 |---|---|
-| Instructor | 1.17.0 |
-| OpenAI | 3.3.0 |
-| jiter | 0.14.0 |
-| LangChain | 1.5.0 |
-| langchain-openai | 1.7.4 |
-| Langfuse | 5.2.0 |
+| Instructor | 1.18.0 in upstream source; not a published stable release |
+| OpenAI | 3.49.0 |
+| jiter | 0.18.0 |
+| LangChain / langchain-openai / Langfuse | 1.5.0 / 1.7.4 / 5.2.0 |
 
-Instructor with the official Langfuse OpenAI wrapper extracted a validated
-integer. Native ChatOpenAI streaming retained usage. Langfuse Cloud export was
-disabled because its project keys are still unavailable, so wrapper compatibility
-is proven, not full Cloud ingestion. Instructor's incompatible bound is on jiter;
-do not force OpenAI 3.49.0 into that set or patch its SDK.
+Live Vilao calls through Instructor plus the official Langfuse OpenAI wrapper
+passed both ordinary tool-based extraction and text JSON with a deliberate
+validation failure followed by correction. Cloud tracing was disabled because
+Langfuse project keys are unavailable; this proves wrapper compatibility, not
+Cloud ingestion or all application integration paths.
 
-Recommendation: pin this compatible official set, keep the current LangChain and
-Langfuse versions, and run the affected graph/tool/stream/enrichment/embedding,
-type and telemetry checks before merging. No project downgrade has occurred.
+Recommendation: retain OpenAI 3.49.0. If implementation must proceed before a
+compatible Instructor release, propose pinning that exact official commit,
+subject to the user's acceptance of an unreleased dependency. Otherwise retain
+the SDK and wait for a compatible stable Instructor release. Do not silently
+downgrade, pin moving `main`, override incompatible constraints or fork the SDK.
 
 ## Configuration proposal
 
-Keep one shared YAML with three actual boundaries: providers, catalog and task
-assignments. Provider credentials/URLs can reference `OPENAI_*`; the existing
-loader must explicitly resolve allowed references rather than pass literal
-`${...}` strings to clients. Resolve configured fields, not arbitrary YAML text.
+Keep the existing shared YAML. Move model definitions out of Leta's private
+catalog into one `models.catalog`; other sections select entries rather than
+redefine them. Provider credentials/URLs can reference `OPENAI_*`; explicitly
+resolve the configured fields rather than pass literal `${...}` strings to
+clients or interpolate arbitrary YAML text.
 
 ```yaml
 models:
   providers:
-    main:
+    vilao:
       base_url: ${OPENAI_BASE_URL}
       api_key: ${OPENAI_API_KEY}
       timeout_seconds: 90
-      max_retries: 1
 
   catalog:
-    fast:
-      provider: main
-      model: deepseek-v4.1-flash
+    deepseek-v4.1-flash:
+      type: llm
+      provider: vilao
       pricing_model: deepseek/deepseek-v4.1-flash
       context_window_tokens: 65536
+      max_output_tokens: 8192
       structured_output: tools
       reasoning_efforts: [null, none, low, high]
 
-    reasoning:
-      provider: main
-      model: gpt-6.1-sol
+    gpt-6.1-sol:
+      type: llm
+      provider: vilao
       pricing_model: openai/gpt-6.1-sol
       context_window_tokens: 65536
+      max_output_tokens: 8192
       structured_output: tools
       reasoning_efforts: [null, low]
 
-    documents:
-      provider: main
-      model: text-embedding-3-large
+    text-embedding-3-large:
+      type: embedding
+      provider: vilao
       pricing_model: openai/text-embedding-3-large
       dimensions: 1536
 
-  tasks:
-    agent:
-      model: fast
-      allowed_models: [fast, reasoning]
-      max_output_tokens: 8192
-      reasoning_effort: null
-
-    compaction:
-      model: fast
-      max_output_tokens: 4096
+  leta:
+    default:
+      model_id: deepseek-v4.1-flash
       reasoning_effort: none
 
-    enrichment:
-      model: fast
-      max_output_tokens: 8192
-      reasoning_effort: none
-      validation_retries: 1
+  enrichment:
+    model_id: deepseek-v4.1-flash
+    reasoning_effort: none
+    max_input_characters: 24000
+    max_image_pixels: 25000000
+    image_max_side: 1600
+    image_jpeg_quality: 85
 
-    embedding:
-      model: documents
+  embedding:
+    model_id: text-embedding-3-large
 
-    rerank: null
+  reranking: null
 ```
 
-The 65,536-token context settings above are conservative configured working
-budgets for illustration, not verified Vilao capacity. Existing input/image
-limits remain with enrichment; parsing/chunking/concurrency remain with ingest.
-Do not infer Vilao's true capacity from OpenRouter metadata.
+The context settings are illustrative conservative working budgets, not verified
+Vilao capacity. Parsing/chunking/concurrency remain with ingest. Reasoning sets
+contain the exercised choices and the explicit provider-default choice; HTTP
+acceptance alone does not establish the provider honors each effort precisely.
+Do not infer actual Vilao context capacity from OpenRouter metadata.
 
 Field responsibilities:
 
-- Provider: connection details and native transport retry policy, shared by the
-  selected entries. A second provider entry is needed only when actually used.
-- Catalog key: stable application model selection ID. `model` is exactly the
-  provider request string. SQL/API agent `model_id` would select the catalog key;
-  this is an intentional contract change that must include callers/tests and
-  an explicit data transition if existing rows are retained. No fallback alias.
+- Provider: connection details. Keep the current provider name `vilao`; a second
+  entry is needed only for an endpoint actually used. Retry ownership follows
+  execution context, not one provider-wide setting.
+- Catalog key: actual provider request model ID, also used by SQL/API `model_id`.
+  No `fast`/`reasoning` role aliases or duplicate request-name field. Adding a
+  model adds one entry; it does not add a new config section, class or agent
+  column. Changing to OpenRouter can change its key to the canonical ID.
+- `type`: `llm`, `embedding` or `reranker`, so a choice can reject the wrong kind.
+  Each kind has only its relevant fields; embedding does not carry reasoning or
+  structured-output settings. A configured reranker belongs in the same catalog.
 - `pricing_model`: exact OpenRouter catalog ID, independent of request names.
   Do not prepend a guessed vendor or infer identity from an alias.
 - `structured_output`: strategy only for calls that supply a response schema.
   It does not impose structured answers on agent tool loops or compaction.
-- Context/reasoning settings: existing budget/admission responsibility, not a
-  provider capability registry. List only values intentionally offered by UI/API.
-- Task: model selection and generation budget for a real call site. Agent
-  selection does not silently change compaction or enrichment.
+- Context/output settings: retain the budget information consumed by admission
+  and summarization. The output cap is defined once per LLM entry rather than
+  repeated with the same value at every selection.
+- `reasoning_efforts`: choices permitted for this particular entry, checked on
+  model selection. A non-reasoning model can allow only `[null]`. `null` omits
+  the parameter; `none` explicitly requests no reasoning. They are not synonyms.
+- `dimensions`: used by both document and query embedding and checked against
+  the index.
+- Leta default/enrichment: each selects the pair `model_id` and
+  `reasoning_effort`. Existing enrichment input/image limits stay with their
+  owning operation; they are not model capabilities.
 
-Per-task `structured_output` can override the catalog default when actually
-needed; omit it otherwise. A new structured task supplies its Pydantic response
-model in code and selects a catalog model in config. Do not place schemas,
-prompts, tool definitions or arbitrary adapter classes into YAML.
+Per-agent creation/configuration must also carry the model/effort pair when
+setting either field. A PATCH that changes `model_id` must explicitly supply
+`reasoning_effort`; an effort change sends the same model ID with the new effort.
+Do not carry the previous model's effort onto a new model. Both fields can be
+omitted for an unrelated PATCH. Explicitly clearing the pair preserves existing
+Leti → root → default inheritance, as one pair. No new SQL model-alias column or
+migration to role aliases is proposed.
+
+Current compaction is an extra inference request: `summarize()` calls
+`chat.ainvoke()` in `apps/leta/src/leta/runtime/agent.py:441`. It uses the same
+already constructed chat model and reasoning effort as the agent. Preserve that
+behavior. There is no independent compaction model choice, provider client or
+task assignment in config. A `compaction` observation label still distinguishes
+its actual cost from the agent's ordinary calls.
+
+A new structured operation supplies its Pydantic response type in code and
+selects a catalog LLM plus effort. It reuses that entry's `structured_output`.
+Do not add per-task mode overrides, schema files, prompts, tool definitions or
+arbitrary adapter classes to YAML.
 
 Mode mapping:
 
@@ -186,20 +252,87 @@ Keep clients reusable per process/provider. A small model/task lookup and a
 typed structured-call function are enough; no provider plugin framework, custom
 OpenAI client subclass, automatic fallback, JSON repair or per-model classes.
 Use OpenAI-style `reasoning_effort` consistently in both call sites, rather than
-the ingest OpenRouter-specific `extra_body.reasoning` shape.
+the ingest OpenRouter-specific `extra_body.reasoning` shape. OpenRouter documents
+`reasoning_effort` as shorthand for `reasoning.effort`; authenticated OpenRouter
+verification is still outstanding.
 
-Native transport `max_retries=1` allows one additional HTTP attempt for supported
-transient errors. Instructor `validation_retries=1` allows one correction model
-call. This yields at most four HTTP attempts for an extraction attempt under
-those native retry rules; existing Temporal activity retries remain outside
-that bound. Authentication/configuration errors do not become JSON correction
-attempts. No new Temporal workflow or retry controller is proposed.
+Concrete enrichment example: select `deepseek-v4.1-flash` with effort `none`,
+pass existing Pydantic `Metadata`, and resolve its `structured_output: tools`.
+Instructor sends an ordinary tool definition whose arguments match Metadata,
+then parses and validates the returned arguments. It does not depend on Vilao
+honoring `response_format`. `text` instead puts schema instructions into the
+messages and parses the returned text. `json_schema` asks the endpoint to enforce
+the response format and is unsuitable for the currently tested Vilao endpoint.
+None of these settings changes ordinary agent replies or text compaction into
+structured output when the caller has not requested a response type.
+
+## Retry audit and proposal
+
+| Current path | In-process retries | Outer recovery |
+|---|---|---|
+| Leta/Leti model | `ChatOpenAI(max_retries=0)` | Agent Temporal activity policy |
+| Custom compaction callback | Same client; callback called once | Same activity policy |
+| Ingest description/embedding | `AsyncOpenAI(max_retries=0)` | EnrichAndIndex, maximum 3 activity attempts |
+| Go query embedding/rerank | Native Go SDK default: 2 retries, up to 3 HTTP attempts | A failed search can propagate to an agent activity; direct API callers have no Temporal wrapper |
+| Instructor | Not integrated in application yet | Would add validation correction, not a second transport retry policy |
+
+The agent retry policy does not set `maximum_attempts`; it retains Temporal's
+default unlimited attempts, subject to activity timeouts and its nonretryable
+error types. Do not describe the complete agent request count as bounded by
+three. There is no configured graph `with_retry` or per-node retry policy.
+
+Installed SummarizationMiddleware creates an internal model retry runnable by
+default, but the application's custom `summarizer=summarize` path bypasses it.
+An offline failing-callback probe observed exactly one invocation. Do not report
+three internal compaction attempts for the current code.
+
+Recommendations:
+
+1. Keep Python model SDK retries at zero and keep existing Temporal recovery.
+   Withdraw the earlier new provider-wide `max_retries: 1` setting.
+2. Keep Go's native two transport retries for synchronous query embedding and
+   optional reranking. They retry a short request locally, including for human
+   search callers. Explicitly acknowledge that when called by an agent this can
+   coexist with later activity recovery; it is not a claim of zero nested retry.
+   Add no Go retry loop or RPC retry configuration. Setting Go to zero would
+   remove that overlap but make direct searches return transient errors without
+   local retry; it is not automatically a better policy.
+3. Use native Instructor `max_retries=1`: at most one correction after parsing
+   or validation failure. The inspected upstream version already filters these
+   errors; no new Tenacity controller is needed.
+4. Classify failures at the existing activity boundary. Exhausted schema
+   correction and permanent auth/request/config failures must be nonretryable;
+   transient transport/rate-limit/provider failures remain retryable. Instructor
+   wraps both categories in `InstructorRetryException`, and ingest TaskGroup
+   can wrap them in an ExceptionGroup. Examine the native causes/leaf exceptions
+   rather than mark every wrapper retryable or nonretryable. Cancellation stays
+   cancellation. Do not broaden this into a generic exception framework.
+
+An isolated HTTP fault-injection check against the pinned upstream Instructor
+with OpenAI 3.49.0 and SDK retries disabled observed:
+
+| Response sequence | HTTP attempts |
+|---|---|
+| Invalid arguments, then valid arguments | 2; validated result returned |
+| Invalid arguments twice | 2; wrapper cause is ValidationError |
+| HTTP 500 | 1; wrapper cause is InternalServerError |
+| HTTP 401 | 1; wrapper cause is AuthenticationError |
+
+This verifies native correction behavior and error wrapping, not Temporal
+classification already implemented. Activity recovery can repeat paid inference:
+enrichment holds per-artifact metadata in RAM until CommitEnrichment, and a
+retry before that commit can repeat successful sibling calls. Indexing can also
+repeat successful embedding batches. Existing stage/checkpoint boundaries avoid
+some work, but do not provide exactly-once provider billing. Do not add a
+per-request persistence mechanism in this configuration change.
 
 ## Optional reranking
 
-`tasks.rerank: null` disables reranking. Enabling it selects a configured entry,
-for example `rerank: {model: relevance}`; the referenced model supplies its own
-provider/model. Do not add both `enabled` and a nullable model field.
+`models.reranking: null` disables reranking. Enabling it selects a real catalog
+entry with `type: reranker`, using `reranking: {model_id: <actual-model-id>}`.
+That entry selects an actually working rerank provider endpoint; Vilao currently
+has none, so do not populate a fake active entry. Do not add both `enabled` and
+a nullable model field. Reranking does not have a reasoning effort.
 
 Off:
 
@@ -334,11 +467,16 @@ span rather than mislabel rerank as an LLM generation solely to get a cost field
 
 - Resolve the official dependency set and pass strict Pyright plus affected
   native graph/tool/stream/structured-output/embedding/telemetry checks.
-- Changing each task's model affects only that task; per-agent selection remains
-  admitted against its catalog. Remove old OpenRouter-specific config names
-  and update owners/callers/docs; no compatibility branch.
+- Defaults, enrichment, agent creation/configuration and Box/Leti selections
+  resolve the same central catalog with model-specific effort validation. Agent
+  compaction uses the executing agent's same model/effort. Remove old
+  OpenRouter-specific config names and update owners/callers/docs; no
+  compatibility branch.
 - Validated output modes work through native libraries; validation correction
   appears as two generations with both usage records, not just the final call.
+- Permanent failures stay nonretryable through Instructor/TaskGroup wrappers;
+  transient failures retain activity recovery. Verify actual HTTP/correction and
+  Temporal attempt counts rather than infer them from option names.
 - Query/document embeddings share model and dimensions; no implicit collection
   migration or index reuse across different embedding spaces.
 - Rerank off makes zero rerank requests and returns authorized live fused hits
@@ -351,9 +489,14 @@ span rather than mislabel rerank as an LLM generation solely to get a cost field
 
 ## Sources and limits
 
+- [OpenAI 3.49.0 changelog](https://github.com/openai/openai-python/blob/v3.49.0/CHANGELOG.md)
+- [OpenAI dependency update](https://github.com/openai/openai-python/pull/3680)
+- [Published Instructor 1.17.0 metadata](https://pypi.org/pypi/instructor/1.17.0/json)
+- [Official Instructor commit tested with OpenAI 3.49.0](https://github.com/567-labs/instructor/tree/aeb7e2558166caeec497e541bcfc6b4eaa2cf53b)
 - [OpenAI embeddings](https://developers.openai.com/api/reference/resources/embeddings/methods/create)
 - [OpenRouter embedding request](https://openrouter.ai/docs/api/api-reference/embeddings/create-embeddings)
 - [OpenRouter embedding models](https://openrouter.ai/api/v1/embeddings/models)
+- [OpenRouter reasoning-effort shorthand](https://openrouter.ai/docs/client-sdks/python/api-reference/chat)
 - [Langfuse cost/model definitions](https://langfuse.com/docs/observability/features/token-and-cost-tracking)
 - [Langfuse Metrics API](https://langfuse.com/docs/metrics/features/metrics-api)
 - [Instructor retry behavior](https://python.useinstructor.com/concepts/retrying/)
