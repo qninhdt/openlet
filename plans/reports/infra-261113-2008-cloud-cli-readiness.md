@@ -1,0 +1,60 @@
+# Local demo: Cloud CLI and infrastructure readiness
+
+The user selected the current machine for the demo. No VPS, SSH deployment,
+public domain or public TLS is required for this local acceptance run.
+
+## Installed and checked
+
+| Tool | Version | Result |
+|---|---|---|
+| Grafana `gcx` | 1.7.1 | Official release installed to `~/.local/bin`; installer verified SHA-256. Stack authentication remains pending. |
+| Langfuse `langfuse` | 1.3.1 | Official npm package `@langfuse/cli` installed globally; version/help pass. Project keys remain pending. |
+| Clerk `clerk` | 4.0.0 | Existing login can list the Openlet development application and pull its keys. |
+| Cloudflare `cf` | 1.0.0-beta.16 | Existing login can list R2 buckets and inspect bucket CORS/lifecycle. |
+| Docker | 29.8.1 | Available with 12 CPUs; port 8080 is free. |
+
+The current host has approximately 5.2 GiB available RAM and 151 GiB free disk.
+Previous shared-stack E2E ran on this host; this is not a concurrency benchmark.
+
+## Authentication and configuration
+
+- Existing local configuration records Clerk issuer/JWKS/audience and R2
+  endpoint/region/bucket metadata. No secrets were copied into tracked files.
+- Clerk development keys were fetched with explicit application/instance
+  selection, without linking the repository, into a private ignored file with
+  mode `0600`. The backend API and public JWKS were reachable.
+- A private ignored `0600` template is ready for Langfuse's regional URL and
+  project keys. Its CLI has no browser login step.
+- Grafana browser sign-in uses `gcx login openlet --cloud --oauth`. Before
+  sign-in, the native API command reports no configured stack. Runtime Alloy
+  still needs a Cloud access-policy token for metrics/logs/traces writes.
+- Runtime S3 credentials and the OpenRouter key are absent under the expected
+  variable names. Cloudflare CLI OAuth does not replace S3 authentication.
+- The runtime YAML still needs to be assembled from the existing example and
+  real Cloud service metadata after credentials are available.
+
+## Existing R2 configuration
+
+The configured `openlet-dev` bucket exists. Its current CORS rule allows
+GET/PUT/HEAD from `http://127.0.0.1:8765` and exposes `ETag` plus range/download
+headers. Change the allowed origin if the browser app uses a different origin.
+Lifecycle aborts incomplete multipart uploads after seven days; an existing
+`exports/` expiry rule also remains. No bucket, policy or object was changed.
+
+## Remaining setup
+
+1. Sign in to Grafana and choose the Cloud stack; obtain ingestion endpoints,
+   instance IDs and a runtime write token.
+2. Provide Langfuse project keys and its regional URL privately. Verify CLI
+   access before importing approved prompts.
+3. Supply an OpenRouter key and bucket-scoped R2 S3 credentials privately.
+4. Internal PostgreSQL/Redis/SpiceDB/Qdrant credentials can be generated locally.
+   Compose/bootstrap owns PostgreSQL, Temporal, SpiceDB, Qdrant, Redis and Alloy;
+   no individual manual provisioning is required.
+5. Prompt content still needs approval before publication. Dashboard/alert API
+   imports, Cloud export checks and backed-up local startup follow once external
+   credentials are available. No deployment or migration ran here.
+
+See [operator CLI setup](../../docs/setup.md#cloud-operator-clis),
+[Cloud operations](../../docs/observability.md) and
+[implementation acceptance](../261111-2010-leta-rewrite/execution.md).

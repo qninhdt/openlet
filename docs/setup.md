@@ -30,3 +30,18 @@ The script creates its own ephemeral test credentials, renders [test YAML](../e2
 CPU images prepare OCR/model assets at build time. For host development use the native ingest model command documented by `uv run --package letfs-ingest --extra cpu python -m letfs_ingest.models --help`; model paths and limits come from the YAML. IO needs no Docling/OCR models.
 
 Enable the rewritten agent service with `export COMPOSE_PROFILES=leta` before `make up`. The profile adds Redis, the backed-up Goose/native-checkpoint migration job and Leta API/worker. Configure the Leta model catalog and Langfuse keys/approved prompt labels first; cold prompt resolution has no local fallback. Add `observability` to the same profile list for Alloy and Cloud export; follow [observability setup](observability.md). Keep the profile list consistent for configure, backup, restore and deploy. Leta integration status is tracked in the [execution record](../plans/261111-2010-leta-rewrite/execution.md).
+
+## Cloud operator CLIs
+
+Use the official [Grafana gcx](https://grafana.com/docs/grafana/latest/ai-tools/grafana-cli/gcx/installation/) and [Langfuse CLI](https://langfuse.com/docs/api-and-data-platform/features/cli). These are host operator tools, not runtime dependencies. `grafanactl` is deprecated.
+
+```sh
+gcx login openlet --cloud --oauth
+langfuse api projects list
+```
+
+Grafana opens a browser for sign-in and stack selection. Langfuse has no browser login command: configure `LANGFUSE_BASE_URL`, `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` using the project's API Keys page and regional URL. The CLI supports both environment variables and its native `--env` option for a private file. CLI sign-in does not replace Alloy's runtime Cloud access-policy token with `metrics:write`, `logs:write` and `traces:write` scopes; see [observability](observability.md).
+
+Existing Clerk and Cloudflare CLIs can inspect authentication with `clerk whoami --json` and `cf auth whoami`. Clerk can retrieve development credentials with `clerk env pull`, using explicit application/instance selection and a private target file. Keep credential files ignored and private; YAML continues to use secret references.
+
+Cloudflare CLI OAuth does not supply the S3 credentials required by LetFS. Configure bucket-scoped R2 access keys and CORS for the actual browser origin; presigned uploads need access to the returned `ETag` header.
