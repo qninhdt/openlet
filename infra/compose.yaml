@@ -26,6 +26,18 @@ x-logging: &logging
     max-file: "3"
 
 services:
+  litellm:
+    logging: *logging
+    image: ghcr.io/berriai/litellm:v1.109.1@sha256:11175975a3093e05e92faee2fe2fe3412a3ae2fcaa849eb0fe25d5f0d8bcb2e9
+    command: [--config, /etc/litellm/config.yaml, --port, '4000', --num_workers, '1']
+    volumes: [./config/litellm.yaml:/etc/litellm/config.yaml:ro]
+    stop_grace_period: 30s
+    healthcheck:
+      test: [CMD, python, -c, 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:4000/health/liveliness", timeout=3)']
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
   redis:
     logging: *logging
     profiles: [leta]
@@ -63,6 +75,7 @@ services:
       timeout: 5s
       retries: 30
     depends_on:
+      litellm: {condition: service_healthy}
       leta-migrate: {condition: service_completed_successfully}
       redis: {condition: service_healthy}
       resources: {condition: service_completed_successfully}
@@ -76,6 +89,7 @@ services:
     volumes: ['${OPENLET_CONFIG:?required}:/etc/openlet/openlet.yaml:ro']
     stop_grace_period: 190s
     depends_on:
+      litellm: {condition: service_healthy}
       leta-migrate: {condition: service_completed_successfully}
       redis: {condition: service_healthy}
       resources: {condition: service_completed_successfully}
@@ -235,6 +249,7 @@ services:
       timeout: 3s
       retries: 30
     depends_on:
+      litellm: {condition: service_healthy}
       resources: {condition: service_completed_successfully}
 
   ingest-cpu:
@@ -254,6 +269,7 @@ services:
     volumes: ['${OPENLET_CONFIG:?required}:/etc/openlet/openlet.yaml:ro']
     stop_grace_period: 190s
     depends_on:
+      litellm: {condition: service_healthy}
       letfs: {condition: service_healthy}
 
   envoy:

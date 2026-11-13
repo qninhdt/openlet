@@ -1,0 +1,26 @@
+model_list:
+  - model_name: openai/gpt-4.1-mini
+    litellm_params:
+      model: openai/gpt-4.1-mini
+      api_base: http://wiremock:8080/v1
+      api_key: os.environ/OPENAI_API_KEY
+    model_info:
+      access_groups: [leta]
+  - model_name: openai/text-embedding-3-small
+    litellm_params:
+      model: openai/text-embedding-3-small
+      api_base: http://wiremock:8080/v1
+      api_key: os.environ/OPENAI_API_KEY
+  - model_name: cohere/rerank-v3.5
+    litellm_params:
+      model: cohere/rerank-v3.5
+      api_base: http://wiremock:8080/v1
+      api_key: os.environ/OPENAI_API_KEY
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+litellm_settings:
+  telemetry: false
+  include_cost_in_streaming_usage: true
+router_settings:
+  num_retries: 1

@@ -1,0 +1,43 @@
+# Public names describe models; deployments choose the upstream supplier.
+# Add real supplier rates to litellm_params when known; never use demo prices.
+credential_list:
+  - credential_name: vilao
+    credential_values:
+      api_base: os.environ/OPENAI_BASE_URL
+      api_key: os.environ/OPENAI_API_KEY
+
+model_list:
+  - model_name: openai/gpt-6.1-sol
+    litellm_params:
+      model: openai/gpt-6.1-sol
+      litellm_credential_name: vilao
+    model_info:
+      access_groups: [leta]
+      supported_reasoning_efforts: [low]
+      supports_response_schema: false
+  - model_name: deepseek/deepseek-v4.1-flash
+    litellm_params:
+      model: openai/deepseek-v4.1-flash
+      litellm_credential_name: vilao
+    model_info:
+      # Conservative deployment working bounds; not a provider capacity claim.
+      max_input_tokens: 65536
+      max_output_tokens: 8192
+      supported_reasoning_efforts: [none, low, high]
+      access_groups: [leta]
+      supports_response_schema: false
+  - model_name: openai/text-embedding-3-large
+    litellm_params:
+      model: openai/text-embedding-3-large
+      litellm_credential_name: vilao
+    model_info:
+      mode: embedding
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+litellm_settings:
+  telemetry: false
+  include_cost_in_streaming_usage: true
+  callbacks: [prometheus]
+router_settings:
+  num_retries: 1

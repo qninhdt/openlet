@@ -3,7 +3,7 @@ name = "letfs-ingest"
 version = "0.1.0"
 requires-python = ">=3.14,<3.15"
 dependencies = [
-  "openlet-sdk", "httpx", "openai", "pydantic", "qdrant-client",
+  "openlet-sdk", "httpx", "litellm==1.109.1", "instructor", "pydantic", "qdrant-client",
   "google-crc32c", "langchain-text-splitters", "pillow",
 ]
 
@@ -19,6 +19,7 @@ packages = ["src/letfs_ingest"]
 
 [tool.uv.sources]
 openlet-sdk = { workspace = true }
+instructor = { git = "https://github.com/567-labs/instructor.git", rev = "aeb7e2558166caeec497e541bcfc6b4eaa2cf53b" }
 torch = { index = "pytorch-cpu" }
 torchvision = { index = "pytorch-cpu" }
 

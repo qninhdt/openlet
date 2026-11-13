@@ -1,4 +1,8 @@
 services:
+  litellm:
+    volumes: !override [../e2e/fixtures/litellm.yaml:/etc/litellm/config.yaml:ro]
+    depends_on:
+      wiremock: {condition: service_healthy}
   envoy:
     ports: !reset []
   resources:
