@@ -131,3 +131,29 @@ and traces endpoints all returned HTTP 401; logs explicitly reported
 usable in these checks. See [provider and credential research](research-261113-2054-vilao-provider.md)
 for the same session's live model compatibility results. This supersedes the
 earlier missing-token status, without claiming Cloud ingestion works.
+
+## Follow-up: Grafana ingestion authentication succeeds
+
+After the user corrected the access-policy permissions, empty requests with the
+existing runtime token succeeded:
+
+| Signal | Endpoint | Basic username | HTTP status |
+|---|---|---|---|
+| Metrics | `https://prometheus-prod-37-prod-ap-southeast-1.grafana.net/api/prom/push` | `3658249` | 200 |
+| Logs | `https://logs-prod-020.grafana.net/loki/api/v1/push` | `1824789` | 204 |
+| Traces | `https://otlp-gateway-prod-ap-southeast-1.grafana.net/otlp/v1/traces` | `1867013` | 200 |
+
+For the existing OTLP HTTP exporter, configure the traces base endpoint as
+`https://otlp-gateway-prod-ap-southeast-1.grafana.net/otlp`; it appends
+`/v1/traces`. Its Basic username is the stack ID, not the separate Tempo tenant
+ID. The previously tested direct Tempo HTTP paths returned 404 after permission
+correction and should not be used for this route. This follows the
+[documented regional OTLP gateway](https://grafana.com/docs/grafana-cloud/send-data/otlp/send-data-otlp/).
+
+This supersedes the preceding failed-auth status and completes endpoint/token
+discovery. No token value was printed, no policy was changed by the agent, and
+no runtime YAML was assembled in these checks. Empty requests establish route
+and authentication only. Actual application export through Alloy, dashboards,
+alerts and Cloud usage remain deployment acceptance work. The selected model
+provider is now OpenAI-compatible Vilao using `OPENAI_*`; an OpenRouter key is
+not required for the current demo. Langfuse project keys remain pending.
