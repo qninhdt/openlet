@@ -25,10 +25,10 @@ func (s *Server) provisionInitialStorages(ctx context.Context, in sdk.InitialSto
 	if _, err := s.ProvisionWorkspaceStorage(ctx, &pb.ProvisionWorkspaceStorageRequest{WorkspaceId: in.WorkspaceID, QuotaBytes: in.Quota}); err != nil {
 		return err
 	}
-	if _, err := s.CreateStorage(ctx, &pb.CreateStorageRequest{WorkspaceId: in.WorkspaceID, StorageId: in.SharedStorageID, RootNodeId: in.SharedRootID, Owner: &pb.StorageOwnership{Owner: &pb.StorageOwnership_WorkspaceId{WorkspaceId: in.WorkspaceID}}, Name: "Shared", Visibility: pb.StorageVisibility_STORAGE_VISIBILITY_PUBLIC, AllowBlobFiles: true, AllowIndexing: true}); err != nil {
+	if _, _, err := s.createStorage(ctx, &pb.CreateStorageRequest{WorkspaceId: in.WorkspaceID, StorageId: in.SharedStorageID, RootNodeId: in.SharedRootID, Owner: &pb.StorageOwnership{Owner: &pb.StorageOwnership_WorkspaceId{WorkspaceId: in.WorkspaceID}}, Name: "Shared", Visibility: pb.StorageVisibility_STORAGE_VISIBILITY_PUBLIC, AllowBlobFiles: true, AllowIndexing: true}); err != nil {
 		return err
 	}
-	_, err := s.CreateStorage(ctx, &pb.CreateStorageRequest{WorkspaceId: in.WorkspaceID, StorageId: in.PrivateStorageID, RootNodeId: in.PrivateRootID, Owner: &pb.StorageOwnership{Owner: &pb.StorageOwnership_UserId{UserId: in.UserID}}, Name: "Personal", Visibility: pb.StorageVisibility_STORAGE_VISIBILITY_PRIVATE, AllowBlobFiles: true, AllowIndexing: true})
+	_, _, err := s.createStorage(ctx, &pb.CreateStorageRequest{WorkspaceId: in.WorkspaceID, StorageId: in.PrivateStorageID, RootNodeId: in.PrivateRootID, Owner: &pb.StorageOwnership{Owner: &pb.StorageOwnership_UserId{UserId: in.UserID}}, Name: "Personal", Visibility: pb.StorageVisibility_STORAGE_VISIBILITY_PRIVATE, AllowBlobFiles: true, AllowIndexing: true})
 	return err
 }
 
@@ -43,7 +43,7 @@ func (s *Server) provisionMemberStorage(ctx context.Context, in sdk.MemberStorag
 	}
 	request := &pb.ListStoragesRequest{WorkspaceId: in.WorkspaceID, OwnedOnly: true, PageSize: 100}
 	for {
-		rows, err := s.ListStorages(sdk.WithActor(ctx, sdk.Actor{Type: "user", ID: in.UserID}), request)
+		rows, err := s.listStorages(ctx, request, sdk.Actor{Type: "user", ID: in.UserID})
 		if err != nil {
 			return err
 		}
@@ -55,7 +55,7 @@ func (s *Server) provisionMemberStorage(ctx context.Context, in sdk.MemberStorag
 		}
 		request.PageToken = rows.NextPageToken
 	}
-	_, err = s.CreateStorage(ctx, &pb.CreateStorageRequest{WorkspaceId: in.WorkspaceID, StorageId: in.StorageID, RootNodeId: in.RootID, Owner: &pb.StorageOwnership{Owner: &pb.StorageOwnership_UserId{UserId: in.UserID}}, Name: "Personal", Visibility: pb.StorageVisibility_STORAGE_VISIBILITY_PRIVATE, AllowBlobFiles: true, AllowIndexing: true})
+	_, _, err = s.createStorage(ctx, &pb.CreateStorageRequest{WorkspaceId: in.WorkspaceID, StorageId: in.StorageID, RootNodeId: in.RootID, Owner: &pb.StorageOwnership{Owner: &pb.StorageOwnership_UserId{UserId: in.UserID}}, Name: "Personal", Visibility: pb.StorageVisibility_STORAGE_VISIBILITY_PRIVATE, AllowBlobFiles: true, AllowIndexing: true})
 	return err
 }
 

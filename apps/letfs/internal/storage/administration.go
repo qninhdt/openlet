@@ -42,28 +42,38 @@ func (s *Server) ProvisionWorkspaceStorage(ctx context.Context, r *pb.ProvisionW
 	return v, err
 }
 func (s *Server) CreateStorage(ctx context.Context, r *pb.CreateStorageRequest) (*pb.Storage, error) {
+	v, token, err := s.createStorage(ctx, r)
+	if err != nil {
+		return nil, err
+	}
+	if err := grpc.SetHeader(ctx, metadata.Pairs("x-openlet-zed-token", token)); err != nil {
+		return nil, err
+	}
+	return v, nil
+}
+func (s *Server) createStorage(ctx context.Context, r *pb.CreateStorageRequest) (*pb.Storage, string, error) {
 	if r.Owner == nil || r.Owner.Owner == nil {
-		return nil, invalid("storage owner is required")
+		return nil, "", invalid("storage owner is required")
 	}
 	if o, ok := r.Owner.Owner.(*pb.StorageOwnership_WorkspaceId); ok && o.WorkspaceId != r.WorkspaceId {
-		return nil, invalid("owner workspace must be the storage workspace")
+		return nil, "", invalid("owner workspace must be the storage workspace")
 	}
 	tx, err := s.DB.Begin(ctx)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer tx.Rollback(ctx)
 	tag, err := tx.Exec(ctx, `INSERT INTO storages(id,workspace_id,name,visibility,root_node_id,allow_blob_files,allow_indexing) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(id) DO NOTHING`, r.StorageId, r.WorkspaceId, r.Name, visibilityName(r.Visibility), r.RootNodeId, r.AllowBlobFiles, r.AllowIndexing)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if tag.RowsAffected() > 0 {
 		if _, err = tx.Exec(ctx, `INSERT INTO nodes(id,storage_id,name,kind) VALUES($1,$2,'','directory')`, r.RootNodeId, r.StorageId); err != nil {
-			return nil, err
+			return nil, "", err
 		}
 	}
 	if err = tx.Commit(ctx); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	updates := []*az.RelationshipUpdate{sdk.Touch(sdk.Relation("storage", r.StorageId, "workspace", "workspace", r.WorkspaceId, ""))}
 	switch o := r.Owner.Owner.(type) {
@@ -79,12 +89,9 @@ func (s *Server) CreateStorage(ctx context.Context, r *pb.CreateStorageRequest) 
 	}
 	written, err := s.Graph.WriteRelationships(ctx, &az.WriteRelationshipsRequest{Updates: updates})
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	if err = grpc.SetHeader(ctx, metadata.Pairs("x-openlet-zed-token", written.WrittenAt.Token)); err != nil {
-		return nil, err
-	}
-	return &pb.Storage{Id: r.StorageId, WorkspaceId: r.WorkspaceId, Name: r.Name, Visibility: r.Visibility, RootNodeId: r.RootNodeId, AllowBlobFiles: r.AllowBlobFiles, AllowIndexing: r.AllowIndexing}, nil
+	return &pb.Storage{Id: r.StorageId, WorkspaceId: r.WorkspaceId, Name: r.Name, Visibility: r.Visibility, RootNodeId: r.RootNodeId, AllowBlobFiles: r.AllowBlobFiles, AllowIndexing: r.AllowIndexing}, written.WrittenAt.Token, nil
 }
 func (s *Server) DeleteStorage(ctx context.Context, r *pb.StorageRequest) (*emptypb.Empty, error) {
 	// Match the SQL tenant before touching the canonical graph.
@@ -189,7 +196,7 @@ func (s *Server) capabilities(ctx context.Context, a sdk.Actor, storages []*pb.S
 func (s *Server) ListStorages(ctx context.Context, r *pb.ListStoragesRequest) (*pb.ListStoragesResponse, error) {
 	a, err := s.check(ctx, "workspace", r.WorkspaceId, "view")
 	if err != nil {
-		// Registered agents may discover storages without human-only workspace.view.
+		// Workspace agents can discover storages without human-only workspace.view.
 		if actor, e := sdk.ActorFromContext(ctx); e == nil && actor.Type == "agent" {
 			a, err = s.check(ctx, "workspace", r.WorkspaceId, "eligible_actor")
 		}
@@ -197,6 +204,10 @@ func (s *Server) ListStorages(ctx context.Context, r *pb.ListStoragesRequest) (*
 			return nil, err
 		}
 	}
+	return s.listStorages(ctx, r, a)
+}
+func (s *Server) listStorages(ctx context.Context, r *pb.ListStoragesRequest, a sdk.Actor) (*pb.ListStoragesResponse, error) {
+	var err error
 	if r.PageToken != "" {
 		if _, err = uuid.Parse(r.PageToken); err != nil {
 			return nil, invalid("invalid storage cursor")
