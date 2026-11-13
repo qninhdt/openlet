@@ -1,6 +1,6 @@
 # Thực hiện, kiểm chứng và cutover
 
-Đây là execution detail cho [plan](plan.md), chưa phải execution log đã pass.
+Đây là execution detail cho [plan](plan.md); kết quả thật tại [execution](execution.md).
 Reuse contracts/runtime đang có, không mở một rewrite domain thứ hai.
 
 ## 1. File map và phạm vi ảnh hưởng
@@ -128,8 +128,9 @@ Suggested commit: `feat(observability): capture gateway inference costs`.
    không zero; LF inferred manufacturer prices không report là actual supplier.
 4. Confirm trace tree session/workspace/root/box/file/source-version attribution.
    Kiểm native trace/session aggregation trước; nếu đã đủ thì không thêm gì.
-   Nếu chưa đủ, dừng tại gate trước thêm baggage vì owning design hiện không
-   dùng nó; không claim full agent totals khi chưa aggregate đúng.
+   Gate đã được giải quyết trong acceptance: Cloud thiếu session trên Go RAG;
+   người dùng duyệt scoped native baggage, không thêm RPC/request. Real Cloud
+   proof xác nhận session filter trả retrieval/query embedding, xem execution.
 5. Gateway native operational metrics/logs/traces vào Alloy/Grafana; không
    request IDs làm Prometheus labels hoặc poll cost API every request.
 

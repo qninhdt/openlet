@@ -204,3 +204,33 @@ hoặc publish Cloud trong lượt cập nhật plan này.
   Native SDK/Cloud proofs, workflow history cutover và prompt wording review là
   verification/content work. Nếu proof buộc vượt scope thì trình đúng khác biệt;
   không tự thêm compatibility, recovery service, propagation hoặc data reset.
+
+## 10. Chốt attribution trong Cloud acceptance ngày 2026-11-14
+
+Cloud xác nhận Go RAG cùng trace nhưng sessionId rỗng; API session filter không
+trả query embedding/retriever. Sau giải thích metadata không phải fetch, người
+dùng duyệt native baggage riêng SemanticSearch, với điều kiện **không thêm RPC
+hoặc request sang service khác**. Implementation giữ đúng điều kiện này.
+
+Native LF scopes tạo baggage; driver inject chỉ lên existing SemanticSearch;
+Go đọc từ request trong RAM, copy allowlisted UUID attribution vào existing
+spans. Shared propagator vẫn trace-only nên không gửi IDs sang provider.
+Production ToolNode/Mirage→RPC→LF Cloud proof đã trả cả retrieval/query embedding
+khi filter cùng session agent. Không thêm ledger/mapper service hoặc DB field.
+
+Embedding/dimensions vẫn ở Openlet YAML; người dùng đã rút đề xuất chuyển chúng
+sang Langfuse. Evaluation/Playground không thuộc implementation này.
+
+## 11. Cloud Free metric cardinality trong acceptance
+
+Full native metrics vượt active-series limit dù idle; Alloy ghi native 429 với
+limit15000. Temporal endpoint đo khoảng20000 samples, phần lớn là buckets của
+polling/persistence/matching/shard internals. User yêu cầu giữ workflow/activity
+traces, xem bộ metric được giữ và báo active-series thực sau filtering, gồm idle.
+
+Dùng đúng một native `prometheus.relabel` allowlist trước remote_write cho cả
+OTLP metrics lẫn scrapes. Giữ bốn dashboard/alert families, Openlet custom metrics,
+service latency/errors, process/host/container resources, dependency health,
+queue và worker execution. Không quota controller hoặc sampling controller.
+Trace/log/Langfuse paths và ratio1.0 giữ nguyên. Cloud Usage còn tính old active
+series trong cửa sổ riêng; không report sample counters thành active-series count.

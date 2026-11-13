@@ -40,7 +40,7 @@ test('native runtime, box containment, asynchronous HITL and owner-independent s
   expect(reset.ok(), await reset.text()).toBeTruthy();
   expect((await reset.json()).model_id).toBeNull();
   expect((await account.api.patch(selection, { data: { reasoning_effort: 'low' } })).status()).toBe(
-    400,
+    422,
   );
   const input = {
     message_id: randomUUID(),

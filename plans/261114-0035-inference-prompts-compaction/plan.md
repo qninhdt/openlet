@@ -1,6 +1,6 @@
 # Phạm vi triển khai hợp nhất: inference, Leta và observability
 
-Ngày 2026-11-14. **Design/implementation plan, chưa triển khai runtime.**
+Ngày 2026-11-14. **Runtime đã triển khai; acceptance/evidence tại [execution](execution.md).**
 Đối chiếu 17 commit trong `d69be44..026c044` và các quyết định cuối cuộc trao đổi.
 `d69be44` là application-code baseline; `a6bb313` sau đó có thêm env template.
 
@@ -228,8 +228,10 @@ initial migration đã áp dụng hoặc thêm index cho mọi optional filter.
 - Session agent ID/trace mỗi graph invocation, Leti session riêng và root/box/
   workspace/run metadata. Ingest theo file/source_version/stage, không gán owner
   thành actor hoặc mọi ingestion vào agent session.
-- Kiểm LF native Go RAG trace/session aggregation trước. Nếu thiếu, trình narrow
-  propagation đã nêu, không tự thêm baggage/ledger hoặc claim agent totals đủ.
+- Cloud proof xác nhận Go RAG cùng trace nhưng thiếu session. Người dùng đã
+  duyệt native baggage chỉ trong SemanticSearch nội bộ, không thêm RPC/request.
+  Go copy allowlisted UUID attribution vào existing spans; không forward provider.
+  Cloud đã xác nhận retrieval/query embedding cùng session agent.
 
 ### 11. Observability và Cloud acceptance
 
@@ -260,7 +262,10 @@ Container JSON logs → Alloy → Grafana Cloud Loki
   Leta runtime/stream/state; native scrapes/container logs/exporter failures.
   Alert tuning theo workload, không tự gửi contact/webhook test.
 - Acceptance cần actual app data trong Grafana/LF, không empty OTLP200/local sink.
-  Theo dõi native Free Usage cho 1–10 testers, không quota/sampling controller.
+  Cloud proof phát hiện full dependency metrics vượt active-series limit khi idle.
+  Native Alloy metric allowlist giữ dashboard/alert và essentials; traces/logs/LF
+  giữ nguyên. Báo actual Cloud Usage series và idle estimate; không quota/sampling
+  controller. Xem execution cho số đo và old-series window.
 
 ### 12. Langfuse prompt management và publication
 
@@ -383,10 +388,9 @@ không để compatibility layer thành trạng thái hoàn tất.
   Không automatic mode fallback hoặc custom capability intersection/filter.
 - LangChain invalid-tool-call issue chỉ thêm TODO/link tại `create_agent`;
   không workaround/retry middleware. Giữ giới hạn đã biết theo [design §11](design.md#11-runtime-optimization-và-box-context).
-- **Chi phí RAG theo agent:** kiểm trước LF có aggregate Go observations theo
-  trace/session hiện có không. Chỉ nếu thiếu mới trình narrow native baggage
-  trong internal SemanticSearch; cần chốt trước thay propagation. Xem
-  [design §7](design.md#7-cost-usage-và-attribution).
+- **Chi phí RAG theo agent:** đã kiểm Cloud và chốt native baggage trong đúng
+  internal SemanticSearch; không thêm RPC/request hoặc provider propagation.
+  Session attribution đã được verify, xem [execution](execution.md).
 - Supplier prices/credentials/verified limits là input vận hành: kiểm những gì
   đã có trước khi hỏi. Không tự chọn supplier priority/weights hoặc bịa values.
 
@@ -405,8 +409,8 @@ Verification còn lại không cho phép tự mở rộng scope:
 
 - F04: kiểm existing workflow histories trước đổi result; không tự reset,
   terminate executions hoặc thêm legacy result decoder/versioning layer.
-- RAG cost: thử native LF trace/session aggregation trước; nếu thật sự thiếu,
-  trình narrow propagation change đã nêu, không tự thêm baggage/ledger.
+- RAG cost: gate đã giải quyết bằng Cloud proof và user approval cho scoped
+  native baggage; không thêm lookup/service/ledger.
 - F18: dùng native Mirage stream, giữ capture hữu hạn nhưng drain/settle đầy đủ;
   nếu public API không đáp ứng thì trình limitation, không tự dựng runner mới.
 - Review prompt wording trước Cloud publication; đây là content review đã định,
@@ -451,7 +455,11 @@ tự xử lý trong thiết kế đã duyệt, không biến mỗi verification 
 
 ## Trạng thái
 
-Chưa bắt đầu implementation plan này. Các research probes và runtime baseline
-đã có trước được ghi ở decision ledger; không dùng chúng thay acceptance migration.
-Prompt wording vẫn draft/chưa publish. `.env.example` đang có thay đổi ngoài
-phạm vi lượt lập plan này; giữ nguyên.
+Application changes đã triển khai và chia commit theo boundary. Năm prompt
+version1 đã publish lên Langfuse Cloud với production label; native composition,
+variables, pinning/cache/label rollback đã kiểm. RAG session propagation được
+chốt trong lúc acceptance sau khi Cloud chứng minh thiếu session.
+
+Xem [execution](execution.md) cho kết quả checks, benchmark, crash recovery,
+Cloud/demo và giới hạn chưa kiểm. `.env.example` giữ riêng thay đổi local xóa
+comments của người dùng; không commit secrets hoặc raw acceptance payloads.

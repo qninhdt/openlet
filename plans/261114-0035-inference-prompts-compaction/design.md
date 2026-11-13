@@ -337,22 +337,22 @@ không gán mọi ingestion request vào agent session nếu không có actor th
 Langfuse quan tâm logical model group; upstream routing/cost source ở gateway
 operational details, không đổi tên model theo deployment.
 
-**Khoảng trống đã kiểm source:** Go/Python shared SDK hiện chỉ propagate
-TraceContext; Go retrieval nối trace nhưng không tự có session/workspace fields
-trên observation. Vì vậy chưa được tuyên bố session totals đã đủ cả RAG costs.
+**Attribution đã verify và được duyệt trong implementation:** Cloud xác nhận
+Go retrieval/query embedding cùng trace của agent nhưng sessionId rỗng; filter
+session không trả hai observations này. Người dùng duyệt W3C Baggage chỉ trên
+existing internal SemanticSearch, với điều kiện không thêm RPC/request.
 
-Trước hết kiểm actual LF Cloud có aggregate các Go observations vào session
-của trace hiện có hay không. Nếu native trace association đã đủ thì giữ nguyên,
-không thêm propagation. Owning LF design trước đó chủ ý không thêm baggage.
+Leta dùng native Langfuse `propagate_attributes(..., as_baggage=True)` trong
+scope tool search; LetFS driver inject native W3C baggage vào metadata của
+SemanticSearch. Shared propagator vẫn TraceContext-only. Go extract baggage ở
+handler này và copy session + allowlisted workspace/agent/leta/box/run UUIDs vào
+existing retriever/embedding/rerank spans. Metadata JSON do Langfuse encode được
+đọc đúng; giá trị khác không trở thành authorization identity. Provider transport
+không inject baggage. Không lookup, DB state, price ledger hoặc exporter mới.
 
-**Chỉ nếu proof cho thấy thiếu attribution, đề xuất cần chốt:** dùng standard
-W3C Baggage cho đúng internal SemanticSearch call, allowlist workspace/agent/
-session IDs từ trusted runtime context. Go chỉ
-copy allowlisted values sang native LF metadata/session fields. Không nhận
-client-supplied baggage làm identity, không gửi IDs sang external provider,
-không add DB ledger hoặc custom RPC identity headers. Verify Cloud aggregation
-có gộp đúng trước gọi đây là per-agent cost coverage hoàn chỉnh. Nếu chưa làm,
-report rõ RAG costs theo trace/workspace hiện có, không fabricate agent totals.
+Real Cloud proof qua production ToolNode/Mirage/RPC xác nhận retrieval và query
+embedding cùng session agent. Unknown supplier price vẫn là giới hạn vận hành
+riêng; session attribution không chứng minh manufacturer estimate là bill thật.
 
 ## 8. Prompt management
 

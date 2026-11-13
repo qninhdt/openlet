@@ -251,7 +251,7 @@ working context months later. If the instruction refers to a changing file,
 provide its path and say whether to use its current contents.
 
 Choose a one-time instant/delay, a regular interval, or calendar times according
-to the actual request. Use the supplied current time and business timezone;
+to the actual request. Use dates and timezone supplied by the task or schedule;
 resolve a materially ambiguous time before committing it. Relative delays are
 interpreted when accepted. Do not recreate the same schedule on each turn or
 simulate it with a shell sleep loop. Check or update an existing schedule when
@@ -407,11 +407,7 @@ deliverable is a review, not a rewrite. If a claim is acceptable within the
 precision of its source, say so rather than manufacturing a finding.
 ```
 
-Current context là dữ kiện text ngắn. Timezone lấy từ trusted context có sẵn, fallback UTC; không thêm timezone column hoặc đoán theo ngôn ngữ. Đồng hồ cập nhật tại model call vì agent có thể chạy qua ngày/tháng khác. Với Leti, thêm một câu cho biết có phải representative hay không; root đã có role instructions nên không cần cờ này.
-
-```text
-Current time: 2026-11-13 09:00 +07:00 (Asia/Ho_Chi_Minh).
-```
+Box context là snapshot mỗi activity, chỉ gồm các dữ kiện đã chốt ở §3. Không inject time/timezone. Role templates dùng heading `Your instructions` và native `{{agent_instructions}}`; Leti thêm `Box context` và `{{box_context}}`.
 
 Không inject full member list, toàn bộ graph, mọi mount, mọi schedule hoặc mọi HITL vào prompt. `workspace_get` và feature tools đọc khi cần. Metadata lưu trong database/checkpoint không tự động trở thành model input.
 
