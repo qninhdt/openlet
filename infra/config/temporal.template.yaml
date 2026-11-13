@@ -27,6 +27,10 @@ persistence:
         maxIdleConns: 5
         tls: {enabled: false}
 global:
+  metrics:
+    prometheus:
+      listenAddress: 0.0.0.0:9090
+      timerType: histogram
   membership: {maxJoinDuration: 30s, broadcastAddress: 127.0.0.1}
   pprof: {port: 7936}
 services:

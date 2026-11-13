@@ -105,6 +105,22 @@ def configure(output: Path, test: bool = False) -> None:
                 "sni": jwks.hostname, "common_tls_context": {"validation_context": {
                     "trusted_ca": {"filename": "/etc/ssl/certs/ca-certificates.crt"},
                     "match_typed_subject_alt_names": [{"san_type": "DNS", "matcher": {"exact": jwks.hostname}}]}}}}
+    leta_enabled = 'leta' in os.environ.get('COMPOSE_PROFILES', '').split(',')
+    if leta_enabled:
+        lh, lp = svc['leta']['http_target'].rsplit(':', 1)
+        envoy['static_resources']['clusters'].append({
+            'name': 'leta', 'type': 'STRICT_DNS', 'connect_timeout': '5s',
+            'load_assignment': {'cluster_name': 'leta', 'endpoints': [{'lb_endpoints': [{'endpoint': {
+                'address': {'socket_address': {'address': lh, 'port_value': int(lp)}}}}]}]}})
+        hcm = envoy['static_resources']['listeners'][0]['filter_chains'][0]['filters'][0]['typed_config']
+        routing = cast(dict[str, object], hcm['route_config'])
+        hosts = cast(list[dict[str, object]], routing['virtual_hosts'])
+        routes = cast(list[dict[str, object]], hosts[0]['routes'])
+        routes.insert(0, {'name': 'leta', 'match': {'safe_regex': {'google_re2': {}, 'regex': '/v1/(workspaces/[^/]+/letas|hitl-requests)(/.*)?'}},
+            'route': {'cluster': 'leta', 'timeout': '0s', 'idle_timeout': '0s'},
+            'typed_per_filter_config': {'envoy.filters.http.grpc_json_transcoder': {
+                '@type': 'type.googleapis.com/envoy.extensions.filters.http.grpc_json_transcoder.v3.GrpcJsonTranscoder',
+                'proto_descriptor': '/etc/openlet/public.pb', 'services': []}}})
     configure_tracing(envoy, c["telemetry"], c["runtime"]["environment"])
     native = render("temporal", dict(POSTGRES=f'{pg["host"]}:{pg["port"]}',
         DATABASE=temporal["database"]["name"], VISIBILITY_DATABASE=temporal["visibility_database"],
@@ -123,7 +139,7 @@ def configure(output: Path, test: bool = False) -> None:
             "TEMPORAL_DATABASE": temporal["database"]["name"], "TEMPORAL_VISIBILITY_DATABASE": temporal["visibility_database"]}},
         "qdrant": {"environment": {"QDRANT__SERVICE__API_KEY": secret(dep["qdrant"]["api_key"])}}}}
     def environment(references: Iterable[str]) -> dict[str, str]:
-        return {"OPENLET_CONFIG": "/etc/openlet/openlet.yaml",
+        return {"OPENLET_CONFIG": "/etc/openlet/openlet.yaml", "COMPOSE_PROFILES": os.environ.get("COMPOSE_PROFILES", ""),
             **({"OTEL_RESOURCE_ATTRIBUTES": os.environ["OTEL_RESOURCE_ATTRIBUTES"]} if os.environ.get("OTEL_RESOURCE_ATTRIBUTES") else {}),
             **{value[2:-1]: secret(value) for value in references}}
 
@@ -135,16 +151,57 @@ def configure(output: Path, test: bool = False) -> None:
         "databases": [deploy["postgres"]["admin_password"], svc["platform"]["database"]["password"], svc["letfs"]["database"]["password"], temporal["database"]["password"], db["password"]],
         "resources": [dep["spicedb"]["key"], dep["qdrant"]["api_key"], dep["s3"]["access_key_id"], dep["s3"]["secret_access_key"]],
     }
+    if leta_enabled:
+        refs['databases'].append(svc['leta']['database']['password'])
+        refs['leta-api'] = [svc['leta']['database']['password'], dep['spicedb']['key'], dep['redis']['password']]
+        lf = c.get('langfuse')
+        if lf is None:
+            raise ValueError('leta profile requires Langfuse settings')
+        refs['leta-worker'] = [*refs['leta-api'], c['models']['provider']['api_key'], lf['public_key'], lf['secret_key']]
+        refs['leta-migrate'] = [svc['leta']['database']['password']]
+        runtime['services']['redis'] = {'environment': {'REDIS_PASSWORD': secret(dep['redis']['password'])}}
+    if "langfuse" in c:
+        refs["ingest-io"].extend([c["langfuse"]["public_key"], c["langfuse"]["secret_key"]])
+    if "observability" in os.environ.get("COMPOSE_PROFILES", "").split(","):
+        cloud = c.get("observability")
+        lf = c.get("langfuse")
+        if cloud is None or lf is None:
+            raise ValueError("observability profile requires Grafana Cloud and Langfuse settings")
+        refs["databases"].append(cloud["postgres_password"])
+        runtime["services"]["alloy"] = {"environment": {
+            "OPENLET_ENVIRONMENT": c["runtime"]["environment"],
+            "GRAFANA_METRICS_ENDPOINT": cloud["metrics"]["endpoint"],
+            "GRAFANA_METRICS_USER": cloud["metrics"]["user"],
+            "GRAFANA_TRACES_ENDPOINT": cloud["traces"]["endpoint"],
+            "GRAFANA_TRACES_USER": cloud["traces"]["user"],
+            "GRAFANA_LOGS_ENDPOINT": cloud["logs"]["endpoint"],
+            "GRAFANA_LOGS_USER": cloud["logs"]["user"],
+            "GRAFANA_CLOUD_TOKEN": secret(cloud["token"]),
+            "LANGFUSE_PUBLIC_KEY": secret(lf["public_key"]),
+            "LANGFUSE_SECRET_KEY": secret(lf["secret_key"]),
+            "LANGFUSE_OTLP_ENDPOINT": lf["base_url"].rstrip("/") + "/api/public/otel",
+            "QDRANT_API_KEY": secret(dep["qdrant"]["api_key"]),
+            "QDRANT_METRICS_ADDRESS": dep["qdrant"]["address"].rsplit(":", 1)[0] + ":6333",
+            "REDIS_ADDRESS": dep["redis"]["address"],
+            "REDIS_PASSWORD": secret(dep["redis"]["password"]) if "leta" in os.environ.get("COMPOSE_PROFILES", "").split(",") else "",
+            "POSTGRES_METRICS_DSN": f'postgresql://{quote(cloud["postgres_user"], safe="")}:{quote(secret(cloud["postgres_password"]), safe="")}@{pg["host"]}:{pg["port"]}/postgres?sslmode={pg["sslmode"]}',
+        }}
     for service, references in refs.items():
         runtime["services"][service] = {"environment": environment(references)}
+    if leta_enabled:
+        runtime['services']['leta-api']['healthcheck'] = {'test': ['CMD', '/app/.venv/bin/python', '-c',
+            'import urllib.request; urllib.request.urlopen("http://127.0.0.1:' + svc['leta']['http_listen'].rsplit(':', 1)[1] + '/ready",timeout=3)']}
     runtime["services"]["database-backup"] = {"environment": {
         "PGHOST": pg["host"], "PGPORT": str(pg["port"]),
         "PGUSER": deploy["postgres"]["admin_user"], "PGPASSWORD": secret(deploy["postgres"]["admin_password"])}}
-    for owner, service in (("platform", svc["platform"]), ("letfs", svc["letfs"])):
+    for owner, service in [('platform', svc['platform']), ('letfs', svc['letfs']), *([('leta', svc['leta'])] if leta_enabled else [])]:
         database = service["database"]
         dsn = f'postgres://{quote(database["user"], safe="")}:{quote(secret(database["password"]), safe="")}@{pg["host"]}:{pg["port"]}/{database["name"]}?sslmode={pg["sslmode"]}'
         runtime["services"][f"{owner}-migrate"] = {"environment": {
             "GOOSE_DRIVER": "postgres", "GOOSE_DBSTRING": dsn, "GOOSE_MIGRATION_DIR": "/migrations"}}
+        if owner == "leta":
+            cast(dict[str, str], runtime["services"]["leta-migrate"]["environment"]).update(environment([service["database"]["password"]]))
+            continue
         runtime["services"][owner]["healthcheck"] = {"test": ["CMD", "grpc-health-probe", f'-addr=127.0.0.1:{service["grpc_listen"].rsplit(":", 1)[1]}']}
     runtime["services"]["envoy"] = {
         "ports": [f"127.0.0.1:{port}:{port}"],
@@ -154,6 +211,13 @@ def configure(output: Path, test: bool = False) -> None:
     os.umask(0o077)
     output.mkdir(parents=True, exist_ok=True)
     output.chmod(0o700)
+    alloy = (ROOT / "infra/config/observability/alloy.alloy").read_text()
+    if leta_enabled:
+        alloy = alloy.replace(
+            "targets = [] // Redis targets are enabled by configure.py with the Leta profile.",
+            "targets = prometheus.exporter.redis.cache.targets",
+        )
+    (output / "alloy.alloy").write_text(alloy)
     outputs: list[tuple[str, object]] = [("envoy", envoy), ("temporal", native), ("compose.runtime", runtime)]
     if test:
         outputs.append(("compose.test.runtime", {"services": {"s3": {"environment": {

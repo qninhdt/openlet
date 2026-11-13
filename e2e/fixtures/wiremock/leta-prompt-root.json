@@ -1,0 +1,26 @@
+{
+  "request": {
+    "method": "GET",
+    "urlPathPattern": "/api/public/v2/prompts/leta(/|%2[Ff])root"
+  },
+  "response": {
+    "status": 200,
+    "jsonBody": {
+      "id": "leta-root-fixture",
+      "name": "leta/root",
+      "version": 1,
+      "type": "text",
+      "prompt": "You are an Openlet test agent. Use the available tools for workspace tasks. Stop when the task is complete.",
+      "labels": [
+        "production"
+      ],
+      "tags": [],
+      "config": {},
+      "createdAt": "2026-11-13T00:00:00Z",
+      "updatedAt": "2026-11-13T00:00:00Z"
+    },
+    "headers": {
+      "Content-Type": "application/json"
+    }
+  }
+}

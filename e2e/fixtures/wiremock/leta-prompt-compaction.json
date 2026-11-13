@@ -1,0 +1,26 @@
+{
+  "request": {
+    "method": "GET",
+    "urlPathPattern": "/api/public/v2/prompts/leta(/|%2[Ff])compaction"
+  },
+  "response": {
+    "status": 200,
+    "jsonBody": {
+      "id": "leta-compaction-fixture",
+      "name": "leta/compaction",
+      "version": 1,
+      "type": "text",
+      "prompt": "Summarize goals, completed work, decisions and remaining tasks concisely.",
+      "labels": [
+        "production"
+      ],
+      "tags": [],
+      "config": {},
+      "createdAt": "2026-11-13T00:00:00Z",
+      "updatedAt": "2026-11-13T00:00:00Z"
+    },
+    "headers": {
+      "Content-Type": "application/json"
+    }
+  }
+}

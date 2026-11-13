@@ -4,7 +4,8 @@ set -Eeuo pipefail
 : "${COMPOSE_PROJECT_NAME:?Set the empty target Compose project explicitly}"
 source_dir=${1:?Usage: scripts/restore.sh BACKUP_DIRECTORY}
 (cd "$source_dir" && sha256sum --check SHA256SUMS)
-docker compose stop envoy platform letfs ingest-cpu ingest-io temporal spicedb
+mapfile -t writers < <(docker compose config --services | grep -E '^(envoy|platform|letfs|ingest-cpu|ingest-io|leta-api|leta-worker|temporal|spicedb)$')
+docker compose stop "${writers[@]}"
 while IFS=$'\t' read -r database owner; do
   [[ -n $database ]] || continue
   tables=$(docker compose exec -T postgres sh -ec 'psql -U "$POSTGRES_USER" -d "$1" -At -c "SELECT count(*) FROM pg_tables WHERE schemaname NOT IN ('\''pg_catalog'\'','\''information_schema'\'')"' sh "$database" < /dev/null)

@@ -26,7 +26,7 @@ jobs:
               - 'go.work*'
               - 'Makefile'
             python:
-              - 'apps/letfs-ingest/**'
+              - 'apps/{leta,letfs-ingest}/**'
               - 'packages/{contracts,sdk-python}/**'
               - 'pyproject.toml'
               - 'uv.lock'
@@ -45,7 +45,7 @@ jobs:
               - '.github/workflows/**'
               - 'Makefile'
             runtime:
-              - 'apps/{platform,letfs,letfs-ingest}/**'
+              - 'apps/{platform,letfs,letfs-ingest,leta}/**'
               - 'packages/**'
               - 'e2e/**'
               - 'infra/**'
@@ -138,6 +138,7 @@ jobs:
             letfs
             ingest-cpu
             ingest-io
+            leta-api
           load: true
           set: |
             platform.cache-from=type=gha,scope=platform
@@ -146,6 +147,8 @@ jobs:
             letfs.cache-to=type=gha,scope=letfs,mode=max
             ingest-cpu.cache-from=type=gha,scope=ingest-cpu
             ingest-cpu.cache-to=type=gha,scope=ingest-cpu,mode=max
+            leta-api.cache-from=type=gha,scope=leta
+            leta-api.cache-to=type=gha,scope=leta,mode=max
             ingest-io.cache-from=type=gha,scope=ingest-io
             ingest-io.cache-to=type=gha,scope=ingest-io,mode=max
       - name: Verify SQL invariants on an isolated database
@@ -159,8 +162,8 @@ jobs:
           make integration
       - run: |
           mkdir -p .local
-          printf 'services:\n  platform: {image: "openlet/platform:local"}\n  letfs: {image: "openlet/letfs:local"}\n  ingest-cpu: {image: "openlet/ingest-cpu:local"}\n  ingest-io: {image: "openlet/ingest-io:local"}\n' > .local/test-images.yaml
-          OPENLET_IMAGE_LOCK="$PWD/.local/test-images.yaml" scripts/e2e.sh api
+          printf 'services:\n  platform: {image: "openlet/platform:local"}\n  letfs: {image: "openlet/letfs:local"}\n  ingest-cpu: {image: "openlet/ingest-cpu:local"}\n  ingest-io: {image: "openlet/ingest-io:local"}\n  leta-api: {image: "openlet/leta:local"}\n  leta-worker: {image: "openlet/leta:local"}\n  leta-migrate: {image: "openlet/leta:local"}\n' > .local/test-images.yaml
+          OPENLET_IMAGE_LOCK="$PWD/.local/test-images.yaml" scripts/e2e.sh leta
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:

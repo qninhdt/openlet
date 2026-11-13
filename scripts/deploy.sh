@@ -15,7 +15,6 @@ uv run --env-file "$dotenv" --locked python scripts/configure.py --output "$OPEN
 export COMPOSE_FILE="$root/infra/compose.yaml:$OPENLET_GENERATED/compose.runtime.yaml:$image_lock"
 docker compose config --quiet
 docker compose pull
-docker compose stop envoy platform letfs ingest-cpu ingest-io temporal spicedb
 docker compose up --detach --wait postgres
 scripts/backup.sh "$OPENLET_BACKUPS/pre-deploy-$(date -u +%Y%m%dT%H%M%SZ)"
 docker compose up --detach --wait --wait-timeout 180

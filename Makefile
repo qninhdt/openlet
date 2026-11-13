@@ -33,8 +33,8 @@ check-go:
 	go vet $(GO_PACKAGES)
 
 check-python:
-	uv run --no-env-file --locked ruff check scripts apps/letfs-ingest packages/sdk-python/src/openlet_sdk
-	uv run --no-env-file --locked pyright
+	uv run --no-env-file --locked --all-packages --extra cpu ruff check scripts apps/leta apps/letfs-ingest packages/sdk-python/src/openlet_sdk
+	uv run --no-env-file --locked --all-packages --extra cpu pyright
 
 test: test-go test-python
 
@@ -42,14 +42,14 @@ test-go:
 	go test $(GO_PACKAGES)
 
 test-python:
-	uv run --no-env-file --locked --package letfs-ingest --extra cpu pytest apps/letfs-ingest/tests packages/sdk-python/tests -q
+	uv run --no-env-file --locked --all-packages --extra cpu pytest apps/leta/tests apps/letfs-ingest/tests packages/sdk-python/tests -q
 
 integration:
 	@test -n "$$OPENLET_TEST_DATABASE_URL" || { echo 'Set OPENLET_TEST_DATABASE_URL to an isolated, backed-up test database DSN.' >&2; exit 1; }
 	go test -tags=integration ./apps/letfs/internal/storage -run TestStorageSQLInvariants -count=1
 
 e2e:
-	scripts/e2e.sh api
+	scripts/e2e.sh leta
 
 configure:
 	mkdir -p "$(OPENLET_BACKUPS)"
@@ -58,9 +58,10 @@ configure:
 
 images:
 	docker compose build platform letfs ingest-cpu ingest-io
+	@if [[ ",$$COMPOSE_PROFILES," == *,leta,* ]]; then docker compose build leta-api; fi
 
 up: configure images
-	docker compose stop envoy platform letfs ingest-cpu ingest-io temporal spicedb
+	mapfile -t writers < <(docker compose config --services | grep -E '^(envoy|platform|letfs|ingest-cpu|ingest-io|leta-api|leta-worker|temporal|spicedb)$$'); docker compose stop "$${writers[@]}"
 	docker compose up --detach --wait --wait-timeout 180
 
 down:

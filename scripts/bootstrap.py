@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import os
 from datetime import timedelta
 
 import boto3
@@ -35,11 +36,20 @@ def databases(c: Config) -> None:
     admin = c["deployment"]["postgres"]
     targets = [c["services"]["platform"]["database"], c["services"]["letfs"]["database"]]
     targets += [c["deployment"]["temporal"]["database"], c["deployment"]["spicedb"]["database"]]
+    if 'leta' in os.environ.get('COMPOSE_PROFILES', '').split(','):
+        targets.append(c['services']['leta']['database'])
     temporal = c["deployment"]["temporal"]
     targets += [{**temporal["database"], "name": temporal["visibility_database"]}]
     with psycopg.connect(host=pg["host"], port=pg["port"], dbname="postgres",
             user=admin["admin_user"], password=secret(admin["admin_password"]),
             sslmode=pg["sslmode"], autocommit=True) as db:
+        if "observability" in os.environ.get("COMPOSE_PROFILES", "").split(","):
+            cloud = c.get("observability")
+            if cloud is None:
+                raise ValueError("observability settings are required")
+            if not db.execute("SELECT 1 FROM pg_roles WHERE rolname=%s", (cloud["postgres_user"],)).fetchone():
+                db.execute(sql.SQL("CREATE ROLE {} LOGIN PASSWORD {}").format(sql.Identifier(cloud["postgres_user"]), sql.Literal(secret(cloud["postgres_password"]))))
+            db.execute(sql.SQL("GRANT pg_monitor TO {}").format(sql.Identifier(cloud["postgres_user"])))
         for target in targets:
             if not db.execute("SELECT 1 FROM pg_roles WHERE rolname=%s", (target["user"],)).fetchone():
                 db.execute(sql.SQL("CREATE ROLE {} LOGIN PASSWORD {}").format(

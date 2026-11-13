@@ -41,6 +41,7 @@ jobs:
             letfs
             ingest-cpu
             ingest-io
+            leta-api
           load: true
           set: |
             platform.cache-from=type=gha,scope=platform
@@ -49,13 +50,15 @@ jobs:
             letfs.cache-to=type=gha,scope=letfs,mode=max
             ingest-cpu.cache-from=type=gha,scope=ingest-cpu
             ingest-cpu.cache-to=type=gha,scope=ingest-cpu,mode=max
+            leta-api.cache-from=type=gha,scope=leta
+            leta-api.cache-to=type=gha,scope=leta,mode=max
             ingest-io.cache-from=type=gha,scope=ingest-io
             ingest-io.cache-to=type=gha,scope=ingest-io,mode=max
       - name: Verify the built image set
         run: |
           mkdir -p .local
-          printf 'services:\n  platform: {image: "openlet/platform:local"}\n  letfs: {image: "openlet/letfs:local"}\n  ingest-cpu: {image: "openlet/ingest-cpu:local"}\n  ingest-io: {image: "openlet/ingest-io:local"}\n' > .local/test-images.yaml
-          OPENLET_IMAGE_LOCK="$PWD/.local/test-images.yaml" scripts/e2e.sh api
+          printf 'services:\n  platform: {image: "openlet/platform:local"}\n  letfs: {image: "openlet/letfs:local"}\n  ingest-cpu: {image: "openlet/ingest-cpu:local"}\n  ingest-io: {image: "openlet/ingest-io:local"}\n  leta-api: {image: "openlet/leta:local"}\n  leta-worker: {image: "openlet/leta:local"}\n  leta-migrate: {image: "openlet/leta:local"}\n' > .local/test-images.yaml
+          OPENLET_IMAGE_LOCK="$PWD/.local/test-images.yaml" scripts/e2e.sh leta
       - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
@@ -65,17 +68,18 @@ jobs:
         run: |
           repository="ghcr.io/${GITHUB_REPOSITORY,,}"
           printf 'services:\n' > image-lock.yaml
-          for service in platform letfs ingest-cpu ingest-io; do
+          for service in platform letfs ingest-cpu ingest-io leta; do
             ref="$repository/$service:$GITHUB_SHA"
             docker tag "openlet/$service:local" "$ref"
             docker push "$ref"
             digest=$(docker image inspect "$ref" --format '{{index .RepoDigests 0}}')
-            printf '  %s: {image: "%s"}\n' "$service" "$digest" >> image-lock.yaml
+            if [[ $service != leta ]]; then printf '  %s: {image: "%s"}\n' "$service" "$digest" >> image-lock.yaml; fi
             case "$service" in
+              leta) printf '  leta-api: {image: "%s"}\n  leta-worker: {image: "%s"}\n  leta-migrate: {image: "%s"}\n' "$digest" "$digest" "$digest" >> image-lock.yaml ;;
               platform|letfs) printf '  %s-migrate: {image: "%s"}\n' "$service" "$digest" >> image-lock.yaml ;;
             esac
           done
-          tar -czf .local/release.tgz image-lock.yaml infra scripts packages/contracts/authz packages/contracts/generated pyproject.toml uv.lock .python-version apps/letfs-ingest/pyproject.toml packages/sdk-python/pyproject.toml
+          tar -czf .local/release.tgz image-lock.yaml infra scripts packages/contracts/authz packages/contracts/generated pyproject.toml uv.lock .python-version apps/letfs-ingest/pyproject.toml apps/leta/pyproject.toml packages/sdk-python/pyproject.toml
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-bundle
