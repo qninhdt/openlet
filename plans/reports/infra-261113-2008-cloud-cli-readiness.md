@@ -78,11 +78,24 @@ native health API. The runtime ingestion token remains a separate credential.
 Langfuse project URL/keys and R2 S3 credentials are still empty in the root
 credential file; no provider credentials were invented or substituted.
 
-Cloudflare CLI OAuth can inspect R2, but account token listing and token
-permission-group discovery both returned HTTP 403 (`9109`, unauthorized).
-The current login therefore does not provide access to that token-management
-route. Create bucket-scoped Object Read & Write credentials through R2's
-Manage API Tokens page, or supply an authorized token-management credential.
-The secret access key is shown only at creation; existing token metadata cannot
-recover it. Langfuse's project Settings / API Keys page supplies its initial
-project key pair. Store these values directly in the private root credentials.
+Account token listing and permission-group discovery returned HTTP 403
+(`9109`, unauthorized). The earlier conclusion that dashboard intervention
+was required was premature: user token creation uses a different route.
+Langfuse's project Settings / API Keys page still supplies its initial project
+key pair. Store these values directly in the private root credentials.
+
+## Follow-up: R2 credentials provisioned through CLI
+
+User permission-group discovery succeeded. Although user token listing also
+returned HTTP 403, `cf user tokens create` (`POST /user/tokens`) succeeded with
+the existing OAuth login. Created `openlet-local-letfs`, scoped only to
+`openlet-dev`, with `Workers R2 Storage Bucket Item Write` (read/write/list
+objects; no bucket administration).
+
+Following [Cloudflare's documented derivation](https://developers.cloudflare.com/r2/api/tokens/#get-s3-api-credentials-from-an-api-token),
+the token ID and SHA-256 hex digest of its value were saved as the S3 credential
+pair in the private root credential file. No secret was printed or committed;
+file mode `0600` was verified. An independently signed S3 ListObjectsV2 request
+with `max-keys=1` returned HTTP 200. No new bucket was needed and no object was
+created, changed or deleted. Write operations, presigned browser uploads and
+full LetFS integration with these credentials have not been exercised.
