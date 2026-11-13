@@ -57,6 +57,7 @@ def test_metadata_taxonomy_readme_body_and_image_size(config: Config) -> None:
 async def test_instructor_owns_correction_and_records_each_paid_attempt(
     config: Config, monkeypatch: pytest.MonkeyPatch, mode: str, valid: bool
 ) -> None:
+    import asyncio
     import json
     from contextlib import nullcontext
     from typing import Literal, cast
@@ -143,16 +144,18 @@ async def test_instructor_owns_correction_and_records_each_paid_attempt(
     )
     monkeypatch.setattr(providers, "get_client", lambda: cast(Langfuse, Prompts()))
     monkeypatch.setattr(providers.litellm, "acompletion", complete)
-    pending = providers.Models(config, "production").describe(
-        "report.txt", "Annual results", "text/plain", ""
-    )
-    if valid:
-        assert (await pending).title == "Report"
-    else:
-        from instructor.core.exceptions import InstructorRetryException
+    config["services"]["letfs_ingest"]["io"]["model_concurrency"] = 1
+    ai = providers.Models(config, "production")
+    pending = ai.describe("report.txt", "Annual results", "text/plain", "")
+    # Enrichment holds this slot across artifact download and generation.
+    async with ai.slots, asyncio.timeout(3):
+        if valid:
+            assert (await pending).title == "Report"
+        else:
+            from instructor.core.exceptions import InstructorRetryException
 
-        with pytest.raises(InstructorRetryException):
-            await pending
+            with pytest.raises(InstructorRetryException):
+                await pending
     assert len(requests) == len(updates) == 2
     assert [update["cost_details"] for update in updates] == [
         {"total": 0.1},

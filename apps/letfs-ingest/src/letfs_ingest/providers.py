@@ -178,18 +178,17 @@ class Models:
         )
         defaults = InferenceSettings.model_validate(prompt.config)
         with propagate_attributes(prompt=prompt):
-            async with self.slots:
-                return await self.client.chat.completions.create(
-                    model="litellm_proxy/" + defaults.model,
-                    response_model=Metadata,
-                    max_retries=1,
-                    **self.connection,
-                    **defaults.parameters(),
-                    messages=[
-                        {"role": "system", "content": prompt.compile()},
-                        {"role": "user", "content": content},
-                    ],
-                )
+            return await self.client.chat.completions.create(
+                model="litellm_proxy/" + defaults.model,
+                response_model=Metadata,
+                max_retries=1,
+                **self.connection,
+                **defaults.parameters(),
+                messages=[
+                    {"role": "system", "content": prompt.compile()},
+                    {"role": "user", "content": content},
+                ],
+            )
 
     async def complete(self, **kwargs: object) -> ModelResponse:
         # Record each paid attempt before Instructor accumulates retry usage.

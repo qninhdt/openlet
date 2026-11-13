@@ -238,3 +238,18 @@ thiếu storage vì caller chỉ có revision cũ. RPC nay trả header
 Native caller truyền header đó sang `ListStorages`: workspace mới đọc ngay đủ
 Shared/Personal và upload R2 thành công, không polling quyền. Go platform tests
 và vet pass. Golden scripts/materials nằm ngoài source tại `/tmp`.
+
+## Golden-journey follow-up: enrichment semaphore deadlock
+
+Microsoft FY25Q4 workbook thật tạo116 artifacts, gồm91 CSV. Pipeline giữ
+`ai.slots` khi fetch artifact/generate metadata, nhưng `Models.describe` lại
+acquire cùng semaphore. Đủ concurrent artifacts sẽ giữ hết outer slots rồi
+chờ inner slots: không request inference nào bắt đầu, heartbeat vẫn còn.
+Bỏ inner acquire; giữ existing outer admission cho download/vision/correction
+và existing embedding admission. Không tăng concurrency hoặc thêm semaphore.
+
+Existing Instructor tests nay chạy khi pipeline đã giữ slot với concurrency1,
+bounded timeout để bắt regression; cả3 modes/correction vẫn pass. Toàn bộ23
+ingest tests và strict Pyright/format/lint pass. Deployed IO worker được cập
+nhật, workflow tiếp tục từ parsed artifacts cũ và native paid requests trả200;
+full ready/search/output acceptance tiếp tục trong5 golden journeys.
