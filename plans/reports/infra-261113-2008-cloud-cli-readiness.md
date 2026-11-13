@@ -123,3 +123,11 @@ bootstrap credential is a stack-scoped Cloud access-policy token with
 access policies. A management-capable Cloud API credential is another route;
 do not reuse a short-lived CLI OAuth token as Alloy's persistent credential.
 Runtime ingestion and dashboard rendering remain unverified.
+
+The user subsequently supplied a runtime token, now stored privately in the
+root credential file. Empty ingestion requests to the discovered metrics, logs
+and traces endpoints all returned HTTP 401; logs explicitly reported
+`authentication error: invalid scope requested`. The token is present but not
+usable in these checks. See [provider and credential research](research-261113-2054-vilao-provider.md)
+for the same session's live model compatibility results. This supersedes the
+earlier missing-token status, without claiming Cloud ingestion works.
