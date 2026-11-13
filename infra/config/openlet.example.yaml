@@ -84,37 +84,20 @@ dependencies:
     password: ${REDIS_PASSWORD}
 
 models:
-  provider:
-    base_url: https://openrouter.ai/api/v1
-    api_key: ${OPENROUTER_API_KEY}
+  gateway:
+    base_url: http://litellm:4000
+    api_key: ${LITELLM_MASTER_KEY}
     timeout_seconds: 90
   embedding:
-    model: openai/text-embedding-3-small
+    model: openai/text-embedding-3-large
     dimensions: 1536
-  reranking:
-    model: cohere/rerank-v3.5
+  reranking: null
   enrichment:
-    model: openai/gpt-4.1-mini
-    reasoning_effort: null
-    max_output_tokens: 8192
+    output_mode: tools
     max_input_characters: 24000
     max_image_pixels: 25000000
     image_max_side: 1600
     image_jpeg_quality: 85
-  leta:
-    default:
-      model_id: openai/gpt-4.1-mini
-      reasoning_effort: null
-    catalog:
-      - model_id: openai/gpt-4.1-mini
-        reasoning_efforts: [null]
-        context_window_tokens: 1047576
-        max_output_tokens: 8192
-      - model_id: openai/gpt-5.1
-        reasoning_efforts: [null, low, medium, high]
-        context_window_tokens: 400000
-        max_output_tokens: 8192
-
 services:
   gateway:
     http_listen: 0.0.0.0:8080
@@ -158,6 +141,9 @@ services:
   leta:
     # Optional integration. Core services do not load this section or wait for Leta.
     http_listen: 0.0.0.0:8000
+    compaction:
+      trigger_fraction: 0.8
+      keep_fraction: 0.3
     http_target: leta-api:8000
     database:
       name: leta

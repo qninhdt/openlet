@@ -77,13 +77,26 @@ func run() error {
 	var object s3Settings
 	var vector qdrantSettings
 	var providerURL, providerKey, embedding, reranking string
+	var rerankingSettings *struct {
+		Model string `yaml:"model"`
+	}
 	var dimensions int64
+	var providerTimeout float64
 	for _, v := range []struct {
 		path   string
 		target any
-	}{{"runtime", &runtime}, {"telemetry", &telemetry}, {"grpc", &g}, {"services.letfs", &settings}, {"dependencies.postgres", &postgres}, {"dependencies.spicedb", &graph}, {"dependencies.temporal", &temporal}, {"dependencies.s3", &object}, {"dependencies.qdrant", &vector}, {"models.provider.base_url", &providerURL}, {"models.provider.api_key", &providerKey}, {"models.embedding.model", &embedding}, {"models.embedding.dimensions", &dimensions}, {"models.reranking.model", &reranking}} {
+	}{{"runtime", &runtime}, {"telemetry", &telemetry}, {"grpc", &g}, {"services.letfs", &settings}, {"dependencies.postgres", &postgres}, {"dependencies.spicedb", &graph}, {"dependencies.temporal", &temporal}, {"dependencies.s3", &object}, {"dependencies.qdrant", &vector}, {"models.gateway.base_url", &providerURL}, {"models.gateway.api_key", &providerKey}, {"models.gateway.timeout_seconds", &providerTimeout}, {"models.embedding.model", &embedding}, {"models.embedding.dimensions", &dimensions}} {
 		if err = c.Section(v.path, v.target); err != nil {
 			return err
+		}
+	}
+	if err = c.OptionalSection("models.reranking", &rerankingSettings); err != nil {
+		return err
+	}
+	if rerankingSettings != nil {
+		reranking = rerankingSettings.Model
+		if reranking == "" {
+			return fmt.Errorf("reranking model must not be empty")
 		}
 	}
 	if settings.GRPCListen == "" || settings.MaxTextBytes < 1 || settings.MaxBlobBytes < 1 || settings.MultipartPartBytes < 5*1024*1024 || settings.MultipartThresholdBytes < settings.MultipartPartBytes || settings.UploadURLTTLSeconds < 1 || settings.DownloadURLTTLSeconds < 1 || settings.IdempotencyRetentionSeconds < 1 || settings.Processing.MaxArtifacts < 1 || settings.Processing.MaxManifestTextBytes < 1 || settings.Processing.ParseTimeoutSeconds < 1 || settings.Processing.EnrichIndexTimeoutSeconds < 1 || settings.Maintenance.IntervalSeconds < 1 || settings.Maintenance.ObjectGCGraceSeconds <= settings.UploadURLTTLSeconds || g.MaxReceiveBytes < 1 || runtime.ShutdownTimeoutSeconds < 1 {
@@ -143,11 +156,11 @@ func run() error {
 		return err
 	}
 	defer qc.Close()
-	modelKey, err := sdk.Secret("models.provider.api_key", providerKey)
+	modelKey, err := sdk.Secret("models.gateway.api_key", providerKey)
 	if err != nil {
 		return err
 	}
-	models := openai.NewClient(option.WithAPIKey(modelKey), option.WithBaseURL(providerURL), option.WithHTTPClient(&http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)}))
+	models := openai.NewClient(option.WithAPIKey(modelKey), option.WithMaxRetries(0), option.WithRequestTimeout(time.Duration(providerTimeout*float64(time.Second))), option.WithBaseURL(providerURL), option.WithHTTPClient(&http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)}))
 	tracing, err := temporalotel.NewTracingInterceptor(temporalotel.TracerOptions{DisableBaggage: true, TextMapPropagator: propagation.TraceContext{}})
 	if err != nil {
 		return err

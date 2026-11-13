@@ -98,38 +98,18 @@ class EmbeddingSettings(TypedDict):
 
 
 class EnrichmentSettings(TypedDict):
-    model: str
-    reasoning_effort: ReasoningEffort
-    max_output_tokens: int
+    output_mode: Literal["tools", "json_schema", "text"]
     max_input_characters: int
     max_image_pixels: int
     image_max_side: int
     image_jpeg_quality: int
 
 
-class ModelChoice(TypedDict):
-    model_id: str
-    reasoning_effort: ReasoningEffort
-
-
-class ModelEntry(TypedDict):
-    model_id: str
-    reasoning_efforts: list[ReasoningEffort]
-    context_window_tokens: int
-    max_output_tokens: int
-
-
-class LetaModels(TypedDict):
-    default: ModelChoice
-    catalog: list[ModelEntry]
-
-
 class ModelsSettings(TypedDict):
-    provider: ProviderSettings
+    gateway: ProviderSettings
     embedding: EmbeddingSettings
-    reranking: dict[str, str]
+    reranking: NotRequired[dict[str, str] | None]
     enrichment: EnrichmentSettings
-    leta: LetaModels
 
 
 class Queues(TypedDict):
@@ -203,10 +183,16 @@ class PlatformSettings(TypedDict):
     maintenance: MaintenanceSettings
 
 
+class CompactionSettings(TypedDict):
+    trigger_fraction: float
+    keep_fraction: float
+
+
 class LetaSettings(TypedDict):
     http_listen: str
     http_target: str
     database: DatabaseSettings
+    compaction: CompactionSettings
 
 
 class Services(TypedDict):

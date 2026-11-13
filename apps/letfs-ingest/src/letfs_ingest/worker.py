@@ -120,7 +120,6 @@ async def run(role: Literal["cpu", "io"]) -> None:
                 lf = initialize_langfuse(lf_settings, runtime)
                 stack.callback(lf.shutdown)
                 ai = Models(config, lf_settings["prompt_label"])
-                stack.push_async_callback(ai.client.close)
                 vector = config["dependencies"]["qdrant"]
                 host, port = vector["address"].rsplit(":", 1)
                 qdrant = AsyncQdrantClient(

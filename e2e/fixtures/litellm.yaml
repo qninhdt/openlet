@@ -6,6 +6,7 @@ model_list:
       api_key: os.environ/OPENAI_API_KEY
     model_info:
       access_groups: [leta]
+      supported_reasoning_efforts: [low]
   - model_name: openai/text-embedding-3-small
     litellm_params:
       model: openai/text-embedding-3-small
@@ -14,7 +15,7 @@ model_list:
   - model_name: cohere/rerank-v3.5
     litellm_params:
       model: cohere/rerank-v3.5
-      api_base: http://wiremock:8080/v1
+      api_base: http://wiremock:8080
       api_key: os.environ/OPENAI_API_KEY
 
 general_settings:

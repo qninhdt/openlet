@@ -336,10 +336,10 @@ def configure(output: Path, test: bool = False) -> None:
             dep["s3"]["access_key_id"],
             dep["s3"]["secret_access_key"],
             dep["qdrant"]["api_key"],
-            c["models"]["provider"]["api_key"],
+            c["models"]["gateway"]["api_key"],
         ],
         "ingest-cpu": [],
-        "ingest-io": [dep["qdrant"]["api_key"], c["models"]["provider"]["api_key"]],
+        "ingest-io": [dep["qdrant"]["api_key"], c["models"]["gateway"]["api_key"]],
         "databases": [
             deploy["postgres"]["admin_password"],
             svc["platform"]["database"]["password"],
@@ -356,20 +356,18 @@ def configure(output: Path, test: bool = False) -> None:
     }
     if leta_enabled:
         refs["databases"].append(svc["leta"]["database"]["password"])
+        lf = c.get("langfuse")
+        if lf is None:
+            raise ValueError("leta profile requires Langfuse settings")
         refs["leta-api"] = [
             svc["leta"]["database"]["password"],
             dep["spicedb"]["key"],
             dep["redis"]["password"],
-        ]
-        lf = c.get("langfuse")
-        if lf is None:
-            raise ValueError("leta profile requires Langfuse settings")
-        refs["leta-worker"] = [
-            *refs["leta-api"],
-            c["models"]["provider"]["api_key"],
+            c["models"]["gateway"]["api_key"],
             lf["public_key"],
             lf["secret_key"],
         ]
+        refs["leta-worker"] = refs["leta-api"]
         refs["leta-migrate"] = [svc["leta"]["database"]["password"]]
         runtime["services"]["redis"] = {
             "environment": {"REDIS_PASSWORD": secret(dep["redis"]["password"])}
@@ -398,6 +396,7 @@ def configure(output: Path, test: bool = False) -> None:
                 "GRAFANA_CLOUD_TOKEN": secret(cloud["token"]),
                 "LANGFUSE_PUBLIC_KEY": secret(lf["public_key"]),
                 "LANGFUSE_SECRET_KEY": secret(lf["secret_key"]),
+                "LITELLM_MASTER_KEY": secret(c["models"]["gateway"]["api_key"]),
                 "LANGFUSE_OTLP_ENDPOINT": lf["base_url"].rstrip("/")
                 + "/api/public/otel",
                 "QDRANT_API_KEY": secret(dep["qdrant"]["api_key"]),
@@ -410,6 +409,13 @@ def configure(output: Path, test: bool = False) -> None:
                 "POSTGRES_METRICS_DSN": f"postgresql://{quote(cloud['postgres_user'], safe='')}:{quote(secret(cloud['postgres_password']), safe='')}@{pg['host']}:{pg['port']}/postgres?sslmode={pg['sslmode']}",
             }
         }
+    runtime["services"]["litellm"] = {
+        "environment": {
+            "LITELLM_MASTER_KEY": secret(c["models"]["gateway"]["api_key"]),
+            "OPENAI_API_KEY": os.environ["OPENAI_API_KEY"],
+            "OPENAI_BASE_URL": os.environ["OPENAI_BASE_URL"],
+        }
+    }
     for service, references in refs.items():
         runtime["services"][service] = {"environment": environment(references)}
     if leta_enabled:

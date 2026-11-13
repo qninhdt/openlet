@@ -48,3 +48,118 @@ def test_metadata_taxonomy_readme_body_and_image_size(config: Config) -> None:
         assert image.mode == "RGB"
     with pytest.raises(ValueError, match="pixel limit"):
         vision(data.getvalue(), {**settings, "max_image_pixels": 10})
+
+
+@pytest.mark.parametrize(
+    ("mode", "valid"),
+    [("tools", True), ("json_schema", True), ("text", True), ("tools", False)],
+)
+async def test_instructor_owns_correction_and_records_each_paid_attempt(
+    config: Config, monkeypatch: pytest.MonkeyPatch, mode: str, valid: bool
+) -> None:
+    import json
+    from contextlib import nullcontext
+    from typing import Literal, cast
+
+    from langfuse import Langfuse
+    from langfuse.api.prompts.types.prompt import Prompt_Text
+    from langfuse.model import TextPromptClient
+    from letfs_ingest import providers
+    from litellm.types.utils import ModelResponse  # pyright: ignore[reportMissingTypeStubs]  # Upstream has no py.typed.
+
+    updates: list[dict[str, object]] = []
+    requests: list[dict[str, object]] = []
+
+    class Observation:
+        def update(self, **kwargs: object) -> None:
+            updates.append(kwargs)
+
+    class Prompts:
+        def get_prompt(self, *args: object, **kwargs: object) -> TextPromptClient:
+            return TextPromptClient(
+                Prompt_Text(
+                    name="letfs/enrichment",
+                    version=1,
+                    prompt="Describe the file.",
+                    labels=[],
+                    tags=[],
+                    config={"model": "chat", "max_tokens": 512},
+                )
+            )
+
+        def start_as_current_observation(
+            self, **kwargs: object
+        ) -> nullcontext[Observation]:
+            return nullcontext(Observation())
+
+    async def complete(**kwargs: object) -> ModelResponse:
+        requests.append(kwargs)
+        payload = (
+            {}
+            if len(requests) == 1 or not valid
+            else {
+                "title": "Report",
+                "description": "Results",
+                "semantic_type": "document:report",
+                "context": "Annual results",
+            }
+        )
+        if mode == "tools":
+            message: dict[str, object] = {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": f"call-{len(requests)}",
+                        "type": "function",
+                        "function": {
+                            "name": "Metadata",
+                            "arguments": json.dumps(payload),
+                        },
+                    }
+                ],
+            }
+        else:
+            message = {"role": "assistant", "content": json.dumps(payload)}
+        result = ModelResponse(
+            model="chat",
+            choices=[
+                {
+                    "index": 0,
+                    "finish_reason": "tool_calls" if mode == "tools" else "stop",
+                    "message": message,
+                }
+            ],
+            usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        )
+        cast(dict[str, object], getattr(result, "_hidden_params"))["response_cost"] = (
+            len(requests) / 10
+        )
+        return result
+
+    monkeypatch.setenv("LITELLM_MASTER_KEY", "fixture")
+    config["models"]["enrichment"]["output_mode"] = cast(
+        Literal["tools", "json_schema", "text"], mode
+    )
+    monkeypatch.setattr(providers, "get_client", lambda: cast(Langfuse, Prompts()))
+    monkeypatch.setattr(providers.litellm, "acompletion", complete)
+    pending = providers.Models(config, "production").describe(
+        "report.txt", "Annual results", "text/plain", ""
+    )
+    if valid:
+        assert (await pending).title == "Report"
+    else:
+        from instructor.core.exceptions import InstructorRetryException
+
+        with pytest.raises(InstructorRetryException):
+            await pending
+    assert len(requests) == len(updates) == 2
+    assert [update["cost_details"] for update in updates] == [
+        {"total": 0.1},
+        {"total": 0.2},
+    ]
+    assert [update["usage_details"] for update in updates] == [
+        {"input": 10, "output": 5}
+    ] * 2
+    assert all(request["num_retries"] == 0 for request in requests)
+    assert "validation" in str(requests[1]["messages"]).lower()

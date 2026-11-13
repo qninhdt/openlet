@@ -9,6 +9,9 @@
       },
       {
         "doesNotMatch": "(?s).*\"role\"\\s*:\\s*\"tool\".*"
+      },
+      {
+        "matchesJsonPath": "$[?(@.stream == true)]"
       }
     ]
   },

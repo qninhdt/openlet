@@ -10,12 +10,15 @@
       "name": "leta/leti",
       "version": 1,
       "type": "text",
-      "prompt": "You are an Openlet test agent. Use the available tools for workspace tasks. Stop when the task is complete.",
+      "prompt": "You are an Openlet test agent. Use the available tools for workspace tasks. Stop when the task is complete.\n\nYour instructions\n{{agent_instructions}}\n\nBox context\n{{box_context}}",
       "labels": [
         "production"
       ],
       "tags": [],
-      "config": {},
+      "config": {
+        "model": "openai/gpt-4.1-mini",
+        "max_tokens": 8192
+      },
       "createdAt": "2026-11-13T00:00:00Z",
       "updatedAt": "2026-11-13T00:00:00Z"
     },

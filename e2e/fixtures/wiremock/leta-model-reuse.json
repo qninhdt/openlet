@@ -12,6 +12,9 @@
       },
       {
         "doesNotMatch": "(?s).*reuse-session.*"
+      },
+      {
+        "matchesJsonPath": "$[?(@.stream == true)]"
       }
     ]
   },

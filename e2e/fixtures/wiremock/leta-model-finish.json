@@ -9,6 +9,9 @@
       },
       {
         "matchesJsonPath": "$.messages[?(@.tool_call_id == 'reuse-session')]"
+      },
+      {
+        "matchesJsonPath": "$[?(@.stream == true)]"
       }
     ]
   },

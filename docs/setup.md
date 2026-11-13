@@ -47,3 +47,27 @@ Grafana opens a browser for sign-in and stack selection, storing its login throu
 Existing Clerk and Cloudflare CLIs can inspect authentication with `clerk whoami --json` and `cf auth whoami`. Clerk can retrieve development credentials with `clerk env pull`, using explicit application/instance selection and its `--file` option to target the root credential file. Preserve existing values when updating credentials; YAML continues to use secret references.
 
 Cloudflare CLI OAuth can manage R2 buckets and, with token-creation permission, provision LetFS credentials through `cf user tokens create`. Use a policy scoped to the target bucket with `Workers R2 Storage Bucket Item Write` (object read/write/list). Per [R2 authentication](https://developers.cloudflare.com/r2/api/tokens/#get-s3-api-credentials-from-an-api-token), the response `id` becomes the S3 access key ID and the SHA-256 hex digest of `value` becomes the secret access key. Capture the response privately and save credentials directly to the root credential file. Account token-management authorization is separate; its failure does not establish whether user token creation works. Configure CORS for the actual browser origin; presigned uploads need access to the returned `ETag` header.
+
+## Inference gateway
+
+One internal LiteLLM Proxy owns upstream deployments, prices and transport retries.
+Configure [its native YAML](../infra/config/litellm.yaml), set `OPENAI_BASE_URL`,
+`OPENAI_API_KEY` and an independent `LITELLM_MASTER_KEY` in the private root `.env`.
+Only the Proxy receives upstream credentials. Do not expose port 4000 publicly.
+A public model group can contain several suppliers; enable only configured suppliers
+and enter their actual rates in native deployment parameters when known.
+
+Openlet `models.gateway` points to the Proxy. Langfuse Prompt Config holds task
+`model`, `max_tokens` and optional `reasoning_effort`, `temperature`, `top_p`, `top_k`.
+The config is flat and versioned with `leta/root`, `leta/leti` or `letfs/enrichment`.
+Explicit agent `model_id` and `reasoning_effort` override task defaults; Leti inherits
+its root selection when unset. Mark offered groups `model_info.access_groups: [leta]`.
+Unknown deployment limits/efforts must be configured in the Proxy metadata.
+
+Embedding model and dimensions remain in Openlet config and identify the index
+space. Changing them requires a deliberate reindex; routing must not mix spaces.
+`models.reranking: null` (or absent) disables reranking while retaining hybrid search.
+Enrichment `output_mode` accepts `tools`, `json_schema`, `text`; Vilao uses `tools`.
+Instructor validates extraction and may make two completions; Proxy transport retries
+once and application SDK transport retries are disabled. These are separate from
+Temporal's durable activity retries.

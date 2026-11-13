@@ -15,9 +15,19 @@
           "index": 0,
           "message": {
             "role": "assistant",
-            "content": "{\"title\": \"Revenue report\", \"description\": \"Quarterly revenue and regional sales\", \"semantic_type\": \"document:report\", \"context\": \"Financial report with sales evidence and tables\"}"
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "metadata",
+                "type": "function",
+                "function": {
+                  "name": "Metadata",
+                  "arguments": "{\"title\": \"Revenue report\", \"description\": \"Quarterly revenue and regional sales\", \"semantic_type\": \"document:report\", \"context\": \"Financial report with sales evidence and tables\"}"
+                }
+              }
+            ]
           },
-          "finish_reason": "stop"
+          "finish_reason": "tool_calls"
         }
       ],
       "usage": {

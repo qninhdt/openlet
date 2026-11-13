@@ -32,6 +32,14 @@ func LoadConfig() (*Config, error) {
 
 // Section validates only its owner's fields; other roles need no secrets here.
 func (c *Config) Section(path string, target any) error {
+	return c.section(path, target, false)
+}
+
+func (c *Config) OptionalSection(path string, target any) error {
+	return c.section(path, target, true)
+}
+
+func (c *Config) section(path string, target any, optional bool) error {
 	n := c.root.Content[0]
 	for _, key := range strings.Split(path, ".") {
 		var found *yaml.Node
@@ -42,6 +50,9 @@ func (c *Config) Section(path string, target any) error {
 			}
 		}
 		if found == nil {
+			if optional {
+				return nil
+			}
 			return fmt.Errorf("missing config section %s", path)
 		}
 		n = found

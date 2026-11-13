@@ -1,7 +1,7 @@
 {
   "request": {
     "method": "POST",
-    "urlPath": "/v1/rerank"
+    "urlPathPattern": "/v[12]/rerank"
   },
   "response": {
     "status": 200,

@@ -59,23 +59,17 @@ dependencies:
     api_key: ${QDRANT_API_KEY}
     collection: files
 models:
-  provider:
-    base_url: http://wiremock:8080/v1
-    api_key: ${OPENROUTER_API_KEY}
+  gateway:
+    base_url: http://litellm:4000
+    api_key: ${LITELLM_MASTER_KEY}
     timeout_seconds: 90
-  leta:
-    default: {model_id: openai/gpt-4.1-mini, reasoning_effort: null}
-    catalog:
-      - {model_id: openai/gpt-4.1-mini, reasoning_efforts: [null], context_window_tokens: 128000, max_output_tokens: 8192}
   embedding:
     model: openai/text-embedding-3-small
     dimensions: 1536
   reranking:
     model: cohere/rerank-v3.5
   enrichment:
-    model: openai/gpt-4.1-mini
-    reasoning_effort: null
-    max_output_tokens: 8192
+    output_mode: tools
     max_input_characters: 24000
     max_image_pixels: 25000000
     image_max_side: 1600
@@ -122,6 +116,9 @@ services:
       object_gc_grace_seconds: 86400
   leta:
     http_listen: 0.0.0.0:8080
+    compaction:
+      trigger_fraction: 0.8
+      keep_fraction: 0.3
     http_target: leta-api:8080
     database:
       name: leta

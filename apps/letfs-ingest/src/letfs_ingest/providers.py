@@ -4,11 +4,15 @@ import csv
 import io
 from enum import StrEnum
 from itertools import islice
+from typing import TypedDict, cast
 
+import instructor
+import litellm
 from langfuse import get_client, propagate_attributes
-from langfuse.openai import AsyncOpenAI  # pyright: ignore[reportPrivateImportUsage]
+from litellm.types.utils import EmbeddingResponse, ModelResponse, Usage  # pyright: ignore[reportMissingTypeStubs]  # LiteLLM does not ship py.typed.
 from openai.types.chat import ChatCompletionContentPartParam
-from openlet_sdk.config import JSON, Config, EnrichmentSettings, secret
+from openlet_sdk.config import Config, EnrichmentSettings, secret
+from openlet_sdk.inference import InferenceSettings, response_cost, usage_details
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -99,17 +103,38 @@ def vision(data: bytes, settings: EnrichmentSettings) -> str:
             ).decode("ascii")
 
 
+class ConnectionParameters(TypedDict):
+    api_base: str
+    api_key: str
+    timeout: int
+    num_retries: int
+
+
+class EmbeddingData(TypedDict):
+    index: int
+    embedding: list[float]
+
+
 class Models:
     def __init__(self, config: Config, prompt_label: str) -> None:
         self.settings = config["models"]
         self.langfuse = get_client()
         self.prompt_label = prompt_label
-        provider = self.settings["provider"]
-        self.client = AsyncOpenAI(
-            base_url=provider["base_url"],
-            api_key=secret(provider["api_key"]),
-            max_retries=0,
-            timeout=provider["timeout_seconds"],
+        gateway = self.settings["gateway"]
+        self.connection: ConnectionParameters = {
+            "api_base": gateway["base_url"],
+            "api_key": secret(gateway["api_key"]),
+            "timeout": gateway["timeout_seconds"],
+            "num_retries": 0,
+        }
+        self.client = instructor.from_litellm(
+            self.complete,
+            async_client=True,
+            mode={
+                "tools": instructor.Mode.TOOLS,
+                "json_schema": instructor.Mode.JSON_SCHEMA,
+                "text": instructor.Mode.MD_JSON,
+            }[self.settings["enrichment"]["output_mode"]],
         )
         self.slots = asyncio.Semaphore(
             config["services"]["letfs_ingest"]["io"]["model_concurrency"]
@@ -144,41 +169,82 @@ class Models:
                     },
                 }
             )
-        extra: dict[str, JSON] = {}
-        if settings["reasoning_effort"] is not None:
-            extra["reasoning"] = {"effort": settings["reasoning_effort"]}
         prompt = await asyncio.to_thread(
             self.langfuse.get_prompt,
             "letfs/enrichment",
             label=self.prompt_label,
             type="text",
+            cache_ttl_seconds=60,
         )
+        defaults = InferenceSettings.model_validate(prompt.config)
         with propagate_attributes(prompt=prompt):
-            result = await self.client.chat.completions.parse(
-                model=settings["model"],
-                max_completion_tokens=settings["max_output_tokens"],
-                response_format=Metadata,
-                extra_body=extra,
-                messages=[
-                    {"role": "system", "content": prompt.compile()},
-                    {"role": "user", "content": content},
-                ],
+            async with self.slots:
+                return await self.client.chat.completions.create(
+                    model="litellm_proxy/" + defaults.model,
+                    response_model=Metadata,
+                    max_retries=1,
+                    **self.connection,
+                    **defaults.parameters(),
+                    messages=[
+                        {"role": "system", "content": prompt.compile()},
+                        {"role": "user", "content": content},
+                    ],
+                )
+
+    async def complete(self, **kwargs: object) -> ModelResponse:
+        # Record each paid attempt before Instructor accumulates retry usage.
+        model = str(kwargs["model"]).removeprefix("litellm_proxy/")
+        with self.langfuse.start_as_current_observation(
+            name="enrichment",
+            as_type="generation",
+            model=model,
+            input=kwargs.get("messages"),
+        ) as observation:
+            response = cast(ModelResponse, await litellm.acompletion(**kwargs))
+            observation.update(
+                output=response.choices[0].model_dump(),
+                usage_details=usage_details(
+                    cast(Usage | None, getattr(response, "usage", None))
+                ),
+                cost_details=response_cost(
+                    cast(
+                        dict[str, object], getattr(response, "_hidden_params", {})
+                    ).get("response_cost")
+                ),
             )
-        message = result.choices[0].message
-        if message.parsed is None:
-            raise ValueError("model did not return valid file metadata")
-        return message.parsed
+            return response
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         model = self.settings["embedding"]
         async with self.slots:
-            response = await self.client.embeddings.create(
+            with self.langfuse.start_as_current_observation(
+                name="embedding",
+                as_type="embedding",
                 model=model["model"],
                 input=texts,
-                dimensions=model["dimensions"],
-                encoding_format="float",
-            )
-        ordered = sorted(response.data, key=lambda item: item.index)
-        if [item.index for item in ordered] != list(range(len(texts))):
+            ) as observation:
+                response: EmbeddingResponse = await litellm.aembedding(
+                    model="litellm_proxy/" + model["model"],
+                    input=texts,
+                    dimensions=model["dimensions"],
+                    encoding_format="float",
+                    **self.connection,
+                )
+                observation.update(
+                    usage_details=usage_details(response.usage),
+                    cost_details=response_cost(
+                        cast(
+                            dict[str, object], getattr(response, "_hidden_params", {})
+                        ).get("response_cost")
+                    ),
+                )
+        ordered = sorted(
+            cast(list[EmbeddingData], getattr(response, "data")),
+            key=lambda item: item["index"],
+        )
+        if [item["index"] for item in ordered] != list(range(len(texts))):
             raise ValueError("embedding provider returned invalid indices")
-        return [item.embedding for item in ordered]
+        vectors = [item["embedding"] for item in ordered]
+        if any(len(vector) != model["dimensions"] for vector in vectors):
+            raise ValueError("embedding provider returned invalid dimensions")
+        return vectors

@@ -32,3 +32,23 @@ func TestRoleConfigAndSecrets(t *testing.T) {
 		t.Fatal("missing required secret accepted")
 	}
 }
+
+func TestOptionalSection(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "openlet.yaml")
+	if err := os.WriteFile(p, []byte("models:\n  reranking: null\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OPENLET_CONFIG", p)
+	c, err := LoadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var model *struct {
+		Model string `yaml:"model"`
+	}
+	for _, path := range []string{"models.reranking", "models.absent"} {
+		if err := c.OptionalSection(path, &model); err != nil || model != nil {
+			t.Fatalf("%s: %v %v", path, model, err)
+		}
+	}
+}

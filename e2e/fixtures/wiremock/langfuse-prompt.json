@@ -18,7 +18,10 @@
         "production"
       ],
       "tags": [],
-      "config": {},
+      "config": {
+        "model": "openai/gpt-4.1-mini",
+        "max_tokens": 8192
+      },
       "createdAt": "2026-11-13T00:00:00Z",
       "updatedAt": "2026-11-13T00:00:00Z"
     }

@@ -22,11 +22,12 @@ from pathlib import Path
 import os
 import secrets
 os.umask(0o077)
-keys = ('POSTGRES_ADMIN_PASSWORD', 'PLATFORM_DB_PASSWORD', 'LETFS_DB_PASSWORD', 'TEMPORAL_DB_PASSWORD', 'SPICEDB_DB_PASSWORD', 'SPICEDB_KEY', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY', 'QDRANT_API_KEY', 'OPENROUTER_API_KEY', 'CLERK_SECRET_KEY', 'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY', 'LETA_DB_PASSWORD', 'REDIS_PASSWORD')
+keys = ('POSTGRES_ADMIN_PASSWORD', 'PLATFORM_DB_PASSWORD', 'LETFS_DB_PASSWORD', 'TEMPORAL_DB_PASSWORD', 'SPICEDB_DB_PASSWORD', 'SPICEDB_KEY', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY', 'QDRANT_API_KEY', 'OPENAI_API_KEY', 'LITELLM_MASTER_KEY', 'CLERK_SECRET_KEY', 'LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY', 'LETA_DB_PASSWORD', 'REDIS_PASSWORD')
 Path('.local/e2e/test.env').write_text(''.join(f'{key}={secrets.token_hex(16)}\n' for key in keys))
 PY
 set -a
 source .local/e2e/test.env
+export OPENAI_BASE_URL=http://wiremock:8080/v1
 set +a
 uv run --no-env-file --locked python scripts/configure.py --test --output "$OPENLET_GENERATED"
 compose=(docker compose --project-name "$project" -f infra/compose.yaml -f "$OPENLET_GENERATED/compose.runtime.yaml" -f infra/compose.test.yaml -f "$OPENLET_GENERATED/compose.test.runtime.yaml")

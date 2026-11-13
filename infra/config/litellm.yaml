@@ -2,6 +2,7 @@
 # Add real supplier rates to litellm_params when known; never use demo prices.
 credential_list:
   - credential_name: vilao
+    credential_info: {}
     credential_values:
       api_base: os.environ/OPENAI_BASE_URL
       api_key: os.environ/OPENAI_API_KEY
