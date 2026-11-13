@@ -12,7 +12,7 @@ import httpx
 from openlet_api.letfs.v1.internal_pb2_grpc import LetFSInternalServiceStub
 from openlet_sdk.config import load
 from openlet_sdk.rpc import channel
-from openlet_sdk.telemetry import initialize
+from openlet_sdk.telemetry import initialize, initialize_langfuse
 from temporalio.client import Client
 from temporalio.contrib.opentelemetry import TracingInterceptor
 from temporalio.runtime import (
@@ -75,7 +75,12 @@ async def run(role: Literal["cpu", "io"]) -> None:
 
                 if not 0 <= settings["chunk_overlap_tokens"] < settings["chunk_size_tokens"] or settings["embedding_batch_size"] < 1 or settings["model_concurrency"] < 1:
                     raise ValueError("invalid indexing/model limits")
-                ai = Models(config)
+                lf_settings = config.get("langfuse")
+                if lf_settings is None:
+                    raise ValueError("langfuse settings are required for enrichment prompts")
+                lf = initialize_langfuse(lf_settings, runtime)
+                stack.callback(lf.shutdown)
+                ai = Models(config, lf_settings["prompt_label"])
                 stack.push_async_callback(ai.client.close)
                 vector = config["dependencies"]["qdrant"]
                 host, port = vector["address"].rsplit(":", 1)

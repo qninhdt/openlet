@@ -11,6 +11,10 @@ import (
 	"github.com/openai/openai-go/v3"
 	"github.com/qdrant/go-client/qdrant"
 	pb "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/letfs/v1"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
@@ -146,24 +150,31 @@ func (s *Server) TextSearch(ctx context.Context, r *pb.TextSearchRequest) (*pb.T
 	}
 	return out, nil
 }
-func (s *Server) SemanticSearch(ctx context.Context, r *pb.SemanticSearchRequest) (*pb.SemanticSearchResponse, error) {
+func (s *Server) SemanticSearch(ctx context.Context, r *pb.SemanticSearchRequest) (result *pb.SemanticSearchResponse, err error) {
 	if _, err := s.check(ctx, "storage", r.StorageId, "read"); err != nil {
 		return nil, err
 	}
+	span := trace.SpanFromContext(ctx)
+	span.SetAttributes(attribute.String("langfuse.observation.type", "retriever"), attribute.String("langfuse.observation.input", r.Query), attribute.String("langfuse.observation.metadata.storage_id", r.StorageId), attribute.Int("langfuse.observation.metadata.top_k", int(r.TopK)))
+	defer func() {
+		if result == nil {
+			return
+		}
+		// Only returned SQL-authorized hits leave the service as observation content.
+		hits := make([]map[string]any, 0, len(result.Hits))
+		for _, hit := range result.Hits {
+			hits = append(hits, map[string]any{"file_id": hit.Node.Id, "snippet": hit.Snippet, "score": hit.Score})
+		}
+		body, _ := json.Marshal(hits)
+		span.SetAttributes(attribute.String("langfuse.observation.output", string(body)), attribute.Int("langfuse.observation.metadata.returned_count", len(hits)))
+	}()
 	input, err := locatorJSON([]*pb.NodeLocator{r.Root})
 	if err != nil {
 		return nil, err
 	}
-	embeddings, err := s.Models.Embeddings.New(ctx, openai.EmbeddingNewParams{Model: openai.EmbeddingModel(s.EmbeddingModel), Dimensions: openai.Int(s.EmbeddingDimensions), Input: openai.EmbeddingNewParamsInputUnion{OfString: openai.String(r.Query)}})
+	vector, err := s.queryEmbedding(ctx, r.Query)
 	if err != nil {
 		return nil, err
-	}
-	if len(embeddings.Data) != 1 {
-		return nil, fmt.Errorf("embedding provider returned no query vector")
-	}
-	vector := make([]float32, len(embeddings.Data[0].Embedding))
-	for i, v := range embeddings.Data[0].Embedding {
-		vector[i] = float32(v)
 	}
 	limit := uint64(r.TopK) * 3
 	filter := &qdrant.Filter{Must: []*qdrant.Condition{qdrant.NewMatchKeyword("workspace_id", r.WorkspaceId)}}
@@ -179,6 +190,7 @@ func (s *Server) SemanticSearch(ctx context.Context, r *pb.SemanticSearchRequest
 	if err != nil {
 		return nil, err
 	}
+	span.SetAttributes(attribute.Int("langfuse.observation.metadata.candidate_count", len(points)))
 	records := []map[string]any{}
 	for _, p := range points {
 		file := p.Payload["file_id"].GetStringValue()
@@ -221,6 +233,7 @@ func (s *Server) SemanticSearch(ctx context.Context, r *pb.SemanticSearchRequest
 		return nil, err
 	}
 	rows.Close()
+	span.SetAttributes(attribute.Int("langfuse.observation.metadata.valid_count", len(out.Hits)))
 	if len(out.Hits) == 0 {
 		return out, nil
 	}
@@ -228,23 +241,66 @@ func (s *Server) SemanticSearch(ctx context.Context, r *pb.SemanticSearchRequest
 	for i, h := range out.Hits {
 		documents[i] = map[string]string{"text": h.Snippet}
 	}
-	var ranked struct {
-		Results []struct {
-			Index int     `json:"index"`
-			Score float64 `json:"relevance_score"`
-		} `json:"results"`
-	}
-	if err = s.Models.Post(ctx, "rerank", map[string]any{"model": s.RerankingModel, "query": r.Query, "documents": documents, "top_n": r.TopK}, &ranked); err != nil {
+	ranked, err := s.rerank(ctx, r.Query, documents, int(r.TopK))
+	if err != nil {
 		return nil, err
 	}
-	result := new(pb.SemanticSearchResponse)
-	for _, v := range ranked.Results {
-		if v.Index < 0 || v.Index >= len(out.Hits) {
-			return nil, fmt.Errorf("reranker returned an invalid document index")
-		}
+	result = new(pb.SemanticSearchResponse)
+	for _, v := range ranked {
 		hit := out.Hits[v.Index]
 		hit.Score = v.Score
 		result.Hits = append(result.Hits, hit)
 	}
 	return result, nil
+}
+
+func (s *Server) queryEmbedding(ctx context.Context, query string) ([]float32, error) {
+	ctx, span := otel.Tracer("openlet.letfs").Start(ctx, "query_embedding")
+	defer span.End()
+	span.SetAttributes(attribute.String("langfuse.observation.type", "embedding"), attribute.String("langfuse.observation.input", query), attribute.String("gen_ai.operation.name", "embeddings"), attribute.String("gen_ai.request.model", s.EmbeddingModel))
+	embeddings, err := s.Models.Embeddings.New(ctx, openai.EmbeddingNewParams{Model: openai.EmbeddingModel(s.EmbeddingModel), Dimensions: openai.Int(s.EmbeddingDimensions), Input: openai.EmbeddingNewParamsInputUnion{OfString: openai.String(query)}})
+	if err != nil {
+		span.SetStatus(codes.Error, "embedding failed")
+		return nil, err
+	}
+	if len(embeddings.Data) != 1 {
+		span.SetStatus(codes.Error, "invalid embedding response")
+		return nil, fmt.Errorf("embedding provider returned no query vector")
+	}
+	if embeddings.JSON.Usage.Valid() {
+		span.SetAttributes(attribute.Int64("gen_ai.usage.input_tokens", embeddings.Usage.PromptTokens))
+	}
+	vector := make([]float32, len(embeddings.Data[0].Embedding))
+	for i, v := range embeddings.Data[0].Embedding {
+		vector[i] = float32(v)
+	}
+	span.SetAttributes(attribute.Int("langfuse.observation.metadata.dimensions", len(vector)), attribute.String("langfuse.observation.output", fmt.Sprintf(`{"count":1,"dimensions":%d}`, len(vector))))
+	return vector, nil
+}
+
+type rankedDocument struct {
+	Index int     `json:"index"`
+	Score float64 `json:"relevance_score"`
+}
+
+func (s *Server) rerank(ctx context.Context, query string, documents []map[string]string, topK int) ([]rankedDocument, error) {
+	ctx, span := otel.Tracer("openlet.letfs").Start(ctx, "rerank")
+	defer span.End()
+	span.SetAttributes(attribute.String("langfuse.observation.type", "span"), attribute.String("langfuse.observation.input", query), attribute.String("langfuse.observation.metadata.model", s.RerankingModel), attribute.Int("langfuse.observation.metadata.candidate_count", len(documents)))
+	var ranked struct {
+		Results []rankedDocument `json:"results"`
+	}
+	if err := s.Models.Post(ctx, "rerank", map[string]any{"model": s.RerankingModel, "query": query, "documents": documents, "top_n": topK}, &ranked); err != nil {
+		span.SetStatus(codes.Error, "rerank failed")
+		return nil, err
+	}
+	for _, v := range ranked.Results {
+		if v.Index < 0 || v.Index >= len(documents) {
+			span.SetStatus(codes.Error, "invalid rerank response")
+			return nil, fmt.Errorf("reranker returned an invalid document index")
+		}
+	}
+	body, _ := json.Marshal(ranked.Results)
+	span.SetAttributes(attribute.String("langfuse.observation.output", string(body)))
+	return ranked.Results, nil
 }

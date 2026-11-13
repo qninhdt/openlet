@@ -1,4 +1,5 @@
 import httpx
+from langfuse import propagate_attributes
 from openlet_api.letfs.v1 import internal_pb2 as pb
 from openlet_api.letfs.v1.internal_pb2_grpc import LetFSInternalServiceStub
 from openlet_sdk.config import Config
@@ -19,23 +20,24 @@ class Processor:
 
     @activity.defn(name="EnrichAndIndex")
     async def run(self, request: ProcessingIdentity) -> None:
-        async with heartbeats():
-            identity: ProcessingIdentity = {"file_id": request["file_id"], "version": request["version"]}
-            query = pb.ProcessingRequest(**identity)
-            source = await self.stub.GetProcessingInput(query, timeout=30)
-            if source.outcome.obsolete or source.outcome.stage == "ready":
-                return
-            if source.outcome.stage == "parsed":
-                with stage("enrich", identity):
-                    result = await self.stub.CommitEnrichment(
-                        await enrich(source, identity, self.ai, self.http, self.config["services"]["letfs"]["max_blob_bytes"]), timeout=60,
-                    )
-                if result.obsolete:
-                    return
+        with propagate_attributes(metadata={"file_id": request["file_id"], "source_version": str(request["version"])}):
+            async with heartbeats():
+                identity: ProcessingIdentity = {"file_id": request["file_id"], "version": request["version"]}
+                query = pb.ProcessingRequest(**identity)
                 source = await self.stub.GetProcessingInput(query, timeout=30)
-            if source.outcome.obsolete or source.outcome.stage != "enriched":
-                return
-            if source.allow_indexing:
-                with stage("index", identity):
-                    await index(source, identity, self.ai, self.qdrant, self.config)
-            await self.stub.CompleteIndex(query, timeout=30)
+                if source.outcome.obsolete or source.outcome.stage == "ready":
+                    return
+                if source.outcome.stage == "parsed":
+                    with stage("enrich", identity):
+                        result = await self.stub.CommitEnrichment(
+                            await enrich(source, identity, self.ai, self.http, self.config["services"]["letfs"]["max_blob_bytes"]), timeout=60,
+                        )
+                    if result.obsolete:
+                        return
+                    source = await self.stub.GetProcessingInput(query, timeout=30)
+                if source.outcome.obsolete or source.outcome.stage != "enriched":
+                    return
+                if source.allow_indexing:
+                    with stage("index", identity):
+                        await index(source, identity, self.ai, self.qdrant, self.config)
+                await self.stub.CompleteIndex(query, timeout=30)
