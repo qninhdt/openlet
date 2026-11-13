@@ -99,3 +99,27 @@ file mode `0600` was verified. An independently signed S3 ListObjectsV2 request
 with `max-keys=1` returned HTTP 200. No new bucket was needed and no object was
 created, changed or deleted. Write operations, presigned browser uploads and
 full LetFS integration with these credentials have not been exercised.
+
+## Follow-up: Grafana runtime token authorization
+
+The current CLI login can read the `openlet` Free stack and discover its region,
+metrics/logs/traces endpoints and instance IDs. Stack health returns success;
+the Cloud organization and stack-list commands also succeed. The OAuth scopes
+include metrics/logs/traces writes, profile and stack read/write.
+
+This does not establish access-policy management: the documented Cloud
+`GET /api/v1/accesspolicies` returns HTTP 401 (`InvalidCredentials`, token could
+not be parsed). The installed Access Policies plugin's frontend identifies
+`/api/plugin-proxy/grafana-auth-app/auth/v1/accesspolicies` as its native route;
+calling that route through `gcx api` returns HTTP 403 (`plugin proxy route
+access denied`). The current user has the Grafana Admin role and the
+`grafana-auth-app:write` permission, so do not attribute this result simply to
+a missing Admin role. No access policy or runtime token was created.
+
+No browser is exposed to the automation tool in this session. The remaining
+bootstrap credential is a stack-scoped Cloud access-policy token with
+`metrics:write`, `logs:write` and `traces:write`, saved privately as
+`GRAFANA_CLOUD_TOKEN`. It can be created through Grafana Administration → Cloud
+access policies. A management-capable Cloud API credential is another route;
+do not reuse a short-lived CLI OAuth token as Alloy's persistent credential.
+Runtime ingestion and dashboard rendering remain unverified.
