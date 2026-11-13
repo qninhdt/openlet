@@ -17,3 +17,10 @@ Leta uses direct HTTP JSON and SSE. Its [FastAPI declarations](../apps/leta/src/
 Under a Leta resource, routes cover configuration, messages, boxes, operators, HITL requests and schedules. Agent routes provide history previews/entry content, run state and cancel. Incoming HITL cards/answers use `/v1/hitl-requests` and require the exact addressed user. There is no separate chat transport: posting to `messages` admits work; `events` streams native AG-UI events plus namespaced Openlet state notifications.
 
 A fresh event connection returns a bounded snapshot, history previews/references and the Redis cursor. A valid reconnect cursor reads the retained suffix; an expired cursor requests canonical refresh. Full tool output is read by history entry. Token chunks are provisional Redis events, not PostgreSQL writes. Stable request/message IDs preserve durable admission; request IDs cannot be reused for different input. See the [streaming contract](../plans/261111-2010-leta-rewrite/streaming.md) and [execution status](../plans/261111-2010-leta-rewrite/execution.md).
+
+Leta model choices are available at `GET /v1/workspaces/{workspace_id}/letas/models`
+after workspace participation authorization. The response exposes logical `model_id`
+and verified `reasoning_efforts` only; deployments and credentials remain private.
+PATCH keeps omitted selections, but changing `model_id` without an effort clears the
+old effort. `model_id: null` resets both fields to defaults/inheritance. An effort-only
+update requires an existing explicit model; null effort omits a provider override.

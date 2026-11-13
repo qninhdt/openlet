@@ -15,6 +15,9 @@ from uuid import UUID
 
 import grpc
 from authzed.api.v1 import (
+    CheckBulkPermissionsRequest,
+    CheckBulkPermissionsRequestItem,
+    CheckBulkPermissionsResponse,
     CheckPermissionRequest,
     CheckPermissionResponse,
     Consistency,
@@ -93,6 +96,47 @@ class Authorization:
             result.permissionship
             == CheckPermissionResponse.PERMISSIONSHIP_HAS_PERMISSION
         )
+
+    async def allowed_many(
+        self, actor: Actor, kind: str, ids: list[UUID], permission: str
+    ) -> set[UUID]:
+        ids = list(dict.fromkeys(ids))
+        if not ids:
+            return set()
+        response = await cast(
+            Awaitable[CheckBulkPermissionsResponse],
+            self.stub.CheckBulkPermissions(
+                CheckBulkPermissionsRequest(
+                    consistency=Consistency(fully_consistent=True),
+                    items=[
+                        CheckBulkPermissionsRequestItem(
+                            resource=ObjectReference(
+                                object_type=kind, object_id=str(id)
+                            ),
+                            permission=permission,
+                            subject=SubjectReference(
+                                object=ObjectReference(
+                                    object_type=actor.kind, object_id=str(actor.id)
+                                )
+                            ),
+                        )
+                        for id in ids
+                    ],
+                ),
+                metadata=self.metadata,
+                timeout=10,
+            ),
+        )
+        allowed: set[UUID] = set()
+        for pair in response.pairs:
+            if pair.HasField("error"):
+                raise RuntimeError(f"permission check failed: {pair.error.code}")
+            if (
+                pair.item.permissionship
+                == CheckPermissionResponse.PERMISSIONSHIP_HAS_PERMISSION
+            ):
+                allowed.add(UUID(pair.request.resource.object_id))
+        return allowed
 
     async def require(self, actor: Actor, kind: str, id: UUID, permission: str) -> None:
         if not await self.allowed(actor, kind, id, permission):

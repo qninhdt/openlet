@@ -7,6 +7,10 @@ test('native runtime, box containment, asynchronous HITL and owner-independent s
 }) => {
   test.setTimeout(180_000);
   const workspace = `/v1/workspaces/${account.workspaceId}`;
+  const models = await account.api.get(`${workspace}/letas/models`);
+  expect(models.ok(), await models.text()).toBeTruthy();
+  const listed = (await models.json()).models;
+  expect(listed).toEqual([{ model_id: 'openai/gpt-4.1-mini', reasoning_efforts: [null, 'low'] }]);
   const requestId = randomUUID();
   const creation = await account.api.post(`${workspace}/letas`, {
     data: {
@@ -23,6 +27,21 @@ test('native runtime, box containment, asynchronous HITL and owner-independent s
       timeout: 30_000,
     })
     .toBe('active');
+  const selection = `${path}/agents/${root.id}`;
+  const selected = await account.api.patch(selection, {
+    data: { model_id: 'openai/gpt-4.1-mini', reasoning_effort: 'low' },
+  });
+  expect(selected.ok(), await selected.text()).toBeTruthy();
+  expect((await selected.json()).reasoning_effort).toBe('low');
+  const changed = await account.api.patch(selection, { data: { model_id: 'openai/gpt-4.1-mini' } });
+  expect(changed.ok(), await changed.text()).toBeTruthy();
+  expect((await changed.json()).reasoning_effort).toBeNull();
+  const reset = await account.api.patch(selection, { data: { model_id: null } });
+  expect(reset.ok(), await reset.text()).toBeTruthy();
+  expect((await reset.json()).model_id).toBeNull();
+  expect((await account.api.patch(selection, { data: { reasoning_effort: 'low' } })).status()).toBe(
+    400,
+  );
   const input = {
     message_id: randomUUID(),
     content: 'Write a workspace report and run a shell calculation.',

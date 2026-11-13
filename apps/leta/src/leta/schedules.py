@@ -131,10 +131,15 @@ def normalize(timing: Timing, now: datetime) -> tuple[str, dict[str, JSON]] | No
     return None
 
 
-async def get(db: Pool, id: UUID) -> dict[str, JSON]:
+async def get(
+    db: Pool, id: UUID, *, root: UUID | None = None, creator: UUID | None = None
+) -> dict[str, JSON]:
     async with db.connection() as conn:
         row = await (
-            await conn.execute("SELECT * FROM schedules WHERE id=%s", (id,))
+            await conn.execute(
+                "SELECT sc.* FROM schedules sc JOIN agents a ON a.id=sc.creator_agent_id WHERE sc.id=%s AND (%s::uuid IS NULL OR a.leta_id=%s) AND (%s::uuid IS NULL OR sc.creator_agent_id=%s)",
+                (id, root, root, creator, creator),
+            )
         ).fetchone()
     if row is None:
         raise LookupError("schedule not found")
@@ -241,9 +246,9 @@ async def save(db: Pool, canonical: CanonicalChange) -> dict[str, JSON]:
         if change.action == "create":
             if timing is None or change.content is None:
                 raise ValueError("schedule requires instruction and timing")
-            await conn.execute(
+            changed = await conn.execute(
                 """INSERT INTO schedules(id,creator_agent_id,target_agent_id,title,content,type,spec,paused)
-                VALUES(%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(id) DO NOTHING""",
+                VALUES(%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(id) DO NOTHING RETURNING *""",
                 (
                     change.schedule_id,
                     change.creator_agent_id,
@@ -258,8 +263,8 @@ async def save(db: Pool, canonical: CanonicalChange) -> dict[str, JSON]:
         elif old is None:
             raise LookupError("schedule not found")
         elif change.action == "delete":
-            await conn.execute(
-                "UPDATE schedules SET deleted_at=coalesce(deleted_at,%s) WHERE id=%s",
+            changed = await conn.execute(
+                "UPDATE schedules SET deleted_at=coalesce(deleted_at,%s) WHERE id=%s RETURNING *",
                 (canonical.now, change.schedule_id),
             )
         else:
@@ -272,8 +277,8 @@ async def save(db: Pool, canonical: CanonicalChange) -> dict[str, JSON]:
                     spec[field] = (
                         value.isoformat() if isinstance(value, datetime) else value
                     )
-            await conn.execute(
-                """UPDATE schedules SET title=%s,content=%s,type=%s,spec=%s,paused=%s WHERE id=%s""",
+            changed = await conn.execute(
+                """UPDATE schedules SET title=%s,content=%s,type=%s,spec=%s,paused=%s WHERE id=%s RETURNING *""",
                 (
                     change.title if change.title is not None else old["title"],
                     change.content if change.content is not None else old["content"],
@@ -283,11 +288,7 @@ async def save(db: Pool, canonical: CanonicalChange) -> dict[str, JSON]:
                     change.schedule_id,
                 ),
             )
-        row = await (
-            await conn.execute(
-                "SELECT * FROM schedules WHERE id=%s", (change.schedule_id,)
-            )
-        ).fetchone()
+        row = await changed.fetchone() or old
         assert row is not None
         native = change.action != "update" or bool(
             change.supplied

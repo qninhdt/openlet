@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING
 from openlet_api.letfs.v1.internal_pb2_grpc import LetFSInternalServiceStub
 from openlet_api.letfs.v1.letfs_pb2_grpc import LetFSServiceStub
 from openlet_api.platform.v1.internal_pb2_grpc import PlatformInternalServiceStub
-from openlet_api.platform.v1.platform_pb2_grpc import PlatformServiceStub
 
 if TYPE_CHECKING:
     from openlet_api.letfs.v1.internal_pb2_grpc import LetFSInternalServiceAsyncStub
@@ -13,7 +12,6 @@ if TYPE_CHECKING:
     from openlet_api.platform.v1.internal_pb2_grpc import (
         PlatformInternalServiceAsyncStub,
     )
-    from openlet_api.platform.v1.platform_pb2_grpc import PlatformServiceAsyncStub
 else:
     # Generated async stub types share the runtime stub class.
     from openlet_api.letfs.v1.internal_pb2_grpc import (
@@ -25,9 +23,6 @@ else:
     from openlet_api.platform.v1.internal_pb2_grpc import (
         PlatformInternalServiceStub as PlatformInternalServiceAsyncStub,
     )
-    from openlet_api.platform.v1.platform_pb2_grpc import (
-        PlatformServiceStub as PlatformServiceAsyncStub,
-    )
 
 
 from collections.abc import AsyncGenerator
@@ -35,7 +30,8 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from urllib.parse import quote
 
-from openlet_sdk.config import Config, ModelEntry, ReasoningEffort, load, secret
+import httpx
+from openlet_sdk.config import Config, secret
 from openlet_sdk.rpc import channel
 from redis.asyncio import Redis
 from temporalio.client import Client
@@ -45,32 +41,13 @@ from temporalio.runtime import Runtime
 
 from .auth import Authorization
 from .db import Pool, pool
+from .models import Models
 
 
 def validate(config: Config) -> None:
-    models = config["models"]["leta"]
-    ids = [item["model_id"] for item in models["catalog"]]
-    if not ids or len(ids) != len(set(ids)):
-        raise ValueError("model catalog must have unique model IDs")
-    for item in models["catalog"]:
-        if not 0 < item["max_output_tokens"] < item["context_window_tokens"]:
-            raise ValueError("model output must fit its context window")
-    model(config, models["default"]["model_id"], models["default"]["reasoning_effort"])
-
-
-def model(config: Config, model_id: str | None, effort: ReasoningEffort) -> ModelEntry:
-    if model_id is None:
-        effort = config["models"]["leta"]["default"]["reasoning_effort"]
-    selected = model_id or config["models"]["leta"]["default"]["model_id"]
-    for item in config["models"]["leta"]["catalog"]:
-        if item["model_id"] == selected:
-            if effort not in item["reasoning_efforts"]:
-                raise ValueError("unsupported reasoning effort for model")
-            return item
-    raise ValueError("unknown model")
-
-
-settings = load
+    compaction = config["services"]["leta"]["compaction"]
+    if not 0 < compaction["keep_fraction"] < compaction["trigger_fraction"] < 1:
+        raise ValueError("compaction requires 0 < keep_fraction < trigger_fraction < 1")
 
 
 @dataclass
@@ -80,10 +57,10 @@ class Services:
     auth: Authorization
     files: LetFSServiceAsyncStub
     storage: LetFSInternalServiceAsyncStub
-    platform: PlatformServiceAsyncStub
     internal: PlatformInternalServiceAsyncStub
     temporal: Client
     redis: Redis
+    models: Models
 
 
 def redis_url(config: Config) -> str:
@@ -96,7 +73,7 @@ async def connect(
     config: Config, *, native: Runtime | None = None
 ) -> AsyncGenerator[Services]:
     async with AsyncExitStack() as stack:
-        db = await stack.enter_async_context(pool())
+        db = await stack.enter_async_context(pool(config))
         auth = Authorization(config)
         stack.push_async_callback(auth.channel.close)
         f = await stack.enter_async_context(
@@ -124,14 +101,22 @@ async def connect(
             runtime=native,
             interceptors=[TracingInterceptor()],
         )
+        gateway = config["models"]["gateway"]
+        http = await stack.enter_async_context(
+            httpx.AsyncClient(
+                base_url=gateway["base_url"],
+                headers={"Authorization": f"Bearer {secret(gateway['api_key'])}"},
+                timeout=gateway["timeout_seconds"],
+            )
+        )
         yield Services(
             config,
             db,
             auth,
             LetFSServiceStub(f),
             LetFSInternalServiceStub(f),
-            PlatformServiceStub(p),
             PlatformInternalServiceStub(p),
             temporal,
             redis,
+            Models(http),
         )

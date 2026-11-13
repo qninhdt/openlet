@@ -18,7 +18,7 @@ from pydantic import Field, model_validator
 
 from .agents import Input, gate, get_agent, json_row
 from .auth import Actor, Authorization
-from .db import Pool, effect
+from .db import Pool, Row, effect
 
 
 class Question(Input):
@@ -77,10 +77,15 @@ def form(questions: list[Question]) -> dict[str, JSON]:
     return {"questions": items}
 
 
-async def get(db: Pool, id: UUID) -> dict[str, JSON]:
+async def get(
+    db: Pool, id: UUID, *, root: UUID | None = None, requester: UUID | None = None
+) -> dict[str, JSON]:
     async with db.connection() as conn:
         row = await (
-            await conn.execute("SELECT * FROM hitl_requests WHERE id=%s", (id,))
+            await conn.execute(
+                "SELECT h.* FROM hitl_requests h JOIN agents a ON a.id=h.requester_agent_id WHERE h.id=%s AND (%s::uuid IS NULL OR a.leta_id=%s) AND (%s::uuid IS NULL OR h.requester_agent_id=%s)",
+                (id, root, root, requester, requester),
+            )
         ).fetchone()
     if row is None:
         raise LookupError("request not found")
@@ -264,11 +269,24 @@ async def resolve(db: Pool, auth: Authorization, decision: Decision) -> dict[str
 async def apply(
     db: Pool, auth: Authorization, stub: LetFSServiceAsyncStub, id: UUID
 ) -> dict[str, JSON]:
-    request = await get(db, id)
-    agent = await get_agent(db, UUID(str(request["requester_agent_id"])))
-    root = cast(UUID, agent["leta_id"])
+    async def facts() -> Row:
+        async with db.connection() as conn:
+            row = await (
+                await conn.execute(
+                    """SELECT h.*,a.leta_id,a.box_id,l.workspace_id,l.state,b.state AS box_state
+                FROM hitl_requests h JOIN agents a ON a.id=h.requester_agent_id
+                JOIN letas l ON l.id=a.leta_id LEFT JOIN boxes b ON b.id=a.box_id WHERE h.id=%s""",
+                    (id,),
+                )
+            ).fetchone()
+        if row is None:
+            raise LookupError("request not found")
+        return row
+
+    request = await facts()
+    root = cast(UUID, request["leta_id"])
     async with effect(db, root):
-        request = await get(db, id)
+        request = await facts()
         if request["outcome"] is not None:
             return cast(dict[str, JSON], request["outcome"])
         if request["type"] != "approval" or request["status"] != "accepted":
@@ -276,10 +294,9 @@ async def apply(
         payload = cast(dict[str, JSON], request["payload"])
         storage = UUID(str(payload["storage_id"]))
         user = Actor("user", UUID(str(request["recipient_user_id"])))
-        agent = await get_agent(db, UUID(str(request["requester_agent_id"])))
         reason = None
-        if agent["state"] != "active" or (
-            agent["box_id"] and agent["box_state"] != "active"
+        if request["state"] != "active" or (
+            request["box_id"] and request["box_state"] != "active"
         ):
             reason = "requester_inactive"
         elif not await auth.allowed(user, "storage", storage, "manage_access"):
@@ -294,7 +311,7 @@ async def apply(
                 try:
                     await stub.SetStorageAccess(
                         fs.SetStorageAccessRequest(
-                            workspace_id=str(agent["workspace_id"]),
+                            workspace_id=str(request["workspace_id"]),
                             storage_id=str(storage),
                             actor=fs.ActorRef(agent_id=str(root)),
                             role=fs.STORAGE_ROLE_EDITOR

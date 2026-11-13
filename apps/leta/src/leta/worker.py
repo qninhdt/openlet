@@ -1,10 +1,10 @@
 import asyncio
 import logging
 import signal
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime, timedelta
-from typing import Literal, cast
+from typing import Literal, TypeVar, cast
 from uuid import UUID
 
 import grpc
@@ -36,11 +36,11 @@ from .agents import RootCreation, get_agent, stable
 from .auth import Actor, relationship
 from .boxes import BoxCreation
 from .config import Services, connect, validate
-from .db import effect, receipt, request_hash
-from .jobs.agent import Agent, AgentInput, RunInput
-from .jobs.hitl import HitlRequest
+from .db import Row, effect, receipt, request_hash
+from .jobs.agent import Agent, AgentInput, RunInput, RunResult
+from .jobs.hitl import HitlInput, HitlRequest
 from .jobs.resources import BoxLifecycle, LetaLifecycle, ResourceOperation
-from .jobs.schedules import ScheduleChanges, ScheduleDelivery
+from .jobs.schedules import ScheduleChanges, ScheduleDelivery, ScheduleInput
 from .messages import Message
 
 
@@ -61,6 +61,63 @@ async def deliver(s: Services, message: Message) -> dict[str, JSON]:
         id=request_hash(message).hex(),
         start_workflow_operation=start,
     )
+
+
+async def submit_hitl(s: Services, request: hitl.OpenRequest) -> dict[str, JSON]:
+    queues = s.config["dependencies"]["temporal"]["queues"]
+    start: WithStartWorkflowOperation[HitlRequest, None] = WithStartWorkflowOperation(
+        HitlRequest.run,
+        HitlInput(request=request, bridge_queue=queues["leta_bridge"]),
+        id=f"hitl/{request.id}",
+        task_queue=queues["leta"],
+        id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+    )
+    return await s.temporal.execute_update_with_start_workflow(  # pyright: ignore[reportUnknownMemberType]  # Temporal overload is untyped.
+        HitlRequest.open,
+        request,
+        start_workflow_operation=start,
+        id=request_hash(request).hex(),
+    )
+
+
+async def submit_schedule(s: Services, change: schedules.Change) -> dict[str, JSON]:
+    queues = s.config["dependencies"]["temporal"]["queues"]
+    start: WithStartWorkflowOperation[ScheduleChanges, None] = (
+        WithStartWorkflowOperation(
+            ScheduleChanges.run,
+            ScheduleInput(
+                schedule_id=change.schedule_id, bridge_queue=queues["leta_bridge"]
+            ),
+            id=f"schedule-changes/{change.schedule_id}",
+            task_queue=queues["leta"],
+            id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+        )
+    )
+    return await s.temporal.execute_update_with_start_workflow(  # pyright: ignore[reportUnknownMemberType]  # Temporal overload is untyped.
+        ScheduleChanges.change,
+        change,
+        start_workflow_operation=start,
+        id=request_hash(change).hex(),
+    )
+
+
+T = TypeVar("T")
+
+
+async def fanout(items: Iterable[T], action: Callable[[T], Awaitable[None]]) -> None:
+    limit = asyncio.Semaphore(8)
+
+    async def apply(item: T) -> None:
+        async with limit:
+            await action(item)
+
+    # Settle all in-flight effects before the caller may retry the phase.
+    results = await asyncio.gather(
+        *(apply(item) for item in items), return_exceptions=True
+    )
+    for result in results:
+        if isinstance(result, BaseException):
+            raise result
 
 
 async def operation(
@@ -116,7 +173,9 @@ async def operation(
         if error.status != RPCStatusCode.NOT_FOUND:
             raise
         return cast(dict[str, JSON], await handle.result())
-    return cast(dict[str, JSON], await handle.result()) if wait else result
+    return (
+        cast(dict[str, JSON], await handle.result()) if wait and not is_box else result
+    )
 
 
 @asynccontextmanager
@@ -142,7 +201,7 @@ class Activities:
         self.s, self.langfuse = services, langfuse
 
     @activity.defn
-    async def run_agent(self, input: RunInput) -> str:
+    async def run_agent(self, input: RunInput) -> RunResult:
         from .runtime.agent import run
 
         return await run(self.s, self.langfuse, input)
@@ -153,19 +212,22 @@ class Activities:
 
     @activity.defn
     async def load_agent_control(self, id: UUID) -> dict[str, JSON]:
-        agent = await get_agent(self.s.db, id)
         async with self.s.db.connection() as conn:
             row = await (
                 await conn.execute(
-                    "SELECT id FROM runs WHERE agent_id=%s AND status IN ('running','paused')",
+                    """SELECT l.state,l.paused,b.state AS box_state,a.box_id,r.id AS run_id
+                FROM agents a JOIN letas l ON l.id=a.leta_id LEFT JOIN boxes b ON b.id=a.box_id
+                LEFT JOIN runs r ON r.agent_id=a.id AND r.status IN ('running','paused') WHERE a.id=%s""",
                     (id,),
                 )
             ).fetchone()
+        if row is None:
+            raise LookupError("agent not found")
         return {
-            "active": agent["state"] == "active"
-            and (agent["box_id"] is None or agent["box_state"] == "active"),
-            "paused": bool(agent["paused"]),
-            "run_id": str(row["id"]) if row else None,
+            "active": row["state"] == "active"
+            and (row["box_id"] is None or row["box_state"] == "active"),
+            "paused": bool(row["paused"]),
+            "run_id": str(row["run_id"]) if row["run_id"] else None,
         }
 
     @activity.defn
@@ -175,15 +237,8 @@ class Activities:
         status: Literal["completed", "paused", "failed", "cancelled"],
         error: str | None,
     ) -> None:
-        await agents.finish_run(self.s.db, id, status, error)
+        row = await agents.finish_run(self.s.db, id, status, error)
         if status != "paused":
-            async with self.s.db.connection() as conn:
-                row = await (
-                    await conn.execute(
-                        "SELECT r.agent_id,a.leta_id FROM runs r JOIN agents a ON a.id=r.agent_id WHERE r.id=%s",
-                        (id,),
-                    )
-                ).fetchone()
             if row:
                 await events.publish(
                     self.s.redis,
@@ -314,9 +369,13 @@ class Activities:
     async def refresh_leta_agents(self, root: UUID) -> None:
         async with self.s.db.connection() as conn:
             rows = await (
-                await conn.execute("SELECT id FROM agents WHERE leta_id=%s", (root,))
+                await conn.execute(
+                    "SELECT a.id FROM agents a LEFT JOIN boxes b ON b.id=a.box_id WHERE a.leta_id=%s AND (a.box_id IS NULL OR b.state='active')",
+                    (root,),
+                )
             ).fetchall()
-        for row in rows:
+
+        async def refresh(row: Row) -> None:
             try:
                 await self.s.temporal.get_workflow_handle(  # pyright: ignore[reportUnknownMemberType]  # Temporal has an untyped overload for args.
                     f"agent/{row['id']}"
@@ -324,6 +383,8 @@ class Activities:
             except RPCError as error:
                 if error.status != RPCStatusCode.NOT_FOUND:
                     raise
+
+        await fanout(rows, refresh)
 
     @activity.defn
     async def provision_box(self, creation: BoxCreation) -> UUID:
@@ -361,7 +422,10 @@ class Activities:
     async def close_box(self, id: UUID) -> None:
         async with self.s.db.connection() as conn, conn.transaction():
             row = await (
-                await conn.execute("SELECT leta_id FROM boxes WHERE id=%s", (id,))
+                await conn.execute(
+                    "SELECT leta_id FROM boxes WHERE id=%s",
+                    (id,),
+                )
             ).fetchone()
             if row:
                 await conn.execute(
@@ -378,7 +442,7 @@ class Activities:
                 cast(UUID, row["id"])
                 for row in await (
                     await conn.execute(
-                        "SELECT id FROM agents WHERE leta_id=%s AND (%s::uuid IS NULL OR box_id=%s)",
+                        "SELECT a.id FROM agents a LEFT JOIN boxes b ON b.id=a.box_id WHERE a.leta_id=%s AND (a.box_id IS NULL OR b.state<>'archived') AND (%s::uuid IS NULL OR box_id=%s)",
                         (root, box, box),
                     )
                 ).fetchall()
@@ -389,7 +453,8 @@ class Activities:
                     (ids, ids),
                 )
             ).fetchall()
-        for row in producers:
+
+        async def remove_producer(row: Row) -> None:
             try:
                 await self.s.temporal.get_schedule_handle(
                     f"schedule/{row['id']}"
@@ -397,6 +462,8 @@ class Activities:
             except RPCError as error:
                 if error.status != RPCStatusCode.NOT_FOUND:
                     raise
+
+        await fanout(producers, remove_producer)
         async with self.s.db.connection() as conn:
             await conn.execute(
                 "UPDATE schedules SET deleted_at=coalesce(deleted_at,now()) WHERE creator_agent_id=ANY(%s) OR target_agent_id=ANY(%s)",
@@ -408,7 +475,8 @@ class Activities:
                     (ids,),
                 )
             ).fetchall()
-        for row in requests:
+
+        async def settle_request(row: Row) -> None:
             handle = self.s.temporal.get_workflow_handle(f"hitl/{row['id']}")
             try:
                 await handle.execute_update("settle_effects")  # pyright: ignore[reportUnknownMemberType]  # Upstream SDK has an untyped overload or kwargs.
@@ -419,7 +487,10 @@ class Activities:
             except RPCError as error:
                 if error.status != RPCStatusCode.NOT_FOUND:
                     raise
-        for id in ids:
+
+        await fanout(requests, settle_request)
+
+        async def settle_writer(id: UUID) -> None:
             try:
                 handle = self.s.temporal.get_workflow_handle(f"agent/{id}")
                 await handle.execute_update("stop")  # pyright: ignore[reportUnknownMemberType]  # Temporal has an untyped overload for args.
@@ -435,19 +506,15 @@ class Activities:
                 )
             activity.heartbeat()
 
-    async def archive_box(self, id: UUID) -> None:
-        async with self.s.db.connection() as conn:
-            box = await (
-                await conn.execute("SELECT * FROM boxes WHERE id=%s", (id,))
-            ).fetchone()
-        if box is None or box["state"] == "archived":
-            return
-        root = await get_agent(self.s.db, cast(UUID, box["leta_id"]))
+        await fanout(ids, settle_writer)
+
+    async def archive_box(self, box: Row) -> None:
+        id = cast(UUID, box["id"])
         try:
             await self.s.files.TrashNode(
                 fs.TrashNodeRequest(
-                    workspace_id=str(root["workspace_id"]),
-                    storage_id=str(root["storage_id"]),
+                    workspace_id=str(box["workspace_id"]),
+                    storage_id=str(box["storage_id"]),
                     target=fs.NodeLocator(node_id=str(box["home_node_id"])),
                     request_id=str(stable(id, "delete-home")),
                 ),
@@ -468,12 +535,15 @@ class Activities:
         async with pulsing():
             async with self.s.db.connection() as conn:
                 row = await (
-                    await conn.execute("SELECT leta_id FROM boxes WHERE id=%s", (id,))
+                    await conn.execute(
+                        "SELECT b.*,l.workspace_id,l.storage_id FROM boxes b JOIN letas l ON l.id=b.leta_id WHERE b.id=%s AND b.state<>'archived'",
+                        (id,),
+                    )
                 ).fetchone()
             if row:
                 await self.settle_agents(cast(UUID, row["leta_id"]), id)
                 async with effect(self.s.db, cast(UUID, row["leta_id"])):
-                    await self.archive_box(id)
+                    await self.archive_box(row)
 
     @activity.defn
     async def cleanup_leta(self, id: UUID) -> None:
@@ -488,12 +558,11 @@ class Activities:
                     )
                     rows = await (
                         await conn.execute(
-                            "SELECT id FROM boxes WHERE leta_id=%s AND state<>'archived'",
+                            "SELECT b.*,l.workspace_id,l.storage_id FROM boxes b JOIN letas l ON l.id=b.leta_id WHERE b.leta_id=%s AND b.state<>'archived'",
                             (id,),
                         )
                     ).fetchall()
-                for row in rows:
-                    await self.archive_box(cast(UUID, row["id"]))
+                await fanout(rows, self.archive_box)
                 root = await get_agent(self.s.db, id)
                 workspace = cast(UUID, root["workspace_id"])
                 await self.s.auth.write(

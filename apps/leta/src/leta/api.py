@@ -27,8 +27,7 @@ from opentelemetry.instrumentation.redis import RedisInstrumentor
 from psycopg import errors
 from pydantic import Field
 from sse_starlette import EventSourceResponse, ServerSentEvent
-from temporalio.client import WithStartWorkflowOperation, WorkflowUpdateFailedError
-from temporalio.common import WorkflowIDConflictPolicy
+from temporalio.client import WorkflowUpdateFailedError
 from temporalio.service import RPCError, RPCStatusCode
 
 from . import boxes, events, history, hitl, messages, schedules
@@ -44,13 +43,11 @@ from .agents import (
 )
 from .auth import Actor, human, relationship
 from .boxes import BoxCreation, CreateBox
-from .config import Services, connect, model, validate
-from .db import Row, request_hash
-from .jobs.hitl import HitlInput, HitlRequest
+from .config import Services, connect, validate
+from .db import Row
 from .jobs.resources import ResourceOperation
-from .jobs.schedules import ScheduleChanges, ScheduleInput
 from .messages import Message, SendMessage
-from .worker import deliver, operation
+from .worker import deliver, operation, submit_hitl, submit_schedule
 
 
 @asynccontextmanager
@@ -172,12 +169,29 @@ async def ready(s: Service) -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get(base + "/models")
+async def list_models(workspace_id: UUID, s: Service, actor: User) -> JSON:
+    await s.auth.require(actor, "workspace", workspace_id, "participate")
+    return {
+        "models": [
+            {
+                "model_id": item.model_id,
+                "reasoning_efforts": list(item.reasoning_efforts),
+            }
+            for item in (await s.models.catalog()).values()
+        ]
+    }
+
+
 @app.post(base, status_code=202)
 async def create_leta(
     workspace_id: UUID, body: CreateLeta, s: Service, actor: User
 ) -> JSON:
     await s.auth.require(actor, "workspace", workspace_id, "create_agent")
-    model(s.config, body.model_id, body.reasoning_effort)
+    if body.model_id is not None:
+        await s.models.get(body.model_id, body.reasoning_effort)
+    elif body.reasoning_effort is not None:
+        raise ValueError("reasoning effort requires an explicit model")
     creation = RootRequest(
         workspace_id=workspace_id,
         owner_id=actor.id,
@@ -208,10 +222,10 @@ async def list_letas(
                 (workspace_id, cursor, cursor),
             )
         ).fetchall()
-    items: list[JSON] = []
-    for row in rows:
-        if await s.auth.allowed(actor, "agent", cast(UUID, row["id"]), "use"):
-            items.append(json_row(row))
+    allowed = await s.auth.allowed_many(
+        actor, "agent", [cast(UUID, row["id"]) for row in rows], "use"
+    )
+    items: list[JSON] = [json_row(row) for row in rows if row["id"] in allowed]
     return {
         "items": items,
         "next_cursor": str(rows[-1]["id"]) if len(rows) == 20 else None,
@@ -282,33 +296,38 @@ async def configure_agent(
     effort = (
         body.reasoning_effort
         if "reasoning_effort" in body.model_fields_set
-        else agent["reasoning_effort"]
+        else (
+            None if "model_id" in body.model_fields_set else agent["reasoning_effort"]
+        )
     )
     from openlet_sdk.config import ReasoningEffort
 
-    if selected is None and agent["box_id"]:
-        parent = await get_agent(s.db, leta_id)
-        selected = cast(str | None, parent["model_id"])
-        effort = parent["reasoning_effort"]
-    model(s.config, selected, cast(ReasoningEffort, effort))
+    if selected is None and effort is not None:
+        raise ValueError("reasoning effort requires an explicit model")
+    if selected is not None:
+        await s.models.get(selected, cast(ReasoningEffort, effort))
     if not body.model_fields_set:
         return json_row(agent)
     from psycopg import sql
 
     values = body.model_dump(exclude_unset=True)
-    if "model_id" in values and body.model_id is None:
-        values["reasoning_effort"] = None
+    if "model_id" in values:
+        values["reasoning_effort"] = effort if body.model_id is not None else None
     async with s.db.connection() as conn, conn.transaction():
         await gate(conn, leta_id, cast(UUID | None, agent["box_id"]))
-        await conn.execute(
-            sql.SQL("UPDATE agents SET {} WHERE id=%s").format(
-                sql.SQL(",").join(
-                    sql.SQL("{}=%s").format(sql.Identifier(field)) for field in values
-                )
-            ),
-            (*values.values(), agent_id),
-        )
-    return json_row(await get_agent(s.db, agent_id))
+        updated = await (
+            await conn.execute(
+                sql.SQL("UPDATE agents SET {} WHERE id=%s RETURNING *").format(
+                    sql.SQL(",").join(
+                        sql.SQL("{}=%s").format(sql.Identifier(field))
+                        for field in values
+                    )
+                ),
+                (*values.values(), agent_id),
+            )
+        ).fetchone()
+    assert updated is not None
+    return json_row({**agent, **updated})
 
 
 @app.post(root_path + "/messages", dependencies=[Depends(usable)])
@@ -489,7 +508,7 @@ async def get_box(
 async def delete_box(
     leta_id: UUID, box_id: UUID, body: CommandInput, s: Service
 ) -> JSON:
-    await boxes.get(s.db, leta_id, str(box_id))
+    await boxes.identity(s.db, leta_id, box_id)
     return await operation(
         s,
         ResourceOperation(
@@ -566,12 +585,15 @@ async def incoming_requests(
                 (actor.id, cursor, cursor),
             )
         ).fetchall()
-    items: list[JSON] = []
-    for row in rows:
-        if await s.auth.allowed(
-            actor, "workspace", cast(UUID, row["workspace_id"]), "participate"
-        ):
-            items.append(json_row(row))
+    allowed = await s.auth.allowed_many(
+        actor,
+        "workspace",
+        [cast(UUID, row["workspace_id"]) for row in rows],
+        "participate",
+    )
+    items: list[JSON] = [
+        json_row(row) for row in rows if row["workspace_id"] in allowed
+    ]
     return {
         "items": items,
         "next_cursor": str(rows[-1]["id"]) if len(rows) == 20 else None,
@@ -695,20 +717,7 @@ async def ask(
             "reason": body.reason,
         },
     )
-    queues = s.config["dependencies"]["temporal"]["queues"]
-    start: WithStartWorkflowOperation[HitlRequest, None] = WithStartWorkflowOperation(
-        HitlRequest.run,
-        HitlInput(request=request, bridge_queue=queues["leta_bridge"]),
-        id=f"hitl/{request.id}",
-        task_queue=queues["leta"],
-        id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
-    )
-    return await s.temporal.execute_update_with_start_workflow(  # pyright: ignore[reportUnknownMemberType]  # Upstream SDK has an untyped overload or kwargs.
-        HitlRequest.open,
-        request,
-        start_workflow_operation=start,
-        id=request_hash(request).hex(),
-    )
+    return await submit_hitl(s, request)
 
 
 class ScheduleCreate(schedules.Timing):
@@ -725,32 +734,11 @@ class ScheduleUpdate(schedules.Timing):
     paused: bool | None = None
 
 
-async def submit_schedule(s: Services, command: schedules.Change) -> JSON:
-    queues = s.config["dependencies"]["temporal"]["queues"]
-    start: WithStartWorkflowOperation[ScheduleChanges, None] = (
-        WithStartWorkflowOperation(
-            ScheduleChanges.run,
-            ScheduleInput(
-                schedule_id=command.schedule_id, bridge_queue=queues["leta_bridge"]
-            ),
-            id=f"schedule-changes/{command.schedule_id}",
-            task_queue=queues["leta"],
-            id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
-        )
-    )
-    return await s.temporal.execute_update_with_start_workflow(  # pyright: ignore[reportUnknownMemberType]  # Upstream SDK has an untyped overload or kwargs.
-        ScheduleChanges.change,
-        command,
-        id=request_hash(command).hex(),
-        start_workflow_operation=start,
-    )
-
-
 @app.post(root_path + "/schedules", dependencies=[Depends(usable)])
 async def create_schedule(leta_id: UUID, body: ScheduleCreate, s: Service) -> JSON:
     target = leta_id
     if body.target_box_id:
-        box = await boxes.get(s.db, leta_id, str(body.target_box_id))
+        box = await boxes.identity(s.db, leta_id, body.target_box_id)
         target = UUID(str(box["representative_agent_id"]))
     data = body.model_dump(exclude={"request_id", "target_box_id"})
     return await submit_schedule(
@@ -793,7 +781,7 @@ async def get_schedule(leta_id: UUID, schedule_id: UUID, s: Service) -> dict[str
 async def update_schedule(
     leta_id: UUID, schedule_id: UUID, body: ScheduleUpdate, s: Service
 ) -> JSON:
-    value = await get_schedule(leta_id, schedule_id, s)
+    value = await schedules.get(s.db, schedule_id, root=leta_id)
     return await submit_schedule(
         s,
         schedules.Change(
@@ -811,7 +799,7 @@ async def update_schedule(
 async def delete_schedule(
     leta_id: UUID, schedule_id: UUID, body: CommandInput, s: Service
 ) -> JSON:
-    value = await get_schedule(leta_id, schedule_id, s)
+    value = await schedules.get(s.db, schedule_id, root=leta_id)
     return await submit_schedule(
         s,
         schedules.Change(

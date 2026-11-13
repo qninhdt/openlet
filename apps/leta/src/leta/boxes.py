@@ -2,10 +2,11 @@ from typing import cast
 from uuid import UUID
 
 from openlet_sdk.config import JSON
+from psycopg import sql
 from pydantic import Field, model_validator
 
 from .agents import Input, gate, json_row, stable
-from .db import Pool, receipt, save_receipt
+from .db import Pool, Row, receipt, save_receipt
 
 
 class LetiDefinition(Input):
@@ -72,24 +73,35 @@ async def prepare(db: Pool, creation: BoxCreation, home: UUID) -> dict[str, JSON
                 home,
             ),
         )
-        for item in creation.request.letis:
-            await conn.execute(
-                """INSERT INTO agents(id,leta_id,box_id,name,description,system_prompt)
-                VALUES(%s,%s,%s,%s,%s,%s)""",
-                (
-                    ids[item.name],
-                    creation.leta_id,
-                    creation.box_id,
-                    item.name,
-                    item.description,
-                    item.system_prompt,
-                ),
+        members = [
+            (
+                ids[item.name],
+                creation.leta_id,
+                creation.box_id,
+                item.name,
+                item.description,
+                item.system_prompt,
             )
-        for a, b in creation.request.edges:
-            low, high = sorted((ids[a], ids[b]))
+            for item in creation.request.letis
+        ]
+        await conn.execute(
+            sql.SQL(
+                "INSERT INTO agents(id,leta_id,box_id,name,description,system_prompt) VALUES {}"
+            ).format(
+                sql.SQL(",").join(sql.SQL("(%s,%s,%s,%s,%s,%s)") for _ in members)
+            ),
+            tuple(value for member in members for value in member),
+        )
+        edges = [
+            (creation.box_id, *sorted((ids[a], ids[b])))
+            for a, b in creation.request.edges
+        ]
+        if edges:
             await conn.execute(
-                "INSERT INTO box_edges(box_id,agent_low_id,agent_high_id) VALUES(%s,%s,%s)",
-                (creation.box_id, low, high),
+                sql.SQL(
+                    "INSERT INTO box_edges(box_id,agent_low_id,agent_high_id) VALUES {}"
+                ).format(sql.SQL(",").join(sql.SQL("(%s,%s,%s)") for _ in edges)),
+                tuple(value for edge in edges for value in edge),
             )
         result: dict[str, JSON] = {
             "id": str(creation.box_id),
@@ -105,6 +117,19 @@ async def prepare(db: Pool, creation: BoxCreation, home: UUID) -> dict[str, JSON
             result,
         )
         return result
+
+
+async def identity(db: Pool, root: UUID, id: UUID) -> Row:
+    async with db.connection() as conn:
+        row = await (
+            await conn.execute(
+                "SELECT id,representative_agent_id FROM boxes WHERE id=%s AND leta_id=%s",
+                (id, root),
+            )
+        ).fetchone()
+    if row is None:
+        raise LookupError("box not found")
+    return row
 
 
 async def get(
