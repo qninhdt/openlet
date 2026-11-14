@@ -456,6 +456,35 @@ class LetFS(BaseVFS):
             path, (await materialize(data)).decode("utf-8"), overwrite=True
         )
 
+    async def create(self, path: PathSpec) -> FileStat:
+        try:
+            return await self.write_text(path, "")
+        except FileExistsError:
+            return await self.stat(path)
+
+    async def truncate(
+        self, path: PathSpec, length: int, no_create: bool = False
+    ) -> FileStat:
+        try:
+            node = await self.call(
+                self.stub.MutateText(
+                    fs.MutateTextRequest(
+                        workspace_id=str(self.workspace),
+                        storage_id=str(self.storage),
+                        target=self.locator(path),
+                        truncate_bytes=length,
+                        request_id=self.request_id("truncate", path),
+                    ),
+                    metadata=self.actor.metadata,
+                    timeout=30,
+                )
+            )
+        except FileNotFoundError:
+            if no_create or length != 0:
+                raise
+            return await self.create(path)
+        return stat(node)
+
     async def append(self, path: PathSpec, data: ByteSource) -> FileStat:
         content = (await materialize(data)).decode("utf-8")
         try:
