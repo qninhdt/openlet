@@ -158,7 +158,7 @@ history_search:
 Search earlier activity using literal keywords; all query terms must match. Use a few distinctive terms. Omit query for recent previews.
 ```
 
-These describe existing semantics. The approved [tool-format.md](tool-format.md) adds content-focused history previews and sequence references. The separate history self-matching/search-selection fix remains deferred; do not silently expand format work into that implementation. Likewise, do not change retrieval top_k, relevance cutoffs, reranking or ingestion artifacts as part of prompt editing.
+These describe existing semantics. The approved [tool-format.md](tool-format.md) adds content-focused history previews and sequence references. The history self-matching correction was subsequently approved in section 13; it excludes lookup call/results only from agent search, preserving stored and public history. Likewise, do not change retrieval top_k, relevance cutoffs, reranking or ingestion artifacts as part of prompt editing.
 
 ## 6. Approved compaction prompt clarification
 
@@ -285,3 +285,24 @@ Validation is complete: 30 tests, Ruff and strict Pyright pass; real PostgreSQL/
 Measured five-turn result: 120 tools, 101 generations, seven tool errors, two compactions, 11m32s. Including recovery: 162 tools, 129 generations, eight tool errors, three compactions, 15m09s. All 11 runs completed; all agents retain one clean latest checkpoint. Three workpapers survive box archival, both schedules are deleted and no HITL remains pending. Lower tool counts do not establish successful efficiency improvement because original requirements were omitted and an extra instruction was needed.
 
 The existing input contract/prompts were not silently changed after this finding. Notification delivery/read behavior needs review before calling the golden journey complete. Detailed errors, remaining content defects, verification limits and comparison with both baselines: [HANA acceptance report](../reports/acceptance-261115-hana-query-optimization.md). Temporary scripts and evidence: `/tmp/openlet-hana-optimized/`.
+
+
+## 13. Approved notification and harness correction round
+
+The user approved implementing the six-part follow-up after the full HANA checkpoint audit: explicit preview notifications without a read-action footer; voluntary reading when details are needed; accurate inbox read/reply descriptions; exclusion of history lookup calls/results from agent search; image-aware listing labels; and focused collaboration/execution prompt replacements. Keep ordinary root previews at 120 characters, full Leti/HITL/scheduled inputs, conversation-scoped unread batches, validation, pagination, model defaults and existing compaction settings. No forced read gate or automatic full-message injection.
+
+History search adds a predicate to its existing SELECT, excluding only tool_call/tool_result entries named history_search or history_read. No extra query, table, index or deletion. Public history and direct entry reads retain all records. Listings use media types already supplied by LetFS to distinguish an image that file_read opens directly from document artifact directories; no label-only Stat/RPC is added.
+
+Native dependency investigation confirmed two Monty limitations: Path.resolve() returns text and PosixPath.parents is absent. Mirage's AbstractOS callback contract itself returns text. The user explicitly chose **keep Monty and use supported paths/APIs**, rather than modifying dependencies. Prompt guidance uses explicit /home output paths, execution cwd and supported .parent. No runtime fork, monkeypatch or adapter.
+
+Prompt changes delegate independent work as soon as sources/outcomes are known, keep role and assignment separate, put detailed evidence in files, avoid reopening work for a completion notice, name the base of percentage calculations, distinguish recommendations from requirements, and use && for dependent shell steps. Existing instructions are replaced in Markdown; compiled fixtures and Langfuse composition must match.
+
+Runtime/tool boundary implemented in `8fb680d` (`fix(leta): clarify inbox previews and exclude history lookup echoes`). Validation: **31 Leta tests**, Ruff lint/format and **strict Pyright: zero errors/warnings**. A real PostgreSQL regression verifies exclusion, evidence preservation, recipient scoping, pagination, direct entry reads and unfiltered public history; its temporary changes were rolled back. Image listing has a regression test and uses existing response media type, without additional RPCs.
+
+Published Langfuse common/root/Leti **v8** to production after checking compiled composition and preserving configs/model defaults. Compiled WireMock fixtures match Cloud. Compaction remains **v5**, with unchanged thresholds, tail and budget. Rebuilt/recreated only Leta API and worker. No Monty/Mirage patch, alternate loop, forced inbox-read gate or new retry/recovery mechanism.
+
+Fresh DeepSeek medium root/session `0a1ca438-45fe-4174-8cf9-cd6b184dcadd` replayed the five original HANA messages against the same documents, with actual access/choice HITL answers and **no recovery user message**. Operational lifecycle completes: correct totals; two Leti exchange findings; private access and image reads work; semantic retrieval finds the clause; group interval changes and pauses; lot question cancels; both schedules delete; five workpapers survive box archival. All 11 runs complete; all agents retain one clean checkpoint; public pagination and SSE folded replay pass.
+
+**Overall quality/efficiency remains incomplete.** This run records **211 tools, 155 generations, eight explicit tool errors, four compactions, 11m58s**. Root opens full previews and does not ask for a resend, but repeats analysis, opens 28 history entries and wakes completed team work. Unsupported commands/APIs and guessed paths still cause recoverable errors. The final report exceeds the requested length, has stale box references and still turns advice into requirements; its claim that any extra cost exceeds the cap contradicts the 63,280 headroom. No general efficiency improvement is established. Agent-authored evidence was not corrected by the tester or hidden behind an extra instruction.
+
+Detailed comparison, errors, content findings and verification limits: [notification/harness acceptance report](../reports/acceptance-261115-hana-preview-followup.md). Test scripts, complete histories, checkpoints, API control, delivered files and Cloud evidence stay under `/tmp/openlet-hana-notifications/`. Unrelated ingestion/configuration changes were preserved and excluded from these commits/deployment.

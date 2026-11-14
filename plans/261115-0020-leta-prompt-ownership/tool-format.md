@@ -162,18 +162,18 @@ Box create/get must supply routable names matching the tool-input contract; outp
 Keep notification-driven reading for ordinary root inbox messages. Reduce preview from 240 to **120 Unicode characters including the truncation marker**. Collapse whitespace only inside previews. Preview is for triage, not the full instruction.
 
 ```text
-New messages
+New inbox message from User | message=73
+Preview: Please check the updated budget before finalizing the recommendation…
 
-From User | message=73
-Please check the updated budget before finalizing the recommendation...
+---
 
-From box quote-review | message=74
-Comparison and independent review are complete. The recommendation is...
+New inbox message from box quote-review | message=74
+Preview: Comparison and independent review are complete. The recommendation is…
 ```
 
 Use known names; do not fetch another service solely to decorate a sender label. If an identity has no available name, use its source type and the actionable message number. Do not invent a person-name mapping.
 
-Group conversation notifications within the fetched batch, keep the newest preview and a stable message number identifying that conversation. This does not mark unseen bodies as read or drop them. Preserve the existing batch cursor/admission semantics; a future correction in the same conversation must remain available to inbox_read. Read the ordinary message body before acting on it.
+Group conversation notifications within the fetched batch, keep the newest preview and a stable message number identifying that conversation. This does not mark unseen bodies as read or drop them. Preserve the existing batch cursor/admission semantics; a future correction in the same conversation must remain available to inbox_read. Notifications do not require immediate action or an obligatory read. Read the full conversation when its details are needed. A shortened preview does not mean that the original is incomplete; reuse full messages already in context instead of asking for resends. Do not add a read-action footer.
 
 ### inbox_read
 
