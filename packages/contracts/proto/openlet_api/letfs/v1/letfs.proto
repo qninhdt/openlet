@@ -15,7 +15,7 @@ enum FileType { FILE_TYPE_UNSPECIFIED = 0; FILE_TYPE_TEXT = 1; FILE_TYPE_BLOB = 
 message ActorRef { oneof actor { option (buf.validate.oneof).required = true; string user_id = 1 [(buf.validate.field).string.uuid = true]; string agent_id = 2 [(buf.validate.field).string.uuid = true]; } }
 message StorageOwnership { oneof owner { string user_id = 1; string agent_id = 2; string workspace_id = 3; } }
 message StorageCapabilities { bool read = 1; bool write = 2; bool manage_access = 3; }
-message Storage { string id = 1; string workspace_id = 2; string name = 3; StorageVisibility visibility = 4; string root_node_id = 5; bool allow_blob_files = 6; bool allow_indexing = 7; StorageCapabilities capabilities = 8; }
+message Storage { string id = 1; string workspace_id = 2; string name = 3; StorageVisibility visibility = 4; string root_node_id = 5; bool allow_blob_files = 6; bool allow_indexing = 7; StorageCapabilities capabilities = 8; StorageOwnership owner = 9; }
 message WorkspaceStorage { string workspace_id = 1; int64 quota_bytes = 2; int64 used_bytes = 3; }
 message AccessGrant { ActorRef actor = 1; StorageRole role = 2; }
 message StorageAccess { StorageOwnership ownership = 1; repeated AccessGrant grants = 2; StorageVisibility visibility = 3; }

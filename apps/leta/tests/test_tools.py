@@ -61,7 +61,11 @@ async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None
     try:
 
         class Files:
-            bindings = {"read-only": (uuid4(), False), "editable": (uuid4(), True)}
+            storages = [
+                {"id": "read-only", "readable": True, "writable": False},
+                {"id": "editable", "readable": True, "writable": True},
+                {"id": "private", "readable": False, "writable": False},
+            ]
 
             async def open(self) -> Session:
                 return await workspace.session("tools")
@@ -141,6 +145,7 @@ async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None
         assert "ZeroDivisionError" in replies["failed-python"].text
         assert '"writable": false' in replies["mounts"].text
         assert '"writable": true' in replies["mounts"].text
+        assert '"readable": false' in replies["mounts"].text
         assert replies["invalid-calendar"].status == "error"
         assert "day_of_week" in replies["invalid-calendar"].text
     finally:
