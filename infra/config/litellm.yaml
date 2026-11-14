@@ -10,9 +10,13 @@ credential_list:
 model_list:
   - model_name: openai/gpt-6.1-sol
     litellm_params:
+      # Vilao's Chat Completions stream works; avoid OpenAI's automatic Responses bridge.
       model: openai/gpt-6.1-sol
+      custom_llm_provider: custom_openai
       litellm_credential_name: vilao
+      allowed_openai_params: [reasoning_effort]
     model_info:
+      base_model: gpt-6.1-sol
       access_groups: [leta]
       supported_reasoning_efforts: [low]
       supports_response_schema: false

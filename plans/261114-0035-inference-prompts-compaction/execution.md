@@ -323,3 +323,33 @@ preserved and can be isolated to 2026-11-14 00:13–00:36 UTC for the journeys.
 Grafana metric acceptance still awaits old head-series release: last observed
 451 active / 36,913 memory series, so low admitted active count alone does not
 prove new-series ingestion. This external acceptance item is not marked complete.
+
+## Vilao streaming tool arguments — root cause and routing correction
+
+The five journeys reached their business outcomes, but a native checkpoint census
+found 102 failed attempts among 542 tool calls. Of these, 74 lacked required
+arguments. Replaying the actual failing Northstar context reproduced three empty
+`file_read` calls through LiteLLM 1.109.1, while direct Vilao Chat Completions
+returned all three paths.
+
+With tools and reasoning enabled, the OpenAI adapter automatically selected
+Responses. Vilao's captured Responses stream supplied complete arguments in
+`function_call_arguments.done`/`output_item.done` without argument deltas; native
+LiteLLM conversion deterministically lost those arguments. The deployment now
+selects LiteLLM's built-in `custom_openai` adapter explicitly, keeping the exact
+upstream model name separate from the public alias. No custom provider code,
+argument repair or nonstreaming fallback was added. `allowed_openai_params`
+forwards reasoning effort; `model_info.base_model` preserves native registry
+metadata/pricing lookup. Other deployments and embeddings are unchanged.
+
+Actual proxy and ChatLiteLLM streaming returned complete parallel tool arguments.
+A captured-request check confirmed Chat Completions routing and forwarding
+`reasoning_effort=low`. Live metadata retained model listing limits, usage,
+cache-read tokens and `response_cost`. Public model name remains
+`openai/gpt-6.1-sol`; names containing `/` are preserved when the adapter is
+specified separately. Costs remain registry estimates, not verified Vilao rates.
+
+Evidence/scripts are outside source in `/tmp/openlet-golden-small`, including
+`responses-raw-events.json`, `proxy-fix-summary.json`, `native-chat-routing.json`
+and `proxy-fixed-metadata.json`. Diagnostics do not create additional Langfuse
+scenario traces or remove failed attempts from the existing five scenario sets.
