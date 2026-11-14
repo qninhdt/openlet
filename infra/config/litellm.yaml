@@ -28,7 +28,7 @@ model_list:
       # Conservative deployment working bounds; not a provider capacity claim.
       max_input_tokens: 65536
       max_output_tokens: 8192
-      supported_reasoning_efforts: [none, low, high]
+      supported_reasoning_efforts: [none, low, medium, high]
       access_groups: [leta]
       supports_response_schema: false
   - model_name: openai/text-embedding-3-large
