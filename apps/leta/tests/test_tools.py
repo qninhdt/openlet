@@ -8,7 +8,8 @@ from leta.config import Services
 from leta.filesystem.workspace import Filesystem
 from leta.runtime.inbox import State
 from leta.runtime.tools import Context, tools
-from mirage import Session, Workspace
+from mirage import MountMode, Session, Workspace
+from mirage.runtime.python.monty import MontyRuntime  # pyright: ignore[reportMissingTypeStubs]  # Upstream package does not publish type stubs.
 from pydantic import BaseModel
 
 
@@ -50,7 +51,9 @@ async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None
     builder.add_edge(START, "tools")
     builder.add_edge("tools", END)
     graph = builder.compile()  # pyright: ignore[reportUnknownMemberType]  # Native overload leaves checkpoint generics unspecified.
-    workspace = Workspace({}, network=False)
+    workspace = Workspace(
+        {}, mode=MountMode.EXEC, network=False, runtimes=[MontyRuntime()]
+    )
     try:
 
         class Files:
@@ -75,6 +78,13 @@ async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None
                                 "args": {"command": "printf native"},
                             },
                             {
+                                "id": "python",
+                                "name": "exec_python",
+                                "args": {
+                                    "code": 'print({"label": "customer\'s total", "minutes": 42 / (6 * 6) * 60})'
+                                },
+                            },
+                            {
                                 "id": "invalid",
                                 "name": "file_read",
                                 "args": {"path": "~", "start_line": 0},
@@ -92,6 +102,9 @@ async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None
         }
         assert replies["shell"].status == "success"
         assert "native" in replies["shell"].content
+        assert replies["python"].status == "success"
+        assert "70.0" in replies["python"].text
+        assert "customer's total" in replies["python"].text
         assert replies["invalid"].status == "error"
         assert "start_line" in replies["invalid"].content
     finally:

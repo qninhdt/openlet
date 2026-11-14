@@ -127,7 +127,7 @@ class Filesystem:
             driver = LetFS(self.s.files, actor, workspace, storage, home)
             cache_id = f"leta:vfs:{self.agent['leta_id']}:{storage}:{home}"
             self.workspace = Workspace(
-                {"/home": Mount(vfs=driver, mode=MountMode.WRITE, read=ReadSpec())},
+                {"/home": Mount(vfs=driver, mode=MountMode.EXEC, read=ReadSpec())},
                 network={
                     "allowed_domains": [
                         self.s.config["dependencies"]["redis"]["address"]

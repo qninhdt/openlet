@@ -1,4 +1,5 @@
 import asyncio
+import shlex
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Annotated, Literal, cast
@@ -800,7 +801,9 @@ async def exec_shell(
 @tool
 async def exec_python(runtime: ToolRuntime[Context, State], code: str) -> JSON:
     """Run Python calculations and file transformations; no packages, network or state across calls."""
-    return await shell(await session(runtime), code, runtime="monty")
+    return await shell(
+        await session(runtime), f"python -c {shlex.quote(code)}", runtime="monty"
+    )
 
 
 def tools(*, root: bool) -> list[BaseTool]:

@@ -11,7 +11,7 @@ from leta.auth import Actor
 from leta.config import Services
 from leta.filesystem.letfs import LetFS
 from leta.filesystem.workspace import Filesystem
-from mirage import MountMode, PathSpec, Session, Workspace
+from mirage import Mount, MountMode, PathSpec, Session, Workspace
 from openlet_api.letfs.v1 import letfs_pb2 as fs
 from openlet_api.letfs.v1.letfs_pb2_grpc import (
     LetFSServiceServicer,
@@ -152,6 +152,7 @@ async def test_parallel_file_tools_share_session_and_only_apply_mount_changes(
     def workspace(*args: object, **kwargs: object) -> Workspace:
         nonlocal created
         created += 1
+        assert cast(dict[str, Mount], args[0])["/home"].mode == MountMode.EXEC
         return cast(Workspace, NativeWorkspace())
 
     storage, root = uuid4(), uuid4()

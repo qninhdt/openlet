@@ -253,3 +253,19 @@ bounded timeout để bắt regression; cả3 modes/correction vẫn pass. Toàn
 ingest tests và strict Pyright/format/lint pass. Deployed IO worker được cập
 nhật, workflow tiếp tục từ parsed artifacts cũ và native paid requests trả200;
 full ready/search/output acceptance tiếp tục trong5 golden journeys.
+
+## Compact synthetic golden-journey follow-up: Python dispatch
+
+Live Python calculations exposed two integration mistakes: passing Python source
+as a shell line (the `runtime` argument selects an interpreter binding, not the
+shell language), and mounting agent home as WRITE although Mirage requires an
+EXEC mount even for inline Python. `exec_python` now uses native `python -c`
+with standard shell quoting; only agent home becomes EXEC. External mounts keep
+their existing read/write permissions; the only Python runtime remains Monty.
+No host runtime, network callback, custom interpreter or execution layer added.
+
+The existing native ToolNode test now executes a Python calculation containing
+an apostrophe and checks its result. The filesystem test checks the home mount
+while retaining its external read-to-write permission coverage. Four targeted
+tests, strict Pyright, Ruff lint and formatting pass. Live journey verification
+continues with the deployed worker; fixtures and runners stay under `/tmp`.
