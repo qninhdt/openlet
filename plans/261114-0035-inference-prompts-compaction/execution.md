@@ -269,3 +269,57 @@ an apostrophe and checks its result. The filesystem test checks the home mount
 while retaining its external read-to-write permission coverage. Four targeted
 tests, strict Pyright, Ruff lint and formatting pass. Live journey verification
 continues with the deployed worker; fixtures and runners stay under `/tmp`.
+
+## Five compact synthetic golden journeys — completed
+
+User replaced the oversized published-source attempt with realistic synthetic
+business records and natural user messages. Fixtures, scripts and raw evidence
+remain outside source in `/tmp/openlet-golden-small`. Native offline parsing
+confirmed 11 generated artifact files plus one original image before any paid
+processing. Eight attachments cover PDF/DOCX/XLSX/PPTX/image, with small inline
+CSV, Markdown and Python source files. No IDs or tool-call instructions were
+injected into user messages; the private finance register is linked in its brief.
+
+All five business/API journeys pass independent assertions:
+- Northstar: six adjusted invoice balances total 20,100; aging 11,600/5,000/3,500;
+  due-today is Current; actual private grant; reviewer communicates directly
+  with both specialists; RAG returns an openable policy source.
+- Juniper: minimal corrected working source passes all four approved cases;
+  independent QA reads the screenshot and executes the saved source. Shared
+  original stays read-only; corrected source and evidence survive in main home.
+- Beacon: North capacity 36/hour and 70 minutes for 42 cases; scope answered,
+  obsolete venue question cancelled; runbook/risk review remain after team closure.
+- Cedar: 60 bundles, revenue 1,080, cost 1,050, profit 30; actual scheduled inbox
+  delivery, independent checkpoint review, pause/update and calendar/timezone
+  inspection; both one-shot and weekly test schedules deleted at the end.
+- Harbor: vendor totals 3,314/2,964/3,366; Ardent recommended, warranty/delivery
+  failures rejected; assurance evidence retained before closing that team only.
+
+Coverage: all 28 tools have successful results; 22 agents including 17 Leti,
+6 boxes (2 archived), 72 completed runs and no failed runs. All 1,241 canonical
+history entries match 73 API pages across root and Leti, including archived teams.
+New SSE connections return at most 20 history previews; reconnect replays the
+expected suffix without duplicates in each of the five cases.
+
+Langfuse native API confirms 80 traces, 22 sessions and 4,411 observations, all
+belonging to these five successful scenario sets; old traces were removed and
+all associated root/Leti/processing traces retained. Query embedding and retrieval
+share the root session. Native reported cost is approximately 2.90 in registry
+prices, not a verified Vilao invoice. Reranking is intentionally disabled for the
+configured provider. Recovery remains visible in the retained traces: 74 required-
+argument tool calls were empty and corrected via native validation feedback;
+minimal OpenAI and ChatLiteLLM streaming probes pass, so the precise cause has
+not been isolated. No repair middleware or provider-specific workaround added.
+
+The parallel journeys exposed Alloy soft-limit refusals at 192–209 MiB heap.
+User approved container 384→512 MiB and limiter 384 MiB with 96 MiB spike allowance
+(288 MiB soft limit). Native Alloy validation and Compose validation pass; deployed
+container limit is 536,870,912 bytes. A fresh API trace reaches Tempo after resize
+and refused-span counters remain zero in the verification window. The full paid
+parallel workload was not repeated solely for RAM tuning; earlier trace-export
+refusals remain a limitation of the original execution window. Grafana data is
+preserved and can be isolated to 2026-11-14 00:13–00:36 UTC for the journeys.
+
+Grafana metric acceptance still awaits old head-series release: last observed
+451 active / 36,913 memory series, so low admitted active count alone does not
+prove new-series ingestion. This external acceptance item is not marked complete.

@@ -14,8 +14,8 @@ otelcol.receiver.otlp "openlet" {
 
 otelcol.processor.memory_limiter "openlet" {
   check_interval = "1s"
-  limit = "256MiB"
-  spike_limit = "64MiB"
+  limit = "384MiB"
+  spike_limit = "96MiB"
   output {
     traces = [otelcol.processor.batch.openlet.input]
     metrics = [otelcol.processor.batch.openlet.input]
