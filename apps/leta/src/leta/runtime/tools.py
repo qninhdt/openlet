@@ -213,11 +213,10 @@ async def inbox_read(
 ) -> JSON:
     """Read the conversation identified by an incoming message number and mark returned items read. unread_only=false includes previously read messages."""
     ctx = runtime.context
-    original = await messages.incoming(ctx.services.db, ctx.id, message)
     return await messages.read(
         ctx.services.db,
         ctx.id,
-        cast(UUID, original["conversation_id"]),
+        message,
         int(cursor or 0),
         unread_only,
     )
@@ -351,10 +350,7 @@ async def box_get(
 ) -> JSON:
     """Get box members, links and representative; prompts are opt-in."""
     ctx = runtime.context
-    identity = await boxes.named(ctx.services.db, ctx.root, box)
-    result = await boxes.get(
-        ctx.services.db, ctx.root, str(identity["id"]), include_prompts
-    )
+    result = await boxes.get(ctx.services.db, ctx.root, box, include_prompts)
     members = cast(list[dict[str, JSON]], result["letis"])
     names = {str(member["id"]): str(member["name"]) for member in members}
     lines = [
@@ -568,7 +564,7 @@ async def leti_hitl_list(
 
 
 async def change_schedule(
-    runtime: ToolRuntime[Context, State], change: schedules.Change
+    runtime: ToolRuntime[Context, State], change: schedules.Change, target: str
 ) -> JSON:
     from ..worker import submit_schedule
 
@@ -577,27 +573,11 @@ async def change_schedule(
         return {"schedule_id": str(change.schedule_id), "deleted": True}
     return {
         "schedule_id": result["id"],
-        "target": await schedule_target(
-            runtime.context, UUID(str(result["target_agent_id"]))
-        ),
+        "target": target,
         "type": result["type"],
         "spec": result["spec"],
         "paused": result["paused"],
     }
-
-
-async def schedule_target(ctx: Context, target: UUID) -> str:
-    if target == ctx.root:
-        return "root"
-    async with ctx.services.db.connection() as conn:
-        row = await (
-            await conn.execute(
-                "SELECT CASE WHEN a.id=b.representative_agent_id THEN b.name ELSE b.name||'/'||a.name END AS name FROM agents a JOIN boxes b ON b.id=a.box_id WHERE a.id=%s AND a.leta_id=%s",
-                (target, ctx.root),
-            )
-        ).fetchone()
-    assert row is not None
-    return str(row["name"])
 
 
 async def own_schedule(ctx: Context, id: UUID) -> dict[str, JSON]:
@@ -648,6 +628,7 @@ async def root_schedule_create(
             ends_at=ends_at,
             timezone=timezone,
         ),
+        target_box or "root",
     )
 
 
@@ -684,6 +665,12 @@ async def leti_schedule_create(
             starts_at=starts_at,
             ends_at=ends_at,
             timezone=timezone,
+        ),
+        str(ctx.agent["box_name"])
+        + (
+            ""
+            if ctx.id == ctx.agent["representative_agent_id"]
+            else f"/{ctx.agent['name']}"
         ),
     )
 
@@ -731,6 +718,7 @@ async def schedule_update(
             timezone=timezone,
             supplied=set(call["args"]),
         ),
+        str(old["target"]),
     )
 
 
@@ -749,6 +737,7 @@ async def schedule_delete(
             target_agent_id=UUID(str(old["target_agent_id"])),
             action="delete",
         ),
+        str(old["target"]),
     )
 
 
@@ -770,9 +759,7 @@ async def schedule_get(runtime: ToolRuntime[Context, State], schedule_id: UUID) 
             )
             if value.get(key) is not None
         },
-        "target": await schedule_target(
-            runtime.context, UUID(str(value["target_agent_id"]))
-        ),
+        "target": value["target"],
         **await schedules.upcoming(runtime.context.services.temporal, value),
     }
 

@@ -144,7 +144,14 @@ async def get(
     async with db.connection() as conn:
         row = await (
             await conn.execute(
-                "SELECT sc.* FROM schedules sc JOIN agents a ON a.id=sc.creator_agent_id WHERE sc.id=%s AND (%s::uuid IS NULL OR a.leta_id=%s) AND (%s::uuid IS NULL OR sc.creator_agent_id=%s)",
+                """SELECT sc.*,CASE WHEN target.box_id IS NULL THEN 'root'
+                WHEN target.id=b.representative_agent_id THEN b.name
+                ELSE b.name||'/'||target.name END AS target
+                FROM schedules sc JOIN agents a ON a.id=sc.creator_agent_id
+                JOIN agents target ON target.id=sc.target_agent_id
+                LEFT JOIN boxes b ON b.id=target.box_id
+                WHERE sc.id=%s AND (%s::uuid IS NULL OR a.leta_id=%s)
+                AND (%s::uuid IS NULL OR sc.creator_agent_id=%s)""",
                 (id, root, root, creator, creator),
             )
         ).fetchone()

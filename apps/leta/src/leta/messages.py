@@ -181,10 +181,15 @@ async def has_pending(db: Pool, agent_id: UUID, after: int) -> bool:
 async def pending(
     db: Pool, agent_id: UUID, after: int, *, root: bool = False
 ) -> list[Row]:
+    # Keep a character beyond a trailing space so rendering still detects truncation.
     async with db.connection() as conn:
         rows = await (
             await conn.execute(
-                """SELECT m.*,coalesce(a.name,b.name) AS source_name,
+                """SELECT m.seq,m.source_kind,m.source_id,m.conversation_id,m.scheduled_at,m.created_at,
+                CASE WHEN %s AND m.source_kind NOT IN ('hitl','schedule')
+                    THEN left(trim(regexp_replace(m.content,'[[:space:]]+',' ','g')),122)
+                    ELSE m.content END AS content,
+                coalesce(a.name,b.name) AS source_name,
                 h.title AS request_title,h.type AS request_type,h.payload AS request_payload,
                 sc.title AS schedule_title
                 FROM agent_messages m
@@ -193,7 +198,7 @@ async def pending(
                 LEFT JOIN hitl_requests h ON m.source_kind='hitl' AND h.id=m.source_id
                 LEFT JOIN schedules sc ON m.source_kind='schedule' AND sc.id=m.source_id
                 WHERE m.recipient_agent_id=%s AND m.seq>%s ORDER BY m.seq LIMIT 20""",
-                (agent_id, after),
+                (root, agent_id, after),
             )
         ).fetchall()
     size = 0
@@ -260,23 +265,34 @@ async def incoming(db: Pool, agent: UUID, seq: int) -> Row:
 
 
 async def read(
-    db: Pool, agent: UUID, conversation: UUID, after: int = 0, unread: bool = True
+    db: Pool, agent: UUID, message: int, after: int = 0, unread: bool = True
 ) -> str:
     async with db.connection() as conn, conn.transaction():
         rows = await (
             await conn.execute(
                 """SELECT m.*,coalesce(a.name,b.name) AS source_name,
                 h.title AS request_title,h.type AS request_type,h.payload AS request_payload,sc.title AS schedule_title
-                FROM agent_messages m
+                FROM (SELECT recipient_agent_id,conversation_id FROM agent_messages
+                    WHERE recipient_agent_id=%s AND seq=%s) original
+            LEFT JOIN LATERAL (
+                SELECT * FROM agent_messages
+                WHERE recipient_agent_id=original.recipient_agent_id AND conversation_id=original.conversation_id
+                AND seq>%s AND (NOT %s OR read_at IS NULL)
+                ORDER BY seq LIMIT 20 FOR UPDATE
+            ) m ON true
             LEFT JOIN agents a ON m.source_kind='agent' AND a.id=m.source_id
             LEFT JOIN boxes b ON m.source_kind='box' AND b.id=m.source_id
             LEFT JOIN hitl_requests h ON m.source_kind='hitl' AND h.id=m.source_id
             LEFT JOIN schedules sc ON m.source_kind='schedule' AND sc.id=m.source_id
-            WHERE m.recipient_agent_id=%s AND m.conversation_id=%s
-            AND m.seq>%s AND (NOT %s OR m.read_at IS NULL) ORDER BY m.seq LIMIT 20 FOR UPDATE OF m""",
-                (agent, conversation, after, unread),
+            ORDER BY m.seq""",
+                (agent, message, after, unread),
             )
         ).fetchall()
+        if not rows:
+            raise LookupError(
+                "incoming message not found; use a message number from your inbox"
+            )
+        rows = [row for row in rows if row["id"] is not None]
         await conn.execute(
             "UPDATE agent_messages SET read_at=coalesce(read_at,now()) WHERE id=ANY(%s)",
             ([r["id"] for r in rows],),
