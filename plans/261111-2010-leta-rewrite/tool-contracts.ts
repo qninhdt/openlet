@@ -142,7 +142,7 @@ export interface LetiTools {
     start_line?: number;
   }): unknown;
 
-  /** List files and directories; /mnt lists accessible storages. */
+  /** List files and directories; /mnt lists accessible storages and whether each is writable. */
   file_list(input: PageInput & {
     path?: string;
     /** 1: paged children; greater than 1: bounded tree. */
@@ -176,7 +176,7 @@ export interface LetiTools {
     cwd?: string;
   }): unknown;
 
-  /** Run Python calculations and file transformations; no packages, network or state across calls. */
+  /** Run Python calculations and file transformations using supported modules; no packages, network or state across calls. Use relative paths instead of Path.home(); compile() is unavailable. */
   exec_python(input: {
     code: string;
   }): unknown;

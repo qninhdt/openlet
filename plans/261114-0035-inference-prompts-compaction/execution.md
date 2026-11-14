@@ -353,3 +353,36 @@ Evidence/scripts are outside source in `/tmp/openlet-golden-small`, including
 `responses-raw-events.json`, `proxy-fix-summary.json`, `native-chat-routing.json`
 and `proxy-fixed-metadata.json`. Diagnostics do not create additional Langfuse
 scenario traces or remove failed attempts from the existing five scenario sets.
+
+## Tool contracts and supported Python modules
+
+- `file_list /mnt` now returns `writable` from the existing discovered LetFS
+  capabilities. No new RPC, per-file authorization check or access-policy change.
+  The six read-only denials in the journeys were correct. Northstar's failed
+  write preceded its editor grant; its subsequent write succeeded.
+- Calendar arguments now share a native Pydantic annotated dictionary with the
+  allowed key names and a description of ranges/defaults. The invalid `weekday`
+  key is rejected with feedback naming `day_of_week` before entering the tool.
+  Existing value/range validation and Temporal schedule behavior remain intact.
+- Python's tool description identifies unavailable `Path.home()`/`compile()`.
+  The common system prompt lists only the 28 module names from Monty **1.6.0**'s
+  tagged module reference, all imported successfully through the actual runtime.
+  Langfuse common/root/Leti production prompts are now **version 2**, preserving
+  generation configs, native composition and placeholders.
+- Nonzero shell/Python exit codes set the native tool message status to `error`,
+  preserving stdout/stderr/exit code for agent feedback and classifying the
+  existing tool metric correctly. No repair loop or runtime replacement.
+
+Validation: all 36 Python tests passed; strict Pyright reported zero errors;
+Ruff lint/format and Compose validation passed. The existing native ToolNode
+check covers writable discovery, successful Python, nonzero shell/Python status
+and useful invalid-calendar feedback. A temporary live ToolNode check against
+all five demo workspaces confirmed the correct writable flag, all 28 Python
+imports and native errors; it created no agent runs/history or Langfuse traces.
+The rebuilt Leta API/worker image was deployed to `openlet-demo`. Final live
+proxy and ChatLiteLLM replays each retained all three parallel tool arguments.
+
+The user reported exhausted provider credit after these checks. No additional
+paid validation or full five-journey rerun is needed for this fix. Live probes and
+fixtures remain under `/tmp/openlet-golden-small`, outside source/CI; the retained
+five scenario trace groups and their failed attempts were not deleted or hidden.

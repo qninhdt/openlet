@@ -6,6 +6,7 @@ from langgraph.graph import END, START, StateGraph  # pyright: ignore[reportMiss
 from langgraph.prebuilt import ToolNode
 from leta.config import Services
 from leta.filesystem.workspace import Filesystem
+from leta.runtime.agent import ToolEffects
 from leta.runtime.inbox import State
 from leta.runtime.tools import Context, tools
 from mirage import MountMode, Session, Workspace
@@ -47,7 +48,10 @@ def test_native_tools_expose_only_agent_arguments() -> None:
 
 async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None:
     builder = StateGraph(State, context_schema=Context)
-    builder.add_node("tools", ToolNode(tools(root=False)))  # pyright: ignore[reportUnknownMemberType]  # Native overload leaves cache-policy generics unspecified.
+    builder.add_node(  # pyright: ignore[reportUnknownMemberType]  # Native overload leaves cache-policy generics unspecified.
+        "tools",
+        ToolNode(tools(root=False), awrap_tool_call=ToolEffects().awrap_tool_call),
+    )
     builder.add_edge(START, "tools")
     builder.add_edge("tools", END)
     graph = builder.compile()  # pyright: ignore[reportUnknownMemberType]  # Native overload leaves checkpoint generics unspecified.
@@ -57,6 +61,8 @@ async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None
     try:
 
         class Files:
+            bindings = {"read-only": (uuid4(), False), "editable": (uuid4(), True)}
+
             async def open(self) -> Session:
                 return await workspace.session("tools")
 
@@ -89,6 +95,29 @@ async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None
                                 "name": "file_read",
                                 "args": {"path": "~", "start_line": 0},
                             },
+                            {
+                                "id": "failed-shell",
+                                "name": "exec_shell",
+                                "args": {"command": "false"},
+                            },
+                            {
+                                "id": "failed-python",
+                                "name": "exec_python",
+                                "args": {"code": "print(1 / 0)"},
+                            },
+                            {
+                                "id": "mounts",
+                                "name": "file_list",
+                                "args": {"path": "/mnt"},
+                            },
+                            {
+                                "id": "invalid-calendar",
+                                "name": "schedule_create",
+                                "args": {
+                                    "content": "Review stock",
+                                    "calendar": {"weekday": [1]},
+                                },
+                            },
                         ],
                     )
                 ]
@@ -107,5 +136,12 @@ async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None
         assert "customer's total" in replies["python"].text
         assert replies["invalid"].status == "error"
         assert "start_line" in replies["invalid"].content
+        assert replies["failed-shell"].status == "error"
+        assert replies["failed-python"].status == "error"
+        assert "ZeroDivisionError" in replies["failed-python"].text
+        assert '"writable": false' in replies["mounts"].text
+        assert '"writable": true' in replies["mounts"].text
+        assert replies["invalid-calendar"].status == "error"
+        assert "day_of_week" in replies["invalid-calendar"].text
     finally:
         await workspace.close()

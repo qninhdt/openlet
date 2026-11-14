@@ -234,6 +234,10 @@ capabilities actually available. Shell cwd defaults to home for each call; pass
 cwd explicitly when needed. Python variables and shell state are not persistent
 memory between calls. In Python use paths relative to home or valid absolute
 paths; do not assume open("~/file") expands the tilde.
+Supported Python modules: annotationlib, asyncio, base64, binascii, bisect,
+collections, copy, csv, dataclasses, datetime, decimal, fnmatch, functools,
+hashlib, itertools, json, math, os, os.path, pathlib, posixpath, random, re,
+sys, time, tomllib, typing, unicodedata.
 
 Store requested artifacts in files and communicate their paths with a useful
 description. Do not create a second task ledger or continually rewrite memory

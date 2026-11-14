@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta, timezone
-from typing import Literal, cast
+from typing import Annotated, Literal, cast
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -28,12 +28,24 @@ from temporalio.service import RPCError, RPCStatusCode
 from .agents import Input, gate, get_agent, json_row
 from .db import Pool, receipt, save_receipt
 
+type CalendarValues = Annotated[
+    dict[
+        Literal[
+            "second", "minute", "hour", "day_of_month", "month", "year", "day_of_week"
+        ],
+        list[int],
+    ],
+    Field(
+        description="All fields must match. Keys: second/minute 0-59, hour 0-23, day_of_month 1-31, month 1-12, year 1970-9999, day_of_week 0-6 (Sunday=0). Values are nonempty lists. Omitted second/minute/hour=0; other fields unrestricted."
+    ),
+]
+
 
 class Timing(Input):
     at: datetime | None = None
     after_seconds: int | None = Field(default=None, ge=0)
     every_seconds: int | None = Field(default=None, ge=1)
-    calendar: dict[str, list[int]] | None = None
+    calendar: CalendarValues | None = None
     starts_at: datetime | None = None
     ends_at: datetime | None = None
     timezone: str = "UTC"
@@ -68,8 +80,7 @@ class Timing(Input):
         }
         for field, values in (self.calendar or {}).items():
             if (
-                field not in limits
-                or not values
+                not values
                 or any(
                     value < limits[field][0] or value > limits[field][1]
                     for value in values

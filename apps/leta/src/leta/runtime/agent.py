@@ -86,6 +86,13 @@ class ToolEffects(AgentMiddleware[State, Context]):
         started, outcome = monotonic(), "ok"
         try:
             result = await handler(request)
+            if (
+                isinstance(result, ToolMessage)
+                and result.status != "error"
+                and request.tool_call["name"] in {"exec_shell", "exec_python"}
+                and json.loads(result.text)["exit_code"] != 0
+            ):
+                result.status = "error"
             if isinstance(result, ToolMessage) and result.status == "error":
                 outcome = "rejected"
             return result

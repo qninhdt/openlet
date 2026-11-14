@@ -452,7 +452,7 @@ async def root_schedule_create(
     at: datetime | None = None,
     after_seconds: int | None = None,
     every_seconds: int | None = None,
-    calendar: dict[str, list[int]] | None = None,
+    calendar: schedules.CalendarValues | None = None,
     starts_at: datetime | None = None,
     ends_at: datetime | None = None,
     timezone: str = "UTC",
@@ -494,7 +494,7 @@ async def leti_schedule_create(
     at: datetime | None = None,
     after_seconds: int | None = None,
     every_seconds: int | None = None,
-    calendar: dict[str, list[int]] | None = None,
+    calendar: schedules.CalendarValues | None = None,
     starts_at: datetime | None = None,
     ends_at: datetime | None = None,
     timezone: str = "UTC",
@@ -533,7 +533,7 @@ async def schedule_update(
     at: datetime | None = None,
     after_seconds: int | None = None,
     every_seconds: int | None = None,
-    calendar: dict[str, list[int]] | None = None,
+    calendar: schedules.CalendarValues | None = None,
     starts_at: datetime | None = None,
     ends_at: datetime | None = None,
     timezone: str = "UTC",
@@ -670,13 +670,13 @@ async def file_list(
     cursor: str = "",
     depth: Annotated[int, Field(ge=1, le=10)] = 1,
 ) -> JSON:
-    """List files and directories; /mnt lists accessible storages."""
+    """List files and directories; /mnt lists accessible storages and whether each is writable."""
     vfs = (await session(runtime)).vfs
     if file_path(path) == "/mnt":
         return {
             "items": [
-                {"path": f"/mnt/{name}", "kind": "directory"}
-                for name in await vfs.readdir("/mnt")
+                {"path": f"/mnt/{name}", "kind": "directory", "writable": write}
+                for name, (_, write) in runtime.context.filesystem.bindings.items()
             ],
             "next_cursor": None,
             "truncated": False,
@@ -800,7 +800,7 @@ async def exec_shell(
 
 @tool
 async def exec_python(runtime: ToolRuntime[Context, State], code: str) -> JSON:
-    """Run Python calculations and file transformations; no packages, network or state across calls."""
+    """Run Python calculations and file transformations using the supported modules in your instructions; no packages, network or state across calls. Use relative paths instead of Path.home(); compile() is unavailable."""
     return await shell(
         await session(runtime), f"python -c {shlex.quote(code)}", runtime="monty"
     )
