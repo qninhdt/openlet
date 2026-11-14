@@ -91,6 +91,15 @@ class ToolEffects(AgentMiddleware[State, Context]):
     ) -> ToolMessage | Command[object]:
         started, outcome = monotonic(), "ok"
         try:
+            message = cast(State, request.state)["messages"][-1]
+            if (
+                isinstance(message, AIMessage)
+                and message.response_metadata.get("finish_reason") == "length"
+            ):
+                raise ValueError(
+                    "Tool call was not executed: the model response reached its output limit. "
+                    "Split large content into smaller operations and reissue complete arguments."
+                )
             result = await handler(request)
             if (
                 isinstance(result, ToolMessage)
@@ -105,7 +114,15 @@ class ToolEffects(AgentMiddleware[State, Context]):
         except (ValueError, LookupError, PermissionError, OSError) as error:
             outcome = "rejected"
             return ToolMessage(
-                content=str(error), tool_call_id=request.tool_call["id"], status="error"
+                content=(
+                    "Command exceeded its execution time limit. File changes may be incomplete; "
+                    "inspect affected files before retrying."
+                    if isinstance(error, TimeoutError)
+                    else str(error)
+                ),
+                name=request.tool_call["name"],
+                tool_call_id=request.tool_call["id"],
+                status="error",
             )
         except WorkflowUpdateFailedError as error:
             cause = error.cause
@@ -118,6 +135,7 @@ class ToolEffects(AgentMiddleware[State, Context]):
                     outcome = "rejected"
                     return ToolMessage(
                         content=cause.message,
+                        name=request.tool_call["name"],
                         tool_call_id=request.tool_call["id"],
                         status="error",
                     )
@@ -402,6 +420,13 @@ async def project(s: Services, ctx: Context, messages: Sequence[BaseMessage]) ->
                         ),
                         "name": message.name,
                         "text": message.text,
+                        "status": message.status,
+                        **(
+                            {"file": {"path": message.artifact, "kind": "image"}}
+                            if message.name == "file_read"
+                            and isinstance(message.artifact, str)
+                            else {}
+                        ),
                     },
                 )
             )

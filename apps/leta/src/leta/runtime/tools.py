@@ -684,12 +684,12 @@ async def file_list(
     return cast(JSON, result)
 
 
-@tool
+@tool(response_format="content_and_artifact")
 async def file_read(
     runtime: ToolRuntime[Context, State],
     path: str,
     start_line: Annotated[int, Field(ge=1)] = 1,
-) -> JSON:
+) -> tuple[JSON, str | None]:
     """Read a text window, image preview or uploaded-document artifacts; follow returned continuations."""
     vfs = (await session(runtime)).vfs
     metadata = await vfs.stat(file_path(path))
@@ -700,7 +700,9 @@ async def file_read(
         result, _ = await vfs.dispatch(
             "preview", scope(path), image=media.startswith("image/")
         )
-        return cast(JSON, result)
+        if media.startswith("image/"):
+            return cast(JSON, result), path
+        return cast(JSON, result), None
     data = await vfs.read(file_path(path))
     lines = data.decode().splitlines()
     text = "\n".join(
@@ -713,7 +715,7 @@ async def file_read(
         "content": text[:16000],
         "next_start_line": start_line + 200 if len(lines) >= start_line + 200 else None,
         "truncated": len(text) > 16000,
-    }
+    }, None
 
 
 @tool

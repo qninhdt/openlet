@@ -1,7 +1,9 @@
 from typing import cast
 from uuid import uuid4
 
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain.tools import ToolRuntime
+from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
+from langchain_core.messages.tool import ToolCall
 from langgraph.graph import END, START, StateGraph  # pyright: ignore[reportMissingTypeStubs]  # Upstream has annotations but no py.typed marker.
 from langgraph.prebuilt import ToolNode
 from leta.config import Services
@@ -146,3 +148,87 @@ async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None
         assert "day_of_week" in replies["invalid-calendar"].text
     finally:
         await workspace.close()
+
+
+async def test_truncated_arguments_cannot_overwrite_an_existing_file() -> None:
+    from mirage import Mount
+    from mirage.vfs.ram import RAMVFS
+
+    builder = StateGraph(State, context_schema=Context)
+    builder.add_node(  # pyright: ignore[reportUnknownMemberType]  # Native overload has unspecified cache generics.
+        "tools",
+        ToolNode(tools(root=False), awrap_tool_call=ToolEffects().awrap_tool_call),
+    )
+    builder.add_edge(START, "tools")
+    builder.add_edge("tools", END)
+    graph = builder.compile()  # pyright: ignore[reportUnknownMemberType]  # Native overload has unspecified checkpoint generics.
+    workspace = Workspace(
+        {"/home": Mount(vfs=RAMVFS(), mode=MountMode.WRITE)}, network=False
+    )
+    try:
+        session = await workspace.session("tools")
+        await session.vfs.write("/home/report.md", b"Complete original report")
+
+        class Files:
+            async def open(self) -> Session:
+                return session
+
+        identity = uuid4()
+        context = Context(
+            services=cast(Services, None),
+            agent={"id": identity, "leta_id": identity},
+            run_id=uuid4(),
+            filesystem=cast(Filesystem, Files()),
+        )
+        message = AIMessageChunk(
+            content="",
+            tool_call_chunks=[
+                {
+                    "name": "file_write",
+                    "id": "truncated",
+                    "index": 0,
+                    "args": '{"path":"~/report.md","overwrite":true,"content":"unfinished',
+                }
+            ],
+            response_metadata={"finish_reason": "length"},
+        )
+        assert message.tool_calls[0]["args"]["content"] == "unfinished"
+        result = await graph.ainvoke(  # pyright: ignore[reportUnknownMemberType]  # Native invocation overload.
+            {"messages": [message]}, context=context
+        )
+        error = result["messages"][-1]
+        assert isinstance(error, ToolMessage)
+        assert (error.name, error.status, error.tool_call_id) == (
+            "file_write",
+            "error",
+            "truncated",
+        )
+        assert "not executed" in error.text
+        assert await session.vfs.read("/home/report.md") == b"Complete original report"
+    finally:
+        await workspace.close()
+
+
+async def test_tool_timeout_returns_named_actionable_error() -> None:
+    from langgraph.prebuilt.tool_node import ToolCallRequest
+    from langgraph.types import Command
+    from leta.runtime.tools import exec_shell
+
+    async def timed_out(request: ToolCallRequest) -> ToolMessage | Command[object]:
+        raise TimeoutError
+
+    call: ToolCall = {
+        "name": "exec_shell",
+        "args": {"command": "work"},
+        "id": "timeout",
+    }
+    request = ToolCallRequest(
+        tool_call=call,
+        tool=exec_shell,
+        state={"messages": [AIMessage(content="", tool_calls=[call])]},
+        runtime=cast(ToolRuntime[None, dict[str, object]], None),
+    )
+    result = await ToolEffects().awrap_tool_call(request, timed_out)
+    assert isinstance(result, ToolMessage)
+    assert (result.name, result.status) == ("exec_shell", "error")
+    assert "time limit" in result.text and "inspect" in result.text
