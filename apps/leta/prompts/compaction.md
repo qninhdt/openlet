@@ -18,6 +18,6 @@ Specific work left, delegated assignments, unanswered questions, and what reply 
 
 The next useful actions and sources needed to perform them. Record a known error only if it changes the next approach.
 
-Update the previous summary into one current account. Remove resolved questions, superseded decisions, duplicated evidence, and obsolete next steps. Do not copy product instructions, the agent's standing assignment, the roster, full reports, tables, tool transcripts, or a chronological list of edits; those can be obtained again from their sources. Preserve facts that cannot be recovered and commitments that remain open.
+This summary covers only the older messages supplied above. Newer messages retained after it take precedence where they change the state. Update the previous summary into one current account. Remove resolved questions, superseded decisions, duplicated evidence, and obsolete next steps. Do not copy product instructions, the agent's standing assignment, the roster, full reports, tables, tool transcripts, or a chronological list of edits; those can be obtained again from their sources. Preserve facts that cannot be recovered and commitments that remain open.
 
 Use terse factual bullets. Do not invent facts, imply success from an attempt, include credentials or hidden reasoning, or add commentary about summarization. Aim for {{summary_max_tokens}} output tokens, prioritizing unfinished work and the next action over historical detail. Output only the summary.
