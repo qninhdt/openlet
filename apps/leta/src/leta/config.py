@@ -46,8 +46,12 @@ from .models import Models
 
 def validate(config: Config) -> None:
     compaction = config["services"]["leta"]["compaction"]
-    if not 0 < compaction["keep_fraction"] < compaction["trigger_fraction"] < 1:
-        raise ValueError("compaction requires 0 < keep_fraction < trigger_fraction < 1")
+    if not 0 <= compaction["keep_fraction"] < compaction["trigger_fraction"] < 1:
+        raise ValueError(
+            "compaction requires 0 <= keep_fraction < trigger_fraction < 1"
+        )
+    if compaction["summary_max_tokens"] <= 0:
+        raise ValueError("compaction summary_max_tokens must be positive")
 
 
 @dataclass

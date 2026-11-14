@@ -10,7 +10,7 @@
       "name": "leta/compaction",
       "version": 1,
       "type": "text",
-      "prompt": "Summarize goals, completed work, decisions and remaining tasks concisely.",
+      "prompt": "Summarize goals, completed work, decisions and remaining tasks within {{summary_max_tokens}} tokens. Keep references to saved details instead of copying tables.",
       "labels": [
         "production"
       ],

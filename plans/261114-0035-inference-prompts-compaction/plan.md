@@ -122,14 +122,14 @@ không là các dự án riêng phải rewrite lại. Không tạo thêm plan t�
   riêng, replacement system hoặc flatten XML; summary call không thực thi tools.
 - `trim_tokens_to_summarize=None`. Budget gồm system/tools/messages/compaction
   instruction/output reserve. Configurable `trigger_fraction: 0.8`,
-  `keep_fraction: 0.3` dưới `services.leta.compaction`; validate tại startup.
-  Tính trên usable history budget H sau overhead, không toàn context window.
+  `keep_fraction: 0`, `summary_max_tokens: 2048` dưới `services.leta.compaction`; validate tại startup.
+  Trigger tính trên full usable request budget để khớp native reported usage; tail dương tính trên history budget H sau overhead. Tail 0 tóm tắt toàn bộ prefix. Summary request truyền budget vào prompt và max_tokens; summary rỗng/truncated không thay context.
 - Checkpoint giữ rolling summary + bounded recent tail + continuation/cursor;
   summary cũ tích hợp vào summary mới. Không summary table hoặc adaptive engine.
 - Summary giữ goals/decisions/confirmed-or-unknown effects/pending work/IDs/
   paths/recipients. Compaction là paid call với prompt/cost riêng.
 - Capture outgoing main/summary prefix/cache usage để kiểm thực; stable prefix
-  không là cam kết provider cache hit, 0.8/0.3 chưa là empirically optimal.
+  không là cam kết provider cache hit, các tỷ lệ chưa là empirically optimal.
 
 ### 7. Checkpoint, history và streaming
 
@@ -445,8 +445,8 @@ tự xử lý trong thiết kế đã duyệt, không biến mỗi verification 
   giới hạn rõ, script chỉ ở thư mục tạm, không source/CI.
 - Compaction giữ exact system/tools/native prefix, summary + bounded tail,
   checkpoint restart và `keep_latest`; không flatten XML hoặc model riêng.
-- Compaction thresholds cấu hình được, initial defaults 0.8/0.3 trên usable
-  history budget. Batch history transaction độc lập native saver, recover gap
+- Compaction configurable: trigger 0.8 trên full usable request budget, tail 0%,
+  summary_max_tokens 2048. Batch history transaction độc lập native saver, recover gap
   trước resume/prune; live text identity khớp canonical history.
   Projection Redis dùng một pipeline/boundary sau SQL commit, giữ individual
   events/order và live token streaming; không per-entry transaction/pipeline.

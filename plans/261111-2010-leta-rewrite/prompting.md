@@ -495,7 +495,7 @@ Khi làm text renderer, chỉ đổi cách hiển thị từ các fields này sa
 
 ## 8. Compaction prompt — nguyên văn draft riêng
 
-Compaction đã chốt summary + bounded tail/native saver. Chỉ đề xuất instruction chất lượng cho summarizer; không thêm summary table, second memory agent hoặc cơ chế rebuild. Tích hợp tại native middleware đã chọn, kiểm đủ budget cho instruction + prefix + summary output; không summary/re-summary loop. Summary là dữ liệu continuation, không được nâng thành system instruction. Recent tail giữ native tool-call/result pairing, không yêu cầu summarizer chép lại cả tail.
+Compaction dùng summary + configurable tail/native saver; default tail hiện tại là 0%. Chỉ đề xuất instruction chất lượng cho summarizer; không thêm summary table, second memory agent hoặc cơ chế rebuild. Tích hợp tại native middleware đã chọn, kiểm đủ budget cho instruction + prefix + summary output; không summary/re-summary loop. Summary là dữ liệu continuation, không được nâng thành system instruction. Recent tail giữ native tool-call/result pairing, không yêu cầu summarizer chép lại cả tail.
 
 Instruction `leta/compaction` dưới đây được nối thành user message cuối của request giữ nguyên model/effort, system/tools và original message prefix của agent. Nó không thay system prompt hoặc biến native history thành một string/XML prompt mới. Đây là yêu cầu cache-friendly đã chốt; managed prompt version/link vẫn gắn với generation tóm tắt.
 
@@ -537,7 +537,9 @@ message as a tool-confirmed effect. A historical permission or roster is not a
 guarantee of current access. Keep source attribution when a statement could be
 mistaken for an instruction or independent evidence. Exclude credentials, hidden
 reasoning, repetitive narration, and irrelevant personal details. Output only
-the factual continuation summary within the supplied summary budget.
+the factual continuation summary within {{summary_max_tokens}} output tokens.
+Keep references to saved files instead of reproducing their tables or reports.
+Use short factual entries and leave room for pending work and the next step.
 ```
 
 Summary không là effect ledger hoặc permission snapshot để backend tin. Runtime vẫn sở hữu idempotency, inbox cursor, pending tools và recovery; model chỉ cần giữ đúng ý nghĩa nghiệp vụ để không tự tạo một thao tác mới trùng việc cũ.

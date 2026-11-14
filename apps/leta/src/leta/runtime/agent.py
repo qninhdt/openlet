@@ -173,6 +173,12 @@ class ExecutionModel(AgentMiddleware[State, Context]):
         entry = await self.s.models.get(selected, effort)
         if self.defaults.max_tokens > entry.max_output_tokens:
             raise ValueError("prompt output budget exceeds gateway model limit")
+        settings = self.s.config["services"]["leta"]["compaction"]
+        if settings["summary_max_tokens"] > entry.max_output_tokens:
+            raise ValueError("summary output budget exceeds gateway model limit")
+        self.summary_instruction = self.compaction.compile(
+            summary_max_tokens=settings["summary_max_tokens"]
+        )
         self.system = self.prompt.compile(
             agent_instructions=selection[2], box_context=self.box_context
         )
@@ -199,7 +205,7 @@ class ExecutionModel(AgentMiddleware[State, Context]):
         overhead = self.count_tokens(
             [
                 SystemMessage(content=self.system),
-                HumanMessage(content=self.compaction.compile()),
+                HumanMessage(content=self.summary_instruction),
             ],
             include_tools=True,
         )
@@ -209,16 +215,18 @@ class ExecutionModel(AgentMiddleware[State, Context]):
                 "model context is too small for instructions and tools",
                 non_retryable=True,
             )
-        settings = self.s.config["services"]["leta"]["compaction"]
         self.summary = SummarizationMiddleware[JSON, Context](
             self.chat,
             # Native triggers also compare provider usage for the full request.
             trigger=("tokens", int(self.tokens * settings["trigger_fraction"])),
-            keep=("tokens", int(history_budget * settings["keep_fraction"])),
+            keep=("tokens", max(1, int(history_budget * settings["keep_fraction"]))),
             token_counter=self.count_tokens,
             trim_tokens_to_summarize=None,
             summarizer=self.summarize,
         )
+        if settings["keep_fraction"] == 0:
+            # Native cutoff supports zero messages; constructor rejects zero thresholds.
+            self.summary.keep = ("messages", 0)
         self.selection = selection
 
     def count_tokens(
@@ -250,12 +258,27 @@ class ExecutionModel(AgentMiddleware[State, Context]):
         request: list[BaseMessage] = [
             SystemMessage(content=self.system),
             *messages,
-            HumanMessage(content=self.compaction.compile()),
+            HumanMessage(content=self.summary_instruction),
         ]
         self.guard(request)
         with propagate_attributes(prompt=self.compaction):
-            bound = self.chat.bind_tools(self.catalog, tool_choice="none")  # pyright: ignore[reportUnknownMemberType]  # Native overload includes untyped callable tools.
+            bound = self.chat.bind_tools(  # pyright: ignore[reportUnknownMemberType]  # Native overload includes untyped callable tools.
+                self.catalog,
+                tool_choice="none",
+                max_tokens=self.s.config["services"]["leta"]["compaction"][
+                    "summary_max_tokens"
+                ],
+            )
             result = await bound.ainvoke(request)
+        if (
+            not result.text.strip()
+            or result.response_metadata.get("finish_reason") == "length"
+        ):
+            raise ApplicationError(
+                "compaction summary is empty or exceeded its output budget",
+                type="summary_limit",
+                non_retryable=True,
+            )
         return result.text
 
     async def abefore_model(

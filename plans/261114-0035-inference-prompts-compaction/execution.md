@@ -386,3 +386,22 @@ The user reported exhausted provider credit after these checks. No additional
 paid validation or full five-journey rerun is needed for this fix. Live probes and
 fixtures remain under `/tmp/openlet-golden-small`, outside source/CI; the retained
 five scenario trace groups and their failed attempts were not deleted or hidden.
+
+
+## 2026-11-14 — Explicit summary budget and summary-only continuation
+
+User approved `summary_max_tokens: 2048` and `keep_fraction: 0`; trigger remains
+0.8. The existing custom summarizer passes the budget to the managed prompt and
+request max_tokens. Native middleware still owns trigger, cutoff and replacement.
+Its constructor rejects zero thresholds, while its public keep setting and native
+message cutoff handle zero; set `keep=("messages", 0)` after construction so the
+entire prefix, including the final tool call/result, is summarized. Empty or
+length-truncated summaries fail before replacing the original context. No new
+model, table, recovery loop or custom history slicer.
+
+Updated shared typing, startup validation, example/demo/E2E config, WireMock prompt
+and Langfuse production `leta/compaction` version2 with summary budget placeholder.
+Ten runtime/tool/workflow tests pass; strict Pyright and Ruff pass. Worker/API
+healthy after deploy; continuity resumed from its checkpoint at11:26UTC. Completed
+finance/release/procurement/campaign roots remain paused. Subsequent real provider
+compaction frequency and continuation quality still need live verification.

@@ -118,7 +118,8 @@ services:
     http_listen: 0.0.0.0:8080
     compaction:
       trigger_fraction: 0.8
-      keep_fraction: 0.3
+      keep_fraction: 0
+      summary_max_tokens: 2048
     http_target: leta-api:8080
     database:
       name: leta

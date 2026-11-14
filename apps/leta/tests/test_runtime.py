@@ -76,8 +76,10 @@ async def test_shell_capture_is_bounded_and_redirection_remains_complete() -> No
         await workspace.close()
 
 
+@pytest.mark.parametrize("keep_fraction", [0.0, 0.3])
 async def test_execution_reuses_client_and_native_compaction_preserves_prefix(
     monkeypatch: pytest.MonkeyPatch,
+    keep_fraction: float,
 ) -> None:
     from pathlib import Path
     from types import SimpleNamespace
@@ -103,6 +105,7 @@ async def test_execution_reuses_client_and_native_compaction_preserves_prefix(
     from leta.runtime.tools import Context, exec_shell
     from openlet_sdk.config import Config, ReasoningEffort
     from openlet_sdk.inference import InferenceSettings
+    from temporalio.exceptions import ApplicationError
 
     class Catalog:
         async def get(self, model: str, effort: ReasoningEffort) -> Model:
@@ -123,6 +126,7 @@ async def test_execution_reuses_client_and_native_compaction_preserves_prefix(
     config = cast(
         Config, yaml.safe_load(Path("infra/config/openlet.example.yaml").read_text())
     )
+    config["services"]["leta"]["compaction"]["keep_fraction"] = keep_fraction
     monkeypatch.setenv("LITELLM_MASTER_KEY", "fixture")
     services = cast(
         Services, SimpleNamespace(config=config, models=cast(Models, Catalog()))
@@ -131,7 +135,7 @@ async def test_execution_reuses_client_and_native_compaction_preserves_prefix(
         services,
         InferenceSettings(model="chat", max_tokens=1024),
         prompt("Product rules\nYour instructions\n{{agent_instructions}}"),
-        prompt("Summarize only."),
+        prompt("Summarize only, within {{summary_max_tokens}} tokens."),
         [exec_shell],
         "",
     )
@@ -156,10 +160,14 @@ async def test_execution_reuses_client_and_native_compaction_preserves_prefix(
 
     received: list[AnyMessage] = []
     binding: dict[str, object] = {}
+    finish_reason = "stop"
 
     async def summarize(messages: list[AnyMessage]) -> AIMessage:
         received.extend(messages)
-        return AIMessage(content="Keep the goal and confirmed effects.")
+        return AIMessage(
+            content="Keep the goal and confirmed effects.",
+            response_metadata={"finish_reason": finish_reason},
+        )
 
     def bind(
         self: ChatLiteLLM, tools: object, **kwargs: object
@@ -197,7 +205,7 @@ async def test_execution_reuses_client_and_native_compaction_preserves_prefix(
     assert (
         isinstance(received[0], SystemMessage) and received[0].content == runtime.system
     )
-    assert received[-1].content == "Summarize only."
+    assert received[-1].content == "Summarize only, within 2048 tokens."
     prefix = received[1:-1]
     assert prefix == messages[: len(prefix)]
     calls = {
@@ -210,10 +218,24 @@ async def test_execution_reuses_client_and_native_compaction_preserves_prefix(
         message.tool_call_id for message in prefix if isinstance(message, ToolMessage)
     }
     assert calls == results
-    assert binding == {"tools": [exec_shell], "tool_choice": "none"}
+    assert binding == {
+        "tools": [exec_shell],
+        "tool_choice": "none",
+        "max_tokens": 2048,
+    }
     replacements = cast(list[AnyMessage], update["messages"])
     assert replacements[1].additional_kwargs["lc_source"] == "summarization"
     assert replacements[2:] == messages[len(prefix) :]
+    if keep_fraction == 0:
+        assert prefix == messages
+        assert len(replacements) == 2
+        received.clear()
+        after_tool = await runtime.summary.abefore_model(
+            {"messages": messages[:-1]}, Runtime[Context](context=cast(Context, None))
+        )
+        assert after_tool is not None
+        assert received[1:-1] == messages[:-1]
+        assert len(cast(list[AnyMessage], after_tool["messages"])) == 2
 
     agent["system_prompt"] = "Fixed product rules. " * 1200
     await runtime.refresh(agent)
@@ -259,4 +281,35 @@ async def test_execution_reuses_client_and_native_compaction_preserves_prefix(
     )
     assert update is not None
     retained = cast(list[AnyMessage], update["messages"])[2:]
-    assert runtime.count_tokens(retained) <= int(runtime.summary.keep[1])
+    if keep_fraction == 0:
+        assert retained == []
+    else:
+        assert runtime.count_tokens(retained) <= int(runtime.summary.keep[1])
+
+    finish_reason = "length"
+    with pytest.raises(ApplicationError, match="summary is empty or exceeded"):
+        await runtime.summarize([HumanMessage(content="Keep this original context.")])
+
+
+def test_compaction_config_allows_no_tail_and_requires_positive_summary_budget() -> (
+    None
+):
+    from pathlib import Path
+    from typing import cast
+
+    import yaml
+    from leta.config import validate
+    from openlet_sdk.config import Config
+
+    config = cast(
+        Config, yaml.safe_load(Path("infra/config/openlet.example.yaml").read_text())
+    )
+    validate(config)
+    settings = config["services"]["leta"]["compaction"]
+    settings["keep_fraction"] = -0.1
+    with pytest.raises(ValueError, match="keep_fraction"):
+        validate(config)
+    settings["keep_fraction"] = 0
+    settings["summary_max_tokens"] = 0
+    with pytest.raises(ValueError, match="summary_max_tokens"):
+        validate(config)

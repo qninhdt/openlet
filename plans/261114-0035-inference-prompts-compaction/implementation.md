@@ -49,7 +49,7 @@ Suggested commit: `build(inference): add LiteLLM gateway`.
 5. Update env example khi implementation thực sự cần variables mới; reconcile
    existing dirty change trước edit, không stage secrets/user edits vô tình.
 6. Thêm shared typed `services.leta.compaction.trigger_fraction` và
-   `keep_fraction`, example defaults 0.8/0.3; validate một lần tại Leta startup.
+   `keep_fraction`, `summary_max_tokens`, defaults 0.8/0/2048; validate một lần tại Leta startup.
    Không thêm threshold per-model/agent hoặc hardcode hai literals trong runtime.
 
 Verification: uv lock/strict type compatibility, Compose config/native health,
@@ -212,8 +212,9 @@ Focused commit boundaries: `refactor(leta): reuse agent execution resources`,
    không inject clock/timezone vào system hoặc user input thay thế.
 3. Native middleware trigger/cutoff/keep; `trim_tokens_to_summarize=None`.
    Budget includes appended instruction + output reserve trước request.
-   Resolve native token thresholds từ configurable 0.8/0.3 trên history budget H;
-   test changed settings áp dụng đúng budget, không đổi đơn vị sang full window.
+   Trigger 0.8 trên full usable request budget; tail mặc định 0%, summary budget
+   2048 tokens. Tail dương tính trên history budget H. Test cả summary-only
+   replacement và positive tail bằng native cutoff.
 4. Keep native summary+tail/checkpoint/sync projection/prune under writer lock;
    no SQL summary table hoặc rerun effects từ public transcript.
 5. Exact prompt link override cho compaction, restore role scope sau đó.

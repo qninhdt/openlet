@@ -186,6 +186,7 @@ class PlatformSettings(TypedDict):
 class CompactionSettings(TypedDict):
     trigger_fraction: float
     keep_fraction: float
+    summary_max_tokens: int
 
 
 class LetaSettings(TypedDict):

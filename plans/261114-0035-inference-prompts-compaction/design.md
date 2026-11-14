@@ -413,7 +413,7 @@ Custom summarizer chỉ đổi **request construction** qua public hook.
 
 ### Thresholds cấu hình được
 
-Giữ initial defaults 80% trigger và 30% recent tail; không gọi đây là kết quả
+Defaults hiện tại: 80% trigger, 0% recent tail, summary tối đa 2.048 tokens; không gọi đây là kết quả
 benchmark tối ưu cho Openlet. [LangChain reference](https://reference.langchain.com/python/langchain/agents/middleware/summarization/SummarizationMiddleware)
 có cả ví dụ trigger fraction 0.8 và keep fraction 0.3, nhưng default keep thật
 của thư viện là 20 messages. [OpenCode source](https://github.com/anomalyco/opencode/blob/f91b88efac039856f284979984ac43cd93bce8f5/packages/core/src/session/compaction.ts#L128)
@@ -424,16 +424,14 @@ services:
   leta:
     compaction:
       trigger_fraction: 0.8
-      keep_fraction: 0.3
+      keep_fraction: 0
+      summary_max_tokens: 2048
 ```
 
 Đây là service resource policy trong shared YAML, không model catalog/default
-hoặc field DB mỗi agent. Validate `0 < keep_fraction < trigger_fraction < 1`
+hoặc field DB mỗi agent. Validate `0 <= keep_fraction < trigger_fraction < 1` và `summary_max_tokens > 0`
 một lần ở config boundary. Gọi H là history-token budget sau khi chừa chỗ cho
-system, ordered tools, appended compaction instruction và model output. Truyền
-native `trigger=("tokens", floor(H * trigger_fraction))` và
-`keep=("tokens", floor(H * keep_fraction))`; không nhầm H với toàn context
-window hoặc đổi sang native fraction trên model profile mà không trừ overhead.
+system, ordered tools, appended compaction instruction và model output. Truyền native `trigger=("tokens", floor((context_window - main_output_reserve) * trigger_fraction))` để khớp provider usage của full request. Tail dương dùng `keep=("tokens", floor(H * keep_fraction))`; tail bằng 0 dùng native message cutoff 0 để summary toàn bộ prefix, không giữ raw messages. Summary request dùng cùng model/effort và stable prefix, với `max_tokens=summary_max_tokens`; instruction nhận `{{summary_max_tokens}}`. Summary rỗng hoặc hết output budget không thay checkpoint cũ.
 Native cutoff vẫn ưu tiên tool-call/result integrity, nên tail không là hard
 exact token count. Sau implementation mới tune dựa trên usage/errors/latency và
 chất lượng continuation; không thêm adaptive tuning engine.
