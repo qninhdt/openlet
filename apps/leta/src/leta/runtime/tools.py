@@ -670,11 +670,14 @@ async def file_list(
     cursor: str = "",
     depth: Annotated[int, Field(ge=1, le=10)] = 1,
 ) -> JSON:
-    """List files; /mnt lists storage names, owners and access. Request access before opening a storage marked unreadable."""
+    """List files and directories; /mnt lists accessible storages and whether each is writable."""
     vfs = (await session(runtime)).vfs
     if file_path(path) == "/mnt":
         return {
-            "items": runtime.context.filesystem.storages,
+            "items": [
+                {"path": f"/mnt/{name}", "kind": "directory", "writable": write}
+                for name, (_, write) in runtime.context.filesystem.bindings.items()
+            ],
             "next_cursor": None,
             "truncated": False,
         }

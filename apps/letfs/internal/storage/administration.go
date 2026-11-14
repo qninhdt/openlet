@@ -243,43 +243,9 @@ func (s *Server) listStorages(ctx context.Context, r *pb.ListStoragesRequest, a 
 		return nil, err
 	}
 	for _, v := range candidates {
-		if r.OwnedOnly && !v.Capabilities.ManageAccess || !v.Capabilities.Read && a.Type != "agent" {
-			continue
+		if v.Capabilities.Read && (!r.OwnedOnly || v.Capabilities.ManageAccess) {
+			out.Storages = append(out.Storages, v)
 		}
-		owner, err := s.storageOwner(ctx, v.Id)
-		if err != nil {
-			return nil, err
-		}
-		v.Owner = owner
-		if !v.Capabilities.Read {
-			v.RootNodeId, v.AllowBlobFiles, v.AllowIndexing = "", false, false
-		}
-		out.Storages = append(out.Storages, v)
 	}
 	return out, nil
-}
-
-func (s *Server) storageOwner(ctx context.Context, id string) (*pb.StorageOwnership, error) {
-	stream, err := s.Graph.ReadRelationships(ctx, &az.ReadRelationshipsRequest{
-		RelationshipFilter: &az.RelationshipFilter{ResourceType: "storage", OptionalResourceId: id, OptionalRelation: "owner"},
-		Consistency:        sdk.Consistency(ctx), OptionalLimit: 1,
-	})
-	if err != nil {
-		return nil, err
-	}
-	row, err := stream.Recv()
-	if err != nil {
-		return nil, err
-	}
-	subject := row.Relationship.Subject.Object
-	owner := new(pb.StorageOwnership)
-	switch subject.ObjectType {
-	case "user":
-		owner.Owner = &pb.StorageOwnership_UserId{UserId: subject.ObjectId}
-	case "agent":
-		owner.Owner = &pb.StorageOwnership_AgentId{AgentId: subject.ObjectId}
-	case "workspace":
-		owner.Owner = &pb.StorageOwnership_WorkspaceId{WorkspaceId: subject.ObjectId}
-	}
-	return owner, nil
 }

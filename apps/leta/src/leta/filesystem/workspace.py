@@ -72,7 +72,6 @@ class Filesystem:
     def __init__(self, s: Services, agent: Row) -> None:
         self.s, self.agent = s, agent
         self.bindings: dict[str, tuple[UUID, bool]] = {}
-        self.storages: list[JSON] = []
         self.discovered = 0.0
         self.workspace: Workspace | None = None
         self.session: Session | None = None
@@ -83,7 +82,6 @@ class Filesystem:
             return
         token = ""
         bindings: dict[str, tuple[UUID, bool]] = {}
-        storages: list[JSON] = []
         while True:
             response: fs.ListStoragesResponse = await self.s.files.ListStorages(
                 fs.ListStoragesRequest(
@@ -96,27 +94,14 @@ class Filesystem:
             )
             for storage in response.storages:
                 if storage.id != str(self.agent["storage_id"]):
-                    owner = storage.owner.WhichOneof("owner")
-                    item: dict[str, JSON] = {
-                        "id": storage.id,
-                        "name": storage.name,
-                        "owner": {owner: getattr(storage.owner, owner)}
-                        if owner
-                        else None,
-                        "readable": storage.capabilities.read,
-                        "writable": storage.capabilities.write,
-                    }
-                    if storage.capabilities.read:
-                        item["path"] = f"/mnt/{storage.id}"
-                        bindings[storage.id] = (
-                            UUID(storage.root_node_id),
-                            storage.capabilities.write,
-                        )
-                    storages.append(item)
+                    bindings[storage.id] = (
+                        UUID(storage.root_node_id),
+                        storage.capabilities.write,
+                    )
             token = response.next_page_token
             if not token:
                 break
-        self.bindings, self.storages, self.discovered = bindings, storages, monotonic()
+        self.bindings, self.discovered = bindings, monotonic()
 
     async def open(self) -> Session:
         async with self.lock:

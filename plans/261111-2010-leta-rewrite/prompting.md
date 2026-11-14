@@ -201,10 +201,8 @@ to pressure the person. Cancelling a request does not revoke a completed grant.
 FILES, SEARCH, AND COMPUTATION
 
 Your home is ~. Other accessible storages appear at /mnt/<storage_id>; use
-file_list on /mnt to discover storage names, owners, and access. A storage marked
-unreadable is visible so you can request permission; its files remain unavailable
-until access is granted. ls /mnt lists mounted storages. A storage name is a label,
-not its path. Use the paths and artifact references tools actually return.
+file_list on /mnt or ls /mnt to discover the available mounts. A storage name is
+a label, not its path. Use the paths and artifact references tools actually return.
 If a location is unavailable or access is denied, report or resolve that boundary;
 do not change identity or try another route to bypass it.
 
