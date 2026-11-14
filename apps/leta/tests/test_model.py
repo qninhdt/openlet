@@ -4,6 +4,7 @@ from threading import Thread
 from typing import cast
 
 import pytest
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from langfuse.model import TextPromptClient
@@ -20,6 +21,21 @@ from openlet_sdk.inference import InferenceSettings
 @pytest.mark.parametrize("stream", [False, True])
 async def test_http_tool_history_preserves_unicode_and_reasoning(stream: bool) -> None:
     received: list[dict[str, JSON]] = []
+    callback_models: list[object] = []
+
+    class ModelNames(BaseCallbackHandler):
+        def on_chat_model_start(
+            self,
+            serialized: dict[str, object],
+            messages: list[list[BaseMessage]],
+            **kwargs: object,
+        ) -> None:
+            callback_models.extend(
+                [
+                    cast(dict[str, object], kwargs["invocation_params"])["model"],
+                    cast(dict[str, object], kwargs["metadata"])["ls_model_name"],
+                ]
+            )
 
     class Endpoint(BaseHTTPRequestHandler):
         def log_message(self, format: str, *args: object) -> None:
@@ -93,7 +109,8 @@ async def test_http_tool_history_preserves_unicode_and_reasoning(stream: bool) -
     thread.start()
     try:
         model = ChatModel(
-            model="litellm_proxy/openai/gpt-4o",
+            model="openai/gpt-4o",
+            custom_llm_provider="litellm_proxy",
             api_base=f"http://127.0.0.1:{server.server_port}/v1",
             api_key="local-fixture-only",
             max_retries=0,
@@ -101,10 +118,10 @@ async def test_http_tool_history_preserves_unicode_and_reasoning(stream: bool) -
         )
         chat = model.bind_tools([file_write])  # pyright: ignore[reportUnknownMemberType]  # Upstream overload includes untyped callable tools.
         if stream:
-            async for _ in chat.astream(messages):
+            async for _ in chat.astream(messages, config={"callbacks": [ModelNames()]}):
                 pass
         else:
-            await chat.ainvoke(messages)
+            await chat.ainvoke(messages, config={"callbacks": [ModelNames()]})
     finally:
         server.shutdown()
         server.server_close()
@@ -112,6 +129,7 @@ async def test_http_tool_history_preserves_unicode_and_reasoning(stream: bool) -
 
     assert len(received) == 1
     assert received[0]["model"] == "openai/gpt-4o"
+    assert callback_models == ["openai/gpt-4o", "openai/gpt-4o"]
     sent = cast(list[dict[str, JSON]], received[0]["messages"])
     calls = cast(list[dict[str, JSON]], sent[1]["tool_calls"])
     function = cast(dict[str, JSON], calls[0]["function"])
@@ -150,7 +168,11 @@ def test_context_counter_includes_replayed_reasoning_and_tools() -> None:
         [file_write],
         "",
     )
-    runtime.chat = ChatModel(model="litellm_proxy/gpt-4o", api_key="local-fixture-only")
+    runtime.chat = ChatModel(
+        model="gpt-4o",
+        custom_llm_provider="litellm_proxy",
+        api_key="local-fixture-only",
+    )
     messages = [
         AIMessage(
             content="Kết quả",

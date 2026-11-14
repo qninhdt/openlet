@@ -37,4 +37,4 @@ Local Mirage/RAMVFS, `seq 1 10000` with a redirected full file: median4.526ms be
 
 Rebuild/restart the Leta services before testing the new runtime against updated local configuration. Run the approved small root–Leti task only when model execution is authorized; compare completion correctness, rereads, errors, compactions, token/cache usage and cost. No new claim that the five journeys now pass. Model behavior and provider compliance with requested output budgets still require a real run.
 
-The `litellm_proxy/` naming discussion is separate from these harness changes. The existing SDK route is unchanged in this implementation.
+Follow-up: model names now remain unchanged throughout Leta, enrichment and embedding. Gateway routing is configured once in the Leta client and ingest connection parameters. Removed prefix concatenation/stripping and the redundant LangChain model metadata override. Local streaming/non-streaming HTTP and callback tests verify the canonical model name used by Langfuse; existing Cloud records are not rewritten.

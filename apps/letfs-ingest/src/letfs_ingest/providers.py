@@ -104,6 +104,7 @@ def vision(data: bytes, settings: EnrichmentSettings) -> str:
 
 
 class ConnectionParameters(TypedDict):
+    custom_llm_provider: str
     api_base: str
     api_key: str
     timeout: int
@@ -122,6 +123,7 @@ class Models:
         self.prompt_label = prompt_label
         gateway = self.settings["gateway"]
         self.connection: ConnectionParameters = {
+            "custom_llm_provider": "litellm_proxy",
             "api_base": gateway["base_url"],
             "api_key": secret(gateway["api_key"]),
             "timeout": gateway["timeout_seconds"],
@@ -179,7 +181,7 @@ class Models:
         defaults = InferenceSettings.model_validate(prompt.config)
         with propagate_attributes(prompt=prompt):
             return await self.client.chat.completions.create(
-                model="litellm_proxy/" + defaults.model,
+                model=defaults.model,
                 response_model=Metadata,
                 max_retries=1,
                 **self.connection,
@@ -192,11 +194,10 @@ class Models:
 
     async def complete(self, **kwargs: object) -> ModelResponse:
         # Record each paid attempt before Instructor accumulates retry usage.
-        model = str(kwargs["model"]).removeprefix("litellm_proxy/")
         with self.langfuse.start_as_current_observation(
             name="enrichment",
             as_type="generation",
-            model=model,
+            model=str(kwargs["model"]),
             input=kwargs.get("messages"),
         ) as observation:
             response = cast(ModelResponse, await litellm.acompletion(**kwargs))
@@ -223,7 +224,7 @@ class Models:
                 input=texts,
             ) as observation:
                 response: EmbeddingResponse = await litellm.aembedding(
-                    model="litellm_proxy/" + model["model"],
+                    model=model["model"],
                     input=texts,
                     dimensions=model["dimensions"],
                     encoding_format="float",

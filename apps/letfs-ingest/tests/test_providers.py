@@ -165,4 +165,8 @@ async def test_instructor_owns_correction_and_records_each_paid_attempt(
         {"input": 10, "output": 5}
     ] * 2
     assert all(request["num_retries"] == 0 for request in requests)
+    assert all(
+        request["model"] == "chat" and request["custom_llm_provider"] == "litellm_proxy"
+        for request in requests
+    )
     assert "validation" in str(requests[1]["messages"]).lower()

@@ -203,13 +203,13 @@ class ExecutionModel(AgentMiddleware[State, Context]):
                 update={"reasoning_effort": effort}
             ).parameters()
             self.chat = ChatModel(
-                model="litellm_proxy/" + selected,
+                model=selected,
+                custom_llm_provider="litellm_proxy",
                 api_base=gateway["base_url"],
                 api_key=secret(gateway["api_key"]),
                 request_timeout=gateway["timeout_seconds"],
                 max_retries=0,
                 max_tokens=self.defaults.max_tokens,
-                metadata={"ls_model_name": selected},
                 model_kwargs={
                     **{k: v for k, v in parameters.items() if k != "max_tokens"},
                     "num_retries": 0,

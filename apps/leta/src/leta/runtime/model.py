@@ -29,7 +29,7 @@ class ChatModel(ChatLiteLLM):
     ) -> int:
         payload, _ = self._create_message_dicts(messages, None)
         return token_counter(
-            model=self.model.removeprefix("litellm_proxy/"),
+            model=self.model,
             messages=cast(list[AllMessageValues], payload),
             tools=cast(
                 list[ChatCompletionToolParam],
