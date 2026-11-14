@@ -79,12 +79,8 @@ class Timing(Input):
             "day_of_week": (0, 6),
         }
         for field, values in (self.calendar or {}).items():
-            if (
-                not values
-                or any(
-                    value < limits[field][0] or value > limits[field][1]
-                    for value in values
-                )
+            if not values or any(
+                value < limits[field][0] or value > limits[field][1] for value in values
             ):
                 raise ValueError("invalid calendar values")
         if self.starts_at and self.ends_at and self.starts_at >= self.ends_at:
