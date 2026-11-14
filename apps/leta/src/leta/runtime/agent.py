@@ -206,7 +206,8 @@ class ExecutionModel(AgentMiddleware[State, Context]):
         settings = self.s.config["services"]["leta"]["compaction"]
         self.summary = SummarizationMiddleware[JSON, Context](
             self.chat,
-            trigger=("tokens", int(history_budget * settings["trigger_fraction"])),
+            # Native triggers also compare provider usage for the full request.
+            trigger=("tokens", int(self.tokens * settings["trigger_fraction"])),
             keep=("tokens", int(history_budget * settings["keep_fraction"])),
             trim_tokens_to_summarize=None,
             summarizer=self.summarize,

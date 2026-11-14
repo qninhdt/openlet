@@ -214,3 +214,37 @@ async def test_execution_reuses_client_and_native_compaction_preserves_prefix(
     replacements = cast(list[AnyMessage], update["messages"])
     assert replacements[1].additional_kwargs["lc_source"] == "summarization"
     assert replacements[2:] == messages[len(prefix) :]
+
+    agent["system_prompt"] = "Fixed product rules. " * 1200
+    await runtime.refresh(agent)
+    recent: list[AnyMessage] = [
+        HumanMessage(content="Retained source details. " * 1000),
+        AIMessage(
+            content="Continue the remaining work.",
+            response_metadata={"model_provider": "litellm"},
+            usage_metadata={
+                "input_tokens": 17000,
+                "output_tokens": 100,
+                "total_tokens": 17100,
+            },
+        ),
+    ]
+    received.clear()
+    assert (
+        await runtime.summary.abefore_model(
+            {"messages": recent}, Runtime[Context](context=cast(Context, None))
+        )
+        is None
+    )
+    assert not received
+    cast(AIMessage, recent[-1]).usage_metadata = {
+        "input_tokens": 19000,
+        "output_tokens": 100,
+        "total_tokens": 19100,
+    }
+    assert (
+        await runtime.summary.abefore_model(
+            {"messages": recent}, Runtime[Context](context=cast(Context, None))
+        )
+        is not None
+    )
