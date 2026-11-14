@@ -2,6 +2,8 @@
 
 ## Acceptance mới nhất
 
+[Harness optimization 2026-11-14](../261114-harness-optimization/implementation.md) ghi phần tối ưu prompt/compaction/tool output, fix Unicode/truncated calls, Langfuse versions và checks mới nhất. Chưa chạy lại journey hay deploy worker trong lượt này.
+
 [Execution hợp nhất 2026-11-14](../261114-0035-inference-prompts-compaction/execution.md) ghi migration
 LiteLLM/Prompt Config/cost/compaction, tối ưu runtime, tests36/36, shared API
 E2E5/5, benchmark và actual Cloud/demo proof. Các checks bên dưới là baseline

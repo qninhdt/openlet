@@ -1,5 +1,7 @@
 # Agent tools: agent chọn ý định, system quản lý cơ chế
 
+Correction đã chốt ngày2026-11-14: [harness optimization](../261114-harness-optimization/implementation.md) thay phần tool surface/read/output bên dưới. Hiện có27 root tools/21 Leti tools, bỏ exec_python riêng; file_read/history_read nhận limit theo dòng, còn token/output budget vẫn do hệ thống quản lý. Runtime dùng native inferred schemas, không dùng JSON-schema draft làm dispatcher.
+
 Ngày 2026-11-13. Giữ 28 root tools/22 Leti tools và input contracts đã duyệt; bổ sung description có ích cho từng tool/tham số trong [TypeScript draft](tool-contracts.ts), đồng bộ [JSON schemas](tool-schemas.json) và đo lại tokens. Version/timeouts/page sizes/native form và schedule structures vẫn thuộc system. Đây là thiết kế cho app viết mới, chưa runtime implementation. [Plan](plan.md), [HITL](hitl.md), [scheduler](scheduler.md), [filesystem](filesystem.md).
 
 ## 1. Ranh giới input đã sửa

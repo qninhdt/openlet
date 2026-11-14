@@ -1,5 +1,7 @@
 # VFS, shell và Python sandbox của Leta đã chốt
 
+Correction đã chốt ngày2026-11-14: [harness optimization](../261114-harness-optimization/implementation.md) bỏ exec_python riêng; Python vẫn chạy qua exec_shell/Monty. Phần output dùng bounded head/tail và capture một lần khi vượt preview. Các phần VFS/cache/session bên dưới giữ nguyên.
+
 Chốt 2026-11-13; implementation và acceptance được ghi tại [execution](execution.md). Mirage là VFS/runtime chung của mọi file_* và exec_* tools; LetFS là owner của dữ liệu bền vững. Giữ native Redis content/index cache với ReadPolicy.BOUNDED, không kiểm quyền/version từ xa trước cache hit; bỏ policy.py. Dùng default Mirage 0.0.8: content/index TTL 600 giây, rút con số 5 giây chưa có số đo. Một storage_id là home binding, vẫn giữ dynamic public/shared/granted-private mounts theo [kiến trúc](design.md#10-filesystem-và-cache) và [native APIs](boundaries.md#5-file-operations-mounts-và-cache). Schema/Temporal inventory không đổi; public transport theo [HTTP/streaming đã chốt](streaming.md).
 
 ## 1. Mục tiêu và quyết định
