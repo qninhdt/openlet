@@ -1,6 +1,6 @@
 import asyncio
 import json
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from contextlib import AsyncExitStack
 from datetime import datetime, timezone
 from time import monotonic
@@ -25,10 +25,14 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
-from langchain_core.messages.utils import count_tokens_approximately
+from langchain_core.messages.utils import (
+    MessageLikeRepresentation,
+    convert_to_openai_messages,
+)
 from langchain_core.outputs import ChatGeneration, LLMResult
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
+from langchain_core.utils.function_calling import convert_to_openai_tool
 from langchain_litellm import ChatLiteLLM
 from langfuse import Langfuse, propagate_attributes
 from langfuse.langchain import CallbackHandler
@@ -37,6 +41,8 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph.state import CompiledStateGraph  # pyright: ignore[reportMissingTypeStubs]  # Upstream package does not publish type stubs.
 from langgraph.runtime import Runtime
 from langgraph.types import Command
+from litellm import token_counter  # pyright: ignore[reportUnknownVariableType]  # Upstream signature leaves optional message/tokenizer generics untyped.
+from litellm.types.llms.openai import ChatCompletionToolParam  # pyright: ignore[reportMissingTypeStubs]  # Upstream package does not publish type stubs.
 from openlet_sdk.config import JSON, ReasoningEffort, secret
 from openlet_sdk.inference import InferenceSettings, response_cost
 from opentelemetry import metrics
@@ -190,12 +196,12 @@ class ExecutionModel(AgentMiddleware[State, Context]):
                 },
             )
         self.tokens = entry.context_window_tokens - self.defaults.max_tokens
-        overhead = count_tokens_approximately(
+        overhead = self.count_tokens(
             [
                 SystemMessage(content=self.system),
                 HumanMessage(content=self.compaction.compile()),
             ],
-            tools=[item for item in self.catalog],
+            include_tools=True,
         )
         history_budget = self.tokens - overhead
         if history_budget < 2000:
@@ -209,16 +215,31 @@ class ExecutionModel(AgentMiddleware[State, Context]):
             # Native triggers also compare provider usage for the full request.
             trigger=("tokens", int(self.tokens * settings["trigger_fraction"])),
             keep=("tokens", int(history_budget * settings["keep_fraction"])),
+            token_counter=self.count_tokens,
             trim_tokens_to_summarize=None,
             summarizer=self.summarize,
         )
         self.selection = selection
 
+    def count_tokens(
+        self,
+        messages: Iterable[MessageLikeRepresentation],
+        *,
+        include_tools: bool = False,
+    ) -> int:
+        return token_counter(
+            model=self.chat.model.removeprefix("litellm_proxy/"),
+            messages=convert_to_openai_messages(list(messages)),
+            tools=cast(
+                list[ChatCompletionToolParam],
+                [convert_to_openai_tool(item) for item in self.catalog],
+            )
+            if include_tools
+            else None,
+        )
+
     def guard(self, messages: list[BaseMessage]) -> None:
-        if (
-            count_tokens_approximately(messages, tools=[item for item in self.catalog])
-            > self.tokens
-        ):
+        if self.count_tokens(messages, include_tools=True) > self.tokens:
             raise ApplicationError(
                 "working context exceeds model input budget",
                 type="context_limit",

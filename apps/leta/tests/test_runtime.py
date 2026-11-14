@@ -172,7 +172,7 @@ async def test_execution_reuses_client_and_native_compaction_preserves_prefix(
     for index in range(6):
         messages.extend(
             [
-                HumanMessage(content=("source " * 2000), id=f"input-{index}"),
+                HumanMessage(content=("source " * 3500), id=f"input-{index}"),
                 AIMessage(
                     content="",
                     id=f"call-{index}",
@@ -218,7 +218,7 @@ async def test_execution_reuses_client_and_native_compaction_preserves_prefix(
     agent["system_prompt"] = "Fixed product rules. " * 1200
     await runtime.refresh(agent)
     recent: list[AnyMessage] = [
-        HumanMessage(content="Retained source details. " * 1000),
+        HumanMessage(content="Retained source details. " * 1800),
         AIMessage(
             content="Continue the remaining work.",
             response_metadata={"model_provider": "litellm"},
@@ -248,3 +248,15 @@ async def test_execution_reuses_client_and_native_compaction_preserves_prefix(
         )
         is not None
     )
+
+    ledger: list[AnyMessage] = [
+        HumanMessage(content="KH-001,điều chỉnh đã duyệt,1.234.567.890 VND\n" * 30)
+        for _ in range(12)
+    ]
+    ledger.append(recent[-1])
+    update = await runtime.summary.abefore_model(
+        {"messages": ledger}, Runtime[Context](context=cast(Context, None))
+    )
+    assert update is not None
+    retained = cast(list[AnyMessage], update["messages"])[2:]
+    assert runtime.count_tokens(retained) <= int(runtime.summary.keep[1])
