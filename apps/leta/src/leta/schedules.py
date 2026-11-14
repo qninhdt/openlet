@@ -278,12 +278,21 @@ async def save(db: Pool, canonical: CanonicalChange) -> dict[str, JSON]:
             if old["deleted_at"] is not None:
                 raise ValueError("schedule is deleted")
             spec = timing[1] if timing else cast(dict[str, JSON], old["spec"]).copy()
+            previous = cast(dict[str, JSON], old["spec"])
             for field in ("ends_at", "starts_at", "timezone"):
                 if field in change.supplied:
                     value = getattr(change, field)
                     spec[field] = (
                         value.isoformat() if isinstance(value, datetime) else value
                     )
+                elif field in previous:
+                    spec[field] = previous[field]
+            if (
+                timing
+                and timing[0] == old["type"] == "interval"
+                and "starts_at" not in change.supplied
+            ):
+                spec["anchor_at"] = previous["anchor_at"]
             changed = await conn.execute(
                 """UPDATE schedules SET title=%s,content=%s,type=%s,spec=%s,paused=%s WHERE id=%s RETURNING *""",
                 (

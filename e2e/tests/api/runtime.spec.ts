@@ -151,6 +151,34 @@ test('native runtime, box containment, asynchronous HITL and owner-independent s
     },
   });
   expect(scheduled.ok(), await scheduled.text()).toBeTruthy();
+  const startsAt = new Date(Date.now() + 3_600_000).toISOString();
+  const endsAt = new Date(Date.now() + 86_400_000).toISOString();
+  const recurring = await guest.api.post(`${path}/schedules`, {
+    data: {
+      request_id: randomUUID(),
+      content: 'Review remaining work.',
+      every_seconds: 600,
+      starts_at: startsAt,
+      ends_at: endsAt,
+      timezone: 'Asia/Ho_Chi_Minh',
+    },
+  });
+  expect(recurring.ok(), await recurring.text()).toBeTruthy();
+  const original = await recurring.json();
+  const changedSchedule = await guest.api.patch(`${path}/schedules/${original.id}`, {
+    data: { request_id: randomUUID(), every_seconds: 900, paused: true },
+  });
+  expect(changedSchedule.ok(), await changedSchedule.text()).toBeTruthy();
+  expect((await changedSchedule.json()).spec).toEqual({ ...original.spec, every_seconds: 900 });
+  const cleared = await guest.api.patch(`${path}/schedules/${original.id}`, {
+    data: { request_id: randomUUID(), ends_at: null },
+  });
+  expect(cleared.ok(), await cleared.text()).toBeTruthy();
+  expect((await cleared.json()).spec.ends_at).toBeNull();
+  const removed = await guest.api.delete(`${path}/schedules/${original.id}`, {
+    data: { request_id: randomUUID() },
+  });
+  expect(removed.ok(), await removed.text()).toBeTruthy();
   await expect
     .poll(
       async () => {
