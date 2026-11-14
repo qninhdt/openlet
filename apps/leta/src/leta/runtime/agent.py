@@ -225,23 +225,20 @@ class ExecutionModel(AgentMiddleware[State, Context]):
             include_tools=True,
         )
         history_budget = self.tokens - overhead
-        if history_budget < 2000:
+        if settings["keep_tokens"] + settings["summary_max_tokens"] >= history_budget:
             raise ApplicationError(
-                "model context is too small for instructions and tools",
+                "model context is too small for instructions, tools, summary and retained tail",
                 non_retryable=True,
             )
         self.summary = SummarizationMiddleware[JSON, Context](
             self.chat,
             # Native triggers also compare provider usage for the full request.
             trigger=("tokens", int(self.tokens * settings["trigger_fraction"])),
-            keep=("tokens", max(1, int(history_budget * settings["keep_fraction"]))),
+            keep=("tokens", settings["keep_tokens"]),
             token_counter=self.count_tokens,
             trim_tokens_to_summarize=None,
             summarizer=self.summarize,
         )
-        if settings["keep_fraction"] == 0:
-            # Native cutoff supports zero messages; constructor rejects zero thresholds.
-            self.summary.keep = ("messages", 0)
         self.selection = selection
 
     def count_tokens(

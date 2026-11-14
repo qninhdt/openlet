@@ -90,10 +90,10 @@ async def test_shell_capture_is_bounded_and_redirection_remains_complete(
         await workspace.close()
 
 
-@pytest.mark.parametrize("keep_fraction", [0.0, 0.3])
+@pytest.mark.parametrize("keep_tokens", [2048, 8192])
 async def test_execution_reuses_client_and_native_compaction_preserves_prefix(
     monkeypatch: pytest.MonkeyPatch,
-    keep_fraction: float,
+    keep_tokens: int,
 ) -> None:
     from pathlib import Path
     from types import SimpleNamespace
@@ -140,7 +140,7 @@ async def test_execution_reuses_client_and_native_compaction_preserves_prefix(
     config = cast(
         Config, yaml.safe_load(Path("infra/config/openlet.example.yaml").read_text())
     )
-    config["services"]["leta"]["compaction"]["keep_fraction"] = keep_fraction
+    config["services"]["leta"]["compaction"]["keep_tokens"] = keep_tokens
     monkeypatch.setenv("LITELLM_MASTER_KEY", "fixture")
     services = cast(
         Services, SimpleNamespace(config=config, models=cast(Models, Catalog()))
@@ -240,21 +240,14 @@ async def test_execution_reuses_client_and_native_compaction_preserves_prefix(
     replacements = cast(list[AnyMessage], update["messages"])
     assert replacements[1].additional_kwargs["lc_source"] == "summarization"
     assert replacements[2:] == messages[len(prefix) :]
-    if keep_fraction == 0:
-        assert prefix == messages
-        assert len(replacements) == 2
-        received.clear()
-        after_tool = await runtime.summary.abefore_model(
-            {"messages": messages[:-1]}, Runtime[Context](context=cast(Context, None))
-        )
-        assert after_tool is not None
-        assert received[1:-1] == messages[:-1]
-        assert len(cast(list[AnyMessage], after_tool["messages"])) == 2
+    assert len(replacements) > 2
+    assert replacements[-1].id == "latest"
+    assert runtime.summary.keep == ("tokens", keep_tokens)
 
     agent["system_prompt"] = "Fixed product rules. " * 1200
     await runtime.refresh(agent)
     recent: list[AnyMessage] = [
-        HumanMessage(content="Retained source details. " * 1800),
+        HumanMessage(content="Retained source details. " * 2400),
         AIMessage(
             content="Continue the remaining work.",
             response_metadata={"model_provider": "litellm"},
@@ -287,7 +280,7 @@ async def test_execution_reuses_client_and_native_compaction_preserves_prefix(
 
     ledger: list[AnyMessage] = [
         HumanMessage(content="KH-001,điều chỉnh đã duyệt,1.234.567.890 VND\n" * 30)
-        for _ in range(12)
+        for _ in range(14)
     ]
     ledger.append(recent[-1])
     update = await runtime.summary.abefore_model(
@@ -295,19 +288,19 @@ async def test_execution_reuses_client_and_native_compaction_preserves_prefix(
     )
     assert update is not None
     retained = cast(list[AnyMessage], update["messages"])[2:]
-    if keep_fraction == 0:
-        assert retained == []
-    else:
-        assert runtime.count_tokens(retained) <= int(runtime.summary.keep[1])
+    assert runtime.count_tokens(retained) <= keep_tokens
 
     finish_reason = "length"
     with pytest.raises(ApplicationError, match="summary is empty or exceeded"):
         await runtime.summarize([HumanMessage(content="Keep this original context.")])
 
+    config["services"]["leta"]["compaction"]["keep_tokens"] = 24000
+    agent["system_prompt"] = "The tail must fit the model context."
+    with pytest.raises(ApplicationError, match="retained tail"):
+        await runtime.refresh(agent)
 
-def test_compaction_config_allows_no_tail_and_requires_positive_summary_budget() -> (
-    None
-):
+
+def test_compaction_config_requires_positive_tail_and_summary_budgets() -> None:
     from pathlib import Path
     from typing import cast
 
@@ -320,10 +313,10 @@ def test_compaction_config_allows_no_tail_and_requires_positive_summary_budget()
     )
     validate(config)
     settings = config["services"]["leta"]["compaction"]
-    settings["keep_fraction"] = -0.1
-    with pytest.raises(ValueError, match="keep_fraction"):
+    settings["keep_tokens"] = 0
+    with pytest.raises(ValueError, match="keep_tokens"):
         validate(config)
-    settings["keep_fraction"] = 0
+    settings["keep_tokens"] = 8192
     settings["summary_max_tokens"] = 0
     with pytest.raises(ValueError, match="summary_max_tokens"):
         validate(config)
