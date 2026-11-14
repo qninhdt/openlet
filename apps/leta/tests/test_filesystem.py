@@ -11,7 +11,7 @@ from leta.auth import Actor
 from leta.config import Services
 from leta.filesystem.letfs import LetFS
 from leta.filesystem.workspace import Filesystem
-from mirage import Mount, MountMode, PathSpec, Session, Workspace
+from mirage import FileType, Mount, MountMode, PathSpec, Session, Workspace
 from openlet_api.letfs.v1 import letfs_pb2 as fs
 from openlet_api.letfs.v1.letfs_pb2_grpc import (
     LetFSServiceServicer,
@@ -25,6 +25,7 @@ from openlet_sdk.config import Config
 async def driver() -> AsyncIterator[LetFS]:
     root, folder, file = str(uuid4()), str(uuid4()), str(uuid4())
     nodes = {
+        root: fs.Node(id=root, name="", kind=fs.NODE_KIND_DIRECTORY),
         folder: fs.Node(
             id=folder, parent_id=root, name="reports", kind=fs.NODE_KIND_DIRECTORY
         ),
@@ -32,6 +33,26 @@ async def driver() -> AsyncIterator[LetFS]:
             id=file, parent_id=folder, name="report.txt", kind=fs.NODE_KIND_FILE
         ),
     }
+    blob = fs.Node(
+        id=str(uuid4()),
+        parent_id=root,
+        name="quotes.xlsx",
+        kind=fs.NODE_KIND_FILE,
+        file=fs.FileHeader(
+            type=fs.FILE_TYPE_BLOB,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ),
+    )
+    artifact = fs.Node(
+        id=str(uuid4()),
+        parent_id=blob.id,
+        name="table.csv",
+        kind=fs.NODE_KIND_FILE,
+        file=fs.FileHeader(
+            type=fs.FILE_TYPE_TEXT, media_type="text/csv", size_bytes=12
+        ),
+        readonly=True,
+    )
 
     class Files(LetFSServiceServicer):
         async def ReadTree(
@@ -39,6 +60,10 @@ async def driver() -> AsyncIterator[LetFS]:
             request: fs.ReadTreeRequest,
             context: grpc.aio.ServicerContext[fs.ReadTreeRequest, fs.ReadTreeResponse],
         ) -> fs.ReadTreeResponse:
+            if request.root.path == "quotes.xlsx":
+                return fs.ReadTreeResponse(
+                    entries=[fs.TreeEntry(path="table.csv", node=artifact)]
+                )
             assert request.root.path == "reports"
             return fs.ReadTreeResponse(
                 entries=[fs.TreeEntry(path="report.txt", node=nodes[file])]
@@ -55,6 +80,16 @@ async def driver() -> AsyncIterator[LetFS]:
             return fs.TextSearchResponse(
                 hits=[fs.TextHit(node=nodes[file], snippet="hello", path="report.txt")]
             )
+
+        async def ListNodes(
+            self,
+            request: fs.ListNodesRequest,
+            context: grpc.aio.ServicerContext[
+                fs.ListNodesRequest, fs.ListNodesResponse
+            ],
+        ) -> fs.ListNodesResponse:
+            assert request.parent.path == "quotes.xlsx"
+            return fs.ListNodesResponse(nodes=[artifact])
 
         async def SemanticSearch(
             self,
@@ -82,6 +117,10 @@ async def driver() -> AsyncIterator[LetFS]:
             context: grpc.aio.ServicerContext[fs.NodeRequest, fs.Node],
         ) -> fs.Node:
             assert request.target.root_node_id == root
+            if request.target.WhichOneof("locator") == "path":
+                if request.target.path == "quotes.xlsx/table.csv":
+                    return artifact
+                return blob if request.target.path == "quotes.xlsx" else nodes[root]
             return nodes[request.target.node_id]
 
     server = grpc.aio.server()
@@ -122,6 +161,29 @@ async def test_search_returns_openable_paths_under_mount(driver: LetFS) -> None:
     assert listing["items"] == [
         {"path": "/home/reports/report.txt", "kind": "file", "size_bytes": None}
     ]
+
+
+async def test_document_artifacts_are_directories_in_shell_and_keep_preview(
+    driver: LetFS,
+) -> None:
+    path = PathSpec(
+        virtual="/data/quotes.xlsx", directory="/data", vfs_path="quotes.xlsx"
+    )
+    assert (await driver.stat(path)).type == FileType.DIRECTORY
+    workspace = Workspace(
+        {"/data": Mount(vfs=driver, mode=MountMode.READ)}, network=False
+    )
+    try:
+        session = await workspace.session("tools")
+        result = await session.shell("cd /data/quotes.xlsx; pwd; ls")
+        assert result.exit_code == 0
+        assert isinstance(result.stdout, bytes)
+        assert b"/data/quotes.xlsx" in result.stdout
+        assert b"table.csv" in result.stdout
+        preview, _ = await session.vfs.dispatch("preview", path, image=False)
+        assert "table.csv" in str(preview)
+    finally:
+        await workspace.close()
 
 
 async def test_parallel_file_tools_share_session_and_only_apply_mount_changes(

@@ -32,7 +32,8 @@ class CreateBox(Input):
             edge = (min(a, b), max(a, b))
             if a not in names or b not in names or a == b or edge in edges:
                 raise ValueError(
-                    "edges must connect distinct members without duplicates"
+                    "Each edge must connect two distinct Leti names. Edges are bidirectional: "
+                    "declare A-B once, without also declaring B-A."
                 )
             edges.add(edge)
         return self

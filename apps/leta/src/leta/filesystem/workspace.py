@@ -214,6 +214,11 @@ async def shell(
         "exit_code": result.exit_code,
         "truncated": truncated,
     }
+    if result.exit_code == 126 and "Permission denied" in str(output["stderr"]):
+        output["notice"] = (
+            "The shell may have rejected an unsupported command. Check the supported command list; "
+            "this message alone does not establish a storage permission problem."
+        )
     if truncated:
         try:
             await session.vfs.write(output_path, bytes(captured))

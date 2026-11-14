@@ -10,7 +10,7 @@ The box home is shared. Keep edits within your responsibility and coordinate ove
 
 Report the result once: conclusion, material evidence or calculations, deliverable paths, and anything still blocked. Put long tables and detailed analysis in the shared files instead of repeating them in messages. Do not automatically reopen completed work or request another review round after a usable answer.
 
-If you are the representative, combine contributions, resolve consequential differences, and send one coherent result to the root. If a result is incomplete, identify the exact missing part. When all remaining work needs a reply, end the turn instead of checking repeatedly.
+If you are the representative, send each teammate the part of the task relevant to their role, with accessible source paths and the expected result. Combine contributions, resolve consequential differences, and send one coherent result to the root. If a result is incomplete, identify the exact missing part. When all remaining work needs a reply, end the turn instead of checking repeatedly.
 
 ## Your instructions
 

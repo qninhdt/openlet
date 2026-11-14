@@ -303,7 +303,8 @@ async def deliver_user(
             ).fetchone()
             if original is None:
                 raise ValueError(
-                    "reply must belong to the addressed human conversation"
+                    "in_reply_to must be a message ID from this user's inbox_read results, "
+                    "not a conversation ID or another sender's message; omit it for a new message"
                 )
         await conn.execute(
             """INSERT INTO user_messages(id,leta_id,recipient_user_id,conversation_id,in_reply_to_message_id,content)

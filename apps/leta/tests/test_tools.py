@@ -1,3 +1,6 @@
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from typing import cast
 from uuid import uuid4
 
@@ -7,7 +10,8 @@ from langchain_core.messages.tool import ToolCall
 from langgraph.graph import END, START, StateGraph  # pyright: ignore[reportMissingTypeStubs]  # Upstream has annotations but no py.typed marker.
 from langgraph.prebuilt import ToolNode
 from leta.config import Services
-from leta.filesystem.workspace import Filesystem
+from leta.db import Pool, Row
+from leta.filesystem.workspace import COMMANDS, Filesystem
 from leta.runtime.agent import ToolEffects
 from leta.runtime.inbox import State
 from leta.runtime.tools import Context, tools
@@ -53,13 +57,18 @@ async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None
     builder = StateGraph(State, context_schema=Context)
     builder.add_node(  # pyright: ignore[reportUnknownMemberType]  # Native overload leaves cache-policy generics unspecified.
         "tools",
-        ToolNode(tools(root=False), awrap_tool_call=ToolEffects().awrap_tool_call),
+        ToolNode(tools(root=True), awrap_tool_call=ToolEffects().awrap_tool_call),
     )
     builder.add_edge(START, "tools")
     builder.add_edge("tools", END)
     graph = builder.compile()  # pyright: ignore[reportUnknownMemberType]  # Native overload leaves checkpoint generics unspecified.
     workspace = Workspace(
-        {}, mode=MountMode.EXEC, network=False, runtimes=[MontyRuntime()]
+        {},
+        mode=MountMode.EXEC,
+        network=False,
+        runtimes=[MontyRuntime()],
+        profiles={"agent": {"commands": {"allow": list(COMMANDS)}}},
+        profile="agent",
     )
     try:
 
@@ -69,9 +78,27 @@ async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None
             async def open(self) -> Session:
                 return await workspace.session("tools")
 
+        identity, teammate, representative, box = uuid4(), uuid4(), uuid4(), uuid4()
+
+        class Connection:
+            async def execute(self, query: str, parameters: object) -> "Connection":
+                return self
+
+            async def fetchone(self) -> Row:
+                return {
+                    "id": teammate,
+                    "box_id": box,
+                    "representative_agent_id": representative,
+                }
+
+        class Database:
+            @asynccontextmanager
+            async def connection(self) -> AsyncGenerator[Connection]:
+                yield Connection()
+
         context = Context(
-            services=cast(Services, None),
-            agent={"id": uuid4()},
+            services=cast(Services, SimpleNamespace(db=cast(Pool, Database()))),
+            agent={"id": identity, "leta_id": identity},
             run_id=uuid4(),
             filesystem=cast(Filesystem, Files()),
         )
@@ -121,6 +148,32 @@ async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None
                                     "calendar": {"weekday": [1]},
                                 },
                             },
+                            {
+                                "id": "duplicate-edge",
+                                "name": "box_create",
+                                "args": {
+                                    "name": "Review team",
+                                    "letis": [
+                                        {"name": "A", "system_prompt": "Analyze."},
+                                        {"name": "B", "system_prompt": "Review."},
+                                    ],
+                                    "edges": [["A", "B"], ["B", "A"]],
+                                    "representative": "A",
+                                },
+                            },
+                            {
+                                "id": "wrong-recipient",
+                                "name": "inbox_send",
+                                "args": {
+                                    "to": str(teammate),
+                                    "content": "Review the quote.",
+                                },
+                            },
+                            {
+                                "id": "unsupported-command",
+                                "name": "exec_shell",
+                                "args": {"command": "md5sum report.txt"},
+                            },
                         ],
                     )
                 ]
@@ -146,6 +199,14 @@ async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None
         assert '"writable": true' in replies["mounts"].text
         assert replies["invalid-calendar"].status == "error"
         assert "day_of_week" in replies["invalid-calendar"].text
+        assert replies["duplicate-edge"].status == "error"
+        assert "bidirectional" in replies["duplicate-edge"].text
+        assert "without also declaring B-A" in replies["duplicate-edge"].text
+        assert replies["wrong-recipient"].status == "error"
+        assert str(representative) in replies["wrong-recipient"].text
+        assert str(box) in replies["wrong-recipient"].text
+        assert replies["unsupported-command"].status == "error"
+        assert "unsupported command" in replies["unsupported-command"].text
     finally:
         await workspace.close()
 

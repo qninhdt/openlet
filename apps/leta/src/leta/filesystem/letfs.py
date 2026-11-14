@@ -36,7 +36,10 @@ def stat(node: fs.Node) -> FileStat:
     return FileStat(
         name=node.name,
         type=(
-            FileType.DIRECTORY if node.kind == fs.NODE_KIND_DIRECTORY else FileType.FILE
+            FileType.DIRECTORY
+            if node.kind == fs.NODE_KIND_DIRECTORY
+            or (node.HasField("file") and node.file.type == fs.FILE_TYPE_BLOB)
+            else FileType.FILE
         ),
         size=node.file.size_bytes if node.HasField("file") else None,
         modified=(
@@ -258,7 +261,7 @@ class LetFS(BaseVFS):
             return None
         return "".join(hit.snippet for hit in response.hits).encode()
 
-    @vfs_call(effect=Effect.READ, target=Target.FILE)
+    @vfs_call(effect=Effect.READ, target=Target.ANY)
     async def preview(self, path: PathSpec, image: bool) -> JSON:
         if image:
             result = await self.call(
@@ -345,7 +348,7 @@ class LetFS(BaseVFS):
                     {
                         "path": posixpath.join(path.virtual, entry.path),
                         "kind": "directory"
-                        if entry.node.kind == fs.NODE_KIND_DIRECTORY
+                        if stat(entry.node).type == FileType.DIRECTORY
                         else "file",
                         "size_bytes": entry.node.file.size_bytes
                         if entry.node.HasField("file")
@@ -376,7 +379,7 @@ class LetFS(BaseVFS):
                 {
                     "path": posixpath.join(path.virtual, node.name),
                     "kind": "directory"
-                    if node.kind == fs.NODE_KIND_DIRECTORY
+                    if stat(node).type == FileType.DIRECTORY
                     else "file",
                     "size_bytes": node.file.size_bytes
                     if node.HasField("file")

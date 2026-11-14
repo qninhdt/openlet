@@ -61,9 +61,14 @@ async def inbox_send(
     runtime: ToolRuntime[Context, State],
     to: UUID,
     content: str,
-    in_reply_to: UUID | None = None,
+    in_reply_to: Annotated[
+        UUID | None,
+        Field(
+            description="Optional message ID from inbox_read; never a conversation ID. Omit for a new message."
+        ),
+    ] = None,
 ) -> JSON:
-    """Send a message to an allowed recipient; final activity text does not deliver."""
+    """Deliver a message. Root contacts a box through its box ID or representative; Leti use their permitted links."""
     from ..worker import deliver
 
     ctx = runtime.context
@@ -73,7 +78,8 @@ async def inbox_send(
     async with s.db.connection() as conn:
         recipient = await (
             await conn.execute(
-                """SELECT a.id,a.box_id FROM agents a WHERE a.leta_id=%s AND
+                """SELECT a.id,a.box_id,b.representative_agent_id FROM agents a
+            LEFT JOIN boxes b ON b.id=a.box_id WHERE a.leta_id=%s AND
             (a.id=%s OR a.id=(SELECT representative_agent_id FROM boxes WHERE id=%s AND leta_id=%s))""",
                 (ctx.root, target, target, ctx.root),
             )
@@ -97,6 +103,16 @@ async def inbox_send(
             in_reply_to,
         )
     target = cast(UUID, recipient["id"])
+    if (
+        ctx.id == ctx.root
+        and recipient["box_id"] is not None
+        and target != recipient["representative_agent_id"]
+    ):
+        raise ValueError(
+            f"Root must send this team's task to box {recipient['box_id']} "
+            f"or representative {recipient['representative_agent_id']}; "
+            "the representative assigns work to teammates."
+        )
     source_kind = "box" if target == ctx.root and agent["box_id"] else "agent"
     source = cast(UUID, agent["box_id"]) if source_kind == "box" else ctx.id
     if in_reply_to:
@@ -108,7 +124,9 @@ async def inbox_send(
                 )
             ).fetchone()
         if original is None:
-            raise ValueError("reply message not found in your inbox")
+            raise ValueError(
+                "in_reply_to must be a message ID from inbox_read, not a conversation ID; omit it for a new message"
+            )
         conversation = cast(UUID, original["conversation_id"])
     else:
         endpoint = cast(UUID, recipient["box_id"]) if recipient["box_id"] else source
@@ -221,7 +239,7 @@ async def box_create(
     representative: str,
     description: str = "",
 ) -> JSON:
-    """Create a fixed team with shared home. Send tasks separately with inbox_send."""
+    """Create a fixed team with shared home. Edges are bidirectional; list each pair once. Send work to the box with inbox_send."""
     from ..worker import operation
 
     ctx = runtime.context
@@ -817,7 +835,7 @@ def tools(*, root: bool) -> list[BaseTool]:
         file_semantic_search,
     ]
     if root:
-        return [
+        catalog = [
             *shared,
             root_hitl_list,
             root_schedule_create,
@@ -829,4 +847,8 @@ def tools(*, root: bool) -> list[BaseTool]:
             box_get,
             box_delete,
         ]
-    return [*shared, leti_hitl_list, leti_schedule_create, leti_schedule_list]
+    else:
+        catalog = [*shared, leti_hitl_list, leti_schedule_create, leti_schedule_list]
+    for item in catalog:
+        item.handle_validation_error = str
+    return catalog
