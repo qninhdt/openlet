@@ -147,6 +147,8 @@ async def operation(
             )
     if saved is not None:
         return cast(dict[str, JSON], saved)
+    if command.box is not None:
+        await boxes.available(s.db, command.box)
     is_box = command.box is not None or command.action == "delete_box"
     type = BoxLifecycle if is_box else LetaLifecycle
     action = "delete" if command.action == "delete_box" else command.action
@@ -407,7 +409,7 @@ class Activities:
                     base=fs.NodeLocator(
                         node_id=storage.root_node_id, root_node_id=storage.root_node_id
                     ),
-                    path=f".boxes/{creation.box_id}",
+                    path=f".boxes/{creation.request.name}",
                 ),
                 metadata=Actor("agent", creation.leta_id).metadata,
                 timeout=30,

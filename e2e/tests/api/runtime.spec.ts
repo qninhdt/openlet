@@ -89,7 +89,7 @@ test('native runtime, box containment, asynchronous HITL and owner-independent s
   const team = await account.api.post(`${path}/boxes`, {
     data: {
       request_id: randomUUID(),
-      name: 'Review',
+      name: 'review',
       letis: [{ name: 'Reviewer', system_prompt: 'Review documents.' }],
       edges: [],
       representative: 'Reviewer',

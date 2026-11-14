@@ -71,21 +71,23 @@ async def test_shell_capture_is_bounded_and_redirection_remains_complete(
     )
     try:
         session = await workspace.session("tools")
-        result = await shell(
+        output, code = await shell(
             session,
             f"seq 1 {last_line} | tee /data/full.txt",
             cwd="/",
             output_path="/data/output.txt",
         )
-        assert result["truncated"] is True
-        assert len(str(result["stdout"]).encode()) <= 16384
-        assert str(result["stdout"]).startswith("1\n")
-        assert str(result["stdout"]).endswith(f"{last_line}\n")
+        assert code == 0
+        assert "[... output omitted ...]" in output
+        assert len(output.encode()) < 16600
+        assert output.startswith("1\n")
+        assert f"{last_line}\n" in output
+        assert "Saved output: /data/output.txt" in output
         full = await session.vfs.read("/data/full.txt")
         captured = await session.vfs.read("/data/output.txt")
         assert full.endswith(f"{last_line}\n".encode())
         assert captured == full[: 1024 * 1024]
-        assert result["output_complete"] is (len(full) <= 1024 * 1024)
+        assert ("first 1 MiB only" in output) is (len(full) > 1024 * 1024)
     finally:
         await workspace.close()
 
@@ -116,7 +118,7 @@ async def test_execution_reuses_client_and_native_compaction_preserves_prefix(
     from leta.db import Row
     from leta.models import Model, Models
     from leta.runtime.agent import ExecutionModel
-    from leta.runtime.tools import Context, exec_shell
+    from leta.runtime.tools import Context, execute
     from openlet_sdk.config import Config, ReasoningEffort
     from openlet_sdk.inference import InferenceSettings
     from temporalio.exceptions import ApplicationError
@@ -150,7 +152,7 @@ async def test_execution_reuses_client_and_native_compaction_preserves_prefix(
         InferenceSettings(model="chat", max_tokens=1024),
         prompt("Product rules\nYour instructions\n{{agent_instructions}}"),
         prompt("Summarize only, within {{summary_max_tokens}} tokens."),
-        [exec_shell],
+        [execute],
         "",
     )
     agent: Row = {
@@ -201,7 +203,7 @@ async def test_execution_reuses_client_and_native_compaction_preserves_prefix(
                     tool_calls=[
                         {
                             "id": str(index),
-                            "name": "exec_shell",
+                            "name": "execute",
                             "args": {"command": "pwd"},
                         }
                     ],
@@ -233,7 +235,7 @@ async def test_execution_reuses_client_and_native_compaction_preserves_prefix(
     }
     assert calls == results
     assert binding == {
-        "tools": [exec_shell],
+        "tools": [execute],
         "tool_choice": "none",
         "max_tokens": 2048,
     }

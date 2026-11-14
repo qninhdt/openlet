@@ -1,11 +1,13 @@
 import asyncio
+import json
+import posixpath
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Annotated, Literal, cast
 from uuid import UUID
 
 from langchain.tools import ToolRuntime, tool
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.tools import BaseTool
 from langfuse import propagate_attributes
 from mirage import ContentType, Session
@@ -13,7 +15,7 @@ from openlet_sdk.config import JSON
 from pydantic import Field
 
 from .. import boxes, history, hitl, messages, schedules
-from ..agents import json_row, stable
+from ..agents import stable
 from ..auth import Actor
 from ..boxes import BoxCreation, CreateBox, LetiDefinition
 from ..config import Services
@@ -23,7 +25,7 @@ from ..filesystem.workspace import Filesystem, scope, shell
 from ..filesystem.workspace import path as file_path
 from ..jobs.resources import ResourceOperation
 from ..messages import Message
-from ..output import page
+from ..output import BYTE_BUDGET, text_page
 from .inbox import State
 
 type Status = Literal[
@@ -59,94 +61,133 @@ async def session(runtime: ToolRuntime[Context, State]) -> Session:
 @tool
 async def inbox_send(
     runtime: ToolRuntime[Context, State],
-    to: UUID,
     content: str,
-    in_reply_to: Annotated[
-        UUID | None,
-        Field(
-            description="Optional message ID from inbox_read; never a conversation ID. Omit for a new message."
-        ),
-    ] = None,
+    to: str | None = None,
+    in_reply_to: Annotated[int | None, Field(ge=1)] = None,
 ) -> JSON:
-    """Deliver a message. Root contacts a box through its box ID or representative; Leti use their permitted links."""
+    """Send a message to a box name, permitted teammate name, root, or human user_id. To reply, use an incoming message number; to can then be omitted."""
     from ..worker import deliver
 
     ctx = runtime.context
     s, agent = ctx.services, ctx.agent
-    target = to
-    id = request_id(runtime)
+    original = (
+        await messages.incoming(s.db, ctx.id, in_reply_to)
+        if in_reply_to is not None
+        else None
+    )
+    if original and original["source_kind"] not in ("user", "agent", "box"):
+        raise ValueError("System events are not reply destinations")
+    if to is None and original is None:
+        raise ValueError("New messages require to; replies require in_reply_to")
     async with s.db.connection() as conn:
-        recipient = await (
-            await conn.execute(
-                """SELECT a.id,a.box_id,b.representative_agent_id FROM agents a
-            LEFT JOIN boxes b ON b.id=a.box_id WHERE a.leta_id=%s AND
-            (a.id=%s OR a.id=(SELECT representative_agent_id FROM boxes WHERE id=%s AND leta_id=%s))""",
-                (ctx.root, target, target, ctx.root),
-            )
-        ).fetchone()
-    if recipient is None:
-        if ctx.id != ctx.root:
-            raise ValueError("recipient is outside the communication graph")
+        if original and to is None:
+            if original["source_kind"] == "box":
+                query, params = (
+                    "SELECT representative_agent_id AS id, id AS box_id FROM boxes WHERE id=%s",
+                    (original["source_id"],),
+                )
+            elif original["source_kind"] == "agent":
+                query, params = (
+                    "SELECT id,box_id FROM agents WHERE id=%s AND leta_id=%s",
+                    (original["source_id"], ctx.root),
+                )
+            else:
+                query, params = (
+                    "SELECT %s::uuid AS id,NULL::uuid AS box_id",
+                    (original["source_id"],),
+                )
+            recipient = await (await conn.execute(query, params)).fetchone()
+        elif ctx.id == ctx.root:
+            recipient = await (
+                await conn.execute(
+                    "SELECT representative_agent_id AS id,id AS box_id FROM boxes WHERE leta_id=%s AND name=%s AND state='active'",
+                    (ctx.root, to),
+                )
+            ).fetchone()
+        elif to == "root":
+            recipient = {"id": ctx.root, "box_id": None}
+        else:
+            recipient = await (
+                await conn.execute(
+                    "SELECT id,box_id FROM agents WHERE leta_id=%s AND box_id=%s AND name=%s",
+                    (ctx.root, agent["box_id"], to),
+                )
+            ).fetchone()
+        human = bool(original and original["source_kind"] == "user" and to is None)
+        if recipient is None:
+            if ctx.id != ctx.root:
+                raise ValueError("recipient is outside the communication graph")
+            try:
+                target = UUID(str(to))
+            except ValueError:
+                raise LookupError(
+                    "recipient not found; use an exact box name or member user_id"
+                ) from None
+            human = True
+        else:
+            target = cast(UUID, recipient["id"])
+        if original:
+            expected = original["source_id"]
+            if original["source_kind"] == "box":
+                matched = recipient is not None and recipient["box_id"] == expected
+            else:
+                matched = target == expected
+            if not matched:
+                raise ValueError("to does not match the sender of in_reply_to")
+    if (
+        target == ctx.root
+        and ctx.id != ctx.root
+        and agent["representative_agent_id"] != ctx.id
+    ):
+        raise ValueError(
+            "Only the representative can contact root; send the result through your permitted teammates"
+        )
+    id = request_id(runtime)
+    if human:
         await s.auth.require(
             Actor("user", target),
             "workspace",
             cast(UUID, agent["workspace_id"]),
             "participate",
         )
-        return await messages.deliver_user(
+        await messages.deliver_user(
             s.db,
             ctx.root,
             target,
             content,
             id,
-            messages.conversation(ctx.root, "user", target),
-            in_reply_to,
+            cast(UUID, original["conversation_id"])
+            if original
+            else messages.conversation(ctx.root, "user", target),
+            cast(UUID, original["id"]) if original else None,
         )
-    target = cast(UUID, recipient["id"])
-    if (
-        ctx.id == ctx.root
-        and recipient["box_id"] is not None
-        and target != recipient["representative_agent_id"]
-    ):
-        raise ValueError(
-            f"Root must send this team's task to box {recipient['box_id']} "
-            f"or representative {recipient['representative_agent_id']}; "
-            "the representative assigns work to teammates."
-        )
-    source_kind = "box" if target == ctx.root and agent["box_id"] else "agent"
-    source = cast(UUID, agent["box_id"]) if source_kind == "box" else ctx.id
-    if in_reply_to:
-        async with s.db.connection() as conn:
-            original = await (
-                await conn.execute(
-                    "SELECT conversation_id FROM agent_messages WHERE id=%s AND recipient_agent_id=%s",
-                    (in_reply_to, ctx.id),
-                )
-            ).fetchone()
-        if original is None:
-            raise ValueError(
-                "in_reply_to must be a message ID from inbox_read, not a conversation ID; omit it for a new message"
-            )
-        conversation = cast(UUID, original["conversation_id"])
     else:
+        assert recipient is not None
+        source_kind = "box" if target == ctx.root and agent["box_id"] else "agent"
+        source = cast(UUID, agent["box_id"]) if source_kind == "box" else ctx.id
         endpoint = cast(UUID, recipient["box_id"]) if recipient["box_id"] else source
-        conversation = messages.conversation(
-            ctx.root,
-            "box" if recipient["box_id"] or agent["box_id"] else "agent",
-            endpoint,
+        conversation = (
+            cast(UUID, original["conversation_id"])
+            if original
+            else messages.conversation(
+                ctx.root,
+                "box" if recipient["box_id"] or agent["box_id"] else "agent",
+                endpoint,
+            )
         )
-    return await deliver(
-        s,
-        Message(
-            id=id,
-            recipient_agent_id=target,
-            source_kind=source_kind,
-            source_id=source,
-            conversation_id=conversation,
-            content=content,
-            in_reply_to_message_id=in_reply_to,
-        ),
-    )
+        await deliver(
+            s,
+            Message(
+                id=id,
+                recipient_agent_id=target,
+                source_kind=source_kind,
+                source_id=source,
+                conversation_id=conversation,
+                content=content,
+                in_reply_to_message_id=cast(UUID, original["id"]) if original else None,
+            ),
+        )
+    return {"sent": True}
 
 
 @tool
@@ -166,14 +207,19 @@ async def inbox_list(
 @tool
 async def inbox_read(
     runtime: ToolRuntime[Context, State],
-    conversation_id: UUID,
+    message: Annotated[int, Field(ge=1)],
     cursor: str = "",
     unread_only: bool = True,
 ) -> JSON:
-    """Read messages and mark returned items read; unread_only=false includes previously read messages."""
+    """Read the conversation identified by an incoming message number and mark returned items read. unread_only=false includes previously read messages."""
     ctx = runtime.context
+    original = await messages.incoming(ctx.services.db, ctx.id, message)
     return await messages.read(
-        ctx.services.db, ctx.id, conversation_id, int(cursor or 0), unread_only
+        ctx.services.db,
+        ctx.id,
+        cast(UUID, original["conversation_id"]),
+        int(cursor or 0),
+        unread_only,
     )
 
 
@@ -208,14 +254,21 @@ async def workspace_get(
             ).fetchone()
             if box and box["representative_agent_id"] == ctx.id and cursor is None:
                 rows.insert(
-                    0, {"id": ctx.root, "name": "Leta", "description": "Root agent"}
+                    0, {"id": ctx.root, "name": "root", "description": "Root agent"}
                 )
     return {
-        "id": str(ctx.id),
+        **(
+            {"workdir": f"~/.boxes/{ctx.agent['box_name']}/"}
+            if ctx.agent["box_id"]
+            else {}
+        ),
         "name": str(ctx.agent["name"]),
         "home": "~",
-        "recipients": [json_row(row) for row in rows],
-        "next_cursor": str(rows[-1]["id"]) if len(rows) >= 20 else None,
+        "recipients": [
+            {"name": str(row["name"]), "description": str(row["description"])}
+            for row in rows
+        ],
+        **({"next_cursor": str(rows[-1]["id"])} if len(rows) >= 20 else {}),
     }
 
 
@@ -225,9 +278,12 @@ async def workspace_member_list(
 ) -> JSON:
     """Find current workspace members and user IDs for HITL."""
     ctx = runtime.context
-    return await ctx.services.auth.members(
+    result = await ctx.services.auth.members(
         ctx.services.internal, cast(UUID, ctx.agent["workspace_id"]), cursor
     )
+    if not result.get("next_cursor"):
+        result.pop("next_cursor", None)
+    return result
 
 
 @tool
@@ -256,7 +312,7 @@ async def box_create(
             representative=representative,
         ),
     )
-    return await operation(
+    await operation(
         ctx.services,
         ResourceOperation(
             id=id,
@@ -269,6 +325,8 @@ async def box_create(
         ),
         wait=True,
     )
+    await ctx.filesystem.changed(f"~/.boxes/{name}")
+    return f"Box: {name}\nState: active\nWork directory: ~/.boxes/{name}/\nRepresentative: {representative}"
 
 
 @tool
@@ -277,7 +335,14 @@ async def box_list(
 ) -> JSON:
     """List boxes and work counts."""
     ctx = runtime.context
-    return await boxes.list_boxes(ctx.services.db, ctx.root, cursor)
+    result = await boxes.list_boxes(ctx.services.db, ctx.root, cursor)
+    lines = [
+        f"{item['name']} | {item['state']} | {item['agent_count']} members\n{item['description']}"
+        for item in cast(list[dict[str, JSON]], result["boxes"])
+    ]
+    if result.get("next_cursor"):
+        lines.append(f"Next cursor: {result['next_cursor']}")
+    return "\n\n".join(lines) or "No boxes."
 
 
 @tool
@@ -286,19 +351,42 @@ async def box_get(
 ) -> JSON:
     """Get box members, links and representative; prompts are opt-in."""
     ctx = runtime.context
-    return await boxes.get(ctx.services.db, ctx.root, box, include_prompts)
+    identity = await boxes.named(ctx.services.db, ctx.root, box)
+    result = await boxes.get(
+        ctx.services.db, ctx.root, str(identity["id"]), include_prompts
+    )
+    members = cast(list[dict[str, JSON]], result["letis"])
+    names = {str(member["id"]): str(member["name"]) for member in members}
+    lines = [
+        f"Box: {result['name']} | {result['state']}",
+        str(result["description"]),
+        f"Work directory: ~/.boxes/{result['name']}/",
+        f"Representative: {names[str(result['representative_agent_id'])]}",
+        "Members:",
+    ]
+    for member in members:
+        lines.append(f"- {member['name']}: {member['description']}")
+        if include_prompts:
+            lines.append(str(member["system_prompt"]))
+    lines.append("Links:")
+    for edge in cast(list[dict[str, JSON]], result["edges"]):
+        lines.append(
+            f"- {names[str(edge['agent_low_id'])]} ↔ {names[str(edge['agent_high_id'])]}"
+        )
+    return "\n".join(lines)
 
 
 @tool
-async def box_delete(runtime: ToolRuntime[Context, State], box_id: UUID) -> JSON:
-    """Stop Leti, remove affected schedules/pending requests and trash shared home. Root storage grants remain."""
+async def box_delete(runtime: ToolRuntime[Context, State], box: str) -> JSON:
+    """Stop a box, remove its schedules/pending requests and trash its work directory. Files elsewhere in shared home remain."""
     from ..worker import operation
 
     ctx = runtime.context
-    return await operation(
+    identity = await boxes.named(ctx.services.db, ctx.root, box)
+    await operation(
         ctx.services,
         ResourceOperation(
-            id=box_id,
+            id=cast(UUID, identity["id"]),
             request_id=request_id(runtime),
             action="delete_box",
             bridge_queue=ctx.services.config["dependencies"]["temporal"]["queues"][
@@ -307,6 +395,9 @@ async def box_delete(runtime: ToolRuntime[Context, State], box_id: UUID) -> JSON
         ),
         wait=True,
     )
+
+    await ctx.filesystem.changed(f"~/.boxes/{box}")
+    return {"box": box, "state": "archived"}
 
 
 @tool
@@ -320,7 +411,7 @@ async def hitl_ask(
     ctx = runtime.context
     from ..worker import submit_hitl
 
-    return await submit_hitl(
+    result = await submit_hitl(
         ctx.services,
         hitl.OpenRequest(
             id=request_id(runtime),
@@ -331,6 +422,7 @@ async def hitl_ask(
             payload=hitl.form(questions),
         ),
     )
+    return {"request_id": result["id"], "status": result["status"]}
 
 
 @tool
@@ -344,7 +436,7 @@ async def hitl_request(
     ctx = runtime.context
     from ..worker import submit_hitl
 
-    return await submit_hitl(
+    result = await submit_hitl(
         ctx.services,
         hitl.OpenRequest(
             id=request_id(runtime),
@@ -355,6 +447,9 @@ async def hitl_request(
             payload={"role": role, "reason": reason},
         ),
     )
+    if result["status"] == "already_granted":
+        return {"status": "already_granted", "access": role}
+    return {"request_id": result["id"], "status": result["status"]}
 
 
 async def own_hitl(ctx: Context, id: UUID) -> dict[str, JSON]:
@@ -369,7 +464,7 @@ async def own_hitl(ctx: Context, id: UUID) -> dict[str, JSON]:
 @tool
 async def hitl_get(runtime: ToolRuntime[Context, State], request_id: UUID) -> JSON:
     """Get a human request, its form, decision and grant outcome."""
-    return await own_hitl(runtime.context, request_id)
+    return hitl.render(await own_hitl(runtime.context, request_id))
 
 
 @tool
@@ -379,7 +474,7 @@ async def hitl_cancel(
     """Cancel a pending human request; does not revoke granted access."""
     ctx = runtime.context
     await own_hitl(ctx, request_id)
-    return await ctx.services.temporal.get_workflow_handle(  # pyright: ignore[reportUnknownMemberType]  # Temporal has an untyped overload for args.
+    result = await ctx.services.temporal.get_workflow_handle(  # pyright: ignore[reportUnknownMemberType]  # Temporal has an untyped overload for args.
         f"hitl/{request_id}"
     ).execute_update(
         "decide",
@@ -392,6 +487,7 @@ async def hitl_cancel(
         ),
         result_type=dict[str, JSON],
     )
+    return {"request_id": str(request_id), "status": result["status"]}
 
 
 async def list_hitl(
@@ -400,7 +496,7 @@ async def list_hitl(
     async with ctx.services.db.connection() as conn:
         rows = await (
             await conn.execute(
-                """SELECT h.id,h.requester_agent_id,h.type,h.title,h.status,h.outcome,h.created_at
+                """SELECT h.id,h.recipient_user_id,h.title,h.status,h.outcome
             FROM hitl_requests h JOIN agents a ON a.id=h.requester_agent_id
             WHERE a.leta_id=%s AND (%s::uuid IS NULL OR a.id=%s) AND (%s::text IS NULL OR h.status=%s)
             AND (%s::uuid IS NULL OR a.box_id=%s) AND (%s::uuid IS NULL OR h.id>%s) ORDER BY h.id LIMIT 20""",
@@ -417,10 +513,25 @@ async def list_hitl(
                 ),
             )
         ).fetchall()
-    return {
-        "requests": [json_row(row) for row in rows],
-        "next_cursor": str(rows[-1]["id"]) if len(rows) == 20 else None,
-    }
+    lines: list[str] = []
+    titles = [row["title"] for row in rows]
+    for row in rows:
+        line = f"{row['id']} | {row['title']} | {row['status']}"
+        if titles.count(row["title"]) > 1:
+            line += f" | to: {row['recipient_user_id']}"
+        if row["outcome"]:
+            outcome = cast(dict[str, JSON], row["outcome"])
+            line += f" | access: {outcome['status']}"
+            if outcome.get("reason"):
+                line += f" ({outcome['reason']})"
+        lines.append(line)
+    if len(rows) == 20:
+        lines.append(f"Next cursor: {rows[-1]['id']}")
+    return "\n".join(lines) or (
+        "No pending requests."
+        if status == "pending"
+        else "No requests matching this filter."
+    )
 
 
 @tool("hitl_list")
@@ -428,10 +539,22 @@ async def root_hitl_list(
     runtime: ToolRuntime[Context, State],
     status: Status | None = None,
     cursor: UUID | None = None,
-    box_id: UUID | None = None,
+    box: str | None = None,
 ) -> JSON:
-    """List human requests across root and boxes; box_id filters by requester box."""
-    return await list_hitl(runtime.context, status, cursor, box_id)
+    """List human requests across root and boxes; box filters by requester box."""
+    return await list_hitl(
+        runtime.context,
+        status,
+        cursor,
+        cast(
+            UUID,
+            (await boxes.named(runtime.context.services.db, runtime.context.root, box))[
+                "id"
+            ],
+        )
+        if box
+        else None,
+    )
 
 
 @tool("hitl_list")
@@ -449,7 +572,32 @@ async def change_schedule(
 ) -> JSON:
     from ..worker import submit_schedule
 
-    return await submit_schedule(runtime.context.services, change)
+    result = await submit_schedule(runtime.context.services, change)
+    if change.action == "delete":
+        return {"schedule_id": str(change.schedule_id), "deleted": True}
+    return {
+        "schedule_id": result["id"],
+        "target": await schedule_target(
+            runtime.context, UUID(str(result["target_agent_id"]))
+        ),
+        "type": result["type"],
+        "spec": result["spec"],
+        "paused": result["paused"],
+    }
+
+
+async def schedule_target(ctx: Context, target: UUID) -> str:
+    if target == ctx.root:
+        return "root"
+    async with ctx.services.db.connection() as conn:
+        row = await (
+            await conn.execute(
+                "SELECT CASE WHEN a.id=b.representative_agent_id THEN b.name ELSE b.name||'/'||a.name END AS name FROM agents a JOIN boxes b ON b.id=a.box_id WHERE a.id=%s AND a.leta_id=%s",
+                (target, ctx.root),
+            )
+        ).fetchone()
+    assert row is not None
+    return str(row["name"])
 
 
 async def own_schedule(ctx: Context, id: UUID) -> dict[str, JSON]:
@@ -473,14 +621,14 @@ async def root_schedule_create(
     starts_at: datetime | None = None,
     ends_at: datetime | None = None,
     timezone: str = "UTC",
-    target_box_id: UUID | None = None,
+    target_box: str | None = None,
 ) -> JSON:
     """Schedule an inbox instruction for yourself or a box. Choose exactly one: at, after_seconds, every_seconds, calendar."""
     ctx = runtime.context
     id = request_id(runtime)
     target = ctx.id
-    if target_box_id:
-        box = await boxes.identity(ctx.services.db, ctx.root, target_box_id)
+    if target_box:
+        box = await boxes.named(ctx.services.db, ctx.root, target_box)
         target = UUID(str(box["representative_agent_id"]))
     return await change_schedule(
         runtime,
@@ -609,7 +757,22 @@ async def schedule_get(runtime: ToolRuntime[Context, State], schedule_id: UUID) 
     """Get a schedule instruction, timing and upcoming forecasts."""
     value = await own_schedule(runtime.context, schedule_id)
     return {
-        **value,
+        **{
+            key: value[key]
+            for key in (
+                "id",
+                "title",
+                "content",
+                "type",
+                "spec",
+                "paused",
+                "deleted_at",
+            )
+            if value.get(key) is not None
+        },
+        "target": await schedule_target(
+            runtime.context, UUID(str(value["target_agent_id"]))
+        ),
         **await schedules.upcoming(runtime.context.services.temporal, value),
     }
 
@@ -620,8 +783,8 @@ async def list_schedules(
     async with ctx.services.db.connection() as conn:
         rows = await (
             await conn.execute(
-                """SELECT sc.* FROM schedules sc JOIN agents a ON a.id=sc.creator_agent_id
-            JOIN agents target ON target.id=sc.target_agent_id WHERE a.leta_id=%s AND (%s::uuid IS NULL OR a.id=%s)
+                """SELECT sc.id,sc.title,sc.type,sc.spec,sc.paused,sc.deleted_at,CASE WHEN target.id=b.representative_agent_id THEN b.name WHEN target.box_id IS NOT NULL THEN b.name||'/'||target.name ELSE 'root' END AS target_name FROM schedules sc JOIN agents a ON a.id=sc.creator_agent_id
+            JOIN agents target ON target.id=sc.target_agent_id LEFT JOIN boxes b ON b.id=target.box_id WHERE a.leta_id=%s AND (%s::uuid IS NULL OR a.id=%s)
             AND (%s::uuid IS NULL OR target.box_id=%s) AND (%s::uuid IS NULL OR sc.id>%s) ORDER BY sc.id LIMIT 20""",
                 (
                     ctx.root,
@@ -634,20 +797,36 @@ async def list_schedules(
                 ),
             )
         ).fetchall()
-    return {
-        "schedules": [json_row(row) for row in rows],
-        "next_cursor": str(rows[-1]["id"]) if len(rows) == 20 else None,
-    }
+    lines = [
+        f"{row['id']} | {row['title']} | {row['target_name']} | "
+        f"{'deleted' if row['deleted_at'] else 'paused' if row['paused'] else 'active'} | {row['type']}: "
+        + json.dumps(row["spec"], ensure_ascii=False, separators=(",", ":"))
+        for row in rows
+    ]
+    if len(rows) == 20:
+        lines.append(f"Next cursor: {rows[-1]['id']}")
+    return "\n".join(lines) or "No schedules matching this filter."
 
 
 @tool("schedule_list")
 async def root_schedule_list(
     runtime: ToolRuntime[Context, State],
     cursor: UUID | None = None,
-    box_id: UUID | None = None,
+    box: str | None = None,
 ) -> JSON:
-    """List root and box schedules; box_id filters by target box."""
-    return await list_schedules(runtime.context, cursor, box_id)
+    """List root and box schedules; box filters by target box."""
+    return await list_schedules(
+        runtime.context,
+        cursor,
+        cast(
+            UUID,
+            (await boxes.named(runtime.context.services.db, runtime.context.root, box))[
+                "id"
+            ],
+        )
+        if box
+        else None,
+    )
 
 
 @tool("schedule_list")
@@ -664,7 +843,7 @@ async def history_search(
 ) -> JSON:
     """Search your activity history by words; omit query for recent previews."""
     ctx = runtime.context
-    return await history.search(
+    return await history.search_text(
         ctx.services.db, ctx.id, int(cursor) if cursor else None, query
     )
 
@@ -672,13 +851,13 @@ async def history_search(
 @tool
 async def history_read(
     runtime: ToolRuntime[Context, State],
-    entry_id: UUID,
+    entry: Annotated[int, Field(ge=1)],
     start_line: Annotated[int, Field(ge=1)] = 1,
-    limit: Annotated[int, Field(ge=1, le=2000)] = 200,
-) -> JSON:
-    """Read a history entry; follow next_start_line for more."""
+    limit: Annotated[int | None, Field(ge=1, le=2000)] = None,
+) -> str:
+    """Read an activity entry by its number from history_search; follow continuations when needed."""
     ctx = runtime.context
-    return await history.read(ctx.services.db, ctx.id, entry_id, start_line, limit)
+    return await history.read_text(ctx.services.db, ctx.id, entry, start_line, limit)
 
 
 @tool
@@ -691,16 +870,40 @@ async def file_list(
     """List files and directories; /mnt lists accessible storages and whether each is writable."""
     vfs = (await session(runtime)).vfs
     if file_path(path) == "/mnt":
-        return {
-            "items": [
-                {"path": f"/mnt/{name}", "kind": "directory", "writable": write}
-                for name, (_, write) in runtime.context.filesystem.bindings.items()
-            ],
-            "next_cursor": None,
-            "truncated": False,
-        }
+        return (
+            "\n\n".join(
+                f"{binding.name} — {'read/write' if binding.writable else 'read-only'}\n  /mnt/{id}"
+                for id, binding in runtime.context.filesystem.bindings.items()
+            )
+            or "No accessible external storages."
+        )
     result, _ = await vfs.dispatch("list_page", scope(path), cursor=cursor, depth=depth)
-    return cast(JSON, result)
+    return directory_text(path, cast(dict[str, JSON], result))
+
+
+def directory_text(base: str, result: dict[str, JSON]) -> str:
+    lines = [f"Directory: {base}"]
+    for item in cast(list[dict[str, JSON]], result["items"]):
+        child = posixpath.relpath(str(item["path"]), file_path(base))
+        if child == ".":
+            continue
+        suffix = (
+            "/ [document artifacts]"
+            if item.get("artifacts")
+            else "/"
+            if item["kind"] == "directory"
+            else ""
+        )
+        lines.append(child + suffix)
+    if not result["items"]:
+        lines.append("(empty)")
+    if result.get("next_cursor"):
+        lines.append(f"Next cursor: {result['next_cursor']}")
+    elif result.get("truncated"):
+        lines.append(
+            "Listing incomplete. Narrow the path or depth to inspect the remaining entries."
+        )
+    return "\n".join(lines)
 
 
 @tool(response_format="content_and_artifact")
@@ -708,9 +911,9 @@ async def file_read(
     runtime: ToolRuntime[Context, State],
     path: str,
     start_line: Annotated[int, Field(ge=1)] = 1,
-    limit: Annotated[int, Field(ge=1, le=2000)] = 200,
+    limit: Annotated[int | None, Field(ge=1, le=2000)] = None,
 ) -> tuple[JSON, str | None]:
-    """Read a text window, image preview or uploaded-document artifacts; follow returned continuations."""
+    """Read file text, an image, or an uploaded document's extracted files. For text, start_line and limit select lines; omitted limit reads up to the output cap. Follow the continuation when more content is needed."""
     vfs = (await session(runtime)).vfs
     metadata = await vfs.stat(file_path(path))
     media = str(metadata.extra.get("media_type", ""))
@@ -722,9 +925,9 @@ async def file_read(
         )
         if media.startswith("image/"):
             return cast(JSON, result), path
-        return cast(JSON, result), None
+        return directory_text(path, cast(dict[str, JSON], result)), None
     data = await vfs.read(file_path(path))
-    return page(data.decode(), start_line, limit), None
+    return text_page(data.decode(), start_line, limit), None
 
 
 @tool
@@ -793,23 +996,60 @@ async def file_semantic_search(
         },
         as_baggage=True,
     ):
-        return {
-            "results": list(
-                await asyncio.gather(*(search(item) for item in paths or ["~"]))
+        results = await asyncio.gather(*(search(item) for item in paths or ["~"]))
+    groups: list[str] = []
+    # Reserve all source paths and omission notices before allocating excerpts.
+    used = 0
+    for value in results:
+        result = cast(dict[str, JSON], value)
+        base = str(result["path"])
+        used += len(f"Search scope: {base}\n\n".encode())
+        for hit in cast(list[dict[str, JSON]], result["hits"]):
+            used += len(
+                (
+                    posixpath.relpath(str(hit["path"]), base)
+                    + " [excerpt omitted; read source]\n\n"
+                ).encode()
             )
-        }
+    for value in results:
+        result = cast(dict[str, JSON], value)
+        base = str(result["path"])
+        lines = [f"Search scope: {base}"]
+        for hit in cast(list[dict[str, JSON]], result["hits"]):
+            name = posixpath.relpath(str(hit["path"]), base)
+            excerpt = str(hit["text"])
+            if len(excerpt) > 800:
+                excerpt = excerpt[:800] + " [excerpt truncated]"
+            size = len(excerpt.encode())
+            if used + size <= BYTE_BUDGET:
+                lines.append(name + "\n" + excerpt)
+                used += size
+            else:
+                lines.append(name + " [excerpt omitted; read source]")
+        groups.append(
+            "\n\n".join(lines) if result["hits"] else f"No matches in {base}."
+        )
+    return "\n\n".join(groups)
 
 
 @tool
-async def exec_shell(
+async def execute(
     runtime: ToolRuntime[Context, State], command: str, cwd: str = "~"
-) -> JSON:
-    """Run supported shell commands and pipelines over workspace files; no host programs or network."""
-    return await shell(
+) -> ToolMessage:
+    """Run supported shell commands and Python over workspace files. Use cwd for the working directory. Output is capped; read the saved output when needed. No host programs or network access."""
+    output, code = await shell(
         await session(runtime),
         command,
         cwd=file_path(cwd),
         output_path=f"/home/.output-{request_id(runtime)}.txt",
+    )
+    assert runtime.tool_call_id is not None
+    return ToolMessage(
+        content=output,
+        tool_call_id=runtime.tool_call_id,
+        name="execute",
+        status="error" if code else "success",
+        artifact={"exit_code": code},
     )
 
 
@@ -831,7 +1071,7 @@ def tools(*, root: bool) -> list[BaseTool]:
         file_read,
         file_write,
         file_edit,
-        exec_shell,
+        execute,
         file_semantic_search,
     ]
     if root:

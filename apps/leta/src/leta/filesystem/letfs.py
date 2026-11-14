@@ -11,11 +11,9 @@ import errno
 import posixpath
 from collections.abc import Awaitable
 from contextvars import ContextVar
-from typing import cast
 from uuid import UUID, uuid4
 
 import grpc
-from google.protobuf.json_format import MessageToDict
 from mirage import BaseVFS, ContentType, FileStat, FileType, PathSpec
 from mirage.io.types import ByteSource, materialize
 from mirage.types import DirListing
@@ -298,7 +296,19 @@ class LetFS(BaseVFS):
                 timeout=15,
             )
         )
-        return cast(JSON, MessageToDict(response, preserving_proto_field_name=True))
+        return {
+            "items": [
+                {
+                    "path": posixpath.join(path.virtual, item.path),
+                    "kind": "directory"
+                    if item.node.kind == fs.NODE_KIND_DIRECTORY
+                    else "file",
+                }
+                for item in response.entries
+                if item.path not in ("", ".")
+            ],
+            "truncated": response.truncated,
+        }
 
     async def read_tree(self, path: PathSpec) -> dict[str, FileStat] | None:
         response: fs.ReadTreeResponse = await self.call(
@@ -350,6 +360,8 @@ class LetFS(BaseVFS):
                         "kind": "directory"
                         if stat(entry.node).type == FileType.DIRECTORY
                         else "file",
+                        "artifacts": entry.node.HasField("file")
+                        and stat(entry.node).type == FileType.DIRECTORY,
                         "size_bytes": entry.node.file.size_bytes
                         if entry.node.HasField("file")
                         else None,
@@ -381,6 +393,8 @@ class LetFS(BaseVFS):
                     "kind": "directory"
                     if stat(node).type == FileType.DIRECTORY
                     else "file",
+                    "artifacts": node.HasField("file")
+                    and stat(node).type == FileType.DIRECTORY,
                     "size_bytes": node.file.size_bytes
                     if node.HasField("file")
                     else None,

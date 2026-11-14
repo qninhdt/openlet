@@ -42,3 +42,18 @@ def test_read_limit_is_validated_and_end_of_file_has_no_continuation() -> None:
     assert page("first\nlast", start_line=3)["content"] == ""
     with pytest.raises(ValueError):
         page("text", limit=2001)
+
+
+def test_plain_read_preserves_source_and_has_no_automatic_line_window() -> None:
+    from leta.output import text_page
+
+    text = "first\n\n" + "Đề nghị xác nhận.\n" * 300
+    assert text_page(text) == text
+    assert (
+        text_page(text, 1, 1) == "first\n\n[More content. Continue with start_line=2.]"
+    )
+    assert text_page("") == "(empty file)"
+    assert "Line 2 exceeds" in text_page("normal\n" + "x" * BYTE_BUDGET + "x", 2)
+    limited = text_page("a\n" * 10000)
+    assert limited.endswith("[More content. Continue with start_line=8193.]")
+    assert limited.count("a\n") == 8192

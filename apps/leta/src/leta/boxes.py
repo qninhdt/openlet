@@ -16,7 +16,9 @@ class LetiDefinition(Input):
 
 
 class CreateBox(Input):
-    name: str = Field(min_length=1, max_length=255)
+    name: str = Field(
+        min_length=1, max_length=64, pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    )
     description: str = Field(default="", max_length=4000)
     letis: list[LetiDefinition] = Field(min_length=1, max_length=20)
     edges: list[tuple[str, str]] = Field(max_length=190)
@@ -25,6 +27,8 @@ class CreateBox(Input):
     @model_validator(mode="after")
     def graph(self) -> "CreateBox":
         names = {item.name for item in self.letis}
+        if self.name == "root" or "root" in names:
+            raise ValueError("root is reserved for the parent agent")
         if len(names) != len(self.letis) or self.representative not in names:
             raise ValueError("Leti names must be unique and include the representative")
         edges: set[tuple[str, str]] = set()
@@ -107,7 +111,7 @@ async def prepare(db: Pool, creation: BoxCreation, home: UUID) -> dict[str, JSON
         result: dict[str, JSON] = {
             "id": str(creation.box_id),
             "state": "active",
-            "home": f"~/.boxes/{creation.box_id}",
+            "home": f"~/.boxes/{creation.request.name}/",
         }
         await save_receipt(
             conn,
@@ -181,3 +185,28 @@ async def list_boxes(
         "boxes": [json_row(row) for row in rows],
         "next_cursor": str(rows[-1]["id"]) if len(rows) == 20 else None,
     }
+
+
+async def named(db: Pool, root: UUID, name: str) -> Row:
+    async with db.connection() as conn:
+        row = await (
+            await conn.execute(
+                "SELECT id,name,representative_agent_id FROM boxes WHERE leta_id=%s AND name=%s AND state<>'archived'",
+                (root, name),
+            )
+        ).fetchone()
+    if row is None:
+        raise LookupError("box not found; use its exact name from box_list")
+    return row
+
+
+async def available(db: Pool, creation: BoxCreation) -> None:
+    async with db.connection() as conn:
+        existing = await (
+            await conn.execute(
+                "SELECT id FROM boxes WHERE leta_id=%s AND name=%s AND state<>'archived' AND id<>%s",
+                (creation.leta_id, creation.request.name, creation.box_id),
+            )
+        ).fetchone()
+    if existing:
+        raise ValueError("box name is already in use; reuse it or choose another name")

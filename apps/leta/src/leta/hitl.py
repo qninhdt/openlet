@@ -361,3 +361,54 @@ async def apply(
                 "UPDATE hitl_requests SET outcome=%s WHERE id=%s", (Jsonb(outcome), id)
             )
         return outcome
+
+
+def render(value: dict[str, JSON]) -> str:
+    payload = cast(dict[str, JSON], value.get("payload") or {})
+    response = cast(dict[str, JSON], value.get("response") or {})
+    approval = value.get("type") == "approval"
+    heading = "Access request" if approval else "Decision"
+    lines = [
+        f"{heading}: {value['title']} | request={value['id']}",
+        f"Status: {value['status']}",
+    ]
+    if approval:
+        lines.append(f"Requested access: {payload.get('role', 'viewer')}")
+        outcome = cast(dict[str, JSON], value.get("outcome") or {})
+        if outcome:
+            lines.append(
+                f"Access: {outcome['status']}"
+                + (f" ({outcome['reason']})" if outcome.get("reason") else "")
+            )
+        elif value["status"] == "accepted":
+            lines.append("Access: grant not confirmed")
+    else:
+        answers = cast(dict[str, dict[str, JSON]], response.get("answers") or {})
+        for question in cast(list[dict[str, JSON]], payload.get("questions") or []):
+            lines.append(str(question["text"]))
+            options = cast(list[dict[str, JSON]], question.get("options") or [])
+            labels = {str(option["id"]): str(option["label"]) for option in options}
+            if options and value["status"] == "pending":
+                lines.append("Options: " + "; ".join(labels.values()))
+            answer = answers.get(str(question["id"]))
+            if answer is not None:
+                if "text" in answer:
+                    text = str(answer["text"])
+                elif "option_ids" in answer:
+                    text = "; ".join(
+                        labels[str(id)] for id in cast(list[str], answer["option_ids"])
+                    )
+                else:
+                    text = (
+                        labels[str(answer["option_id"])]
+                        if answer.get("option_id")
+                        else "(no selection)"
+                    )
+                lines.append("Answer: " + (text or "(empty answer)"))
+                if answer.get("note"):
+                    lines.append("Note: " + str(answer["note"]))
+    if response.get("reason"):
+        lines.append("Reason: " + str(response["reason"]))
+    if value.get("expires_at") and value["status"] == "pending":
+        lines.append("Expires: " + str(value["expires_at"]))
+    return "\n".join(lines)

@@ -42,9 +42,34 @@ def page(text: str, start_line: int = 1, limit: int = 200) -> dict[str, JSON]:
         "truncated": more,
         **(
             {
-                "notice": f"Line {start_line} exceeds the preview budget. Use exec_shell with jq or Python to select the needed fields or part of that line."
+                "notice": f"Line {start_line} exceeds the preview budget. Use execute with jq or Python to select the needed fields or part of that line."
             }
             if more and not output
             else {}
         ),
     }
+
+
+def text_page(text: str, start_line: int = 1, limit: int | None = None) -> str:
+    if start_line < 1 or (limit is not None and not 1 <= limit <= 2000):
+        raise ValueError(
+            "start_line must be positive; limit must be between 1 and 2000"
+        )
+    lines = text.splitlines(keepends=True)
+    offset = start_line - 1
+    end = len(lines) if limit is None else min(len(lines), offset + limit)
+    selected: list[str] = []
+    used = 0
+    for line in lines[offset:end]:
+        size = len(line.encode())
+        if used + size > BYTE_BUDGET:
+            break
+        selected.append(line)
+        used += size
+    next_line = start_line + len(selected)
+    body = "".join(selected)
+    if next_line <= len(lines):
+        if not selected:
+            return f"Line {start_line} exceeds the preview budget. Use execute with jq or Python to select fields or a substring."
+        return body + f"\n[More content. Continue with start_line={next_line}.]"
+    return body or ("(empty file)" if not text else "(end of file)")

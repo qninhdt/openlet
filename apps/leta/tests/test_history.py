@@ -69,7 +69,7 @@ async def test_projection_keeps_error_status_and_image_reference_without_base64(
         ),
         ToolMessage(
             id="error-result",
-            name="exec_shell",
+            name="execute",
             tool_call_id="error",
             content="Timeout",
             status="error",

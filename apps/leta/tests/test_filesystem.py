@@ -159,7 +159,12 @@ async def test_search_returns_openable_paths_under_mount(driver: LetFS) -> None:
     )
     listing = cast(dict[str, object], await driver.list_page(path, depth=2))
     assert listing["items"] == [
-        {"path": "/home/reports/report.txt", "kind": "file", "size_bytes": None}
+        {
+            "path": "/home/reports/report.txt",
+            "kind": "file",
+            "artifacts": False,
+            "size_bytes": None,
+        }
     ]
 
 
@@ -190,6 +195,7 @@ async def test_parallel_file_tools_share_session_and_only_apply_mount_changes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from leta.filesystem import workspace as module
+    from leta.filesystem.workspace import StorageMount
 
     created = 0
     opened = 0
@@ -214,7 +220,9 @@ async def test_parallel_file_tools_share_session_and_only_apply_mount_changes(
     def workspace(*args: object, **kwargs: object) -> Workspace:
         nonlocal created
         created += 1
-        assert cast(dict[str, Mount], args[0])["/home"].mode == MountMode.EXEC
+        mount = cast(dict[str, Mount], args[0])["/home"]
+        assert mount.mode == MountMode.EXEC
+        assert cast(LetFS, mount.vfs).root == root
         return cast(Workspace, NativeWorkspace())
 
     storage, root = uuid4(), uuid4()
@@ -222,7 +230,7 @@ async def test_parallel_file_tools_share_session_and_only_apply_mount_changes(
 
     async def discover(self: Filesystem) -> None:
         await asyncio.sleep(0)
-        self.bindings = {str(storage): (root, writable)}
+        self.bindings = {str(storage): StorageMount(root, writable, "Shared")}
 
     monkeypatch.setattr(module, "Workspace", workspace)
 
@@ -231,10 +239,15 @@ async def test_parallel_file_tools_share_session_and_only_apply_mount_changes(
 
     monkeypatch.setattr(module, "redis_url", redis_url)
     monkeypatch.setattr(Filesystem, "discover", discover)
+
+    class Files:
+        async def GetStorage(self, *args: object, **kwargs: object) -> fs.Storage:
+            return fs.Storage(root_node_id=str(root))
+
     services = cast(
         Services,
         SimpleNamespace(
-            files=None,
+            files=Files(),
             config=cast(Config, {"dependencies": {"redis": {"address": "redis:6379"}}}),
         ),
     )

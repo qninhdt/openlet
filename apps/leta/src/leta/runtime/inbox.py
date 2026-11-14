@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, NotRequired, cast
 from uuid import UUID
@@ -55,9 +54,7 @@ class Inbox(AgentMiddleware[State, "Context"]):
             "messages": [
                 HumanMessage(
                     id=str(stable(self.agent, f"inbox/{last}")),
-                    content=json.dumps(
-                        input_batch(rows, root=self.root), ensure_ascii=False
-                    ),
+                    content=input_batch(rows, root=self.root),
                 )
             ],
             "inbox_cursor": last,

@@ -11,7 +11,7 @@ from langgraph.graph import END, START, StateGraph  # pyright: ignore[reportMiss
 from langgraph.prebuilt import ToolNode
 from leta.config import Services
 from leta.db import Pool, Row
-from leta.filesystem.workspace import COMMANDS, Filesystem
+from leta.filesystem.workspace import COMMANDS, Filesystem, StorageMount
 from leta.runtime.agent import ToolEffects
 from leta.runtime.inbox import State
 from leta.runtime.tools import Context, tools
@@ -46,11 +46,11 @@ def test_native_tools_expose_only_agent_arguments() -> None:
             }
             & fields[tool.name]
         )
-    assert "target_box_id" in fields["schedule_create"]
+    assert "target_box" in fields["schedule_create"]
     assert fields["hitl_request"] == {"user_id", "role", "reason"}
     schedule = leti["schedule_create"].tool_call_schema
     assert isinstance(schedule, type) and issubclass(schedule, BaseModel)
-    assert "target_box_id" not in schedule.model_fields
+    assert "target_box" not in schedule.model_fields
 
 
 async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None:
@@ -73,23 +73,22 @@ async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None
     try:
 
         class Files:
-            bindings = {"read-only": (uuid4(), False), "editable": (uuid4(), True)}
+            bindings = {
+                "read-only": StorageMount(uuid4(), False, "Sources"),
+                "editable": StorageMount(uuid4(), True, "Working"),
+            }
 
             async def open(self) -> Session:
                 return await workspace.session("tools")
 
-        identity, teammate, representative, box = uuid4(), uuid4(), uuid4(), uuid4()
+        identity = uuid4()
 
         class Connection:
             async def execute(self, query: str, parameters: object) -> "Connection":
                 return self
 
-            async def fetchone(self) -> Row:
-                return {
-                    "id": teammate,
-                    "box_id": box,
-                    "representative_agent_id": representative,
-                }
+            async def fetchone(self) -> Row | None:
+                return None
 
         class Database:
             @asynccontextmanager
@@ -110,12 +109,12 @@ async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None
                         tool_calls=[
                             {
                                 "id": "shell",
-                                "name": "exec_shell",
+                                "name": "execute",
                                 "args": {"command": "printf native"},
                             },
                             {
                                 "id": "python",
-                                "name": "exec_shell",
+                                "name": "execute",
                                 "args": {
                                     "command": 'python <<\'PY\'\nprint({"label": "customer\'s total", "minutes": 42 / (6 * 6) * 60})\nPY'
                                 },
@@ -127,12 +126,12 @@ async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None
                             },
                             {
                                 "id": "failed-shell",
-                                "name": "exec_shell",
+                                "name": "execute",
                                 "args": {"command": "false"},
                             },
                             {
                                 "id": "failed-python",
-                                "name": "exec_shell",
+                                "name": "execute",
                                 "args": {"command": "python -c 'print(1 / 0)'"},
                             },
                             {
@@ -152,7 +151,7 @@ async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None
                                 "id": "duplicate-edge",
                                 "name": "box_create",
                                 "args": {
-                                    "name": "Review team",
+                                    "name": "review-team",
                                     "letis": [
                                         {"name": "A", "system_prompt": "Analyze."},
                                         {"name": "B", "system_prompt": "Review."},
@@ -165,13 +164,13 @@ async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None
                                 "id": "wrong-recipient",
                                 "name": "inbox_send",
                                 "args": {
-                                    "to": str(teammate),
+                                    "to": "reviewer",
                                     "content": "Review the quote.",
                                 },
                             },
                             {
                                 "id": "unsupported-command",
-                                "name": "exec_shell",
+                                "name": "execute",
                                 "args": {"command": "md5sum report.txt"},
                             },
                         ],
@@ -195,18 +194,43 @@ async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None
         assert replies["failed-shell"].status == "error"
         assert replies["failed-python"].status == "error"
         assert "ZeroDivisionError" in replies["failed-python"].text
-        assert '"writable": false' in replies["mounts"].text
-        assert '"writable": true' in replies["mounts"].text
+        assert "Sources — read-only" in replies["mounts"].text
+        assert "Working — read/write" in replies["mounts"].text
         assert replies["invalid-calendar"].status == "error"
         assert "day_of_week" in replies["invalid-calendar"].text
         assert replies["duplicate-edge"].status == "error"
         assert "bidirectional" in replies["duplicate-edge"].text
         assert "without also declaring B-A" in replies["duplicate-edge"].text
         assert replies["wrong-recipient"].status == "error"
-        assert str(representative) in replies["wrong-recipient"].text
-        assert str(box) in replies["wrong-recipient"].text
+        assert "recipient not found" in replies["wrong-recipient"].text
         assert replies["unsupported-command"].status == "error"
         assert "unsupported command" in replies["unsupported-command"].text
+        context.agent = {
+            "id": uuid4(),
+            "leta_id": identity,
+            "box_id": uuid4(),
+            "representative_agent_id": uuid4(),
+        }
+        forbidden = await graph.ainvoke(  # pyright: ignore[reportUnknownMemberType]  # Native invocation overload.
+            {
+                "messages": [
+                    AIMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "id": "root-contact",
+                                "name": "inbox_send",
+                                "args": {"to": "root", "content": "Unrouted report"},
+                            }
+                        ],
+                    )
+                ]
+            },
+            context=context,
+        )
+        blocked = forbidden["messages"][-1]
+        assert isinstance(blocked, ToolMessage) and blocked.status == "error"
+        assert "Only the representative" in blocked.text
     finally:
         await workspace.close()
 
@@ -273,23 +297,127 @@ async def test_truncated_arguments_cannot_overwrite_an_existing_file() -> None:
 async def test_tool_timeout_returns_named_actionable_error() -> None:
     from langgraph.prebuilt.tool_node import ToolCallRequest
     from langgraph.types import Command
-    from leta.runtime.tools import exec_shell
+    from leta.runtime.tools import execute
 
     async def timed_out(request: ToolCallRequest) -> ToolMessage | Command[object]:
         raise TimeoutError
 
     call: ToolCall = {
-        "name": "exec_shell",
+        "name": "execute",
         "args": {"command": "work"},
         "id": "timeout",
     }
     request = ToolCallRequest(
         tool_call=call,
-        tool=exec_shell,
+        tool=execute,
         state={"messages": [AIMessage(content="", tool_calls=[call])]},
         runtime=cast(ToolRuntime[None, dict[str, object]], None),
     )
     result = await ToolEffects().awrap_tool_call(request, timed_out)
     assert isinstance(result, ToolMessage)
-    assert (result.name, result.status) == ("exec_shell", "error")
+    assert (result.name, result.status) == ("execute", "error")
     assert "time limit" in result.text and "inspect" in result.text
+
+
+def test_box_names_are_path_components_and_root_is_reserved() -> None:
+    import pytest
+    from leta.boxes import CreateBox
+    from pydantic import ValidationError
+
+    fields = {
+        "letis": [{"name": "analyst", "system_prompt": "Analyze sources."}],
+        "edges": [],
+        "representative": "analyst",
+    }
+    assert (
+        CreateBox.model_validate({"name": "quote-review", **fields}).name
+        == "quote-review"
+    )
+    for name in ("Quote Review", "../escape", "review/a", "root", "x" * 65):
+        with pytest.raises(ValidationError):
+            CreateBox.model_validate({"name": name, **fields})
+    with pytest.raises(ValidationError, match="reserved"):
+        CreateBox.model_validate(
+            {
+                "name": "quote-review",
+                "letis": [{"name": "root", "system_prompt": "Analyze."}],
+                "edges": [],
+                "representative": "root",
+            }
+        )
+
+
+async def test_search_keeps_ranked_paths_and_caps_multibyte_excerpts() -> None:
+    from leta.filesystem.workspace import path as file_path
+    from leta.runtime.tools import file_semantic_search
+    from mirage import PathSpec
+    from openlet_sdk.config import JSON
+
+    class VFS:
+        async def dispatch(
+            self, name: str, scope: PathSpec, **kwargs: object
+        ) -> tuple[JSON, None]:
+            return {
+                "path": scope.virtual,
+                "hits": [
+                    {
+                        "path": scope.virtual + f"/document-{i}.md",
+                        "text": "Thông tin báo giá. " * 300,
+                    }
+                    for i in range(10)
+                ],
+            }, None
+
+    class Files:
+        async def open(self) -> Session:
+            return cast(Session, SimpleNamespace(vfs=VFS()))
+
+    identity = uuid4()
+    context = Context(
+        services=cast(Services, None),
+        agent={
+            "id": identity,
+            "leta_id": identity,
+            "workspace_id": uuid4(),
+            "box_id": None,
+        },
+        run_id=uuid4(),
+        filesystem=cast(Filesystem, Files()),
+    )
+    builder = StateGraph(State, context_schema=Context)
+    builder.add_node("tools", ToolNode([file_semantic_search]))  # pyright: ignore[reportUnknownMemberType]  # Native overload leaves cache generics unspecified.
+    builder.add_edge(START, "tools")
+    builder.add_edge("tools", END)
+    graph = builder.compile()  # pyright: ignore[reportUnknownMemberType]  # Native overload leaves checkpoint generics unspecified.
+    paths = ["~/north", "~/south", "~/shared"]
+    result = await graph.ainvoke(  # pyright: ignore[reportUnknownMemberType]  # Native invocation overload.
+        {
+            "messages": [
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "search",
+                            "name": "file_semantic_search",
+                            "args": {"query": "supplier pricing", "paths": paths},
+                        }
+                    ],
+                )
+            ]
+        },
+        context=context,
+    )
+    reply = result["messages"][-1]
+    assert isinstance(reply, ToolMessage)
+    assert len(reply.text.encode()) <= 16384
+    assert (
+        "[excerpt truncated]" in reply.text
+        and "[excerpt omitted; read source]" in reply.text
+    )
+    assert "Thông tin báo giá. " * 43 not in reply.text
+    for path in paths:
+        group = reply.text.split(f"Search scope: {file_path(path)}\n\n", 1)[1].split(
+            "Search scope:", 1
+        )[0]
+        positions = [group.index(f"document-{i}.md") for i in range(10)]
+        assert positions == sorted(positions)

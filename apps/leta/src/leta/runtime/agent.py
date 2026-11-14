@@ -98,13 +98,6 @@ class ToolEffects(AgentMiddleware[State, Context]):
                     "Split large content into smaller operations and reissue complete arguments."
                 )
             result = await handler(request)
-            if (
-                isinstance(result, ToolMessage)
-                and result.status != "error"
-                and request.tool_call["name"] == "exec_shell"
-                and json.loads(result.text)["exit_code"] != 0
-            ):
-                result.status = "error"
             if isinstance(result, ToolMessage) and result.status == "error":
                 outcome = "rejected"
             return result
@@ -308,7 +301,7 @@ async def runtime_agent(s: Services, id: UUID) -> Row:
     async with s.db.connection() as conn:
         row = await (
             await conn.execute(
-                """SELECT a.*,l.workspace_id,l.storage_id,l.state,l.paused,b.home_node_id,b.state AS box_state,
+                """SELECT a.*,l.workspace_id,l.storage_id,l.state,l.paused,b.name AS box_name,b.representative_agent_id,b.state AS box_state,
             r.model_id AS root_model_id,r.reasoning_effort AS root_reasoning_effort
             FROM agents a JOIN letas l ON l.id=a.leta_id JOIN agents r ON r.id=a.leta_id
             LEFT JOIN boxes b ON b.id=a.box_id WHERE a.id=%s""",
@@ -343,6 +336,7 @@ async def box_context(s: Services, agent: Row) -> str:
     lines = [
         f"Box: {box['name']}",
         f"Purpose: {box['description']}",
+        f"Work directory: ~/.boxes/{box['name']}/",
         f"You: {agent['name']}",
         "Teammates:",
     ]
@@ -354,12 +348,16 @@ async def box_context(s: Services, agent: Row) -> str:
             if member["id"] == box["representative_agent_id"]
             else ""
         )
-        recipient = f"; recipient: {member['id']}" if member["connected"] else ""
+        recipient = (
+            "; contact permitted"
+            if member["connected"]
+            else "; contact through representative"
+        )
         lines.append(
             f"- {member['name']}{representative}: {member['description']}{recipient}"
         )
     if box["representative_agent_id"] == agent["id"]:
-        lines.append(f"You are the representative. Root recipient: {agent['leta_id']}")
+        lines.append("You are the representative. Root contact: root")
     return "\n".join(lines)
 
 
@@ -573,7 +571,7 @@ async def run(s: Services, lf: Langfuse, input: RunInput) -> RunResult:
                 and isinstance(history[-1], AIMessage)
             ):
                 if any(
-                    call["name"] in ("file_write", "file_edit", "exec_shell")
+                    call["name"] in ("file_write", "file_edit", "execute")
                     for call in history[-1].tool_calls
                 ):
                     raise ApplicationError(

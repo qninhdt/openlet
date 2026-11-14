@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from typing import Literal, cast
 from uuid import UUID
@@ -9,6 +10,7 @@ from pydantic import Field
 from .agents import Input, gate, get_agent, stable
 from .auth import Actor, Authorization
 from .db import Pool, Row
+from .hitl import render as render_hitl
 
 inbox_count = metrics.get_meter("openlet.leta").create_counter(
     "openlet.leta.inbox.messages"
@@ -182,72 +184,96 @@ async def pending(
     async with db.connection() as conn:
         rows = await (
             await conn.execute(
-                (
-                    """SELECT m.id,m.seq,m.source_kind,m.source_id,m.conversation_id,m.created_at,m.in_reply_to_message_id,m.scheduled_at,"""
-                    + ("left(m.content,240)" if root else "m.content")
-                    + """ AS content,coalesce(a.name,b.name) AS source_name
-            FROM agent_messages m LEFT JOIN agents a ON m.source_kind='agent' AND a.id=m.source_id
-            LEFT JOIN boxes b ON m.source_kind='box' AND b.id=m.source_id
-            WHERE recipient_agent_id=%s AND seq>%s ORDER BY seq LIMIT 20"""
-                ),
+                """SELECT m.*,coalesce(a.name,b.name) AS source_name,
+                h.title AS request_title,h.type AS request_type,h.payload AS request_payload,
+                sc.title AS schedule_title
+                FROM agent_messages m
+                LEFT JOIN agents a ON m.source_kind='agent' AND a.id=m.source_id
+                LEFT JOIN boxes b ON m.source_kind='box' AND b.id=m.source_id
+                LEFT JOIN hitl_requests h ON m.source_kind='hitl' AND h.id=m.source_id
+                LEFT JOIN schedules sc ON m.source_kind='schedule' AND sc.id=m.source_id
+                WHERE m.recipient_agent_id=%s AND m.seq>%s ORDER BY m.seq LIMIT 20""",
                 (agent_id, after),
             )
         ).fetchall()
     size = 0
     result: list[Row] = []
     for row in rows:
-        size += len(str(row["content"]).encode())
+        size += len(input_batch([row], root=root).encode())
         if result and size > 32000:
             break
         result.append(row)
     return result
 
 
-def input_batch(rows: list[Row], *, root: bool) -> dict[str, JSON]:
-    items: list[JSON] = []
-    conversations: set[str] = set()
+def input_batch(rows: list[Row], *, root: bool) -> str:
+    latest = {row["conversation_id"]: row["seq"] for row in rows}
+    items: list[str] = []
     for row in rows:
-        source: dict[str, JSON] = {
-            "kind": str(row["source_kind"]),
-            "id": str(row["source_id"]),
-        }
-        if row.get("source_name"):
-            source["name"] = str(row["source_name"])
-        if root:
-            conversation = str(row["conversation_id"])
-            if conversation in conversations:
-                continue
-            conversations.add(conversation)
+        kind = row["source_kind"]
+        if kind == "hitl":
+            event = cast(dict[str, JSON], json.loads(str(row["content"])))
             items.append(
-                {
-                    "conversation_id": conversation,
-                    "source": source,
-                    "preview": str(row["content"])[:240],
-                }
+                render_hitl(
+                    {
+                        **event,
+                        "id": str(row["source_id"]),
+                        "title": str(row.get("request_title") or "Human decision"),
+                        "type": str(row.get("request_type") or "ask"),
+                        "payload": cast(JSON, row.get("request_payload") or {}),
+                    }
+                )
+            )
+        elif kind == "schedule":
+            items.append(
+                f"Scheduled task: {row.get('schedule_title') or 'Scheduled instruction'} | schedule={row['source_id']}"
+                f"\nScheduled for: {row['scheduled_at']}\n{row['content']}"
             )
         else:
-            item: dict[str, JSON] = {
-                "message_id": str(row["id"]),
-                "source": source,
-                "content": str(row["content"]),
-                "created_at": cast(datetime, row["created_at"]).isoformat(),
-            }
-            if row["in_reply_to_message_id"]:
-                item["in_reply_to"] = str(row["in_reply_to_message_id"])
-            if row["scheduled_at"]:
-                item["scheduled_at"] = cast(datetime, row["scheduled_at"]).isoformat()
-            items.append(item)
-    return {"notifications" if root else "messages": items}
+            if root and latest[row["conversation_id"]] != row["seq"]:
+                continue
+            sender = str(row.get("source_name") or ("User" if kind == "user" else kind))
+            if kind == "box":
+                sender = "box " + sender
+            body = str(row["content"])
+            if root:
+                body = " ".join(body.split())
+                if len(body) > 120:
+                    body = body[:119] + "…"
+            items.append(f"From {sender} | message={row['seq']}\n{body}")
+    return "\n\n---\n\n".join(items)
+
+
+async def incoming(db: Pool, agent: UUID, seq: int) -> Row:
+    async with db.connection() as conn:
+        row = await (
+            await conn.execute(
+                "SELECT * FROM agent_messages WHERE recipient_agent_id=%s AND seq=%s",
+                (agent, seq),
+            )
+        ).fetchone()
+    if row is None:
+        raise LookupError(
+            "incoming message not found; use a message number from your inbox"
+        )
+    return row
 
 
 async def read(
     db: Pool, agent: UUID, conversation: UUID, after: int = 0, unread: bool = True
-) -> dict[str, JSON]:
+) -> str:
     async with db.connection() as conn, conn.transaction():
         rows = await (
             await conn.execute(
-                """SELECT * FROM agent_messages WHERE recipient_agent_id=%s AND conversation_id=%s
-            AND seq>%s AND (NOT %s OR read_at IS NULL) ORDER BY seq LIMIT 20 FOR UPDATE""",
+                """SELECT m.*,coalesce(a.name,b.name) AS source_name,
+                h.title AS request_title,h.type AS request_type,h.payload AS request_payload,sc.title AS schedule_title
+                FROM agent_messages m
+            LEFT JOIN agents a ON m.source_kind='agent' AND a.id=m.source_id
+            LEFT JOIN boxes b ON m.source_kind='box' AND b.id=m.source_id
+            LEFT JOIN hitl_requests h ON m.source_kind='hitl' AND h.id=m.source_id
+            LEFT JOIN schedules sc ON m.source_kind='schedule' AND sc.id=m.source_id
+            WHERE m.recipient_agent_id=%s AND m.conversation_id=%s
+            AND m.seq>%s AND (NOT %s OR m.read_at IS NULL) ORDER BY m.seq LIMIT 20 FOR UPDATE OF m""",
                 (agent, conversation, after, unread),
             )
         ).fetchall()
@@ -255,10 +281,13 @@ async def read(
             "UPDATE agent_messages SET read_at=coalesce(read_at,now()) WHERE id=ANY(%s)",
             ([r["id"] for r in rows],),
         )
-    return {
-        "messages": input_batch(rows, root=False)["messages"],
-        "next_cursor": str(rows[-1]["seq"]) if len(rows) == 20 else None,
-    }
+    body = (
+        input_batch(rows, root=False)
+        or "No messages matching this conversation and filter."
+    )
+    if len(rows) == 20:
+        body += f"\nNext cursor: {rows[-1]['seq']}"
+    return body
 
 
 async def list_inbox(
@@ -267,20 +296,29 @@ async def list_inbox(
     after: int = 0,
     unread: bool = True,
     source: UUID | None = None,
-) -> dict[str, JSON]:
+) -> str:
     async with db.connection() as conn:
         rows = await (
             await conn.execute(
-                """SELECT * FROM (SELECT DISTINCT ON (conversation_id) * FROM agent_messages WHERE recipient_agent_id=%s
-            AND (NOT %s OR read_at IS NULL) AND (%s::uuid IS NULL OR source_id=%s)
-            ORDER BY conversation_id,seq) notifications WHERE seq>%s ORDER BY seq LIMIT 20""",
-                (agent, unread, source, source, after),
+                """SELECT n.*,coalesce(a.name,b.name) AS source_name,
+                h.title AS request_title,h.type AS request_type,h.payload AS request_payload,sc.title AS schedule_title
+                FROM (
+                SELECT DISTINCT ON (conversation_id) * FROM agent_messages
+                WHERE recipient_agent_id=%s AND seq>%s AND (NOT %s OR read_at IS NULL)
+                AND (%s::uuid IS NULL OR source_id=%s)
+                ORDER BY conversation_id,seq DESC
+            ) n LEFT JOIN agents a ON n.source_kind='agent' AND a.id=n.source_id
+            LEFT JOIN boxes b ON n.source_kind='box' AND b.id=n.source_id
+            LEFT JOIN hitl_requests h ON n.source_kind='hitl' AND h.id=n.source_id
+            LEFT JOIN schedules sc ON n.source_kind='schedule' AND sc.id=n.source_id
+            ORDER BY n.seq LIMIT 20""",
+                (agent, after, unread, source, source),
             )
         ).fetchall()
-    return {
-        **input_batch(rows, root=True),
-        "next_cursor": str(rows[-1]["seq"]) if len(rows) == 20 else None,
-    }
+    body = input_batch(rows, root=True) or "No messages matching this inbox filter."
+    if len(rows) == 20:
+        body += f"\nNext cursor: {rows[-1]['seq']}"
+    return body
 
 
 async def deliver_user(
