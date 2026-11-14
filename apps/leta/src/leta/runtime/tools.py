@@ -318,12 +318,11 @@ async def hitl_ask(
 @tool
 async def hitl_request(
     runtime: ToolRuntime[Context, State],
-    storage_id: UUID,
-    recipient_user_id: UUID,
+    user_id: UUID,
     role: Literal["viewer", "editor"] = "viewer",
     reason: str = "",
 ) -> JSON:
-    """Request storage access for root and its Leti. Pending or accepted is not yet granted."""
+    """Ask a workspace member for access to their Personal storage, shared by root and its Leti. Wait for the grant outcome."""
     ctx = runtime.context
     from ..worker import submit_hitl
 
@@ -332,10 +331,10 @@ async def hitl_request(
         hitl.OpenRequest(
             id=request_id(runtime),
             requester_agent_id=ctx.id,
-            recipient_user_id=recipient_user_id,
+            recipient_user_id=user_id,
             type="approval",
             title="Storage access request",
-            payload={"storage_id": str(storage_id), "role": role, "reason": reason},
+            payload={"role": role, "reason": reason},
         ),
     )
 

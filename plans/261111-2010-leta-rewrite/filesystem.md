@@ -46,7 +46,7 @@ Giữ các external mounts theo một quy tắc đường dẫn ổn định:
 /mnt/<private-storage-id> # private đã cấp viewer/editor cho root agent
 ```
 
-Tên storage là metadata hiển thị, ID làm mount key để rename không đổi đường dẫn. Không cần /users/<owner> hoặc personal resolver vì một user có thể có nhiều storages. Public chỉ trong workspace, mặc định read; write cần owner/editor. Private được share trực tiếp hoặc qua HITL dùng cùng quy tắc mount.
+Tên storage là metadata hiển thị, ID làm mount key để rename không đổi đường dẫn. Không thêm path alias /users/<owner>. HITL tự resolve Personal storage theo user_id; agent không liệt kê kho chưa có quyền. Public chỉ trong workspace, mặc định read; write cần owner/editor. Private được share trực tiếp hoặc qua HITL dùng cùng quy tắc mount.
 
 Discovery gọi ListStorages(workspace_id) bằng root agent, không owned_only và không dùng quyền của human owner. Follow native pagination đến hết kể cả page không có visible items nhưng còn next_page_token. Response có root_node_id/capabilities, không N+1 GetStorage cho mỗi item. Loại home storage_id khỏi external mounts: đặc biệt không tạo /mnt/<home-storage-id> cho Leti vì alias đó sẽ mở lại toàn home storage, vượt box containment.
 

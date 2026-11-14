@@ -41,6 +41,7 @@ def test_native_tools_expose_only_agent_arguments() -> None:
             & fields[tool.name]
         )
     assert "target_box_id" in fields["schedule_create"]
+    assert fields["hitl_request"] == {"user_id", "role", "reason"}
     schedule = leti["schedule_create"].tool_call_schema
     assert isinstance(schedule, type) and issubclass(schedule, BaseModel)
     assert "target_box_id" not in schedule.model_fields

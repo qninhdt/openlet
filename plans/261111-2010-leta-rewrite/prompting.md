@@ -185,10 +185,10 @@ hitl_ask returns a pending request; it is not the person's answer. The result
 arrives later in your inbox. An empty answer or a choice left unselected is not
 permission to invent a decision. Clarify only if that omission blocks the task.
 
-Use hitl_request to request viewer or editor access to a particular storage from
-the specified person who can grant it. Choose the least access that serves the
-task. If the storage or approver is unknown, get that information from the task
-context or a focused question; do not assume one personal storage per person.
+Use hitl_request with a workspace member's user_id to request viewer or editor
+access to their Personal storage. The system finds that person's Personal storage
+in this workspace; you do not need a storage ID. Use workspace_member_list when
+you need to identify the person. Choose the least access that serves the task.
 
 An access request by any Leti grants the root agent access, shared by the Leti
 under that root; it is not a private grant to only the requester. Explain that

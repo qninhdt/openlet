@@ -90,10 +90,9 @@ export interface LetiTools {
     questions: Question[];
   }): unknown;
 
-  /** Request storage access for root and its Leti. Pending or accepted is not yet granted. */
+  /** Ask a member for access to their Personal storage, shared by root and its Leti. */
   hitl_request(input: {
-    storage_id: string;
-    recipient_user_id: string;
+    user_id: string;
     role?: "viewer" | "editor";
     reason?: string;
   }): unknown;

@@ -84,7 +84,7 @@ Một storage_id trong SQL chỉ là home binding, không cấm truy cập nhi�
 
 hitl_requests giữ type/status ở columns, payload storage_id/role/reason, response accepting actor và outcome effect. Khi accepted:
 
-Đề xuất input hitl_request chỉ rõ storage_id và recipient_user_id; requester chưa có read/manage_access không gọi được ListStorageAccess để auto-discover owner. Native graph admission kiểm scoped storage workspace và addressed human manage_access, không dùng Platform personal resolver hoặc giả human actor để đọc metadata private. Chi tiết tại [HITL](hitl.md#2-tools-và-người-nhận); không thêm core RPC hoặc schema mirror.
+hitl_request nhận user_id của current workspace member. Trusted admission tự resolve Personal storage có owner user trực tiếp qua LetFS ListStorages private/owned_only và ListStorageAccess bằng identity của recipient; model không nhận danh sách kho riêng. Lưu target storage_id vào request, giữ membership/manage_access checks và luồng approval/grant hiện có. Không có Platform personal resolver hoặc discovery metadata của kho chưa có quyền cho agent. Chi tiết tại [HITL](hitl.md#2-tools-và-người-nhận); không thêm core RPC hoặc schema mirror.
 
 1. Kiểm root/requester liveness và addressed recipient/current human rights.
 2. SetStorageAccess(workspace_id,storage_id,actor.agent_id=root,role EDITOR/VIEWER) với accepting-human metadata.

@@ -18,7 +18,7 @@ Approval này không là generic execute-any-tool approval. Accept không thực
 | Tool | Input chính | Behavior |
 |---|---|---|
 | hitl_ask | recipient_user_id, questions, optional title | Gửi tới bất kỳ human owner/member hiện tại trong cùng workspace |
-| hitl_request | storage_id, recipient_user_id, role=viewer, reason | Gửi tới human được chỉ rõ và có current storage.manage_access |
+| hitl_request | user_id, role=viewer, reason | Xin quyền vào Personal storage duy nhất của user trong workspace; system tự resolve storage |
 | hitl_list | status, optional box filter cho root, cursor | Root quản lý root scope; Leti chỉ requests của chính nó; page size do system |
 | hitl_get | request_id | Xem canonical form/decision/outcome trong authorized scope |
 | hitl_cancel | request_id, reason | Cancel pending request thuộc quyền quản lý, không revoke grant |
@@ -27,13 +27,13 @@ hitl_ask nhận recipient_user_id explicit do root Leta hoặc Leti chọn. Ch�
 
 recipient_user_id là event identity cố định. Khi open, xem incoming card và answer đều kiểm người nhận còn tham gia cùng workspace; chỉ exact recipient được answer. Thành viên khác không được trả lời thay. Nếu recipient rời workspace thì mất quyền xem/answer; agent tiếp tục chạy, request vẫn pending tới cancel/expiry hoặc recipient rejoin. Không tự retarget tới owner hoặc member khác; muốn hỏi người khác thì tạo request mới. Owner transfer không ảnh hưởng ask routing.
 
-hitl_request phải dùng storage ID cụ thể vì một user có thể có nhiều private storages. recipient_user_id là proposed human recipient, không phải quyền được caller tự khẳng định. Open kiểm native storage workspace relationship/current recipient manage_access và scope cùng workspace; apply còn để LetFS kiểm actual storage parent và rights lần nữa. Không có personal resolver, user→single-storage mapping hoặc platform grant proxy.
+hitl_request nhận user_id của một current workspace member. Hệ thống tự tìm Personal storage duy nhất của user trong workspace qua ListStorages private/owned_only và ListStorageAccess để chọn owner user trực tiếp (loại kho agent#owner), bằng identity của recipient bên trong admission; không trả danh sách này cho model. Lưu storage_id đã resolve vào payload của request để approval/effect dùng đúng target cố định. Không có hoặc không có đúng một kho thì báo lỗi rõ ràng, không chọn tùy ý. Không thêm RPC mới, bảng mapping hoặc quyền metadata discovery cho agent. Model không truyền storage_id hoặc một recipient khác với owner của Personal.
 
-Lý do không auto-discover approver: ListStorageAccess yêu cầu manage_access; agent đang xin private access thường chưa có cả read nên không gọi được API đó. Storage có thể thuộc user, agent hoặc workspace userset. Yêu cầu storage ID và human recipient từ user/task context, kiểm bằng native SpiceDB graph, không enumerate toàn bộ ACL/managers hoặc tạo internal resolver RPC mới. Admission không đọc metadata private bằng cách giả actor của proposed recipient; không expose graph ownership/discovery rộng hơn request cần thiết.
+Open kiểm current workspace membership và storage.manage_access của recipient; read/answer/apply tiếp tục kiểm quyền hiện hành như trước. Agent chỉ thấy public/shared và private đã được grant khi discovery. Sau accepted + granted, native mount refresh đưa Personal storage vào /mnt. Không thay đổi schema SQL hoặc workflow/activity inventory.
 
 Trước khi mở approval mới, kiểm root current read/write tương ứng: nếu đã đủ thì trả already_granted, không tạo request SQL, không chờ human hoặc gửi thêm outcome message. Đây chỉ là permission snapshot; file operations vẫn kiểm quyền lại. Pending request đã tồn tại cùng ID thì trả canonical request đó trước, không biến request cũ thành request mới vì permissions đã đổi.
 
-Grantee luôn là root agent suy qua requester. Model không truyền grantee tùy ý; Leti không có graph grant riêng. Viewer nghĩa là read, editor nghĩa là write; không xin owner, chuyển quyền sở hữu hoặc xin cả workspace. Public viewer thường already_granted; public editor vẫn cần human có manage_access.
+Grantee luôn là root agent suy qua requester. Model không truyền grantee tùy ý; Leti không có graph grant riêng. Viewer nghĩa là read, editor nghĩa là write; không xin owner, chuyển quyền sở hữu hoặc xin cả workspace. Tool này chỉ xin quyền Personal storage; các grant khác được quản lý qua API chia sẻ storage.
 
 ## 3. Form và response
 

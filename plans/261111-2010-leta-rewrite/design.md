@@ -170,7 +170,7 @@ Có hai lifecycle workflow types cụ thể, không generic ResourceChanges/comm
 
 ### HITL
 
-[Thiết kế HITL cuối đề xuất](hitl.md) đối chiếu archive/forms/grant/cleanup. Ask nhận explicit recipient_user_id là bất kỳ human owner/member hiện tại cùng workspace, không agent.use hoặc agent-owner routing; approval chỉ rõ storage_id/recipient_user_id và kiểm quyền manage_access. Không thêm workflow/activity hoặc SQL fields.
+[Thiết kế HITL cuối đề xuất](hitl.md) đối chiếu archive/forms/grant/cleanup. Ask nhận explicit recipient_user_id là bất kỳ human owner/member hiện tại cùng workspace, không agent.use hoặc agent-owner routing; approval nhận user_id, system resolve Personal storage trong workspace và kiểm quyền manage_access. Không thêm workflow/activity hoặc SQL fields.
 
 Một HitlRequest workflow sống đúng đời request: pending, answer/expiry/cancel, grant nếu có, inbox delivery rồi kết thúc. Tool trả pending ngay, không giữ stack hoặc pause toàn agent. Không dùng native dangerous-tool approval để thay async product HITL vì semantics khác nhau.
 

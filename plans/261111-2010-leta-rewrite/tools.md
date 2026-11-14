@@ -32,7 +32,7 @@ vào application. Python declarations là nguồn schema runtime duy nhất.
 
 ### Naming
 
-Tên tool theo quyết định người dùng: `<resource_or_namespace>_<action>`, snake_case và resource dùng số ít. Namespaces: inbox, workspace, workspace_member, box, hitl, schedule, history, file, exec. Giữ cách viết file_semantic_search; exec_shell và exec_python dùng chung namespace exec. workspace_member_list có resource workspace_member và action list. inbox_send gửi tới các recipient được phép như trước; hitl_request vẫn xin quyền viewer/editor cho storage với storage_id/recipient_user_id cụ thể.
+Tên tool theo quyết định người dùng: `<resource_or_namespace>_<action>`, snake_case và resource dùng số ít. Namespaces: inbox, workspace, workspace_member, box, hitl, schedule, history, file, exec. Giữ cách viết file_semantic_search; exec_shell và exec_python dùng chung namespace exec. workspace_member_list có resource workspace_member và action list. inbox_send gửi tới các recipient được phép như trước; hitl_request nhận user_id để xin viewer/editor vào Personal storage duy nhất của user trong workspace; system resolve storage.
 
 Đổi tên model-visible tools trong cả catalog, contracts và examples, không aliases tên cũ. Giữ nguyên activity/workflow IDs, native API method names và archive source; implementation mới đăng ký trực tiếp tên mới bằng native LangChain. Counts hiện tại đã đo lại theo tên mới. Historical baseline trong JSON report giữ literal tên/count cũ để không sửa bằng chứng đo, không là compatibility registry.
 
@@ -65,7 +65,7 @@ workspace_get trả identity/model/home và bounded roster, không toàn bộ gr
 | Tool | Ai có | Input |
 |---|---|---|
 | hitl_ask | Cả hai | recipient_user_id: ID, questions: Question[], title?: string |
-| hitl_request | Cả hai | storage_id: ID, recipient_user_id: ID, role?: viewer/editor=viewer, reason?: string="" |
+| hitl_request | Cả hai | user_id: ID, role?: viewer/editor=viewer, reason?: string="" |
 | hitl_list | Cả hai | status?: HitlStatus, box_id?: ID chỉ root, P |
 | hitl_get | Cả hai | request_id: ID |
 | hitl_cancel | Cả hai | request_id: ID, reason?: string="" |

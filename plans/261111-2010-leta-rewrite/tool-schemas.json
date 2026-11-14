@@ -308,18 +308,10 @@
       "type": "function",
       "function": {
         "name": "hitl_request",
-        "description": "Request storage access for root and its Leti. Pending or accepted is not yet granted.",
+        "description": "Ask a workspace member for access to their Personal storage, shared by root and its Leti. Wait for the grant outcome.",
         "parameters": {
           "type": "object",
           "properties": {
-            "storage_id": {
-              "type": "string",
-              "format": "uuid"
-            },
-            "recipient_user_id": {
-              "type": "string",
-              "format": "uuid"
-            },
             "role": {
               "type": "string",
               "enum": [
@@ -331,11 +323,14 @@
             "reason": {
               "type": "string",
               "default": ""
+            },
+            "user_id": {
+              "type": "string",
+              "format": "uuid"
             }
           },
           "required": [
-            "storage_id",
-            "recipient_user_id"
+            "user_id"
           ],
           "additionalProperties": false
         }
@@ -1013,18 +1008,10 @@
       "type": "function",
       "function": {
         "name": "hitl_request",
-        "description": "Request storage access for root and its Leti. Pending or accepted is not yet granted.",
+        "description": "Ask a workspace member for access to their Personal storage, shared by root and its Leti. Wait for the grant outcome.",
         "parameters": {
           "type": "object",
           "properties": {
-            "storage_id": {
-              "type": "string",
-              "format": "uuid"
-            },
-            "recipient_user_id": {
-              "type": "string",
-              "format": "uuid"
-            },
             "role": {
               "type": "string",
               "enum": [
@@ -1036,11 +1023,14 @@
             "reason": {
               "type": "string",
               "default": ""
+            },
+            "user_id": {
+              "type": "string",
+              "format": "uuid"
             }
           },
           "required": [
-            "storage_id",
-            "recipient_user_id"
+            "user_id"
           ],
           "additionalProperties": false
         }

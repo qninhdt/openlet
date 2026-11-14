@@ -103,14 +103,37 @@ async def open_request(
         "participate",
     )
     if request.type == "approval":
-        await files.GetStorage(
-            fs.StorageRequest(
-                workspace_id=str(agent["workspace_id"]),
-                storage_id=str(request.payload["storage_id"]),
-            ),
-            metadata=Actor("user", request.recipient_user_id).metadata,
-            timeout=15,
+        query = fs.ListStoragesRequest(
+            workspace_id=str(agent["workspace_id"]),
+            visibility=fs.STORAGE_VISIBILITY_PRIVATE,
+            owned_only=True,
+            page_size=100,
         )
+        storages: list[fs.Storage] = []
+        while True:
+            page: fs.ListStoragesResponse = await files.ListStorages(
+                query,
+                metadata=Actor("user", request.recipient_user_id).metadata,
+                timeout=15,
+            )
+            for storage in page.storages:
+                access: fs.StorageAccess = await files.ListStorageAccess(
+                    fs.StorageRequest(
+                        workspace_id=query.workspace_id, storage_id=storage.id
+                    ),
+                    metadata=Actor("user", request.recipient_user_id).metadata,
+                    timeout=15,
+                )
+                if access.ownership.user_id == str(request.recipient_user_id):
+                    storages.append(storage)
+            if not page.next_page_token:
+                break
+            query.page_token = page.next_page_token
+        if len(storages) != 1:
+            raise ValueError(
+                "recipient must have exactly one Personal storage in this workspace"
+            )
+        request.payload = {**request.payload, "storage_id": storages[0].id}
         permission = "write" if request.payload["role"] == "editor" else "read"
         if await auth.allowed(
             Actor("agent", cast(UUID, agent["leta_id"])),
