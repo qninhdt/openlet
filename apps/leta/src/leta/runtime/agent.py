@@ -27,13 +27,11 @@ from langchain_core.messages import (
 )
 from langchain_core.messages.utils import (
     MessageLikeRepresentation,
-    convert_to_openai_messages,
+    convert_to_messages,
 )
 from langchain_core.outputs import ChatGeneration, LLMResult
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
-from langchain_core.utils.function_calling import convert_to_openai_tool
-from langchain_litellm import ChatLiteLLM
 from langfuse import Langfuse, propagate_attributes
 from langfuse.langchain import CallbackHandler
 from langfuse.model import TextPromptClient
@@ -41,8 +39,6 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.graph.state import CompiledStateGraph  # pyright: ignore[reportMissingTypeStubs]  # Upstream package does not publish type stubs.
 from langgraph.runtime import Runtime
 from langgraph.types import Command
-from litellm import token_counter  # pyright: ignore[reportUnknownVariableType]  # Upstream signature leaves optional message/tokenizer generics untyped.
-from litellm.types.llms.openai import ChatCompletionToolParam  # pyright: ignore[reportMissingTypeStubs]  # Upstream package does not publish type stubs.
 from openlet_sdk.config import JSON, ReasoningEffort, secret
 from openlet_sdk.inference import InferenceSettings, response_cost
 from opentelemetry import metrics
@@ -58,6 +54,7 @@ from ..filesystem.workspace import Filesystem
 from ..jobs.agent import RunInput, RunResult
 from ..messages import has_pending
 from .inbox import Inbox, State
+from .model import ChatModel
 from .tools import Context, tools
 
 meter = metrics.get_meter("openlet.leta")
@@ -170,7 +167,7 @@ class ExecutionModel(AgentMiddleware[State, Context]):
         )
         self.catalog, self.box_context = catalog, box_context
         self.selection: tuple[str, ReasoningEffort, str] | None = None
-        self.chat: ChatLiteLLM
+        self.chat: ChatModel
         self.summary: SummarizationMiddleware[JSON, Context]
         self.system = ""
         self.tokens = 0
@@ -205,7 +202,7 @@ class ExecutionModel(AgentMiddleware[State, Context]):
             parameters = self.defaults.model_copy(
                 update={"reasoning_effort": effort}
             ).parameters()
-            self.chat = ChatLiteLLM(
+            self.chat = ChatModel(
                 model="litellm_proxy/" + selected,
                 api_base=gateway["base_url"],
                 api_key=secret(gateway["api_key"]),
@@ -253,15 +250,8 @@ class ExecutionModel(AgentMiddleware[State, Context]):
         *,
         include_tools: bool = False,
     ) -> int:
-        return token_counter(
-            model=self.chat.model.removeprefix("litellm_proxy/"),
-            messages=convert_to_openai_messages(list(messages)),
-            tools=cast(
-                list[ChatCompletionToolParam],
-                [convert_to_openai_tool(item) for item in self.catalog],
-            )
-            if include_tools
-            else None,
+        return self.chat.count_tokens(
+            convert_to_messages(messages), tools=self.catalog if include_tools else None
         )
 
     def guard(self, messages: list[BaseMessage]) -> None:
