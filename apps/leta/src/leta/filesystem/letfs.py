@@ -303,6 +303,7 @@ class LetFS(BaseVFS):
                     "kind": "directory"
                     if item.node.kind == fs.NODE_KIND_DIRECTORY
                     else "file",
+                    "media_type": item.node.file.media_type,
                 }
                 for item in response.entries
                 if item.path not in ("", ".")
@@ -362,6 +363,7 @@ class LetFS(BaseVFS):
                         else "file",
                         "artifacts": entry.node.HasField("file")
                         and stat(entry.node).type == FileType.DIRECTORY,
+                        "media_type": entry.node.file.media_type,
                         "size_bytes": entry.node.file.size_bytes
                         if entry.node.HasField("file")
                         else None,
@@ -395,6 +397,7 @@ class LetFS(BaseVFS):
                     else "file",
                     "artifacts": node.HasField("file")
                     and stat(node).type == FileType.DIRECTORY,
+                    "media_type": node.file.media_type,
                     "size_bytes": node.file.size_bytes
                     if node.HasField("file")
                     else None,

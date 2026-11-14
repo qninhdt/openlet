@@ -65,7 +65,7 @@ async def inbox_send(
     to: str | None = None,
     in_reply_to: Annotated[int | None, Field(ge=1)] = None,
 ) -> JSON:
-    """Send a message to a box name, permitted teammate name, root, or human user_id. To reply, use an incoming message number; to can then be omitted."""
+    """Send to a box name, permitted teammate name, root, or human user_id. in_reply_to replies to the sender of that incoming message; omit to for replies, or omit in_reply_to when messaging someone else."""
     from ..worker import deliver
 
     ctx = runtime.context
@@ -211,7 +211,7 @@ async def inbox_read(
     cursor: str = "",
     unread_only: bool = True,
 ) -> JSON:
-    """Read the conversation identified by an incoming message number and mark returned items read. unread_only=false includes previously read messages."""
+    """Read up to 20 unread messages in the conversation containing message, oldest first, and mark them read. message selects the conversation, not a starting position; cursor continues after a sequence. unread_only=false also rereads previously read messages."""
     ctx = runtime.context
     return await messages.read(
         ctx.services.db,
@@ -828,7 +828,7 @@ async def leti_schedule_list(
 async def history_search(
     runtime: ToolRuntime[Context, State], query: str = "", cursor: str = ""
 ) -> JSON:
-    """Search your activity history by words; omit query for recent previews."""
+    """Search activity using a few distinctive literal keywords; all terms must match. History lookup calls/results are excluded. Omit query for recent previews."""
     ctx = runtime.context
     return await history.search_text(
         ctx.services.db, ctx.id, int(cursor) if cursor else None, query
@@ -872,10 +872,15 @@ def directory_text(base: str, result: dict[str, JSON]) -> str:
     lines = [f"Directory: {base}"]
     for item in cast(list[dict[str, JSON]], result["items"]):
         child = posixpath.relpath(str(item["path"]), file_path(base))
+        image = str(item.get("media_type") or "").startswith("image/")
         if child == ".":
+            if image:
+                lines[0] = f"Image: {base} [read with file_read]"
             continue
         suffix = (
-            "/ [document artifacts]"
+            " [image; read with file_read]"
+            if image
+            else "/ [document artifacts]"
             if item.get("artifacts")
             else "/"
             if item["kind"] == "directory"

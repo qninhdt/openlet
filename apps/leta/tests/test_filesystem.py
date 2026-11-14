@@ -53,6 +53,13 @@ async def driver() -> AsyncIterator[LetFS]:
         ),
         readonly=True,
     )
+    image = fs.Node(
+        id=str(uuid4()),
+        parent_id=root,
+        name="reference.png",
+        kind=fs.NODE_KIND_FILE,
+        file=fs.FileHeader(type=fs.FILE_TYPE_BLOB, media_type="image/png"),
+    )
 
     class Files(LetFSServiceServicer):
         async def ReadTree(
@@ -60,6 +67,8 @@ async def driver() -> AsyncIterator[LetFS]:
             request: fs.ReadTreeRequest,
             context: grpc.aio.ServicerContext[fs.ReadTreeRequest, fs.ReadTreeResponse],
         ) -> fs.ReadTreeResponse:
+            if request.root.path == "reference.png":
+                return fs.ReadTreeResponse(entries=[fs.TreeEntry(path="", node=image)])
             if request.root.path == "quotes.xlsx":
                 return fs.ReadTreeResponse(
                     entries=[fs.TreeEntry(path="table.csv", node=artifact)]
@@ -88,6 +97,8 @@ async def driver() -> AsyncIterator[LetFS]:
                 fs.ListNodesRequest, fs.ListNodesResponse
             ],
         ) -> fs.ListNodesResponse:
+            if request.parent.path == ".":
+                return fs.ListNodesResponse(nodes=[blob, image])
             assert request.parent.path == "quotes.xlsx"
             return fs.ListNodesResponse(nodes=[artifact])
 
@@ -163,6 +174,7 @@ async def test_search_returns_openable_paths_under_mount(driver: LetFS) -> None:
             "path": "/home/reports/report.txt",
             "kind": "file",
             "artifacts": False,
+            "media_type": "",
             "size_bytes": None,
         }
     ]
@@ -189,6 +201,26 @@ async def test_document_artifacts_are_directories_in_shell_and_keep_preview(
         assert "table.csv" in str(preview)
     finally:
         await workspace.close()
+
+
+async def test_listings_distinguish_images_from_document_artifacts(
+    driver: LetFS,
+) -> None:
+    from leta.runtime.tools import directory_text
+
+    root = PathSpec(virtual="/data", directory="/data", vfs_path="")
+    listing = await driver.list_page(root)
+    text = directory_text("/data", listing)
+    assert "quotes.xlsx/ [document artifacts]" in text
+    assert "reference.png [image; read with file_read]" in text
+    assert "reference.png/" not in text
+    image = PathSpec(
+        virtual="/data/reference.png", directory="/data", vfs_path="reference.png"
+    )
+    listing = await driver.list_page(image, depth=3)
+    assert directory_text("/data/reference.png", listing) == (
+        "Image: /data/reference.png [read with file_read]"
+    )
 
 
 async def test_parallel_file_tools_share_session_and_only_apply_mount_changes(

@@ -61,6 +61,8 @@ async def search_text(db: Pool, agent: UUID, before: int | None, query: str) -> 
                 """SELECT seq,kind,created_at,payload->>'name' AS tool,
             left(coalesce(payload->>'text',payload->>'content',(payload->'args')::text,''),201) AS preview
             FROM history WHERE agent_id=%s AND (%s::bigint IS NULL OR seq<%s)
+            AND NOT (kind IN ('tool_call','tool_result')
+                AND coalesce(payload->>'name','') IN ('history_search','history_read'))
             AND (%s='' OR jsonb_to_tsvector('simple'::regconfig,payload,'["string"]'::jsonb)
             @@ plainto_tsquery('simple',%s)) ORDER BY seq DESC LIMIT 20""",
                 (agent, before, before, query, query),

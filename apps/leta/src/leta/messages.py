@@ -245,7 +245,11 @@ def input_batch(rows: list[Row], *, root: bool) -> str:
                 body = " ".join(body.split())
                 if len(body) > 120:
                     body = body[:119] + "…"
-            items.append(f"From {sender} | message={row['seq']}\n{body}")
+                items.append(
+                    f"New inbox message from {sender} | message={row['seq']}\nPreview: {body}"
+                )
+            else:
+                items.append(f"From {sender} | message={row['seq']}\n{body}")
     return "\n\n---\n\n".join(items)
 
 

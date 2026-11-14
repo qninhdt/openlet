@@ -61,18 +61,20 @@ def test_mixed_input_groups_only_notifications_and_preserves_decisions() -> None
     ]
     root = input_batch(rows, root=True)
     assert "message=1" not in root and "message=2" in root
-    preview = root.split("message=2\n", 1)[1].split("\n", 1)[0]
+    preview = root.split("message=2\nPreview: ", 1)[1].split("\n", 1)[0]
     assert len(preview) == 120 and preview.endswith("…")
     assert "Answer: GreenCarton\nNote: Approved within budget" in root
     assert root.count("Original occurrence instruction") == 1
     assert (
-        root.index("From User")
+        root.index("New inbox message from User")
         < root.index("Decision:")
         < root.index("Scheduled task:")
     )
     leti = input_batch(rows, root=False)
     assert leti.index("Older instruction") < leti.index("New  instruction\n")
     assert "x" * 200 in leti
+    assert "Preview:" not in leti and "New inbox message" not in leti
+    assert "Read full:" not in root
 
 
 def test_accepted_access_is_not_claimed_granted() -> None:
