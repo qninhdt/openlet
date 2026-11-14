@@ -6,6 +6,7 @@ from openlet_sdk.config import JSON
 
 from .agents import json_row
 from .db import Pool
+from .output import page
 
 
 async def search(
@@ -29,7 +30,7 @@ async def search(
 
 
 async def read(
-    db: Pool, agent: UUID, entry: UUID, start_line: int = 1
+    db: Pool, agent: UUID, entry: UUID, start_line: int = 1, limit: int = 200
 ) -> dict[str, JSON]:
     if start_line < 1:
         raise ValueError("start_line must be positive")
@@ -41,14 +42,13 @@ async def read(
         ).fetchone()
     if row is None:
         raise LookupError("history entry not found")
-    body = json.dumps(
-        cast(JSON, row.pop("payload")), ensure_ascii=False, indent=2
-    ).splitlines()
-    lines = body[start_line - 1 : start_line + 199]
+    payload = cast(dict[str, JSON], row.pop("payload"))
+    body = payload.pop("text", None)
+    if not isinstance(body, str):
+        body = json.dumps(payload, ensure_ascii=False, indent=2)
+        payload = {}
     return {
         **json_row(row),
-        "content": "\n".join(lines),
-        "next_start_line": (
-            start_line + len(lines) if start_line + len(lines) <= len(body) else None
-        ),
+        "payload": payload,
+        **page(body, start_line, limit),
     }

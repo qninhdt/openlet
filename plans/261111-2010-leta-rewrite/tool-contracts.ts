@@ -139,6 +139,7 @@ export interface LetiTools {
   history_read(input: {
     entry_id: string;
     start_line?: number;
+    limit?: number;
   }): unknown;
 
   /** List files and directories; /mnt lists accessible storages and whether each is writable. */
@@ -152,6 +153,7 @@ export interface LetiTools {
   file_read(input: {
     path: string;
     start_line?: number;
+    limit?: number;
   }): unknown;
 
   /** Create text; overwrite=true replaces the entire file. Use file_edit for partial changes. */
@@ -173,11 +175,6 @@ export interface LetiTools {
   exec_shell(input: {
     command: string;
     cwd?: string;
-  }): unknown;
-
-  /** Run Python calculations and file transformations using supported modules; no packages, network or state across calls. Use relative paths instead of Path.home(); compile() is unavailable. */
-  exec_python(input: {
-    code: string;
   }): unknown;
 
   /** Find passages by meaning; use shell search for exact text. */

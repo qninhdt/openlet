@@ -16,6 +16,7 @@ from openlet_sdk.config import JSON
 from ..auth import Actor
 from ..config import Services, redis_url
 from ..db import Row
+from ..output import BYTE_BUDGET, preview
 from .letfs import LetFS
 
 COMMANDS = (
@@ -183,25 +184,47 @@ def scope(value: str) -> PathSpec:
 
 
 async def shell(
-    session: Session, command: str, *, cwd: str = "/home", runtime: str | None = None
+    session: Session, command: str, *, output_path: str, cwd: str = "/home"
 ) -> dict[str, JSON]:
     buffers = {"stdout": bytearray(), "stderr": bytearray()}
-    limits = {"stdout": 16000, "stderr": 4000}
-    truncated = False
+    captured = bytearray()
+    capture_limit = 1024 * 1024
+    complete = True
     async with asyncio.timeout(30):
-        execution = await session.shell(
-            command, cwd=cwd, runtime=runtime, record=False, stream=True
-        )
+        execution = await session.shell(command, cwd=cwd, record=False, stream=True)
         async with execution:
             async for event in execution.events:
                 name = "stdout" if event.stream == "stdout" else "stderr"
-                remaining = limits[name] - len(buffers[name])
-                buffers[name].extend(event.data[:remaining])
-                truncated |= len(event.data) > remaining
+                buffers[name].extend(event.data)
+                # Keep a head and rolling tail; continue draining the command to completion.
+                if len(buffers[name]) > BYTE_BUDGET + 1:
+                    del buffers[name][BYTE_BUDGET // 2 : -(BYTE_BUDGET // 2 + 1)]
+                remaining = capture_limit - len(captured)
+                captured.extend(event.data[:remaining])
+                complete &= len(event.data) <= remaining
             result = await execution.wait()
-    return {
-        "stdout": buffers["stdout"].decode("utf-8", errors="replace"),
-        "stderr": buffers["stderr"].decode("utf-8", errors="replace"),
+    stdout_limit = min(
+        len(buffers["stdout"]),
+        BYTE_BUDGET - min(len(buffers["stderr"]), BYTE_BUDGET // 4),
+    )
+    truncated = len(buffers["stdout"]) + len(buffers["stderr"]) > BYTE_BUDGET
+    output: dict[str, JSON] = {
+        "stdout": preview(bytes(buffers["stdout"]), stdout_limit),
+        "stderr": preview(bytes(buffers["stderr"]), BYTE_BUDGET - stdout_limit),
         "exit_code": result.exit_code,
         "truncated": truncated,
     }
+    if truncated:
+        try:
+            await session.vfs.write(output_path, bytes(captured))
+            output["output_path"] = output_path
+            output["output_complete"] = complete
+            if not complete:
+                output["notice"] = (
+                    "Saved output contains only the first 1 MiB; the preview includes the final output."
+                )
+        except (ValueError, LookupError, OSError) as error:
+            output["notice"] = (
+                f"Command finished, but output could not be saved: {error}"
+            )
+    return output

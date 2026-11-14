@@ -101,7 +101,7 @@ class ToolEffects(AgentMiddleware[State, Context]):
             if (
                 isinstance(result, ToolMessage)
                 and result.status != "error"
-                and request.tool_call["name"] in {"exec_shell", "exec_python"}
+                and request.tool_call["name"] == "exec_shell"
                 and json.loads(result.text)["exit_code"] != 0
             ):
                 result.status = "error"
@@ -576,8 +576,7 @@ async def run(s: Services, lf: Langfuse, input: RunInput) -> RunResult:
                 and isinstance(history[-1], AIMessage)
             ):
                 if any(
-                    call["name"]
-                    in ("file_write", "file_edit", "exec_shell", "exec_python")
+                    call["name"] in ("file_write", "file_edit", "exec_shell")
                     for call in history[-1].tool_calls
                 ):
                     raise ApplicationError(

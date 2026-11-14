@@ -71,7 +71,7 @@ async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None
 
         context = Context(
             services=cast(Services, None),
-            agent={},
+            agent={"id": uuid4()},
             run_id=uuid4(),
             filesystem=cast(Filesystem, Files()),
         )
@@ -88,9 +88,9 @@ async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None
                             },
                             {
                                 "id": "python",
-                                "name": "exec_python",
+                                "name": "exec_shell",
                                 "args": {
-                                    "code": 'print({"label": "customer\'s total", "minutes": 42 / (6 * 6) * 60})'
+                                    "command": 'python <<\'PY\'\nprint({"label": "customer\'s total", "minutes": 42 / (6 * 6) * 60})\nPY'
                                 },
                             },
                             {
@@ -105,8 +105,8 @@ async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None
                             },
                             {
                                 "id": "failed-python",
-                                "name": "exec_python",
-                                "args": {"code": "print(1 / 0)"},
+                                "name": "exec_shell",
+                                "args": {"command": "python -c 'print(1 / 0)'"},
                             },
                             {
                                 "id": "mounts",

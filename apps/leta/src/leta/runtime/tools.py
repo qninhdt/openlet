@@ -1,5 +1,4 @@
 import asyncio
-import shlex
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Annotated, Literal, cast
@@ -24,6 +23,7 @@ from ..filesystem.workspace import Filesystem, scope, shell
 from ..filesystem.workspace import path as file_path
 from ..jobs.resources import ResourceOperation
 from ..messages import Message
+from ..output import page
 from .inbox import State
 
 type Status = Literal[
@@ -656,10 +656,11 @@ async def history_read(
     runtime: ToolRuntime[Context, State],
     entry_id: UUID,
     start_line: Annotated[int, Field(ge=1)] = 1,
+    limit: Annotated[int, Field(ge=1, le=2000)] = 200,
 ) -> JSON:
     """Read a history entry; follow next_start_line for more."""
     ctx = runtime.context
-    return await history.read(ctx.services.db, ctx.id, entry_id, start_line)
+    return await history.read(ctx.services.db, ctx.id, entry_id, start_line, limit)
 
 
 @tool
@@ -689,6 +690,7 @@ async def file_read(
     runtime: ToolRuntime[Context, State],
     path: str,
     start_line: Annotated[int, Field(ge=1)] = 1,
+    limit: Annotated[int, Field(ge=1, le=2000)] = 200,
 ) -> tuple[JSON, str | None]:
     """Read a text window, image preview or uploaded-document artifacts; follow returned continuations."""
     vfs = (await session(runtime)).vfs
@@ -704,18 +706,7 @@ async def file_read(
             return cast(JSON, result), path
         return cast(JSON, result), None
     data = await vfs.read(file_path(path))
-    lines = data.decode().splitlines()
-    text = "\n".join(
-        f"{i + 1}: {text}"
-        for i, text in enumerate(
-            lines[start_line - 1 : start_line + 199], start_line - 1
-        )
-    )
-    return {
-        "content": text[:16000],
-        "next_start_line": start_line + 200 if len(lines) >= start_line + 200 else None,
-        "truncated": len(text) > 16000,
-    }, None
+    return page(data.decode(), start_line, limit), None
 
 
 @tool
@@ -796,14 +787,11 @@ async def exec_shell(
     runtime: ToolRuntime[Context, State], command: str, cwd: str = "~"
 ) -> JSON:
     """Run supported shell commands and pipelines over workspace files; no host programs or network."""
-    return await shell(await session(runtime), command, cwd=file_path(cwd))
-
-
-@tool
-async def exec_python(runtime: ToolRuntime[Context, State], code: str) -> JSON:
-    """Run Python calculations and file transformations using the supported modules in your instructions; no packages, network or state across calls. Use relative paths instead of Path.home(); compile() is unavailable."""
     return await shell(
-        await session(runtime), f"python -c {shlex.quote(code)}", runtime="monty"
+        await session(runtime),
+        command,
+        cwd=file_path(cwd),
+        output_path=f"/home/.output-{request_id(runtime)}.txt",
     )
 
 
@@ -826,7 +814,6 @@ def tools(*, root: bool) -> list[BaseTool]:
         file_write,
         file_edit,
         exec_shell,
-        exec_python,
         file_semantic_search,
     ]
     if root:

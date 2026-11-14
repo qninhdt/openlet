@@ -58,7 +58,10 @@ def test_relative_schedule_uses_workflow_time_and_native_spec() -> None:
         Timing(at=now, after_seconds=10)
 
 
-async def test_shell_capture_is_bounded_and_redirection_remains_complete() -> None:
+@pytest.mark.parametrize("last_line", [10000, 200000])
+async def test_shell_capture_is_bounded_and_redirection_remains_complete(
+    last_line: int,
+) -> None:
     from leta.filesystem.workspace import shell
     from mirage import Mount, MountMode, Workspace
     from mirage.vfs.ram import RAMVFS
@@ -68,10 +71,21 @@ async def test_shell_capture_is_bounded_and_redirection_remains_complete() -> No
     )
     try:
         session = await workspace.session("tools")
-        result = await shell(session, "seq 1 10000 | tee /data/full.txt", cwd="/")
+        result = await shell(
+            session,
+            f"seq 1 {last_line} | tee /data/full.txt",
+            cwd="/",
+            output_path="/data/output.txt",
+        )
         assert result["truncated"] is True
-        assert len(str(result["stdout"]).encode()) <= 16000
-        assert (await session.vfs.read("/data/full.txt")).endswith(b"10000\n")
+        assert len(str(result["stdout"]).encode()) <= 16384
+        assert str(result["stdout"]).startswith("1\n")
+        assert str(result["stdout"]).endswith(f"{last_line}\n")
+        full = await session.vfs.read("/data/full.txt")
+        captured = await session.vfs.read("/data/output.txt")
+        assert full.endswith(f"{last_line}\n".encode())
+        assert captured == full[: 1024 * 1024]
+        assert result["output_complete"] is (len(full) <= 1024 * 1024)
     finally:
         await workspace.close()
 

@@ -398,9 +398,10 @@ async def activity_entry(
     entry_id: UUID,
     s: Service,
     start_line: Annotated[int, Query(ge=1)] = 1,
+    limit: Annotated[int, Query(ge=1, le=2000)] = 200,
 ) -> JSON:
     await child(s, leta_id, agent_id)
-    return await history.read(s.db, agent_id, entry_id, start_line)
+    return await history.read(s.db, agent_id, entry_id, start_line, limit)
 
 
 @app.get(root_path + "/agents/{agent_id}/runs/{run_id}", dependencies=[Depends(usable)])
