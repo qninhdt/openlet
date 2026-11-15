@@ -55,6 +55,11 @@ class PlatformServiceStub:
                 request_serializer=openlet__api_dot_platform_dot_v1_dot_platform__pb2.ListWorkspacesRequest.SerializeToString,
                 response_deserializer=openlet__api_dot_platform_dot_v1_dot_platform__pb2.ListWorkspacesResponse.FromString,
                 _registered_method=True)
+        self.CreateMyWorkspace = channel.unary_unary(
+                '/openlet.platform.v1.PlatformService/CreateMyWorkspace',
+                request_serializer=openlet__api_dot_platform_dot_v1_dot_platform__pb2.CreateMyWorkspaceRequest.SerializeToString,
+                response_deserializer=openlet__api_dot_platform_dot_v1_dot_platform__pb2.Workspace.FromString,
+                _registered_method=True)
         self.GetWorkspace = channel.unary_unary(
                 '/openlet.platform.v1.PlatformService/GetWorkspace',
                 request_serializer=openlet__api_dot_platform_dot_v1_dot_platform__pb2.WorkspaceRequest.SerializeToString,
@@ -134,6 +139,12 @@ class PlatformServiceServicer:
         raise NotImplementedError('Method not implemented!')
 
     def ListWorkspaces(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def CreateMyWorkspace(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -227,6 +238,11 @@ def add_PlatformServiceServicer_to_server(servicer, server):
                     servicer.ListWorkspaces,
                     request_deserializer=openlet__api_dot_platform_dot_v1_dot_platform__pb2.ListWorkspacesRequest.FromString,
                     response_serializer=openlet__api_dot_platform_dot_v1_dot_platform__pb2.ListWorkspacesResponse.SerializeToString,
+            ),
+            'CreateMyWorkspace': grpc.unary_unary_rpc_method_handler(
+                    servicer.CreateMyWorkspace,
+                    request_deserializer=openlet__api_dot_platform_dot_v1_dot_platform__pb2.CreateMyWorkspaceRequest.FromString,
+                    response_serializer=openlet__api_dot_platform_dot_v1_dot_platform__pb2.Workspace.SerializeToString,
             ),
             'GetWorkspace': grpc.unary_unary_rpc_method_handler(
                     servicer.GetWorkspace,
@@ -392,6 +408,33 @@ class PlatformService:
             '/openlet.platform.v1.PlatformService/ListWorkspaces',
             openlet__api_dot_platform_dot_v1_dot_platform__pb2.ListWorkspacesRequest.SerializeToString,
             openlet__api_dot_platform_dot_v1_dot_platform__pb2.ListWorkspacesResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CreateMyWorkspace(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/openlet.platform.v1.PlatformService/CreateMyWorkspace',
+            openlet__api_dot_platform_dot_v1_dot_platform__pb2.CreateMyWorkspaceRequest.SerializeToString,
+            openlet__api_dot_platform_dot_v1_dot_platform__pb2.Workspace.FromString,
             options,
             channel_credentials,
             insecure,

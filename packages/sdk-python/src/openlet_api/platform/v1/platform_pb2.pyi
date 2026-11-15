@@ -58,12 +58,14 @@ class Workspace(_message.Message):
     def __init__(self, id: _Optional[str] = ..., name: _Optional[str] = ..., state: _Optional[_Union[WorkspaceState, str]] = ..., created_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., role: _Optional[_Union[WorkspaceRole, str]] = ...) -> None: ...
 
 class WorkspaceMember(_message.Message):
-    __slots__ = ("user", "role")
+    __slots__ = ("user", "role", "workspace_id")
     USER_FIELD_NUMBER: _ClassVar[int]
     ROLE_FIELD_NUMBER: _ClassVar[int]
+    WORKSPACE_ID_FIELD_NUMBER: _ClassVar[int]
     user: User
     role: WorkspaceRole
-    def __init__(self, user: _Optional[_Union[User, _Mapping]] = ..., role: _Optional[_Union[WorkspaceRole, str]] = ...) -> None: ...
+    workspace_id: str
+    def __init__(self, user: _Optional[_Union[User, _Mapping]] = ..., role: _Optional[_Union[WorkspaceRole, str]] = ..., workspace_id: _Optional[str] = ...) -> None: ...
 
 class Invitation(_message.Message):
     __slots__ = ("id", "workspace_id", "email", "expires_at", "accepted_by_user_id")
@@ -102,6 +104,14 @@ class ListWorkspacesResponse(_message.Message):
     workspaces: _containers.RepeatedCompositeFieldContainer[Workspace]
     next_page_token: str
     def __init__(self, workspaces: _Optional[_Iterable[_Union[Workspace, _Mapping]]] = ..., next_page_token: _Optional[str] = ...) -> None: ...
+
+class CreateMyWorkspaceRequest(_message.Message):
+    __slots__ = ("name", "request_id")
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    REQUEST_ID_FIELD_NUMBER: _ClassVar[int]
+    name: str
+    request_id: str
+    def __init__(self, name: _Optional[str] = ..., request_id: _Optional[str] = ...) -> None: ...
 
 class WorkspaceRequest(_message.Message):
     __slots__ = ("workspace_id",)

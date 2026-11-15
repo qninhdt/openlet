@@ -109,6 +109,13 @@ func (s *Server) DeleteWorkspace(ctx context.Context, r *pb.WorkspaceRequest) (*
 	_, err = s.Temporal.ExecuteWorkflow(ctx, client.StartWorkflowOptions{ID: "delete-workspace/" + r.WorkspaceId, TaskQueue: s.Queue, WorkflowIDConflictPolicy: enums.WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING, WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE}, DeleteWorkspace, s.cleanupInput(r.WorkspaceId))
 	return w, err
 }
+func (s *Server) CreateMyWorkspace(ctx context.Context, r *pb.CreateMyWorkspaceRequest) (*pb.Workspace, error) {
+	a, err := human(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.CreateWorkspace(ctx, &pb.CreateWorkspaceRequest{OwnerUserId: a.ID, Name: r.Name, RequestId: r.RequestId})
+}
 func (s *Server) CreateWorkspace(ctx context.Context, r *pb.CreateWorkspaceRequest) (*pb.Workspace, error) {
 	var exists bool
 	if err := s.DB.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id=$1)`, r.OwnerUserId).Scan(&exists); err != nil {

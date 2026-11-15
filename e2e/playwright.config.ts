@@ -26,12 +26,5 @@ export default defineConfig({
     ],
   ],
   use: { baseURL: config.services.gateway.public_url },
-  projects: [
-    { name: 'api', testMatch: 'api/**/*.spec.ts' },
-    {
-      name: 'browser',
-      testMatch: 'browser/**/*.spec.ts',
-      use: { browserName: 'chromium', trace: 'retain-on-failure', screenshot: 'only-on-failure' },
-    },
-  ],
+  projects: [{ name: 'api', testMatch: 'api/**/*.spec.ts' }],
 });

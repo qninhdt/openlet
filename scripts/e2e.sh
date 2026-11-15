@@ -5,7 +5,8 @@ root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$root"
 project=${COMPOSE_PROJECT_NAME:-openlet-$(basename "$root")-e2e}
 suite=${1:-api}
-case "$suite" in api|browser) ;; *) echo 'Usage: scripts/e2e.sh [api|browser]' >&2; exit 2 ;; esac
+case "$suite" in api) ;; *) echo 'Usage: scripts/e2e.sh [api] [playwright arguments...]' >&2; exit 2 ;; esac
+if [[ $# -gt 0 ]]; then shift; fi
 if [[ -n $(docker ps -aq --filter "label=com.docker.compose.project=$project") ]]; then
   echo "Compose project $project already exists; inspect and stop that run before starting another." >&2
   exit 1
@@ -54,10 +55,6 @@ if [[ -z ${OPENLET_IMAGE_LOCK:-} ]]; then
     exit 1
   fi
 fi
-if [[ $suite == browser ]]; then
-  docker build --file e2e/Dockerfile --target browser --tag openlet/e2e:local .
-else
-  "${compose[@]}" build e2e
-fi
+"${compose[@]}" build e2e
 "${compose[@]}" up --detach --wait --wait-timeout 180
-"${compose[@]}" run --rm --no-deps e2e test --project="$suite"
+"${compose[@]}" run --rm --no-deps e2e test --project="$suite" "$@"

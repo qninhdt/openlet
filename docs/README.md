@@ -7,7 +7,7 @@ Executable contracts and migrations own the wire format and database schema. The
 - [API contracts](api-contracts.md): gRPC, HTTP/ProtoJSON, identity and errors.
 - [Data model](data-model.md): domain data, quota, versions and idempotency.
 - [Workflows](workflows.md): Temporal ownership and processing.
-- [Testing](testing.md): focused checks and API/browser E2E.
+- [Testing](testing.md): focused checks and API E2E.
 - [Operations](operations.md): deployment, backup and empty-target restore.
 
 Leta has a [separate design](../plans/261111-2010-leta-rewrite/plan.md), with its implementation deferred. Older plans and reports describe historical systems; their commands and schema are not current product contracts.

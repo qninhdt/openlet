@@ -11,13 +11,3 @@ WORKDIR /work/e2e
 ENV PLAYWRIGHT_OUTPUT_DIR=/results/traces PLAYWRIGHT_JUNIT_OUTPUT_FILE=/results/junit.xml PLAYWRIGHT_HTML_OUTPUT_DIR=/results/html
 ENTRYPOINT ["pnpm", "exec", "playwright"]
 CMD ["test", "--project=api"]
-
-FROM mcr.microsoft.com/playwright:v1.65.0-noble@sha256:9beb546099e11f52d62e505537914870e01a67e0e6b00ae41da4775324e73dbe AS browser
-WORKDIR /work
-RUN npm install --global pnpm@12.18.0
-COPY --from=dependencies /work /work
-COPY e2e e2e
-WORKDIR /work/e2e
-ENV PLAYWRIGHT_OUTPUT_DIR=/results/traces PLAYWRIGHT_JUNIT_OUTPUT_FILE=/results/junit.xml PLAYWRIGHT_HTML_OUTPUT_DIR=/results/html
-ENTRYPOINT ["pnpm", "exec", "playwright"]
-CMD ["test", "--project=browser"]

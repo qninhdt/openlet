@@ -162,5 +162,5 @@ func (s *Server) AcceptInvitation(ctx context.Context, r *pb.AcceptInvitationReq
 		}
 	}
 	u, err := scanUser(s.DB.QueryRow(ctx, `SELECT id,display_name,avatar_url FROM users WHERE id=$1`, a.ID))
-	return &pb.WorkspaceMember{User: u, Role: pb.WorkspaceRole_WORKSPACE_ROLE_MEMBER}, err
+	return &pb.WorkspaceMember{User: u, Role: pb.WorkspaceRole_WORKSPACE_ROLE_MEMBER, WorkspaceId: &workspaceID}, err
 }

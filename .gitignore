@@ -13,3 +13,5 @@ node_modules/
 /dist/
 .codegraph
 archive
+.vscode
+plans

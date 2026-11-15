@@ -24,6 +24,7 @@ const (
 	PlatformService_GetMe_FullMethodName                      = "/openlet.platform.v1.PlatformService/GetMe"
 	PlatformService_UpdateMe_FullMethodName                   = "/openlet.platform.v1.PlatformService/UpdateMe"
 	PlatformService_ListWorkspaces_FullMethodName             = "/openlet.platform.v1.PlatformService/ListWorkspaces"
+	PlatformService_CreateMyWorkspace_FullMethodName          = "/openlet.platform.v1.PlatformService/CreateMyWorkspace"
 	PlatformService_GetWorkspace_FullMethodName               = "/openlet.platform.v1.PlatformService/GetWorkspace"
 	PlatformService_UpdateWorkspace_FullMethodName            = "/openlet.platform.v1.PlatformService/UpdateWorkspace"
 	PlatformService_DeleteWorkspace_FullMethodName            = "/openlet.platform.v1.PlatformService/DeleteWorkspace"
@@ -45,6 +46,7 @@ type PlatformServiceClient interface {
 	GetMe(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*User, error)
 	UpdateMe(ctx context.Context, in *UpdateMeRequest, opts ...grpc.CallOption) (*User, error)
 	ListWorkspaces(ctx context.Context, in *ListWorkspacesRequest, opts ...grpc.CallOption) (*ListWorkspacesResponse, error)
+	CreateMyWorkspace(ctx context.Context, in *CreateMyWorkspaceRequest, opts ...grpc.CallOption) (*Workspace, error)
 	GetWorkspace(ctx context.Context, in *WorkspaceRequest, opts ...grpc.CallOption) (*Workspace, error)
 	UpdateWorkspace(ctx context.Context, in *UpdateWorkspaceRequest, opts ...grpc.CallOption) (*Workspace, error)
 	DeleteWorkspace(ctx context.Context, in *WorkspaceRequest, opts ...grpc.CallOption) (*Workspace, error)
@@ -100,6 +102,16 @@ func (c *platformServiceClient) ListWorkspaces(ctx context.Context, in *ListWork
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListWorkspacesResponse)
 	err := c.cc.Invoke(ctx, PlatformService_ListWorkspaces_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) CreateMyWorkspace(ctx context.Context, in *CreateMyWorkspaceRequest, opts ...grpc.CallOption) (*Workspace, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Workspace)
+	err := c.cc.Invoke(ctx, PlatformService_CreateMyWorkspace_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -224,6 +236,7 @@ type PlatformServiceServer interface {
 	GetMe(context.Context, *emptypb.Empty) (*User, error)
 	UpdateMe(context.Context, *UpdateMeRequest) (*User, error)
 	ListWorkspaces(context.Context, *ListWorkspacesRequest) (*ListWorkspacesResponse, error)
+	CreateMyWorkspace(context.Context, *CreateMyWorkspaceRequest) (*Workspace, error)
 	GetWorkspace(context.Context, *WorkspaceRequest) (*Workspace, error)
 	UpdateWorkspace(context.Context, *UpdateWorkspaceRequest) (*Workspace, error)
 	DeleteWorkspace(context.Context, *WorkspaceRequest) (*Workspace, error)
@@ -255,6 +268,9 @@ func (UnimplementedPlatformServiceServer) UpdateMe(context.Context, *UpdateMeReq
 }
 func (UnimplementedPlatformServiceServer) ListWorkspaces(context.Context, *ListWorkspacesRequest) (*ListWorkspacesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListWorkspaces not implemented")
+}
+func (UnimplementedPlatformServiceServer) CreateMyWorkspace(context.Context, *CreateMyWorkspaceRequest) (*Workspace, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateMyWorkspace not implemented")
 }
 func (UnimplementedPlatformServiceServer) GetWorkspace(context.Context, *WorkspaceRequest) (*Workspace, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetWorkspace not implemented")
@@ -377,6 +393,24 @@ func _PlatformService_ListWorkspaces_Handler(srv interface{}, ctx context.Contex
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(PlatformServiceServer).ListWorkspaces(ctx, req.(*ListWorkspacesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_CreateMyWorkspace_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateMyWorkspaceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).CreateMyWorkspace(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_CreateMyWorkspace_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).CreateMyWorkspace(ctx, req.(*CreateMyWorkspaceRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -601,6 +635,10 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListWorkspaces",
 			Handler:    _PlatformService_ListWorkspaces_Handler,
+		},
+		{
+			MethodName: "CreateMyWorkspace",
+			Handler:    _PlatformService_CreateMyWorkspace_Handler,
 		},
 		{
 			MethodName: "GetWorkspace",

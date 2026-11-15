@@ -12,7 +12,7 @@ scripts/e2e.sh api
 
 Focused Go tests cover text/path/idempotency behavior; Python tests generate their Office inputs and check conversion/layout, enrichment evidence, index context, input bounds and telemetry. Public boundaries use concrete types rather than unparameterized dictionaries. The integration-tagged LetFS test requires an isolated, migrated, backed-up database and proves SQL invariants. Never point it at old or production databases.
 
-[Playwright](../e2e/playwright.config.ts) has two projects: api and browser. `scripts/e2e.sh api` runs all service journeys, including Leta, in one shared dependency stack. API uses APIRequestContext; browser will use real frontend pages when a frontend exists. No browser placeholder suite runs today. Use native Playwright file/grep selection inside an already prepared test stack.
+[Playwright](../e2e/playwright.config.ts) has API service journeys in one shared dependency stack. `scripts/e2e.sh api` runs them, including Leta; extra Playwright file/grep arguments are forwarded. API uses APIRequestContext.
 
 The five API journeys cover:
 

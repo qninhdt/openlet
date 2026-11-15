@@ -91,7 +91,8 @@ static_resources:
         cluster_name: letfs
         endpoints: [{lb_endpoints: [{endpoint: {address: {socket_address: {address: @LETFS_HOST@, port_value: @LETFS_PORT@}}}}]}]
     - name: clerk_jwks
-      type: STRICT_DNS
+      type: LOGICAL_DNS
+      dns_lookup_family: ALL
       connect_timeout: 5s
       load_assignment:
         cluster_name: clerk_jwks

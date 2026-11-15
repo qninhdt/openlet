@@ -79,7 +79,7 @@ jobs:
               platform|letfs) printf '  %s-migrate: {image: "%s"}\n' "$service" "$digest" >> image-lock.yaml ;;
             esac
           done
-          tar -czf .local/release.tgz image-lock.yaml infra scripts packages/contracts/authz packages/contracts/generated pyproject.toml uv.lock .python-version apps/letfs-ingest/pyproject.toml apps/leta/pyproject.toml packages/sdk-python/pyproject.toml
+          tar -czf .local/release.tgz image-lock.yaml infra scripts packages/contracts/authz packages/contracts/generated pyproject.toml uv.lock .python-version apps/letfs-ingest/pyproject.toml apps/leta/pyproject.toml packages/sdk-python/pyproject.toml packages/sdk-python/src
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-bundle
