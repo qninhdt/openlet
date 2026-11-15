@@ -13,8 +13,8 @@ def prepare(config: Config) -> None:
     download_models(
         destination,
         with_code_formula=False,
-        with_picture_classifier=False,
-        rapidocr_models=["onnxruntime:iso:en"],
+        with_picture_classifier=True,
+        with_rapidocr=False,
     )
 
 

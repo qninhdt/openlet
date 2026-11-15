@@ -78,25 +78,38 @@ def preflight(source: Path, media: str, config: Config) -> None:
 def converter(config: Config) -> DocumentConverter:
     from docling.datamodel.accelerator_options import AcceleratorOptions
     from docling.datamodel.base_models import InputFormat
-    from docling.datamodel.pipeline_options import PdfPipelineOptions, RapidOcrOptions
+    from docling.datamodel.pipeline_options import (
+        ConvertPipelineOptions,
+        HeadingHierarchyOptions,
+        PdfPipelineOptions,
+        TesseractCliOcrOptions,
+    )
     from docling.document_converter import (
         DocumentConverter,
+        ExcelFormatOption,
         PdfFormatOption,
         PowerpointFormatOption,
         WordFormatOption,
     )
 
+    from .ocr import PdfPipeline
     from .office import Powerpoint, Word
 
     settings = config["services"]["letfs_ingest"]["cpu"]
+    os.environ["OMP_THREAD_LIMIT"] = str(settings["threads"])
     options = PdfPipelineOptions(
         artifacts_path=settings["docling_models_path"],
         accelerator_options=AcceleratorOptions(
             device="cpu", num_threads=settings["threads"]
         ),
         do_ocr=True,
-        ocr_options=RapidOcrOptions(backend="onnxruntime", lang=["iso:en"]),
+        ocr_options=TesseractCliOcrOptions(
+            lang=["eng", "vie"], replace_broken_text_layer=True
+        ),
+        heading_hierarchy_options=HeadingHierarchyOptions(enabled=True),
+        generate_page_images=True,
         generate_picture_images=True,
+        do_picture_classification=True,
         ocr_batch_size=1,
         layout_batch_size=1,
         table_batch_size=1,
@@ -104,6 +117,11 @@ def converter(config: Config) -> DocumentConverter:
         document_timeout=config["services"]["letfs"]["processing"][
             "parse_timeout_seconds"
         ],
+    )
+    office_options = ConvertPipelineOptions(
+        artifacts_path=options.artifacts_path,
+        accelerator_options=options.accelerator_options,
+        do_picture_classification=True,
     )
     return DocumentConverter(
         allowed_formats=[
@@ -113,14 +131,28 @@ def converter(config: Config) -> DocumentConverter:
             InputFormat.XLSX,
         ],
         format_options={
-            InputFormat.PDF: PdfFormatOption(pipeline_options=options),
-            InputFormat.DOCX: WordFormatOption(backend=Word),
-            InputFormat.PPTX: PowerpointFormatOption(backend=Powerpoint),
+            InputFormat.PDF: PdfFormatOption(
+                pipeline_cls=PdfPipeline, pipeline_options=options
+            ),
+            InputFormat.DOCX: WordFormatOption(
+                backend=Word, pipeline_options=office_options
+            ),
+            InputFormat.PPTX: PowerpointFormatOption(
+                backend=Powerpoint, pipeline_options=office_options
+            ),
+            InputFormat.XLSX: ExcelFormatOption(pipeline_options=office_options),
         },
     )
 
 
-def convert(source: Path, output: Path, media: str, config: Config) -> None:
+def convert(
+    source: Path,
+    output: Path,
+    media: str,
+    config: Config,
+    *,
+    source_name: str | None = None,
+) -> None:
     from docling.datamodel.base_models import ConversionStatus
     from PIL import Image
 
@@ -139,17 +171,41 @@ def convert(source: Path, output: Path, media: str, config: Config) -> None:
     )
     if result.status != ConversionStatus.SUCCESS:
         raise InvalidDocument("document conversion incomplete")
-    if media.endswith("spreadsheetml.sheet"):
-        spreadsheets(result.document, source, output)
-    else:
-        document(
-            result.document,
-            output,
-            settings["min_section_tokens"],
-            settings["split_tokens"],
-            presentation=media.endswith("presentationml.presentation"),
-        )
+    if source_name:
+        result.document.name = Path(source_name).stem
+    try:
+        if media.endswith("spreadsheetml.sheet"):
+            spreadsheets(
+                result.document,
+                source,
+                output,
+                config["services"]["letfs"]["max_text_bytes"],
+                split_tokens=settings["split_tokens"],
+            )
+        else:
+            document(
+                result.document,
+                output,
+                settings["split_tokens"],
+                max_text_bytes=config["services"]["letfs"]["max_text_bytes"],
+                presentation=media.endswith("presentationml.presentation"),
+            )
+    except ValueError as error:
+        raise InvalidDocument(str(error)) from error
     entries = list(output.rglob("*"))
+    texts = [
+        path for path in entries if path.suffix in {".md", ".csv", ".json", ".txt"}
+    ]
+    if any(
+        path.stat().st_size > config["services"]["letfs"]["max_text_bytes"]
+        for path in texts
+    ):
+        raise InvalidDocument("artifact text exceeds limit")
+    if (
+        sum(path.stat().st_size for path in texts)
+        > config["services"]["letfs"]["processing"]["max_manifest_text_bytes"]
+    ):
+        raise InvalidDocument("artifact manifest exceeds limit")
     if (
         len(entries) > config["services"]["letfs"]["processing"]["max_artifacts"]
         or sum(path.stat().st_size for path in entries if path.is_file())
@@ -163,11 +219,18 @@ if __name__ == "__main__":
     parser.add_argument("source", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("media_type")
+    parser.add_argument("--source-name")
     args = parser.parse_args()
     os.environ["HF_HUB_OFFLINE"] = "1"
     logging.basicConfig(level=logging.ERROR)
     try:
-        convert(args.source, args.output, args.media_type, load())
+        convert(
+            args.source,
+            args.output,
+            args.media_type,
+            load(),
+            source_name=args.source_name,
+        )
     except InvalidDocument as error:
         print(str(error), file=sys.stderr)
         sys.exit(os.EX_DATAERR)

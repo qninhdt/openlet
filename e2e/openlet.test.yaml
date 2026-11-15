@@ -129,7 +129,6 @@ services:
     cpu:
       activity_concurrency: 1
       docling_models_path: /models/docling
-      min_section_tokens: 256
       split_tokens: 4096
       threads: 2
       limits:

@@ -88,6 +88,7 @@ class Parser:
                             str(name),
                             str(output),
                             source.media_type,
+                            f"--source-name={source.source_name}",
                         ],
                         self.settings["processing"]["parse_timeout_seconds"],
                     )

@@ -1,4 +1,6 @@
 import asyncio
+import csv
+import io
 import json
 
 import httpx
@@ -129,3 +131,95 @@ async def test_enrichment_renames_tree_and_rewrites_all_markdown_without_extra_m
         result.source_metadata.title == "Report"
         and source.source_name == "original.pdf"
     )
+
+
+def test_link_rewrite_preserves_literal_code_and_plain_csv_but_updates_rich_cells() -> (
+    None
+):
+    from letfs_ingest.naming import table_metadata
+
+    paths = {
+        "README.md": "README.md",
+        "image-1.png": "diagram.png",
+        "table-1.csv": "data.csv",
+    }
+    code = "```python\n'[x](image-1.png)'\n```"
+    plain = '<!-- artifact-table {"rich": false} -->\n\n```csv\n"[literal](image-1.png)",1\n```'
+    rich = '<!-- artifact-table {"rich": true} -->\n\n```csv\n"![Image](image-1.png)","multiline\nvalue"\n```'
+    inline = "Use `[literal](image-1.png)` as code. [actual](image-1.png)"
+    body = code + "\n\n" + plain + "\n\n" + rich + "\n\n" + inline
+    rewritten = rewrite_artifact_links(body, "README.md", paths)
+    assert code in rewritten and plain in rewritten
+    assert (
+        "`[literal](image-1.png)`" in rewritten and "[actual](diagram.png)" in rewritten
+    )
+    assert '![Image](diagram.png),"multiline\nvalue"' in rewritten
+    assert table_metadata(code) == []
+    csv_body = '"![Image](image-1.png)","multiline\nvalue"\r\n'
+    changed = rewrite_artifact_links(csv_body, "table-1.csv", paths, csv_cells=True)
+    assert list(csv.reader(io.StringIO(changed, newline=""))) == [
+        ["![Image](diagram.png)", "multiline\nvalue"]
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("inline_parent", [False, True])
+async def test_enrichment_updates_external_rich_csv_links(
+    monkeypatch: pytest.MonkeyPatch,
+    inline_parent: bool,
+) -> None:
+    monkeypatch.setattr("letfs_ingest.enrich.activity.heartbeat", lambda: None)
+    nested = '<!-- artifact-table {"rich": true, "parts": ["table-1.csv"]} -->\n\n[Table](table-1.csv)'
+    buffer = io.StringIO(newline="")
+    csv.writer(buffer).writerow([nested])
+    parent = buffer.getvalue()
+    root = (
+        '<!-- artifact-table {"rich": true} -->\n\n```csv\n' + parent + "```"
+        if inline_parent
+        else '<!-- artifact-table {"rich": true, "parts": ["table-2.csv"]} -->\n\n[Table](table-2.csv)'
+    )
+    items = [
+        artifact("README.md", root),
+        artifact("table-2.csv", parent),
+        artifact("table-1.csv", '"[Details](part-002.md)",123\n'),
+        artifact("part-002.md", "Evidence"),
+    ]
+
+    class TestModels(Models):
+        def __init__(self) -> None:
+            self.slots = asyncio.Semaphore(2)
+
+        async def describe(
+            self,
+            name: str,
+            text: str,
+            media: str,
+            children: str,
+            image: bytes | None = None,
+        ) -> Metadata:
+            return Metadata(
+                title={
+                    "README.md": "Report",
+                    "table-1.csv": "Data",
+                    "table-2.csv": "Outer",
+                    "part-002.md": "Evidence",
+                }[name],
+                description="Useful",
+                semantic_type=SemanticType.TEXT_CONTENT,
+                context="Report",
+            )
+
+    async with httpx.AsyncClient() as http:
+        result = await enrich(
+            internal.ProcessingInput(artifacts=items),
+            {"file_id": "source", "version": 1},
+            TestModels(),
+            http,
+            10000,
+        )
+    updates = {item.node_id: item for item in result.artifacts}
+    assert list(csv.reader(io.StringIO(updates["table-1.csv"].text_content))) == [
+        ["[Details](evidence.md)", "123"]
+    ]
+    outer = updates["README.md" if inline_parent else "table-2.csv"].text_content
+    assert "data.csv" in outer and "[Table](table-1.csv)" not in outer

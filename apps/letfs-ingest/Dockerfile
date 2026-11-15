@@ -21,10 +21,11 @@ ENTRYPOINT ["/app/.venv/bin/python", "-m", "letfs_ingest.worker"]
 CMD ["io"]
 
 FROM cpu-deps AS cpu
+RUN apt-get update && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng tesseract-ocr-vie && rm -rf /var/lib/apt/lists/*
 COPY packages/sdk-python packages/sdk-python
 COPY apps/letfs-ingest/src apps/letfs-ingest/src
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked --no-dev --package letfs-ingest --extra cpu && \
-    /app/.venv/bin/python -c 'from docling.utils.model_downloader import download_models; from pathlib import Path; download_models(Path("/models/docling"), with_code_formula=False, with_picture_classifier=False, rapidocr_models=["onnxruntime:iso:en"])' && \
+    /app/.venv/bin/python -c 'from docling.utils.model_downloader import download_models; from pathlib import Path; download_models(Path("/models/docling"), with_code_formula=False, with_picture_classifier=True, with_rapidocr=False)' && \
     useradd --uid 10001 --create-home ingest
 USER ingest
 ENTRYPOINT ["/app/.venv/bin/python", "-m", "letfs_ingest.worker"]

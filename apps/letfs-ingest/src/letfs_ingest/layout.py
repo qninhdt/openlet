@@ -1,85 +1,169 @@
+import logging
 import re
-from collections.abc import Sequence
 from itertools import accumulate
+from pathlib import Path
 
-from docling_core.types.doc.items.node import NodeItem
+from markdown_it import MarkdownIt
 
-
-def section_name(number: int, count: int, heading: str) -> str:
-    slug = re.sub(r"[^\w-]+", "-", heading).strip("-_").lower()[:60] or "section"
-    return f"{number:0{len(str(count))}d}-{slug}"
+PARSER = MarkdownIt("commonmark")
 
 
-def sections(
-    items: Sequence[tuple[NodeItem, int]], minimum_tokens: int, split_tokens: int
-) -> list[tuple[int, int, str]]:
-    from docling_core.types.doc.items.table.table import TableItem
-    from docling_core.types.doc.items.text import SectionHeaderItem
+def estimated_tokens(text: str) -> int:
+    return (len(text.encode("utf-8")) + 3) // 4
 
-    weights: list[int] = []
-    headings: list[tuple[int, int, str]] = []
-    table_depth = None
-    for position, (item, depth) in enumerate(items):
-        inside_table = table_depth is not None and depth > table_depth
-        if not inside_table:
-            table_depth = depth if isinstance(item, TableItem) else None
-            if isinstance(item, SectionHeaderItem):
-                headings.append((position, item.level, item.text))
-        text = getattr(item, "text", "")
-        if isinstance(item, TableItem):
-            text += " ".join(cell.text for cell in item.data.table_cells)
-        weights.append((len(text) + 3) // 4)
-    totals = list(accumulate(weights, initial=0))
 
-    def size(start: int, stop: int) -> int:
-        return totals[stop] - totals[start]
-
-    def groups(start: int, stop: int, required: int) -> list[tuple[int, int, str]]:
-        candidates = [heading for heading in headings if start <= heading[0] < stop]
-        for level in sorted({heading[1] for heading in candidates}):
-            same_level = [
-                (position, title)
-                for position, depth, title in candidates
-                if depth == level
-            ]
-            if len(same_level) < required:
-                continue
-            merged: list[tuple[int, int, str]] = []
-            for index, (position, title) in enumerate(same_level):
-                end = same_level[index + 1][0] if index + 1 < len(same_level) else stop
-                if merged and size(*merged[-1][:2]) < minimum_tokens:
-                    merged[-1] = (merged[-1][0], end, merged[-1][2])
-                else:
-                    merged.append((position, end, title))
-            if len(merged) > 1 and size(*merged[-1][:2]) < minimum_tokens:
-                tail = merged.pop()
-                merged[-1] = (merged[-1][0], tail[1], merged[-1][2])
-            return merged
-        return []
-
-    mains = groups(0, len(items), 2)
-    if totals[-1] <= split_tokens or len(mains) < 2:
-        return [(0, len(items), "README.md")]
-    children = [groups(start + 1, stop, 1) for start, stop, _ in mains]
-    nested = (
-        sum(
-            size(start, stop) > split_tokens
-            and sum(size(a, b) >= minimum_tokens for a, b, _ in child) >= 2
-            for (start, stop, _), child in zip(mains, children, strict=True)
-        )
-        > len(mains) / 2
-    )
-    result = [(0, mains[0][0], "README.md")]
-    for number, ((start, stop, title), child) in enumerate(
-        zip(mains, children, strict=True), 1
-    ):
-        name = section_name(number, len(mains), title)
-        if not nested:
-            result.append((start, stop, f"{name}.md"))
+def blocks(content: str) -> list[str]:
+    slides = list(re.finditer(r"^<!-- slide \d+ -->", content, re.M))
+    if slides:
+        cuts = sorted({0, *(match.start() for match in slides), len(content)})
+        return [
+            content[a:b].strip() for a, b in zip(cuts, cuts[1:]) if content[a:b].strip()
+        ]
+    lines = content.splitlines(keepends=True)
+    boundaries = {0, len(lines)}
+    depth = 0
+    for token in PARSER.parse(content):
+        if token.map and depth == 0:
+            boundaries.add(token.map[0])
+        depth += token.nesting
+    cuts = sorted(boundaries)
+    result: list[str] = []
+    pending = ""
+    for a, b in zip(cuts, cuts[1:]):
+        block = "".join(lines[a:b]).strip()
+        if not block:
             continue
-        result.append((start, child[0][0] if child else stop, f"{name}/README.md"))
-        result.extend(
-            (a, b, f"{name}/{section_name(index, len(child), heading)}.md")
-            for index, (a, b, heading) in enumerate(child, 1)
-        )
+        if re.fullmatch(r"#{1,6} [^\n]+|<!--[^\n]*-->|<a [^\n]+|Table [^\n]+", block):
+            pending += block + "\n\n"
+        else:
+            result.append(pending + block)
+            pending = ""
+    if pending:
+        result.append(pending.strip())
     return result
+
+
+def contexts(units: list[str]) -> tuple[list[str], list[int]]:
+    active: dict[int, str] = {}
+    prefixes: list[str] = []
+    penalties: list[int] = []
+    for text in units:
+        parsed = PARSER.parse(text)
+        headings = [
+            (int(token.tag[1:]), parsed[i + 1].content)
+            for i, token in enumerate(parsed)
+            if token.type == "heading_open" and parsed[i + 1].content.strip()
+        ]
+        slide = bool(re.match(r"<!-- slide \d+ -->", text))
+        first = headings[0][0] if headings and text.startswith("#") else None
+        inherited = {k: v for k, v in active.items() if first is None or k < first}
+        prefix = (
+            ""
+            if slide
+            else "\n".join("#" * k + " " + v for k, v in sorted(inherited.items()))
+        )
+        prefixes.append(prefix + "\n\n" if prefix else "")
+        penalties.append(0 if slide else len(inherited) + (first is None))
+        if slide:
+            active.clear()
+        else:
+            for level, title in headings:
+                active = {k: v for k, v in active.items() if k < level}
+                active[level] = title
+    return prefixes, penalties
+
+
+def parts(content: str, split_tokens: int, max_text_bytes: int) -> list[str]:
+    if split_tokens <= 0 or max_text_bytes <= 0:
+        raise ValueError("require positive split_tokens and max_text_bytes")
+    units = blocks(content)
+    if not units:
+        return [""]
+    prefixes, penalties = contexts(units)
+    lengths = list(accumulate((len(text.encode()) + 2 for text in units), initial=0))
+    prefix_bytes = [len(prefix.encode()) for prefix in prefixes]
+    n = len(units)
+    target = 4 * split_tokens
+    reserve = 0
+    # The first part also needs room for navigation to the remaining parts.
+    while True:
+        best: list[tuple[int, int, float] | None] = [None] * (n + 1)
+        cuts = [0] * (n + 1)
+        best[n] = (0, 0, 0.0)
+        for start in range(n - 1, -1, -1):
+            navigation_bytes = reserve if start == 0 else 0
+            capacity = max(1, target - navigation_bytes)
+            for stop in range(start + 1, n + 1):
+                size = (
+                    lengths[stop]
+                    - lengths[start]
+                    - 1
+                    + (prefix_bytes[start] if start else 0)
+                )
+                if size + navigation_bytes > max_text_bytes:
+                    if stop == start + 1:
+                        raise ValueError(
+                            "artifact text exceeds limit: indivisible block"
+                        )
+                    break
+                if size > capacity and stop > start + 1:
+                    break
+                tail = best[stop]
+                if tail is None:
+                    continue
+                cost = (
+                    tail[0] + 1,
+                    tail[1] + (penalties[start] if start else 0),
+                    tail[2] + (max(0, capacity - size) / target) ** 2,
+                )
+                current = best[start]
+                if current is None or cost < current:
+                    best[start], cuts[start] = cost, stop
+        ranges: list[tuple[int, int]] = []
+        start = 0
+        while start < n:
+            stop = cuts[start]
+            if stop <= start:
+                raise ValueError("artifact text exceeds limit")
+            ranges.append((start, stop))
+            start = stop
+        navigation = (
+            (
+                "\n\n"
+                + "\n".join(
+                    f"- [Part {i + 1}](part-{i + 1:03}.md)"
+                    for i in range(1, len(ranges))
+                )
+            )
+            if len(ranges) > 1
+            else ""
+        )
+        output = [
+            (prefixes[a] if a else "")
+            + "\n\n".join(units[a:b])
+            + (navigation if i == 0 else "")
+            + "\n"
+            for i, (a, b) in enumerate(ranges)
+        ]
+        new_reserve = len(navigation.encode())
+        if new_reserve > reserve:
+            reserve = new_reserve
+            continue
+        for text in output:
+            if len(text.encode()) > max_text_bytes:
+                raise ValueError("artifact text exceeds limit")
+            # shortcut: preserve oversized atomic lists/tables/slides; a structure-aware splitter is needed to divide them.
+            if len(text.encode()) > target:
+                logging.getLogger(__name__).warning(
+                    "atomic Markdown block exceeds estimated token target: %s",
+                    estimated_tokens(text),
+                )
+        return output
+
+
+def write_markdown(
+    content: str, output: Path, split_tokens: int, max_text_bytes: int
+) -> None:
+    for number, text in enumerate(parts(content, split_tokens, max_text_bytes), 1):
+        name = "README.md" if number == 1 else f"part-{number:03}.md"
+        (output / name).write_text(text, encoding="utf-8")

@@ -86,7 +86,7 @@ async def run(role: Literal["cpu", "io"]) -> None:
                 settings = config["services"]["letfs_ingest"]["cpu"]
                 from .parse import Parser, run_child
 
-                if not 0 < settings["min_section_tokens"] <= settings["split_tokens"]:
+                if settings["split_tokens"] <= 0:
                     raise ValueError("invalid parser layout limits")
                 if await run_child(
                     ["letfs_ingest.models", "check"],

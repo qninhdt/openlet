@@ -9,7 +9,7 @@ from openlet_api.letfs.v1 import letfs_pb2 as pb
 from temporalio import activity
 
 from .artifacts import check_transfer
-from .naming import artifact_paths, rewrite_artifact_links
+from .naming import artifact_paths, rewrite_artifact_links, rich_csv_paths
 from .providers import Metadata, Models
 from .readme import own_body, render
 from .telemetry import ProcessingIdentity
@@ -80,6 +80,9 @@ async def enrich(
         }
         await describe(path, json.dumps(summaries, ensure_ascii=False))
     paths = artifact_paths(source.artifacts, metadata)
+    rich_csvs = rich_csv_paths(
+        {path: item.text_content for path, item in files.items()}
+    )
     updates: list[internal.EnrichedArtifact] = []
     for item in source.artifacts:
         path = item.path
@@ -106,6 +109,10 @@ async def enrich(
                     }
                     body = render(metadata[path], body, summaries)
                 update.text_content = body
+            elif path in rich_csvs:
+                update.text_content = rewrite_artifact_links(
+                    item.text_content, path, paths, csv_cells=True
+                )
         updates.append(update)
     root = metadata.get("README.md")
     if root is None:

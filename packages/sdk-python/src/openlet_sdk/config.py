@@ -67,7 +67,6 @@ class ParseLimits(TypedDict):
 class CPUSettings(TypedDict):
     activity_concurrency: int
     docling_models_path: str
-    min_section_tokens: int
     split_tokens: int
     threads: int
     limits: ParseLimits
