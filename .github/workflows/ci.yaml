@@ -36,10 +36,12 @@ jobs:
             contracts:
               - 'packages/contracts/**'
             e2e:
+              - 'apps/web/**'
               - 'e2e/**'
               - 'pnpm*'
               - 'package.json'
               - '.prettierrc'
+              - '.prettierignore'
               - '.editorconfig'
               - 'Makefile'
             infra:

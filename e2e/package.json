@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "test": "playwright test",
+    "test:web": "playwright test --config playwright.web.config.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

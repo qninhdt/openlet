@@ -1,0 +1,4 @@
+dist/
+.vite/
+*.tsbuildinfo
+/.impeccable/review/

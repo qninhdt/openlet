@@ -46,6 +46,8 @@ check-python:
 check-js:
 	pnpm format:check
 	pnpm typecheck
+	pnpm lint
+	pnpm build
 
 test: test-go test-python
 

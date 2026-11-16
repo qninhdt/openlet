@@ -1,0 +1,42 @@
+/* OpenBot window.css TabShape geometry. Pseudo-element arc fills require CSS. */
+.editor-tab-shape {
+  --tab-curve: 8px;
+  position: absolute;
+  z-index: -1;
+  bottom: -1px;
+  height: 33px;
+  border: 1px solid var(--border);
+  border-bottom: 0;
+  border-radius: var(--tab-curve) var(--tab-curve) 0 0;
+  background: var(--sidebar);
+  pointer-events: none;
+}
+.editor-tab-shape::before,
+.editor-tab-shape::after {
+  position: absolute;
+  bottom: 0;
+  width: calc(var(--tab-curve) + 1px);
+  height: calc(var(--tab-curve) + 1px);
+  content: '';
+  background:
+    radial-gradient(
+      circle at var(--tab-corner) 0,
+      transparent var(--tab-curve),
+      var(--border) var(--tab-curve),
+      var(--border) calc(var(--tab-curve) + 1px),
+      transparent calc(var(--tab-curve) + 1px)
+    ),
+    radial-gradient(
+      circle at var(--tab-corner) 0,
+      transparent var(--tab-curve),
+      var(--sidebar) var(--tab-curve)
+    );
+}
+.editor-tab-shape::before {
+  --tab-corner: 0;
+  left: calc(-1 * var(--tab-curve) - 1px);
+}
+.editor-tab-shape::after {
+  --tab-corner: 100%;
+  right: calc(-1 * var(--tab-curve) - 1px);
+}

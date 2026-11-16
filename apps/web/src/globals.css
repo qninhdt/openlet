@@ -1,0 +1,232 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+@import '@fontsource-variable/geist';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --shadow-menu:
+    inset 0 1px 0 color-mix(in srgb, var(--foreground) 5%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--foreground) 11%, transparent),
+    0 4px 6px -1px rgb(0 0 0 / 30%), 0 2px 4px -2px rgb(0 0 0 / 30%);
+  --text-caption: 0.8125rem;
+  --text-agent: 0.9375rem;
+  --font-heading: var(--font-sans);
+  --font-sans: 'Geist Variable', sans-serif;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-xs: calc(var(--radius) * 0.4);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+:root {
+  --shell-header-height: 38px;
+  --shell-agent-row-height: 62px;
+  --shell-agent-avatar-size: 46px;
+  --brand: oklch(0.72 0.15 250);
+  --brand-foreground: oklch(0.2 0.05 250);
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --radius: 0.625rem;
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --chart-1: oklch(0.87 0 0);
+  --chart-2: oklch(0.556 0 0);
+  --chart-3: oklch(0.439 0 0);
+  --chart-4: oklch(0.371 0 0);
+  --chart-5: oklch(0.269 0 0);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  ::selection {
+    @apply bg-primary text-primary-foreground;
+  }
+  body {
+    @apply bg-background text-foreground;
+    margin: 0;
+  }
+  html {
+    @apply font-sans;
+  }
+}
+
+/* Generated Markdown and highlighter DOM cannot carry component Tailwind classes. */
+.storage-markdown {
+  max-width: 800px;
+  margin-inline: auto;
+  padding: 36px 40px 80px;
+  font-size: 14px;
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+.storage-markdown h1 {
+  font-size: 28px;
+  font-weight: 600;
+  margin-bottom: 20px;
+  letter-spacing: -0.025em;
+}
+.storage-markdown h2 {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 28px 0 12px;
+}
+.storage-markdown h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 20px 0 8px;
+}
+.storage-markdown p,
+.storage-markdown ul,
+.storage-markdown ol,
+.storage-markdown table,
+.storage-markdown pre {
+  margin-bottom: 16px;
+}
+.storage-markdown ul {
+  padding-left: 22px;
+  list-style: disc;
+}
+.storage-markdown ol {
+  padding-left: 22px;
+  list-style: decimal;
+}
+.storage-markdown blockquote {
+  border-left: 1px solid var(--border);
+  padding-left: 16px;
+  color: var(--muted-foreground);
+}
+.storage-markdown a {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.storage-markdown img {
+  max-width: 100%;
+}
+.storage-markdown code {
+  background: var(--muted);
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+  font-size: 0.9em;
+}
+.storage-markdown pre {
+  background: var(--muted);
+  padding: 16px;
+  overflow: auto;
+}
+.storage-markdown th,
+.storage-markdown td {
+  border: 1px solid var(--border);
+  padding: 6px 12px;
+  text-align: left;
+}
+.dark .shiki,
+.dark .shiki span {
+  color: var(--shiki-dark) !important;
+  background-color: transparent !important;
+}
+.shiki {
+  background-color: transparent !important;
+}
+
+@media (max-width: 720px) {
+  .storage-markdown {
+    padding: 24px 20px 60px;
+  }
+}

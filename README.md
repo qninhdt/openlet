@@ -6,6 +6,7 @@ Platform owns users, workspaces and invitations. LetFS owns workspace storages, 
 
 - [Architecture](docs/architecture.md)
 - [Setup and commands](docs/setup.md)
+- [Web frontend](apps/web/README.md)
 - [API contracts](docs/api-contracts.md)
 - [Testing](docs/testing.md)
 - [Operations and recovery](docs/operations.md)

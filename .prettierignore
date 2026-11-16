@@ -1,0 +1,4 @@
+apps/web/dist/
+
+# Keep the upstream engine byte-for-byte for updates.
+apps/web/src/vendor/
