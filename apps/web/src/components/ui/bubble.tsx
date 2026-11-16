@@ -18,6 +18,8 @@ const bubbleVariants = cva(
   {
     variants: {
       variant: {
+        'agent-outline':
+          '*:data-[slot=bubble-content]:border-2 *:data-[slot=bubble-content]:border-(--agent-color) *:data-[slot=bubble-content]:bg-background *:data-[slot=bubble-content]:text-foreground',
         agent:
           '*:data-[slot=bubble-content]:bg-(--agent-color) *:data-[slot=bubble-content]:text-(--agent-foreground)',
         default:

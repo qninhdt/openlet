@@ -63,7 +63,7 @@ class Agent:
             result_type=dict[str, JSON],
         )
         seq = result.get("seq")
-        if isinstance(seq, int):
+        if isinstance(seq, int) and not message.silent:
             self.admitted_seq = max(self.admitted_seq, seq)
         self.rotate()
         return result

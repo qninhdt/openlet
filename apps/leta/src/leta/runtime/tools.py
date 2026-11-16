@@ -14,8 +14,8 @@ from mirage import ContentType, Session
 from openlet_sdk.config import JSON
 from pydantic import Field
 
-from .. import boxes, history, hitl, messages, schedules
-from ..agents import stable
+from .. import boxes, file_refs, history, hitl, messages, reactions, schedules
+from ..agents import json_row, stable
 from ..auth import Actor
 from ..boxes import BoxCreation, CreateBox, LetiDefinition
 from ..config import Services
@@ -31,6 +31,10 @@ from .inbox import State
 type Status = Literal[
     "pending", "answered", "accepted", "denied", "cancelled", "expired"
 ]
+
+
+def presented(kind: str, content: JSON, data: JSON) -> tuple[JSON, dict[str, JSON]]:
+    return content, {"ui": {"version": 1, "kind": kind, "data": data}}
 
 
 @dataclass
@@ -58,14 +62,14 @@ async def session(runtime: ToolRuntime[Context, State]) -> Session:
     return await runtime.context.filesystem.open()
 
 
-@tool
+@tool(response_format="content_and_artifact")
 async def inbox_send(
     runtime: ToolRuntime[Context, State],
     content: str,
     to: str | None = None,
     in_reply_to: Annotated[int | None, Field(ge=1)] = None,
-) -> JSON:
-    """Send to a box name, permitted teammate name, root, or human user_id. in_reply_to replies to the sender of that incoming message; omit to for replies, or omit in_reply_to when messaging someone else."""
+) -> tuple[JSON, dict[str, JSON]]:
+    """Send to a box name, permitted teammate name, root, or human user_id. in_reply_to replies to the sender of that incoming message; omit to for replies, or omit in_reply_to when messaging someone else. Mention a shared file with :file[label]{name=storage_uuid/node_uuid}; both sender and recipient must have read access."""
     from ..worker import deliver
 
     ctx = runtime.context
@@ -75,7 +79,10 @@ async def inbox_send(
         if in_reply_to is not None
         else None
     )
-    if original and original["source_kind"] not in ("user", "agent", "box"):
+    if original and (
+        original["source_kind"] not in ("user", "agent", "box")
+        or original.get("input_type", "message") != "message"
+    ):
         raise ValueError("System events are not reply destinations")
     if to is None and original is None:
         raise ValueError("New messages require to; replies require in_reply_to")
@@ -150,6 +157,13 @@ async def inbox_send(
             cast(UUID, agent["workspace_id"]),
             "participate",
         )
+        refs = await file_refs.validate(
+            s,
+            cast(UUID, agent["workspace_id"]),
+            Actor("agent", ctx.root),
+            Actor("user", target),
+            content,
+        )
         await messages.deliver_user(
             s.db,
             ctx.root,
@@ -160,7 +174,11 @@ async def inbox_send(
             if original
             else messages.conversation(ctx.root, "user", target),
             cast(UUID, original["id"]) if original else None,
+            refs,
         )
+        from .. import events
+
+        await events.changed(s.redis, ctx.root, "messages", id, target)
     else:
         assert recipient is not None
         source_kind = "box" if target == ctx.root and agent["box_id"] else "agent"
@@ -187,45 +205,87 @@ async def inbox_send(
                 in_reply_to_message_id=cast(UUID, original["id"]) if original else None,
             ),
         )
-    return {"sent": True}
+    result: JSON = {"sent": True}
+    return presented("inbox_send", result, result)
 
 
-@tool
+@tool(response_format="content_and_artifact")
+async def inbox_react(
+    runtime: ToolRuntime[Context, State],
+    message: Annotated[int, Field(ge=1)],
+    emoji: str,
+    action: Literal["add", "remove"] = "add",
+) -> tuple[JSON, dict[str, JSON]]:
+    """React to a received user or teammate message using its inbox message number. One emoji per agent per message; add replaces your previous emoji, remove clears it. Feedback is silent and does not wake another agent."""
+    ctx = runtime.context
+    original = await messages.incoming(ctx.services.db, ctx.id, message)
+    result = await reactions.react(
+        ctx.services.db,
+        ctx.services.auth,
+        ctx.root,
+        cast(UUID, original["id"]),
+        "incoming",
+        Actor("agent", ctx.id),
+        reactions.React(
+            request_id=request_id(runtime), emoji=emoji if action == "add" else None
+        ),
+    )
+    from .. import events
+
+    await events.changed(
+        ctx.services.redis,
+        ctx.root,
+        "reactions",
+        cast(UUID, original["id"]),
+        UUID(str(result["user_id"])) if result["user_id"] else None,
+    )
+    return presented("reaction", result, result)
+
+
+@tool(response_format="content_and_artifact")
 async def inbox_list(
     runtime: ToolRuntime[Context, State],
     cursor: str = "",
     unread_only: bool = True,
     source_id: UUID | None = None,
-) -> JSON:
-    """List inbox notifications grouped by conversation."""
+) -> tuple[JSON, dict[str, JSON]]:
+    """List inbox notifications grouped by conversation, including silent feedback that does not wake you."""
     ctx = runtime.context
-    return await messages.list_inbox(
+    result, rows = await messages.list_inbox(
         ctx.services.db, ctx.id, int(cursor or 0), unread_only, source_id
     )
+    return result, {"ui": messages.input_data(rows, root=True)}
 
 
-@tool
+@tool(response_format="content_and_artifact")
 async def inbox_read(
     runtime: ToolRuntime[Context, State],
     message: Annotated[int, Field(ge=1)],
     cursor: str = "",
     unread_only: bool = True,
-) -> JSON:
+) -> tuple[str, dict[str, JSON]]:
     """Read up to 20 unread messages in the conversation containing message, oldest first, and mark them read. message selects the conversation, not a starting position; cursor continues after a sequence. unread_only=false also rereads previously read messages."""
     ctx = runtime.context
-    return await messages.read(
+    text, rows = await messages.read(
         ctx.services.db,
         ctx.id,
         message,
         int(cursor or 0),
         unread_only,
     )
+    from .. import events
+
+    for user in {
+        cast(UUID, row["source_id"]) for row in rows if row["source_kind"] == "user"
+    }:
+        await events.changed(ctx.services.redis, ctx.root, "messages", ctx.id, user)
+    return text, {"ui": messages.input_data(rows, root=False)}
 
 
-@tool
+@tool(response_format="content_and_artifact")
 async def workspace_get(
     runtime: ToolRuntime[Context, State], cursor: UUID | None = None
-) -> JSON:
+) -> tuple[JSON, dict[str, JSON]]:
     """Get your identity, home and allowed messaging recipients."""
     ctx = runtime.context
     async with ctx.services.db.connection() as conn:
@@ -255,7 +315,7 @@ async def workspace_get(
                 rows.insert(
                     0, {"id": ctx.root, "name": "root", "description": "Root agent"}
                 )
-    return {
+    result: JSON = {
         **(
             {"workdir": f"~/.boxes/{ctx.agent['box_name']}/"}
             if ctx.agent["box_id"]
@@ -269,12 +329,13 @@ async def workspace_get(
         ],
         **({"next_cursor": str(rows[-1]["id"])} if len(rows) >= 20 else {}),
     }
+    return presented("workspace_get", result, result)
 
 
-@tool
+@tool(response_format="content_and_artifact")
 async def workspace_member_list(
     runtime: ToolRuntime[Context, State], cursor: str = ""
-) -> JSON:
+) -> tuple[JSON, dict[str, JSON]]:
     """Find current workspace members and user IDs for HITL."""
     ctx = runtime.context
     result = await ctx.services.auth.members(
@@ -282,10 +343,10 @@ async def workspace_member_list(
     )
     if not result.get("next_cursor"):
         result.pop("next_cursor", None)
-    return result
+    return presented("workspace_member_list", result, result)
 
 
-@tool
+@tool(response_format="content_and_artifact")
 async def box_create(
     runtime: ToolRuntime[Context, State],
     name: str,
@@ -293,8 +354,8 @@ async def box_create(
     edges: list[tuple[str, str]],
     representative: str,
     description: str = "",
-) -> JSON:
-    """Create a fixed team with shared home. Edges are bidirectional; list each pair once. Send work to the box with inbox_send."""
+) -> tuple[JSON, dict[str, JSON]]:
+    """Create a fixed team with shared home. Give each Leti a name and a role title (titles may repeat). Edges are bidirectional; list each pair once. Send work to the box with inbox_send."""
     from ..worker import operation
 
     ctx = runtime.context
@@ -325,13 +386,25 @@ async def box_create(
         wait=True,
     )
     await ctx.filesystem.changed(f"~/.boxes/{name}")
-    return f"Box: {name}\nState: active\nWork directory: ~/.boxes/{name}/\nRepresentative: {representative}"
+    result = f"Box: {name}\nState: active\nWork directory: ~/.boxes/{name}/\nRepresentative: {representative}"
+    return presented(
+        "box_create",
+        result,
+        {
+            "name": name,
+            "state": "active",
+            "home": f"~/.boxes/{name}/",
+            "representative": representative,
+            "letis": [item.model_dump(mode="json") for item in letis],
+            "edges": [list(edge) for edge in edges],
+        },
+    )
 
 
-@tool
+@tool(response_format="content_and_artifact")
 async def box_list(
     runtime: ToolRuntime[Context, State], cursor: UUID | None = None
-) -> JSON:
+) -> tuple[JSON, dict[str, JSON]]:
     """List boxes and work counts."""
     ctx = runtime.context
     result = await boxes.list_boxes(ctx.services.db, ctx.root, cursor)
@@ -341,13 +414,13 @@ async def box_list(
     ]
     if result.get("next_cursor"):
         lines.append(f"Next cursor: {result['next_cursor']}")
-    return "\n\n".join(lines) or "No boxes."
+    return presented("box_list", "\n\n".join(lines) or "No boxes.", result)
 
 
-@tool
+@tool(response_format="content_and_artifact")
 async def box_get(
     runtime: ToolRuntime[Context, State], box: str, include_prompts: bool = False
-) -> JSON:
+) -> tuple[JSON, dict[str, JSON]]:
     """Get box members, links and representative; prompts are opt-in."""
     ctx = runtime.context
     result = await boxes.get(ctx.services.db, ctx.root, box, include_prompts)
@@ -369,11 +442,13 @@ async def box_get(
         lines.append(
             f"- {names[str(edge['agent_low_id'])]} ↔ {names[str(edge['agent_high_id'])]}"
         )
-    return "\n".join(lines)
+    return presented("box_get", "\n".join(lines), result)
 
 
-@tool
-async def box_delete(runtime: ToolRuntime[Context, State], box: str) -> JSON:
+@tool(response_format="content_and_artifact")
+async def box_delete(
+    runtime: ToolRuntime[Context, State], box: str
+) -> tuple[JSON, dict[str, JSON]]:
     """Stop a box, remove its schedules/pending requests and trash its work directory. Files elsewhere in shared home remain."""
     from ..worker import operation
 
@@ -393,16 +468,17 @@ async def box_delete(runtime: ToolRuntime[Context, State], box: str) -> JSON:
     )
 
     await ctx.filesystem.changed(f"~/.boxes/{box}")
-    return {"box": box, "state": "archived"}
+    result: JSON = {"box": box, "state": "archived"}
+    return presented("box_delete", result, result)
 
 
-@tool
+@tool(response_format="content_and_artifact")
 async def hitl_ask(
     runtime: ToolRuntime[Context, State],
     recipient_user_id: UUID,
     questions: Annotated[list[hitl.Question], Field(min_length=1, max_length=10)],
     title: str = "",
-) -> JSON:
+) -> tuple[JSON, dict[str, JSON]]:
     """Ask any current workspace member; the answer arrives later in your inbox."""
     ctx = runtime.context
     from ..worker import submit_hitl
@@ -418,16 +494,26 @@ async def hitl_ask(
             payload=hitl.form(questions),
         ),
     )
-    return {"request_id": result["id"], "status": result["status"]}
+    result: JSON = {"request_id": result["id"], "status": result["status"]}
+    return presented(
+        "hitl_ask",
+        result,
+        {
+            **cast(dict[str, JSON], result),
+            "title": title or questions[0].text[:255],
+            "recipient_user_id": str(recipient_user_id),
+            "payload": hitl.form(questions),
+        },
+    )
 
 
-@tool
+@tool(response_format="content_and_artifact")
 async def hitl_request(
     runtime: ToolRuntime[Context, State],
     user_id: UUID,
     role: Literal["viewer", "editor"] = "viewer",
     reason: str = "",
-) -> JSON:
+) -> tuple[JSON, dict[str, JSON]]:
     """Ask a workspace member for access to their Personal storage, shared by root and its Leti. Wait for the grant outcome."""
     ctx = runtime.context
     from ..worker import submit_hitl
@@ -444,8 +530,28 @@ async def hitl_request(
         ),
     )
     if result["status"] == "already_granted":
-        return {"status": "already_granted", "access": role}
-    return {"request_id": result["id"], "status": result["status"]}
+        result: JSON = {"status": "already_granted", "access": role}
+        return presented(
+            "hitl_request",
+            result,
+            {
+                **cast(dict[str, JSON], result),
+                "title": "Storage access request",
+                "recipient_user_id": str(user_id),
+                "payload": {"role": role, "reason": reason},
+            },
+        )
+    result: JSON = {"request_id": result["id"], "status": result["status"]}
+    return presented(
+        "hitl_request",
+        result,
+        {
+            **cast(dict[str, JSON], result),
+            "title": "Storage access request",
+            "recipient_user_id": str(user_id),
+            "payload": {"role": role, "reason": reason},
+        },
+    )
 
 
 async def own_hitl(ctx: Context, id: UUID) -> dict[str, JSON]:
@@ -457,16 +563,19 @@ async def own_hitl(ctx: Context, id: UUID) -> dict[str, JSON]:
     )
 
 
-@tool
-async def hitl_get(runtime: ToolRuntime[Context, State], request_id: UUID) -> JSON:
+@tool(response_format="content_and_artifact")
+async def hitl_get(
+    runtime: ToolRuntime[Context, State], request_id: UUID
+) -> tuple[JSON, dict[str, JSON]]:
     """Get a human request, its form, decision and grant outcome."""
-    return hitl.render(await own_hitl(runtime.context, request_id))
+    result = await own_hitl(runtime.context, request_id)
+    return presented("hitl_get", hitl.render(result), result)
 
 
-@tool
+@tool(response_format="content_and_artifact")
 async def hitl_cancel(
     runtime: ToolRuntime[Context, State], request_id: UUID, reason: str = ""
-) -> JSON:
+) -> tuple[JSON, dict[str, JSON]]:
     """Cancel a pending human request; does not revoke granted access."""
     ctx = runtime.context
     await own_hitl(ctx, request_id)
@@ -483,12 +592,13 @@ async def hitl_cancel(
         ),
         result_type=dict[str, JSON],
     )
-    return {"request_id": str(request_id), "status": result["status"]}
+    public: JSON = {"request_id": str(request_id), "status": result["status"]}
+    return presented("hitl_cancel", public, public)
 
 
 async def list_hitl(
     ctx: Context, status: Status | None, cursor: UUID | None, box_id: UUID | None = None
-) -> JSON:
+) -> tuple[JSON, dict[str, JSON]]:
     async with ctx.services.db.connection() as conn:
         rows = await (
             await conn.execute(
@@ -523,22 +633,23 @@ async def list_hitl(
         lines.append(line)
     if len(rows) == 20:
         lines.append(f"Next cursor: {rows[-1]['id']}")
-    return "\n".join(lines) or (
+    content = "\n".join(lines) or (
         "No pending requests."
         if status == "pending"
         else "No requests matching this filter."
     )
+    return presented("hitl_list", content, {"items": [json_row(row) for row in rows]})
 
 
-@tool("hitl_list")
+@tool("hitl_list", response_format="content_and_artifact")
 async def root_hitl_list(
     runtime: ToolRuntime[Context, State],
     status: Status | None = None,
     cursor: UUID | None = None,
     box: str | None = None,
-) -> JSON:
+) -> tuple[JSON, dict[str, JSON]]:
     """List human requests across root and boxes; box filters by requester box."""
-    return await list_hitl(
+    result = await list_hitl(
         runtime.context,
         status,
         cursor,
@@ -551,16 +662,18 @@ async def root_hitl_list(
         if box
         else None,
     )
+    return result
 
 
-@tool("hitl_list")
+@tool("hitl_list", response_format="content_and_artifact")
 async def leti_hitl_list(
     runtime: ToolRuntime[Context, State],
     status: Status | None = None,
     cursor: UUID | None = None,
-) -> JSON:
+) -> tuple[JSON, dict[str, JSON]]:
     """List your human requests; use hitl_get for details."""
-    return await list_hitl(runtime.context, status, cursor)
+    result = await list_hitl(runtime.context, status, cursor)
+    return result
 
 
 async def change_schedule(
@@ -589,7 +702,7 @@ async def own_schedule(ctx: Context, id: UUID) -> dict[str, JSON]:
     )
 
 
-@tool("schedule_create")
+@tool("schedule_create", response_format="content_and_artifact")
 async def root_schedule_create(
     runtime: ToolRuntime[Context, State],
     content: str,
@@ -602,7 +715,7 @@ async def root_schedule_create(
     ends_at: datetime | None = None,
     timezone: str = "UTC",
     target_box: str | None = None,
-) -> JSON:
+) -> tuple[JSON, dict[str, JSON]]:
     """Schedule an inbox instruction for yourself or a box. Choose exactly one: at, after_seconds, every_seconds, calendar."""
     ctx = runtime.context
     id = request_id(runtime)
@@ -610,7 +723,7 @@ async def root_schedule_create(
     if target_box:
         box = await boxes.named(ctx.services.db, ctx.root, target_box)
         target = UUID(str(box["representative_agent_id"]))
-    return await change_schedule(
+    result = await change_schedule(
         runtime,
         schedules.Change(
             request_id=id,
@@ -630,9 +743,14 @@ async def root_schedule_create(
         ),
         target_box or "root",
     )
+    return presented(
+        "schedule_create",
+        result,
+        {**cast(dict[str, JSON], result), "title": title, "content": content},
+    )
 
 
-@tool("schedule_create")
+@tool("schedule_create", response_format="content_and_artifact")
 async def leti_schedule_create(
     runtime: ToolRuntime[Context, State],
     content: str,
@@ -644,11 +762,11 @@ async def leti_schedule_create(
     starts_at: datetime | None = None,
     ends_at: datetime | None = None,
     timezone: str = "UTC",
-) -> JSON:
+) -> tuple[JSON, dict[str, JSON]]:
     """Schedule an inbox instruction for yourself. Choose exactly one: at, after_seconds, every_seconds, calendar."""
     ctx = runtime.context
     id = request_id(runtime)
-    return await change_schedule(
+    result = await change_schedule(
         runtime,
         schedules.Change(
             request_id=id,
@@ -673,9 +791,14 @@ async def leti_schedule_create(
             else f"/{ctx.agent['name']}"
         ),
     )
+    return presented(
+        "schedule_create",
+        result,
+        {**cast(dict[str, JSON], result), "title": title, "content": content},
+    )
 
 
-@tool
+@tool(response_format="content_and_artifact")
 async def schedule_update(
     runtime: ToolRuntime[Context, State],
     schedule_id: UUID,
@@ -689,7 +812,7 @@ async def schedule_update(
     starts_at: datetime | None = None,
     ends_at: datetime | None = None,
     timezone: str = "UTC",
-) -> JSON:
+) -> tuple[JSON, dict[str, JSON]]:
     """Update only supplied fields. At most one timing selector; recipient stays fixed. ends_at=null clears the cutoff."""
     ctx = runtime.context
     old = await own_schedule(ctx, schedule_id)
@@ -698,7 +821,7 @@ async def schedule_update(
     call = next(
         call for call in message.tool_calls if call["id"] == runtime.tool_call_id
     )
-    return await change_schedule(
+    result = await change_schedule(
         runtime,
         schedules.Change(
             request_id=request_id(runtime),
@@ -720,15 +843,25 @@ async def schedule_update(
         ),
         str(old["target"]),
     )
+    return presented(
+        "schedule_update",
+        result,
+        {
+            **cast(dict[str, JSON], result),
+            "title": title if title is not None else old["title"],
+            "content": content if content is not None else old["content"],
+            "previous_spec": old["spec"],
+        },
+    )
 
 
-@tool
+@tool(response_format="content_and_artifact")
 async def schedule_delete(
     runtime: ToolRuntime[Context, State], schedule_id: UUID
-) -> JSON:
+) -> tuple[JSON, dict[str, JSON]]:
     """Stop future scheduled instructions; already-delivered work remains."""
     old = await own_schedule(runtime.context, schedule_id)
-    return await change_schedule(
+    result = await change_schedule(
         runtime,
         schedules.Change(
             request_id=request_id(runtime),
@@ -739,13 +872,20 @@ async def schedule_delete(
         ),
         str(old["target"]),
     )
+    return presented(
+        "schedule_delete",
+        result,
+        {**cast(dict[str, JSON], result), "title": old["title"]},
+    )
 
 
-@tool
-async def schedule_get(runtime: ToolRuntime[Context, State], schedule_id: UUID) -> JSON:
+@tool(response_format="content_and_artifact")
+async def schedule_get(
+    runtime: ToolRuntime[Context, State], schedule_id: UUID
+) -> tuple[JSON, dict[str, JSON]]:
     """Get a schedule instruction, timing and upcoming forecasts."""
     value = await own_schedule(runtime.context, schedule_id)
-    return {
+    result: JSON = {
         **{
             key: value[key]
             for key in (
@@ -762,11 +902,12 @@ async def schedule_get(runtime: ToolRuntime[Context, State], schedule_id: UUID) 
         "target": value["target"],
         **await schedules.upcoming(runtime.context.services.temporal, value),
     }
+    return presented("schedule_get", result, result)
 
 
 async def list_schedules(
     ctx: Context, cursor: UUID | None, box_id: UUID | None = None
-) -> JSON:
+) -> tuple[JSON, dict[str, JSON]]:
     async with ctx.services.db.connection() as conn:
         rows = await (
             await conn.execute(
@@ -792,15 +933,19 @@ async def list_schedules(
     ]
     if len(rows) == 20:
         lines.append(f"Next cursor: {rows[-1]['id']}")
-    return "\n".join(lines) or "No schedules matching this filter."
+    return presented(
+        "schedule_list",
+        "\n".join(lines) or "No schedules matching this filter.",
+        {"items": [json_row(row) for row in rows]},
+    )
 
 
-@tool("schedule_list")
+@tool("schedule_list", response_format="content_and_artifact")
 async def root_schedule_list(
     runtime: ToolRuntime[Context, State],
     cursor: UUID | None = None,
     box: str | None = None,
-) -> JSON:
+) -> tuple[JSON, dict[str, JSON]]:
     """List root and box schedules; box filters by target box."""
     return await list_schedules(
         runtime.context,
@@ -816,56 +961,79 @@ async def root_schedule_list(
     )
 
 
-@tool("schedule_list")
+@tool("schedule_list", response_format="content_and_artifact")
 async def leti_schedule_list(
     runtime: ToolRuntime[Context, State], cursor: UUID | None = None
-) -> JSON:
+) -> tuple[JSON, dict[str, JSON]]:
     """List your schedules."""
     return await list_schedules(runtime.context, cursor)
 
 
-@tool
+@tool(response_format="content_and_artifact")
 async def history_search(
     runtime: ToolRuntime[Context, State], query: str = "", cursor: str = ""
-) -> JSON:
+) -> tuple[JSON, dict[str, JSON]]:
     """Search activity using a few distinctive literal keywords; all terms must match. History lookup calls/results are excluded. Omit query for recent previews."""
     ctx = runtime.context
-    return await history.search_text(
+    text, data = await history.search_tool(
         ctx.services.db, ctx.id, int(cursor) if cursor else None, query
     )
+    return presented("history_search", text, data)
 
 
-@tool
+@tool(response_format="content_and_artifact")
 async def history_read(
     runtime: ToolRuntime[Context, State],
     entry: Annotated[int, Field(ge=1)],
     start_line: Annotated[int, Field(ge=1)] = 1,
     limit: Annotated[int | None, Field(ge=1, le=2000)] = None,
-) -> str:
+) -> tuple[JSON, dict[str, JSON]]:
     """Read an activity entry by its number from history_search; follow continuations when needed."""
     ctx = runtime.context
-    return await history.read_text(ctx.services.db, ctx.id, entry, start_line, limit)
+    text = await history.read_text(ctx.services.db, ctx.id, entry, start_line, limit)
+
+    return presented(
+        "history_read",
+        text,
+        {"content": text, "entry": entry, "start_line": start_line},
+    )
 
 
-@tool
+@tool(response_format="content_and_artifact")
 async def file_list(
     runtime: ToolRuntime[Context, State],
     path: str = "~",
     cursor: str = "",
     depth: Annotated[int, Field(ge=1, le=10)] = 1,
-) -> JSON:
-    """List files and directories; /mnt lists accessible storages and whether each is writable."""
+) -> tuple[JSON, dict[str, JSON]]:
+    """List files and directories; /mnt lists accessible personal, shared and conversation storages with their identity and write access."""
+    if file_path(path) == "/mnt":
+        runtime.context.filesystem.discovered = 0
     vfs = (await session(runtime)).vfs
     if file_path(path) == "/mnt":
-        return (
+        content = (
             "\n\n".join(
                 f"{binding.name} — {'read/write' if binding.writable else 'read-only'}\n  /mnt/{id}"
                 for id, binding in runtime.context.filesystem.bindings.items()
             )
             or "No accessible external storages."
         )
+        return presented(
+            "file_list",
+            content,
+            {
+                "items": [
+                    {"path": f"/mnt/{id}", "kind": "directory", "name": binding.name}
+                    for id, binding in runtime.context.filesystem.bindings.items()
+                ]
+            },
+        )
     result, _ = await vfs.dispatch("list_page", scope(path), cursor=cursor, depth=depth)
-    return directory_text(path, cast(dict[str, JSON], result))
+    return presented(
+        "file_list",
+        directory_text(path, cast(dict[str, JSON], result)),
+        cast(JSON, result),
+    )
 
 
 def directory_text(base: str, result: dict[str, JSON]) -> str:
@@ -904,7 +1072,7 @@ async def file_read(
     path: str,
     start_line: Annotated[int, Field(ge=1)] = 1,
     limit: Annotated[int | None, Field(ge=1, le=2000)] = None,
-) -> tuple[JSON, str | None]:
+) -> tuple[JSON, str | dict[str, JSON] | None]:
     """Read file text, an image, or an uploaded document's extracted files. For text, start_line and limit select lines; omitted limit reads up to the output cap. Follow the continuation when more content is needed."""
     vfs = (await session(runtime)).vfs
     metadata = await vfs.stat(file_path(path))
@@ -917,18 +1085,25 @@ async def file_read(
         )
         if media.startswith("image/"):
             return cast(JSON, result), path
-        return directory_text(path, cast(dict[str, JSON], result)), None
+        return presented(
+            "file_list",
+            directory_text(path, cast(dict[str, JSON], result)),
+            cast(JSON, result),
+        )
     data = await vfs.read(file_path(path))
-    return text_page(data.decode(), start_line, limit), None
+    page = text_page(data.decode(), start_line, limit)
+    return presented(
+        "file_read", page, {"path": path, "content": page, "start_line": start_line}
+    )
 
 
-@tool
+@tool(response_format="content_and_artifact")
 async def file_write(
     runtime: ToolRuntime[Context, State],
     path: str,
     content: str,
     overwrite: bool = False,
-) -> JSON:
+) -> tuple[JSON, dict[str, JSON]]:
     """Create text; overwrite=true replaces the entire file. Use file_edit for partial changes."""
     token = current_operation.set(request_id(runtime))
     try:
@@ -937,17 +1112,18 @@ async def file_write(
         )
     finally:
         current_operation.reset(token)
-    return {"path": path}
+    result: JSON = {"path": path}
+    return presented("file_write", result, result)
 
 
-@tool
+@tool(response_format="content_and_artifact")
 async def file_edit(
     runtime: ToolRuntime[Context, State],
     path: str,
     old_text: str,
     new_text: str,
     replace_all: bool = False,
-) -> JSON:
+) -> tuple[JSON, dict[str, JSON]]:
     """Replace literal text; exactly one match unless replace_all=true. Empty new_text deletes the match."""
     token = current_operation.set(request_id(runtime))
     try:
@@ -960,15 +1136,16 @@ async def file_edit(
         )
     finally:
         current_operation.reset(token)
-    return {"path": path}
+    result: JSON = {"path": path}
+    return presented("file_edit", result, result)
 
 
-@tool
+@tool(response_format="content_and_artifact")
 async def file_semantic_search(
     runtime: ToolRuntime[Context, State],
     query: str,
     paths: Annotated[list[str] | None, Field(max_length=5)] = None,
-) -> JSON:
+) -> tuple[JSON, dict[str, JSON]]:
     """Find passages by meaning; use shell search for exact text."""
     vfs = (await session(runtime)).vfs
 
@@ -1021,7 +1198,7 @@ async def file_semantic_search(
         groups.append(
             "\n\n".join(lines) if result["hits"] else f"No matches in {base}."
         )
-    return "\n\n".join(groups)
+    return presented("file_semantic_search", "\n\n".join(groups), {"groups": results})
 
 
 @tool
@@ -1048,6 +1225,9 @@ async def execute(
 def tools(*, root: bool) -> list[BaseTool]:
     shared = [
         inbox_send,
+        inbox_react,
+        inbox_read,
+        inbox_list,
         workspace_get,
         workspace_member_list,
         hitl_ask,
@@ -1072,8 +1252,6 @@ def tools(*, root: bool) -> list[BaseTool]:
             root_hitl_list,
             root_schedule_create,
             root_schedule_list,
-            inbox_list,
-            inbox_read,
             box_create,
             box_list,
             box_get,

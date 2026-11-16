@@ -1,5 +1,9 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import Markdown from 'react-markdown';
+import Markdown, { defaultUrlTransform } from 'react-markdown';
+import { fileReferenceStyles } from '@/components/ui/styles';
+import { fileMarkdown } from '@/lib/file-refs';
+import { FileIcon } from '@/components/storage/file-icon';
+import { useAgentPreview } from './agent-preview';
 import remarkGfm from 'remark-gfm';
 import { highlightCode } from '@/lib/highlighter';
 import {
@@ -74,11 +78,30 @@ export function HighlightedCode({
   );
 }
 
+function FileReference({ target, label }: { target: string; label: ReactNode }) {
+  const p = useAgentPreview();
+  const [storage, id] = target.replace('openlet-file:', '').split('/');
+  const node = p.fileNodes[id];
+  return (
+    <button
+      type="button"
+      className={fileReferenceStyles}
+      title={node ? `${node.name} · ${storage}` : String(label)}
+      onClick={() =>
+        void p.openFileReference({ storage_id: storage, node_id: id, label: String(label) })
+      }
+    >
+      <FileIcon node={node ?? { kind: 'file', mime: '', name: String(label) }} />
+      <span className="truncate">{label}</span>
+    </button>
+  );
+}
 export function AgentMarkdown({ text }: { text: string }) {
   return (
     <article className="flex min-w-0 max-w-full flex-col gap-3 text-sm leading-relaxed wrap-anywhere">
       <Markdown
         remarkPlugins={[remarkGfm]}
+        urlTransform={(url) => (url.startsWith('openlet-file:') ? url : defaultUrlTransform(url))}
         components={{
           h1: ({ children }) => <h1 className="text-xl font-medium">{children}</h1>,
           h2: ({ children }) => <h2 className="text-base font-medium">{children}</h2>,
@@ -88,7 +111,7 @@ export function AgentMarkdown({ text }: { text: string }) {
             <ol className="flex list-decimal flex-col gap-1 pl-5">{children}</ol>
           ),
           blockquote: ({ children }) => (
-            <blockquote className="border-l pl-3 text-muted-foreground">{children}</blockquote>
+            <blockquote className="border-l border-current/25 pl-3">{children}</blockquote>
           ),
           pre: ({ children }) => <>{children}</>,
           code: ({ children, className }) => {
@@ -120,19 +143,22 @@ export function AgentMarkdown({ text }: { text: string }) {
           td: ({ children }) => (
             <td className="border-r border-b px-3 py-2 last:border-r-0">{children}</td>
           ),
-          a: ({ href, children }) => (
-            <a
-              href={href}
-              target="_blank"
-              rel="noreferrer"
-              className="underline underline-offset-3"
-            >
-              {children}
-            </a>
-          ),
+          a: ({ href, children }) =>
+            href?.startsWith('openlet-file:') ? (
+              <FileReference target={href} label={children} />
+            ) : (
+              <a
+                href={href}
+                target="_blank"
+                rel="noreferrer"
+                className="underline underline-offset-3"
+              >
+                {children}
+              </a>
+            ),
         }}
       >
-        {text}
+        {fileMarkdown(text)}
       </Markdown>
     </article>
   );

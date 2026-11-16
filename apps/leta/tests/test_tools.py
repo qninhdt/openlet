@@ -24,8 +24,6 @@ def test_native_tools_expose_only_agent_arguments() -> None:
     root = {tool.name: tool for tool in tools(root=True)}
     leti = {tool.name: tool for tool in tools(root=False)}
     assert set(root) - set(leti) == {
-        "inbox_list",
-        "inbox_read",
         "box_create",
         "box_get",
         "box_list",
@@ -48,6 +46,8 @@ def test_native_tools_expose_only_agent_arguments() -> None:
         )
     assert "target_box" in fields["schedule_create"]
     assert fields["hitl_request"] == {"user_id", "role", "reason"}
+    assert fields["inbox_react"] == {"message", "emoji", "action"}
+    assert not any("emote" in name for name in root)
     schedule = leti["schedule_create"].tool_call_schema
     assert isinstance(schedule, type) and issubclass(schedule, BaseModel)
     assert "target_box" not in schedule.model_fields

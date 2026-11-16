@@ -1,3 +1,5 @@
+import { useShellLocation, useShellNavigate } from '@/lib/shell-navigation';
+import { useUploads } from './uploads';
 import {
   createContext,
   useCallback,
@@ -8,14 +10,16 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { useNavigate, useSearch } from '@tanstack/react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useFileSessions } from './file-sessions';
+import { useBackend } from '@/lib/backend';
+import { storageApi } from '@/lib/storage-api';
 import { toast } from 'sonner';
 import {
   ancestors,
   branch,
   loadStorage,
-  saveStorage,
+  updateStorage,
   rootId,
   storageRoots,
   topNodes,
@@ -24,6 +28,7 @@ import {
   type StorageRoot,
   type Collision,
   NameConflict,
+  uniqueName,
   transferNodes,
   trashNodes,
   restoreNode,
@@ -39,6 +44,7 @@ export interface StorageTextSession {
   bom: boolean;
   crlf: boolean;
   truncated: boolean;
+  scroll?: { source: number; preview: number };
   draft?: string;
   source: boolean;
 }
@@ -54,25 +60,80 @@ export interface UploadFile {
 }
 type NameRequest =
   { kind: 'create'; parent: string; storage: string } | { kind: 'rename'; node: StorageNode };
-function useBrowser(workspace: { id: string; agents: readonly { name: string }[] }) {
-  const search = useSearch({ from: '/app' });
-  const navigate = useNavigate();
+type BrowserOptions = {
+  root?: StorageRoot & { root?: string };
+  onOpenFile?: (node: StorageNode) => void;
+  onAttachFiles?: (nodes: StorageNode[]) => void;
+};
+function useBrowser(
+  workspace: { id: string; agents: readonly { name: string; role?: string }[] },
+  options: BrowserOptions = {},
+) {
+  const routeSearch = useShellLocation();
+  const [localLocation, setLocalLocation] = useState({
+    storage: options.root?.id ?? '',
+    folder: '',
+    file: '',
+  });
+  const search = options.root ? { ...routeSearch, view: 'storage', ...localLocation } : routeSearch;
+  const navigate = useShellNavigate();
   const client = useQueryClient();
-  const roots = useMemo(() => storageRoots(workspace), [workspace]);
-  const key = ['storage-preview', workspace.id];
+  const backend = useBackend();
+  const uploads = useUploads();
+  const live = useMemo(
+    () => (backend.api ? storageApi(backend.api, workspace.id) : null),
+    [backend.api, workspace.id],
+  );
+  const rootsQuery = useQuery({
+    queryKey: ['storage-roots', backend.actorId, workspace.id],
+    queryFn: () => live!.listRoots(),
+    enabled: !!live && backend.ready && !options.root,
+    refetchInterval: 30_000,
+  });
+  if (options.root?.root) live?.bind(options.root.id, options.root.root);
+  const previewRoots = useMemo(() => storageRoots(workspace), [workspace]);
+  const rawRoots: StorageRoot[] = options.root
+    ? [options.root]
+    : live
+      ? (rootsQuery.data ?? [{ id: 'loading', name: 'Storage', write: false }])
+      : previewRoots;
+  const roots = rawRoots.map((root) => {
+    if ('root' in root && typeof root.root === 'string') live?.bind(root.id, root.root);
+    const agent = workspace.agents.find((a) => a.name === root.name);
+    return agent ? { ...root, agent: agent.name, title: agent.role } : root;
+  });
+  const key = [live ? 'storage-live' : 'storage-preview', backend.actorId, workspace.id];
   const query = useQuery({
     queryKey: key,
-    queryFn: () => loadStorage(workspace.id, roots),
+    queryFn: () =>
+      live
+        ? Promise.resolve({ nodes: [] } as StorageSnapshot)
+        : loadStorage(workspace.id, previewRoots),
     enabled: search.view === 'storage',
     staleTime: Infinity,
   });
   const snapshot = query.data ?? { nodes: [] };
   const queue = useRef(Promise.resolve());
-  const textSession = useRef<StorageTextSession | null>(null);
-  const getTextSession = useCallback(() => textSession.current, []);
-  const setTextSession = useCallback((session: StorageTextSession | null) => {
-    textSession.current = session;
-  }, []);
+  const textSessions = useFileSessions();
+  const getTextSession = useCallback(
+    (id: string) => {
+      const node = snapshot.nodes.find((n) => n.id === id);
+      return node ? (textSessions.get(`${node.storage}/${id}`) ?? null) : null;
+    },
+    [textSessions, snapshot.nodes],
+  );
+  const setTextSession = useCallback(
+    (id: string, session: StorageTextSession | null) => {
+      const node = session?.node ?? snapshot.nodes.find((n) => n.id === id);
+      if (!node) return;
+      if (session) textSessions.set(`${node.storage}/${id}`, session);
+      else textSessions.delete(`${node.storage}/${id}`);
+    },
+    [textSessions, snapshot.nodes],
+  );
+  const [tabs, setTabs] = useState<Record<string, string[]>>({});
+  const locations = useRef<Record<string, { folder: string; file: string }>>({});
+  const [closeRequest, setCloseRequest] = useState<string | null>(null);
   const [pending, setPending] = useState(0);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [selecting, setSelecting] = useState(false);
@@ -92,8 +153,6 @@ function useBrowser(workspace: { id: string; agents: readonly { name: string }[]
     null,
   );
   const [clipboard, setClipboard] = useState<{ ids: string[]; copy: boolean } | null>(null);
-  const drag = useRef<string[]>([]);
-  const [dragging, setDragging] = useState(0);
   const [dropTarget, setDropTarget] = useState('');
   const last = useMemo(() => {
     try {
@@ -104,11 +163,22 @@ function useBrowser(workspace: { id: string; agents: readonly { name: string }[]
       return null;
     }
   }, [workspace.id]);
-  const storage =
-    roots.find((root) => root.id === search.storage) ??
+  const storage = roots.find((root) => root.id === search.storage) ??
+    (search.storage ? { id: search.storage, name: 'Storage', write: false } : undefined) ??
     roots.find((root) => root.id === last?.storage) ??
-    roots[0];
-  const requestedFolder = search.folder || (search.storage ? '' : last?.folder);
+    roots[0] ?? { id: '', name: 'Storage', write: false };
+  const targetFile = snapshot.nodes.find(
+    (node) => node.id === search.file && node.storage === storage.id,
+  );
+  const requestedFolder =
+    search.folder ||
+    (search.file
+      ? (locations.current[storage.id]?.folder ??
+        (targetFile?.parent === rootId(storage.id) ? '' : targetFile?.parent))
+      : search.storage
+        ? ''
+        : last?.folder);
+  const [pathError, setPathError] = useState<{ target: string; message: string } | null>(null);
   const folder = snapshot.nodes.find(
     (node) =>
       node.id === requestedFolder &&
@@ -122,9 +192,82 @@ function useBrowser(workspace: { id: string; agents: readonly { name: string }[]
   const file = snapshot.nodes.find(
     (node) =>
       node.id === search.file &&
+      node.kind === 'file' &&
       node.storage === storage.id &&
       !ancestors(snapshot.nodes, node.id).some((at) => at.trashed),
   );
+  const folderQuery = useQuery({
+    queryKey: ['storage-folder', backend.actorId, workspace.id, storage.id, requestedFolder ?? ''],
+    queryFn: () =>
+      trash
+        ? live!.listTrash(storage.id)
+        : live!.list(storage.id, requestedFolder || rootId(storage.id)),
+    enabled: !!live && (!!options.root || !!rootsQuery.data) && search.view === 'storage',
+    refetchInterval: 15_000,
+  });
+  useEffect(() => {
+    if (!folderQuery.data) return;
+    client.setQueryData<StorageSnapshot>(key, (previous) => ({
+      nodes: [
+        ...(previous?.nodes ?? []).filter(
+          (node) =>
+            node.storage !== storage.id ||
+            (trash ? !node.trashed : node.parent !== (requestedFolder || rootId(storage.id))),
+        ),
+        ...folderQuery.data!,
+      ].filter((node, index, all) => all.findLastIndex((other) => other.id === node.id) === index),
+    }));
+  }, [folderQuery.data]);
+  useEffect(() => {
+    if (!live) return;
+    const target = search.file || requestedFolder;
+    if (!target || target === 'trash') return;
+    let cancelled = false;
+    void (async () => {
+      const parents: StorageNode[] = [];
+      let id = target;
+      while (id && !id.startsWith('root:')) {
+        const existing = snapshot.nodes.find((n) => n.id === id);
+        const node = existing ?? (await live.stat(storage.id, id));
+        if (node.name) parents.push(node);
+        if (node.parent === id) break;
+        id = node.parent;
+      }
+      if (!cancelled) {
+        setPathError(null);
+        client.setQueryData<StorageSnapshot>(key, (current) => ({
+          nodes: [
+            ...(current?.nodes ?? []).filter((n) => !parents.some((p) => p.id === n.id)),
+            ...parents,
+          ],
+        }));
+      }
+    })().catch((error) => {
+      if (!cancelled)
+        setPathError({
+          target,
+          message: error instanceof Error ? error.message : 'This file is unavailable.',
+        });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [live, search.file, requestedFolder, storage.id]);
+  async function loadFolder(storage: string, parent: string) {
+    if (!live) return;
+    const nodes = await live.list(storage, parent);
+    client.setQueryData<StorageSnapshot>(key, (previous) => ({
+      nodes: [
+        ...(previous?.nodes ?? []).filter(
+          (node) => node.storage !== storage || node.parent !== parent,
+        ),
+        ...nodes,
+      ],
+    }));
+  }
+  async function refreshLive() {
+    await client.invalidateQueries({ queryKey: ['storage-folder', backend.actorId, workspace.id] });
+  }
   const [view, setViewState] = useState<StorageView>('grid');
   useEffect(() => {
     const saved = localStorage.getItem(`openlet-storage-view:${storage.id}`);
@@ -140,7 +283,7 @@ function useBrowser(workspace: { id: string; agents: readonly { name: string }[]
     setFilter('');
     setType('all');
     anchor.current = null;
-    if (query.data && !trash)
+    if (query.data && !trash && !options.root)
       localStorage.setItem(
         `openlet-storage-location:${workspace.id}`,
         JSON.stringify({
@@ -163,15 +306,13 @@ function useBrowser(workspace: { id: string; agents: readonly { name: string }[]
       if (sort === 'size') return b.size - a.size;
       return a.name.localeCompare(b.name, undefined, { numeric: true });
     });
-  async function change(
-    update: (current: StorageSnapshot) => StorageSnapshot | Promise<StorageSnapshot>,
-  ) {
+  async function change(update: (current: StorageSnapshot) => StorageSnapshot) {
     setPending((n) => n + 1);
     const run = queue.current.then(async () => {
       const current = client.getQueryData<StorageSnapshot>(key);
       if (!current) throw new Error('Wait for storage to finish loading.');
-      const next = await update(current);
-      await saveStorage(workspace.id, next);
+      if (live) throw new Error('This operation must use the storage API.');
+      const next = await updateStorage(workspace.id, previewRoots, update);
       client.setQueryData(key, next);
     });
     queue.current = run.catch(() => undefined);
@@ -187,19 +328,75 @@ function useBrowser(workspace: { id: string; agents: readonly { name: string }[]
   function writable(id = storage.id) {
     if (!roots.find((root) => root.id === id)?.write) throw new Error('This storage is read-only.');
   }
-  function go(storage: string, folder = '') {
-    void navigate({
-      to: '/app',
-      search: (previous) => ({ ...previous, view: 'storage', storage, folder, file: '' }),
-    });
+  useEffect(() => {
+    if (search.view !== 'storage' || (!options.root && !search.storage)) return;
+    locations.current[storage.id] = { folder: requestedFolder ?? '', file: search.file ?? '' };
+    if (file)
+      setTabs((previous) =>
+        previous[storage.id]?.includes(file.id)
+          ? previous
+          : { ...previous, [storage.id]: [...(previous[storage.id] ?? []), file.id] },
+      );
+  }, [
+    storage.id,
+    requestedFolder,
+    search.file,
+    file?.id,
+    search.view,
+    search.storage,
+    options.root,
+  ]);
+  const openFiles = (tabs[storage.id] ?? []).flatMap((id) => {
+    const node = snapshot.nodes.find(
+      (node) => node.id === id && node.storage === storage.id && !node.trashed,
+    );
+    return node ? [node] : [];
+  });
+  function go(storage: string, folder?: string) {
+    const saved = locations.current[storage];
+    const destination = folder === undefined ? (saved?.folder ?? '') : folder;
+    const targetFile = folder === undefined ? (saved?.file ?? '') : '';
+    if (options.root) {
+      setLocalLocation({ storage, folder: destination, file: targetFile });
+      return;
+    }
+    void navigate({ view: 'storage', storage, folder: destination, file: targetFile });
   }
   function open(node: StorageNode) {
     if (trash) return;
     if (node.kind === 'folder') go(node.storage, node.id);
-    else void navigate({ to: '/app', search: (previous) => ({ ...previous, file: node.id }) });
+    else if (options.onOpenFile) options.onOpenFile(node);
+    else if (options.root) setLocalLocation((previous) => ({ ...previous, file: node.id }));
+    else void navigate({ view: 'storage', storage: node.storage, file: node.id });
   }
-  function closeFile() {
-    void navigate({ to: '/app', search: (previous) => ({ ...previous, file: '' }), replace: true });
+  function closeFile(id = file?.id, discard = false) {
+    if (!id) return;
+    const session = getTextSession(id);
+    if (!discard && session?.draft !== undefined && session.draft !== session.text) {
+      setCloseRequest(id);
+      return;
+    }
+    const index = openFiles.findIndex((node) => node.id === id);
+    const remaining = openFiles.filter((node) => node.id !== id);
+    setTabs((previous) => ({ ...previous, [storage.id]: remaining.map((node) => node.id) }));
+    setTextSession(id, null);
+    setCloseRequest(null);
+    if (search.file === id)
+      if (options.root)
+        setLocalLocation((previous) => ({
+          ...previous,
+          file: remaining[Math.max(0, index - 1)]?.id ?? '',
+        }));
+      else
+        void navigate(
+          {
+            view: 'storage',
+            storage: storage.id,
+            folder: folder?.id ?? '',
+            file: remaining[Math.max(0, index - 1)]?.id ?? '',
+          },
+          { replace: true },
+        );
   }
   function toggle(node: StorageNode, modifiers: { shiftKey?: boolean } = {}) {
     setSelecting(true);
@@ -226,9 +423,43 @@ function useBrowser(workspace: { id: string; agents: readonly { name: string }[]
       writable(request.storage);
       if (!request.copy)
         for (const node of topNodes(snapshot.nodes, request.ids)) writable(node.storage);
-      await change((current) =>
-        transferNodes(current, request.ids, request.storage, request.parent, request.copy, mode),
-      );
+      if (live) {
+        const sources = topNodes(snapshot.nodes, request.ids);
+        let destination = await live.list(request.storage, request.parent);
+        const conflicts = sources.filter(
+          (node) =>
+            (request.copy || node.storage !== request.storage || node.parent !== request.parent) &&
+            destination.some((other) => other.name === node.name),
+        );
+        if (mode === 'ask' && conflicts.length)
+          throw new NameConflict(conflicts.map((node) => node.name));
+        for (const node of sources) {
+          if (!request.copy && node.storage === request.storage && node.parent === request.parent)
+            continue;
+          const conflict = destination.find((other) => other.name === node.name);
+          const name =
+            conflict && mode === 'keep'
+              ? uniqueName(node.name, destination, request.parent)
+              : node.name;
+          // Keep the destination recoverable if the subsequent transfer fails.
+          if (conflict && mode === 'replace') await live.trash(conflict);
+          const transferred = await live.transfer(
+            node,
+            request.storage,
+            request.parent,
+            request.copy,
+            name,
+          );
+          destination = [
+            ...destination.filter((other) => other.id !== conflict?.id || mode !== 'replace'),
+            transferred,
+          ];
+        }
+        await refreshLive();
+      } else
+        await change((current) =>
+          transferNodes(current, request.ids, request.storage, request.parent, request.copy, mode),
+        );
       setTransfer(null);
       setConflict(null);
       clearSelection();
@@ -243,8 +474,6 @@ function useBrowser(workspace: { id: string; agents: readonly { name: string }[]
   }
   function drop(ids: string[], destination: string, parent: string) {
     setDropTarget('');
-    setDragging(0);
-    drag.current = [];
     const request = { ids, storage: destination, parent, copy: false };
     if (ids.some((id) => snapshot.nodes.find((node) => node.id === id)?.storage !== destination))
       setTransfer(request);
@@ -256,6 +485,13 @@ function useBrowser(workspace: { id: string; agents: readonly { name: string }[]
     const nextName = validateName(name);
     const storage = request.kind === 'create' ? request.storage : request.node.storage;
     writable(storage);
+    if (live) {
+      if (request.kind === 'create') await live.create(storage, request.parent, nextName);
+      else await live.transfer(request.node, storage, request.node.parent, false, nextName);
+      await refreshLive();
+      setNameRequest(null);
+      return;
+    }
     await change((current) => {
       const parent =
         request.kind === 'create'
@@ -299,7 +535,10 @@ function useBrowser(workspace: { id: string; agents: readonly { name: string }[]
   async function remove(ids = deleteIds) {
     try {
       for (const node of topNodes(snapshot.nodes, ids)) writable(node.storage);
-      await change((current) => trashNodes(current, ids));
+      if (live) {
+        for (const node of topNodes(snapshot.nodes, ids)) await live.trash(node);
+        await refreshLive();
+      } else await change((current) => trashNodes(current, ids));
       setDeleteIds([]);
       clearSelection();
       toast.success('Moved to Trash', {
@@ -317,7 +556,13 @@ function useBrowser(workspace: { id: string; agents: readonly { name: string }[]
   async function restore(ids: string[]) {
     try {
       writable();
-      await change((current) => ids.reduce((next, id) => restoreNode(next, id), current));
+      if (live) {
+        for (const id of ids) {
+          const node = snapshot.nodes.find((n) => n.id === id);
+          if (node) await live.restore(node);
+        }
+        await refreshLive();
+      } else await change((current) => ids.reduce((next, id) => restoreNode(next, id), current));
       clearSelection();
       toast.success('Restored');
     } catch (error) {
@@ -327,7 +572,10 @@ function useBrowser(workspace: { id: string; agents: readonly { name: string }[]
   async function download(ids: string[]) {
     try {
       setProgress({ label: 'Preparing download', done: 0, total: ids.length });
-      await downloadNodes(snapshot, ids, (done, total) =>
+      const downloadSnapshot = live
+        ? { nodes: (await Promise.all(topNodes(snapshot.nodes, ids).map(live.descendants))).flat() }
+        : snapshot;
+      await downloadNodes(downloadSnapshot, ids, (done, total) =>
         setProgress({ label: 'Preparing download', done, total }),
       );
     } catch (error) {
@@ -343,83 +591,148 @@ function useBrowser(workspace: { id: string; agents: readonly { name: string }[]
     mode: Collision = 'ask',
   ) {
     if (!files.length) return;
+    const id = crypto.randomUUID();
+    await uploads.enqueue({
+      id,
+      name: files.length === 1 ? files[0].file.name : `${files.length} files`,
+      destination: roots.find((root) => root.id === destination)?.name ?? 'Storage',
+      run: (report) => performUpload(files, destination, parentId, mode, report, id),
+    });
+  }
+  async function performUpload(
+    files: UploadFile[],
+    destination = storage.id,
+    parentId = parent,
+    mode: Collision,
+    reportProgress: (fraction: number) => void,
+    uploadId: string,
+  ) {
+    if (!files.length) return;
+    let remaining = files;
     try {
       writable(destination);
-      setProgress({ label: 'Uploading', done: 0, total: files.length });
-      await change((current) => {
-        let next = { nodes: [...current.nodes] };
+      reportProgress(0);
+      if (live) {
         const destinations = new Map<string, string>([['', parentId]]);
         for (const [index, { file, path }] of files.entries()) {
           const parts = path.split('/').filter(Boolean).map(validateName);
-          const filename = parts.pop() ?? validateName(file.name);
-          let parent = parentId;
-          let directoryPath = '';
+          const name = parts.pop()!;
+          let parent = parentId,
+            prefix = '';
           for (const part of parts) {
-            directoryPath += '/' + part;
-            let id = destinations.get(directoryPath);
+            prefix += '/' + part;
+            let id = destinations.get(prefix);
             if (!id) {
-              const existing = next.nodes.find(
-                (node) => node.parent === parent && node.name === part && !node.trashed,
-              );
-              if (existing && existing.kind !== 'folder')
-                throw new Error(`A file named ${part} blocks this folder.`);
-              id = existing?.id ?? crypto.randomUUID();
-              if (!existing)
-                next.nodes.push({
-                  id,
-                  storage: destination,
-                  parent,
-                  name: part,
-                  kind: 'folder',
-                  mime: '',
-                  size: 0,
-                  updated: Date.now(),
-                });
-              destinations.set(directoryPath, id);
+              const items = await live.list(destination, parent);
+              const existing = items.find((n) => n.name === part);
+              if (existing?.kind === 'file') throw new Error('A file blocks this folder.');
+              id = existing?.id ?? (await live.create(destination, parent, part)).id;
+              destinations.set(prefix, id);
             }
             parent = id;
           }
-          const incoming: StorageNode = {
-            id: crypto.randomUUID(),
-            storage: destination,
-            parent: 'incoming',
-            name: filename,
-            kind: 'file',
-            mime: file.type || mimeForName(filename),
-            size: file.size,
-            updated: file.lastModified,
-            blob: file,
-          };
-          next.nodes.push(incoming);
-          next = transferNodes(next, [incoming.id], destination, parent, false, mode);
-          setProgress({ label: 'Uploading', done: index + 1, total: files.length });
+          remaining = files.slice(index);
+          const siblings = await live.list(destination, parent);
+          const conflict = siblings.find((node) => node.name === name);
+          if (conflict && mode === 'ask') throw new NameConflict([name]);
+          const filename = conflict && mode === 'keep' ? uniqueName(name, siblings, parent) : name;
+          if (conflict && mode === 'replace') await live.trash(conflict);
+          await live.upload(destination, parent, file, filename, (loaded, total) =>
+            reportProgress((index + (total ? loaded / total : 1)) / files.length),
+          );
+          reportProgress((index + 1) / files.length);
         }
-        return next;
-      });
+        await refreshLive();
+      } else
+        await change((current) => {
+          let next = { nodes: [...current.nodes] };
+          const destinations = new Map<string, string>([['', parentId]]);
+          for (const [index, { file, path }] of files.entries()) {
+            const parts = path.split('/').filter(Boolean).map(validateName);
+            const filename = parts.pop() ?? validateName(file.name);
+            let parent = parentId;
+            let directoryPath = '';
+            for (const part of parts) {
+              directoryPath += '/' + part;
+              let id = destinations.get(directoryPath);
+              if (!id) {
+                const existing = next.nodes.find(
+                  (node) => node.parent === parent && node.name === part && !node.trashed,
+                );
+                if (existing && existing.kind !== 'folder')
+                  throw new Error(`A file named ${part} blocks this folder.`);
+                id = existing?.id ?? crypto.randomUUID();
+                if (!existing)
+                  next.nodes.push({
+                    id,
+                    storage: destination,
+                    parent,
+                    name: part,
+                    kind: 'folder',
+                    mime: '',
+                    size: 0,
+                    updated: Date.now(),
+                  });
+                destinations.set(directoryPath, id);
+              }
+              parent = id;
+            }
+            const incoming: StorageNode = {
+              id: crypto.randomUUID(),
+              storage: destination,
+              parent: 'incoming',
+              name: filename,
+              kind: 'file',
+              mime: file.type || mimeForName(filename),
+              size: file.size,
+              updated: file.lastModified,
+              blob: file,
+            };
+            next.nodes.push(incoming);
+            next = transferNodes(next, [incoming.id], destination, parent, false, mode);
+            reportProgress((index + 1) / files.length);
+          }
+          return next;
+        });
       setConflict(null);
-      toast.success(`${files.length} file${files.length === 1 ? '' : 's'} uploaded`);
     } catch (error) {
       if (error instanceof NameConflict)
         setConflict({
           names: error.names,
-          retry: (next) => upload(files, destination, parentId, next),
+          retry: async (next) => {
+            uploads.remove(uploadId);
+            await upload(remaining, destination, parentId, next);
+          },
         });
-      else report(error);
-    } finally {
-      setProgress(null);
+      throw error;
     }
   }
   async function saveText(node: StorageNode, text: string) {
+    if (live) {
+      const updated = await live.save(node, text);
+      client.setQueryData<StorageSnapshot>(key, (current) => ({
+        nodes: (current?.nodes ?? []).map((n) => (n.id === node.id ? updated : n)),
+      }));
+      await refreshLive();
+      return updated;
+    }
     const blob = new Blob([text], { type: node.mime || 'text/plain' });
     if (blob.size > 1_000_000) throw new Error('Text editing is limited to 1 MB.');
-    const updated = { ...node, blob, url: undefined, size: blob.size, updated: Date.now() };
+    const updated = {
+      ...node,
+      blob,
+      url: undefined,
+      size: blob.size,
+      updated: Date.now(),
+      version: (node.version ?? 0) + 1,
+    };
     await change((current) => {
       const existing = current.nodes.find((item) => item.id === node.id);
       if (!existing || ancestors(current.nodes, node.id).some((item) => item.trashed))
         throw new Error('This file is no longer available.');
       writable(existing.storage);
       if (
-        existing.blob !== node.blob ||
+        (existing.version ?? 0) !== (node.version ?? 0) ||
         existing.url !== node.url ||
         existing.updated !== node.updated
       )
@@ -432,11 +745,32 @@ function useBrowser(workspace: { id: string; agents: readonly { name: string }[]
     if (clipboard) void move({ ...clipboard, storage: storage.id, parent });
   }
   return {
+    resumeLocation: locations.current[storage.id] ?? { folder: folder?.id ?? '', file: '' },
+    unavailable:
+      (!live || !!rootsQuery.data || !!options.root) &&
+      (!roots.some((root) => root.id === storage.id) ||
+        (!live &&
+          !!query.data &&
+          ((!!search.file && !file) ||
+            (!!requestedFolder && requestedFolder !== 'trash' && !folder)))),
+    attachFiles: options.onAttachFiles,
     roots,
-    query,
+    query: live
+      ? {
+          ...query,
+          isPending: (!options.root && rootsQuery.isPending) || folderQuery.isPending,
+          error:
+            rootsQuery.error ??
+            folderQuery.error ??
+            (pathError && pathError.target === (search.file || requestedFolder)
+              ? new Error(pathError.message)
+              : null),
+        }
+      : query,
     snapshot,
     storage,
     parent,
+    folderId: folder?.id ?? '',
     path,
     file,
     trash,
@@ -476,15 +810,16 @@ function useBrowser(workspace: { id: string; agents: readonly { name: string }[]
     go,
     open,
     closeFile,
+    openFiles,
+    closeRequest,
+    setCloseRequest,
     move,
+    loadFolder,
     download,
     upload,
     clipboard,
     setClipboard,
     paste,
-    drag,
-    dragging,
-    setDragging,
     dropTarget,
     setDropTarget,
     drop,
@@ -520,11 +855,14 @@ const Context = createContext<StorageBrowser | null>(null);
 export function StorageProvider({
   workspace,
   children,
-}: {
-  workspace: { id: string; agents: readonly { name: string }[] };
+  root,
+  onOpenFile,
+  onAttachFiles,
+}: BrowserOptions & {
+  workspace: { id: string; agents: readonly { name: string; role?: string }[] };
   children: ReactNode;
 }) {
-  const browser = useBrowser(workspace);
+  const browser = useBrowser(workspace, { root, onOpenFile, onAttachFiles });
   return <Context.Provider value={browser}>{children}</Context.Provider>;
 }
 export function useStorageBrowser() {

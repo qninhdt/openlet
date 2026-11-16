@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from leta.db import Row
-from leta.messages import input_batch
+from leta.messages import input_batch, input_data
 from openlet_sdk.config import JSON
 
 
@@ -75,6 +75,19 @@ def test_mixed_input_groups_only_notifications_and_preserves_decisions() -> None
     assert "x" * 200 in leti
     assert "Preview:" not in leti and "New inbox message" not in leti
     assert "Read full:" not in root
+    typed = input_data(rows, root=True)
+    items = typed["items"]
+    assert isinstance(items, list)
+    assert isinstance(items[0], dict) and items[0]["presented"] is False
+    assert isinstance(items[1], dict) and items[1]["preview"] is True
+    assert len(str(items[1]["content"])) == 120
+    assert isinstance(items[2], dict)
+    assert items[2]["decision"] == json.loads(str(rows[2]["content"]))
+    assert items[2]["request_payload"] == rows[2]["request_payload"]
+    assert isinstance(items[3], dict)
+    assert items[3]["schedule_title"] == "Purchasing"
+    assert items[3]["content"] == "Original occurrence instruction"
+    assert items[3]["scheduled_at"] == "2026-11-15T00:00:00+00:00"
 
 
 def test_accepted_access_is_not_claimed_granted() -> None:
@@ -92,3 +105,50 @@ def test_accepted_access_is_not_claimed_granted() -> None:
     assert "Access: skipped (permission_revoked)" in render(request)
     request["outcome"] = {"status": "granted"}
     assert "Access: granted" in render(request)
+
+
+def test_reaction_input_keeps_latest_feedback_without_superseding_ordinary_message() -> (
+    None
+):
+    user, target, conv = uuid4(), uuid4(), uuid4()
+    rows: list[Row] = []
+    for seq, emoji in enumerate(("👍", "🎉", None), 1):
+        rows.append(
+            {
+                "seq": seq,
+                "conversation_id": conv,
+                "source_kind": "user",
+                "source_id": user,
+                "input_type": "reaction",
+                "silent": True,
+                "content": "Feedback",
+                "input_payload": {
+                    "target": {
+                        "message_id": str(target),
+                        "kind": "outgoing",
+                        "content": "Quote",
+                    },
+                    "emoji": emoji,
+                },
+            }
+        )
+    rows.append(
+        {
+            "seq": 4,
+            "conversation_id": conv,
+            "source_kind": "user",
+            "source_id": user,
+            "content": "Continue working",
+        }
+    )
+    body = input_batch(rows, root=True)
+    assert "👍" not in body and "🎉" not in body
+    assert "Emoji: removed" in body and "Continue working" in body
+    items = input_data(rows, root=True)["items"]
+    assert isinstance(items, list)
+    assert [i["presented"] for i in items if isinstance(i, dict)] == [
+        False,
+        False,
+        True,
+        True,
+    ]

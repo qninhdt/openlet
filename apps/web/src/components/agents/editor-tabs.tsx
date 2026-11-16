@@ -75,6 +75,7 @@ export function EditorTabs({
               focusStyles,
               'group/editor-tab relative flex h-8 max-w-56 min-w-0 shrink-0 items-center gap-1.5 rounded-t-lg px-2 text-caption leading-4 text-muted-foreground hover:text-foreground aria-selected:text-foreground',
             )}
+            aria-label={item.label}
             title={item.label}
             onClick={() => onSelect(item.id)}
             onAuxClick={(event) => {

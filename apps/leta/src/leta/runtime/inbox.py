@@ -12,7 +12,7 @@ from opentelemetry import metrics
 
 from ..agents import stable
 from ..db import Pool
-from ..messages import inbox_count, input_batch, pending
+from ..messages import inbox_count, input_batch, input_data, pending
 
 if TYPE_CHECKING:
     from .tools import Context
@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
 class State(AgentState[JSON]):
     inbox_cursor: NotRequired[int]
+    silent_cursor: NotRequired[int]
 
 
 meter = metrics.get_meter("openlet.leta")
@@ -36,7 +37,11 @@ class Inbox(AgentMiddleware[State, "Context"]):
         self, state: State, runtime: Runtime[Context]
     ) -> dict[str, object] | None:
         rows = await pending(
-            self.db, self.agent, state.get("inbox_cursor", 0), root=self.root
+            self.db,
+            self.agent,
+            state.get("inbox_cursor", 0),
+            root=self.root,
+            silent_after=state.get("silent_cursor", 0),
         )
         if not rows:
             return None
@@ -55,7 +60,15 @@ class Inbox(AgentMiddleware[State, "Context"]):
                 HumanMessage(
                     id=str(stable(self.agent, f"inbox/{last}")),
                     content=input_batch(rows, root=self.root),
+                    additional_kwargs={"openlet": input_data(rows, root=self.root)},
                 )
             ],
-            "inbox_cursor": last,
+            "inbox_cursor": max(
+                (cast(int, r["seq"]) for r in rows if not r.get("silent")),
+                default=state.get("inbox_cursor", 0),
+            ),
+            "silent_cursor": max(
+                (cast(int, r["seq"]) for r in rows if r.get("silent")),
+                default=state.get("silent_cursor", 0),
+            ),
         }

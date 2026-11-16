@@ -15,7 +15,7 @@ async def search(
     async with db.connection() as conn:
         rows = await (
             await conn.execute(
-                """SELECT id,agent_id,run_id,seq,kind,created_at,left(payload::text,500) AS preview,
+                """SELECT id,agent_id,run_id,seq,kind,created_at,left(payload::text,500) AS preview,left(payload->>'text',500) AS text_preview,
             octet_length(payload::text)>500 AS truncated FROM history WHERE agent_id=%s
             AND (%s::bigint IS NULL OR seq<%s) AND (%s='' OR
             jsonb_to_tsvector('simple'::regconfig,payload,'["string"]'::jsonb) @@ plainto_tsquery('simple',%s))
@@ -54,11 +54,13 @@ async def read(
     }
 
 
-async def search_text(db: Pool, agent: UUID, before: int | None, query: str) -> str:
+async def search_tool(
+    db: Pool, agent: UUID, before: int | None, query: str
+) -> tuple[str, dict[str, JSON]]:
     async with db.connection() as conn:
         rows = await (
             await conn.execute(
-                """SELECT seq,kind,created_at,payload->>'name' AS tool,
+                """SELECT id,agent_id,run_id,seq,kind,created_at,payload->>'name' AS tool,
             left(coalesce(payload->>'text',payload->>'content',(payload->'args')::text,''),201) AS preview
             FROM history WHERE agent_id=%s AND (%s::bigint IS NULL OR seq<%s)
             AND NOT (kind IN ('tool_call','tool_result')
@@ -80,7 +82,10 @@ async def search_text(db: Pool, agent: UUID, before: int | None, query: str) -> 
         )
     if len(rows) == 20:
         lines.append(f"Next cursor: {rows[-1]['seq']}")
-    return "\n\n".join(lines) or "No matching activity entries."
+    return "\n\n".join(lines) or "No matching activity entries.", {
+        "entries": [json_row({**row, "text_preview": row["preview"]}) for row in rows],
+        "next_cursor": str(rows[-1]["seq"]) if len(rows) == 20 else None,
+    }
 
 
 async def read_text(

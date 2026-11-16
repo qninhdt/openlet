@@ -81,6 +81,8 @@ func (s *Server) createStorage(ctx context.Context, r *pb.CreateStorageRequest) 
 		updates = append(updates, sdk.Touch(sdk.Relation("storage", r.StorageId, "owner", "user", o.UserId, "")))
 	case *pb.StorageOwnership_AgentId:
 		updates = append(updates, sdk.Touch(sdk.Relation("storage", r.StorageId, "owner", "agent", o.AgentId, "")), sdk.Touch(sdk.Relation("storage", r.StorageId, "owner", "agent", o.AgentId, "owner")))
+	case *pb.StorageOwnership_ConversationId:
+		updates = append(updates, sdk.Touch(sdk.Relation("storage", r.StorageId, "conversation", "conversation", o.ConversationId, "")))
 	case *pb.StorageOwnership_WorkspaceId:
 		updates = append(updates, sdk.Touch(sdk.Relation("storage", r.StorageId, "owner", "workspace", r.WorkspaceId, "owner")))
 	}

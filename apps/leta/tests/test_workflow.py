@@ -81,6 +81,12 @@ async def test_consumed_late_admissions_do_not_wake_again_but_new_input_does(
     await asyncio.sleep(0.01)
     assert len(runs) == 1 and agent.admitted_seq == 2
 
+    quiet = message().model_copy(update={"silent": True})
+    admissions[quiet.id].set_result({"seq": 3})
+    await cast(Awaitable[dict[str, JSON]], Agent.receive(agent, quiet))
+    await asyncio.sleep(0.01)
+    assert len(runs) == 1 and agent.admitted_seq == 2
+
     third = message()
     admissions[third.id].set_result({"seq": 3})
     await cast(Awaitable[dict[str, JSON]], Agent.receive(agent, third))
@@ -98,3 +104,32 @@ async def test_consumed_late_admissions_do_not_wake_again_but_new_input_does(
     await until(lambda: agent.active is None)
     agent.stopping = True
     await asyncio.wait_for(execution, 2)
+
+
+async def test_silent_delivery_never_calls_temporal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from leta import messages
+    from leta.config import Services
+    from leta.worker import deliver
+
+    message = Message(
+        id=uuid4(),
+        recipient_agent_id=uuid4(),
+        source_kind="user",
+        source_id=uuid4(),
+        conversation_id=uuid4(),
+        content="Feedback",
+        silent=True,
+    )
+
+    async def admit(db: object, auth: object, value: Message) -> dict[str, JSON]:
+        assert value == message
+        return {"seq": 1}
+
+    monkeypatch.setattr(messages, "admit", admit)
+    # No config or Temporal client exists: this must only persist the input.
+    services = cast(Services, SimpleNamespace(db=None, auth=None))
+    assert await deliver(services, message) == {"seq": 1}

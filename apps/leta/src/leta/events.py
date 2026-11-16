@@ -23,8 +23,8 @@ ag_ui = TypeAdapter(AgUiEvent)
 resyncs = metrics.get_meter("openlet.leta").create_counter("openlet.leta.stream.resync")
 
 
-def key(root: UUID) -> str:
-    return f"leta:events:{root}"
+def key(root: UUID, user: UUID | None = None) -> str:
+    return f"leta:events:{root}" + (f":user:{user}" if user else "")
 
 
 def cursor(value: str) -> tuple[int, int]:
@@ -46,23 +46,27 @@ def event(type: str, agent: UUID, run: UUID | None = None, **fields: JSON) -> Ev
     )
 
 
-async def publish(redis: Redis, root: UUID, value: Event) -> bool:
-    return await publish_batch(redis, root, [value])
+async def publish(
+    redis: Redis, root: UUID, value: Event, user: UUID | None = None
+) -> bool:
+    return await publish_batch(redis, root, [value], user)
 
 
-async def publish_batch(redis: Redis, root: UUID, values: Sequence[Event]) -> bool:
+async def publish_batch(
+    redis: Redis, root: UUID, values: Sequence[Event], user: UUID | None = None
+) -> bool:
     if not values:
         return True
     try:
         async with redis.pipeline(transaction=False) as pipe:
             for value in values:
                 pipe.xadd(
-                    key(root),
+                    key(root, user),
                     {"event": json.dumps(value, ensure_ascii=False)},
                     maxlen=10000,
                     approximate=True,
                 )
-            pipe.expire(key(root), 86400)
+            pipe.expire(key(root, user), 86400)
             await pipe.execute()
         return True
     except RedisError:
@@ -75,7 +79,11 @@ async def publish_batch(redis: Redis, root: UUID, values: Sequence[Event]) -> bo
 def fold(records: list[tuple[str, Event]]) -> list[tuple[str, Event]]:
     folded: list[tuple[str, Event]] = []
     for id, value in records:
-        if folded and value.get("type") in ("TEXT_MESSAGE_CONTENT", "TOOL_CALL_ARGS"):
+        if folded and value.get("type") in (
+            "TEXT_MESSAGE_CONTENT",
+            "REASONING_MESSAGE_CONTENT",
+            "TOOL_CALL_ARGS",
+        ):
             last = folded[-1][1]
             if {k: v for k, v in last.items() if k != "delta"} == {
                 k: v for k, v in value.items() if k != "delta"
@@ -88,8 +96,22 @@ def fold(records: list[tuple[str, Event]]) -> list[tuple[str, Event]]:
     return folded
 
 
-async def tail(redis: Redis, root: UUID) -> str:
-    records = cast(Records, await redis.xrevrange(key(root), count=1))
+async def changed(
+    redis: Redis, root: UUID, resource: str, id: UUID, user: UUID | None = None
+) -> None:
+    value = event(
+        "CUSTOM",
+        root,
+        name="openlet.resource_changed",
+        value={"resource": resource, "id": str(id)},
+    )
+    await publish(redis, root, value)
+    if user:
+        await publish(redis, root, value, user)
+
+
+async def tail(redis: Redis, root: UUID, user: UUID | None = None) -> str:
+    records = cast(Records, await redis.xrevrange(key(root, user), count=1))
     return records[0][0].decode() if records else "0-0"
 
 
@@ -119,10 +141,10 @@ async def snapshot(db: Pool, root: UUID) -> Event:
 
 
 async def suffix(
-    redis: Redis, root: UUID, after: str
+    redis: Redis, root: UUID, after: str, user: UUID | None = None
 ) -> AsyncIterator[tuple[str, Event]]:
     cursor(after)
-    stream = key(root)
+    stream = key(root, user)
     position = after
     while True:
         batches = cast(

@@ -30,6 +30,17 @@ export function StorageDialogs() {
   const crossStorage = transfer?.ids.some(
     (id) => b.snapshot.nodes.find((node) => node.id === id)?.storage !== destination.storage,
   );
+  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    if (!transfer) return;
+    let active = true;
+    setLoading(true);
+    setError('');
+    void b.loadFolder(destination.storage, destination.parent)
+      .catch(error => active && setError(error instanceof Error ? error.message : 'Could not load folders.'))
+      .finally(() => active && setLoading(false));
+    return () => { active = false; };
+  }, [!!transfer, destination.storage, destination.parent]);
   const destinationNode = b.snapshot.nodes.find((node) => node.id === destination.parent);
   const invalid = (id: string) =>
     !!transfer?.ids.some(
@@ -134,6 +145,8 @@ export function StorageDialogs() {
               </span>
             </div>
             <div className="h-52 overflow-auto p-1">
+              {loading && <p role="status" className="p-3 text-sm text-muted-foreground">Loading folders…</p>}
+              {error && <p role="alert" className="p-3 text-sm text-destructive">{error}</p>}
               {b.snapshot.nodes
                 .filter(
                   (node) =>
@@ -158,7 +171,7 @@ export function StorageDialogs() {
             <Button variant="outline" onClick={() => b.setTransfer(null)}>
               Cancel
             </Button>
-            <Button disabled={!!b.pending || invalid(destination.parent)} onClick={confirmTransfer}>
+            <Button disabled={loading || !!error || !!b.pending || invalid(destination.parent)} onClick={confirmTransfer}>
               {b.pending ? 'Working…' : transfer?.copy ? 'Copy here' : 'Move here'}
             </Button>
           </DialogFooter>

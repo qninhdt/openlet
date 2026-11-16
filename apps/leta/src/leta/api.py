@@ -25,12 +25,26 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.psycopg import PsycopgInstrumentor
 from opentelemetry.instrumentation.redis import RedisInstrumentor
 from psycopg import errors
+from psycopg.types.json import Jsonb
 from pydantic import Field
 from sse_starlette import EventSourceResponse, ServerSentEvent
 from temporalio.client import WorkflowUpdateFailedError
 from temporalio.service import RPCError, RPCStatusCode
 
-from . import boxes, events, history, hitl, messages, schedules
+from . import (
+    box_views,
+    boxes,
+    conversations,
+    events,
+    file_refs,
+    history,
+    hitl,
+    messages,
+    reactions,
+    schedules,
+    sidebar,
+    views,
+)
 from .agents import (
     ConfigureAgent,
     CreateLeta,
@@ -183,6 +197,129 @@ async def list_models(workspace_id: UUID, s: Service, actor: User) -> JSON:
     }
 
 
+sidebar_path = base + "/sidebar"
+
+
+@app.exception_handler(sidebar.StaleLayout)
+async def stale_layout(request: Request, error: sidebar.StaleLayout) -> JSONResponse:
+    return JSONResponse(
+        {"detail": "Sidebar changed in another session. Reload and try again."},
+        status_code=409,
+    )
+
+
+@app.get(sidebar_path)
+async def get_sidebar(workspace_id: UUID, s: Service, actor: User) -> JSON:
+    await s.auth.require(actor, "workspace", workspace_id, "participate")
+    result = await sidebar.read(s.db, workspace_id, actor.id)
+    layout = sidebar.Layout.model_validate(result["layout"])
+    ids = set(layout.pins) | set(layout.order) | set(layout.assignments)
+    async with s.db.connection() as conn:
+        rows = await (
+            await conn.execute(
+                "SELECT id FROM letas WHERE workspace_id=%s AND id=ANY(%s) AND state NOT IN ('deleting','archived')",
+                (workspace_id, list(ids)),
+            )
+        ).fetchall()
+    allowed = (
+        await s.auth.allowed_many(
+            actor, "agent", [cast(UUID, r["id"]) for r in rows], "use"
+        )
+        if rows
+        else set[UUID]()
+    )
+    layout.pins = [id for id in layout.pins if id in allowed]
+    layout.order = [id for id in layout.order if id in allowed]
+    layout.assignments = {
+        id: folder for id, folder in layout.assignments.items() if id in allowed
+    }
+    result["layout"] = layout.model_dump(mode="json")
+    result["can_create_agent"] = await s.auth.allowed(
+        actor, "workspace", workspace_id, "create_agent"
+    )
+    return result
+
+
+@app.put(sidebar_path)
+async def put_sidebar(
+    workspace_id: UUID, body: sidebar.Update, s: Service, actor: User
+) -> JSON:
+    await s.auth.require(actor, "workspace", workspace_id, "participate")
+    ids = set(body.layout.pins) | set(body.layout.order) | set(body.layout.assignments)
+    async with s.db.connection() as conn:
+        rows = await (
+            await conn.execute(
+                "SELECT id FROM letas WHERE workspace_id=%s AND id=ANY(%s) AND state NOT IN ('deleting','archived')",
+                (workspace_id, list(ids)),
+            )
+        ).fetchall()
+    allowed = (
+        await s.auth.allowed_many(
+            actor, "agent", [cast(UUID, r["id"]) for r in rows], "use"
+        )
+        if rows
+        else set[UUID]()
+    )
+    if ids - allowed:
+        raise PermissionError("sidebar contains an unavailable agent")
+    result = await sidebar.save(s.db, workspace_id, actor.id, body)
+    await events.publish(
+        s.redis,
+        workspace_id,
+        events.event(
+            "CUSTOM",
+            workspace_id,
+            name="openlet.resource_changed",
+            value={"resource": "sidebar"},
+        ),
+        actor.id,
+    )
+    return result
+
+
+@app.get(sidebar_path + "/events")
+async def sidebar_stream(
+    workspace_id: UUID, request: Request, s: Service, actor: User
+) -> EventSourceResponse:
+    await s.auth.require(actor, "workspace", workspace_id, "participate")
+    return await event_response(
+        workspace_id,
+        request,
+        s,
+        actor,
+        "participate",
+        {},
+        private=True,
+        permission_kind="workspace",
+    )
+
+
+@app.get(base + "/box-view")
+async def box_view(
+    workspace_id: UUID,
+    s: Service,
+    actor: User,
+    leta_id: UUID | None = None,
+    cursor: UUID | None = None,
+) -> JSON:
+    await s.auth.require(actor, "workspace", workspace_id, "view")
+    async with s.db.connection() as conn:
+        rows = await (
+            await conn.execute(
+                """SELECT id FROM letas WHERE workspace_id=%s AND state<>'archived'
+            AND (%s::uuid IS NULL OR id=%s) AND (%s::uuid IS NULL OR id>%s) ORDER BY id LIMIT 20""",
+                (workspace_id, leta_id, leta_id, cursor, cursor),
+            )
+        ).fetchall()
+    allowed = await s.auth.allowed_many(
+        actor, "agent", [cast(UUID, r["id"]) for r in rows], "manage"
+    )
+    result = await box_views.graph(
+        s.db, [cast(UUID, r["id"]) for r in rows if r["id"] in allowed]
+    )
+    return {**result, "next_cursor": str(rows[-1]["id"]) if len(rows) == 20 else None}
+
+
 @app.post(base, status_code=202)
 async def create_leta(
     workspace_id: UUID, body: CreateLeta, s: Service, actor: User
@@ -217,7 +354,7 @@ async def list_letas(
     async with s.db.connection() as conn:
         rows = await (
             await conn.execute(
-                """SELECT l.*,a.name,a.description FROM letas l JOIN agents a ON a.id=l.id
+                """SELECT l.*,a.name,a.title,a.appearance,a.description FROM letas l JOIN agents a ON a.id=l.id
             WHERE l.workspace_id=%s AND (%s::uuid IS NULL OR l.id>%s) ORDER BY l.id LIMIT 20""",
                 (workspace_id, cursor, cursor),
             )
@@ -225,7 +362,18 @@ async def list_letas(
     allowed = await s.auth.allowed_many(
         actor, "agent", [cast(UUID, row["id"]) for row in rows], "use"
     )
-    items: list[JSON] = [json_row(row) for row in rows if row["id"] in allowed]
+    managed = await s.auth.allowed_many(
+        actor, "agent", [cast(UUID, row["id"]) for row in rows], "manage"
+    )
+    summaries = await views.chat_summaries(s.db, list(allowed), actor.id)
+    items: list[JSON] = [
+        {
+            **views.profile(row, row["id"] in managed),
+            **json_row(summaries[cast(UUID, row["id"])]),
+        }
+        for row in rows
+        if row["id"] in allowed
+    ]
     return {
         "items": items,
         "next_cursor": str(rows[-1]["id"]) if len(rows) == 20 else None,
@@ -233,8 +381,10 @@ async def list_letas(
 
 
 @app.get(root_path, dependencies=[Depends(usable)])
-async def get_leta(resource: Root) -> JSON:
-    return json_row(resource)
+async def get_leta(leta_id: UUID, resource: Root, s: Service, actor: User) -> JSON:
+    return views.profile(
+        resource, await s.auth.allowed(actor, "agent", leta_id, "manage")
+    )
 
 
 class CommandInput(Input):
@@ -257,7 +407,7 @@ async def delete_leta(
     )
 
 
-@app.post(root_path + "/pause", status_code=202, dependencies=[Depends(usable)])
+@app.post(root_path + "/pause", status_code=202, dependencies=[Depends(manageable)])
 async def pause(leta_id: UUID, body: CommandInput, s: Service) -> JSON:
     return await operation(
         s,
@@ -270,7 +420,7 @@ async def pause(leta_id: UUID, body: CommandInput, s: Service) -> JSON:
     )
 
 
-@app.post(root_path + "/resume", status_code=202, dependencies=[Depends(usable)])
+@app.post(root_path + "/resume", status_code=202, dependencies=[Depends(manageable)])
 async def resume(leta_id: UUID, body: CommandInput, s: Service) -> JSON:
     return await operation(
         s,
@@ -283,7 +433,7 @@ async def resume(leta_id: UUID, body: CommandInput, s: Service) -> JSON:
     )
 
 
-@app.patch(root_path + "/agents/{agent_id}", dependencies=[Depends(usable)])
+@app.patch(root_path + "/agents/{agent_id}", dependencies=[Depends(manageable)])
 async def configure_agent(
     leta_id: UUID, agent_id: UUID, body: ConfigureAgent, s: Service
 ) -> JSON:
@@ -311,6 +461,8 @@ async def configure_agent(
     from psycopg import sql
 
     values = body.model_dump(exclude_unset=True)
+    if "appearance" in values:
+        values["appearance"] = Jsonb(values["appearance"])
     if "model_id" in values:
         values["reasoning_effort"] = effort if body.model_id is not None else None
     async with s.db.connection() as conn, conn.transaction():
@@ -332,6 +484,14 @@ async def configure_agent(
 
 @app.post(root_path + "/messages", dependencies=[Depends(usable)])
 async def send(leta_id: UUID, body: SendMessage, s: Service, actor: User) -> JSON:
+    agent = await get_agent(s.db, leta_id)
+    refs = await file_refs.validate(
+        s,
+        cast(UUID, agent["workspace_id"]),
+        actor,
+        Actor("agent", leta_id),
+        body.content,
+    )
     return await deliver(
         s,
         Message(
@@ -341,9 +501,97 @@ async def send(leta_id: UUID, body: SendMessage, s: Service, actor: User) -> JSO
             source_id=actor.id,
             conversation_id=messages.conversation(leta_id, "user", actor.id),
             content=body.content,
+            file_refs=refs,
             in_reply_to_message_id=body.in_reply_to,
+            in_reply_to_role=body.in_reply_to_role,
         ),
     )
+
+
+class FileReference(Input):
+    storage_id: UUID
+    node_id: UUID
+    label: str = Field(min_length=1, max_length=255)
+    copy_file: bool = Field(default=False, alias="copy")
+    request_id: UUID
+
+
+@app.post(root_path + "/file-reference", dependencies=[Depends(usable)])
+async def attach_file(
+    leta_id: UUID, body: FileReference, s: Service, actor: User
+) -> JSON:
+    from openlet_api.letfs.v1 import letfs_pb2 as fs
+
+    resource = await get_agent(s.db, leta_id)
+    workspace = str(resource["workspace_id"])
+    storage_id, node_id = body.storage_id, body.node_id
+    if body.copy_file:
+        target = await conversations.storage(s, leta_id, actor.id)
+        source: fs.Node = await s.files.Stat(
+            fs.NodeRequest(
+                workspace_id=workspace,
+                storage_id=str(storage_id),
+                target=fs.NodeLocator(node_id=str(node_id)),
+            ),
+            metadata=actor.metadata,
+            timeout=15,
+        )
+        if source.kind != fs.NODE_KIND_FILE:
+            raise ValueError("only files can be attached")
+        copied: fs.Node = await s.files.CopyNode(
+            fs.TransferNodeRequest(
+                workspace_id=workspace,
+                storage_id=str(storage_id),
+                source=fs.NodeLocator(node_id=str(node_id)),
+                destination_storage_id=str(target["storage_id"]),
+                parent=fs.NodeLocator(node_id=str(target["root_node_id"])),
+                name=source.name,
+                request_id=str(body.request_id),
+            ),
+            metadata=actor.metadata,
+            timeout=15,
+        )
+        storage_id, node_id = UUID(copied.storage_id), UUID(copied.id)
+    label = (
+        body.label.replace("\\", "\\\\")
+        .replace("]", "\\]")
+        .replace("[", "\\[")
+        .replace("\n", " ")
+    )
+    token = f":file[{label}]{{name={storage_id}/{node_id}}}"
+    refs = await file_refs.validate(
+        s, cast(UUID, resource["workspace_id"]), actor, Actor("agent", leta_id), token
+    )
+    return refs[0]
+
+
+@app.post(root_path + "/conversation-storage", dependencies=[Depends(usable)])
+async def conversation_storage(leta_id: UUID, s: Service, actor: User) -> JSON:
+    return cast(JSON, await conversations.storage(s, leta_id, actor.id))
+
+
+@app.put(
+    root_path + "/messages/{role}/{message_id}/reaction", dependencies=[Depends(usable)]
+)
+async def react_message(
+    leta_id: UUID,
+    role: Literal["user", "assistant"],
+    message_id: UUID,
+    body: reactions.React,
+    s: Service,
+    actor: User,
+) -> JSON:
+    result = await reactions.react(
+        s.db,
+        s.auth,
+        leta_id,
+        message_id,
+        "incoming" if role == "user" else "outgoing",
+        actor,
+        body,
+    )
+    await events.changed(s.redis, leta_id, "reactions", message_id, actor.id)
+    return result
 
 
 @app.get(root_path + "/messages", dependencies=[Depends(usable)])
@@ -353,31 +601,87 @@ async def chat(
     actor: User,
     before: datetime | None = None,
     cursor: UUID | None = None,
+    role: Literal["user", "assistant"] = "user",
 ) -> JSON:
-    if (before is None) != (cursor is None):
-        raise ValueError("before and cursor must be supplied together")
-    async with s.db.connection() as conn:
-        rows = await (
-            await conn.execute(
-                """SELECT * FROM (
-            SELECT id,content,created_at,source_id AS user_id,'user' AS role FROM agent_messages WHERE recipient_agent_id=%s AND source_kind='user' AND source_id=%s
-            UNION ALL SELECT id,content,created_at,recipient_user_id,'assistant' FROM user_messages WHERE leta_id=%s AND recipient_user_id=%s
-            ) chat WHERE (%s::timestamptz IS NULL OR (created_at,id)<(%s,%s)) ORDER BY created_at DESC,id DESC LIMIT 20""",
-                (leta_id, actor.id, leta_id, actor.id, before, before, cursor),
-            )
-        ).fetchall()
-    return {
-        "items": [json_row(row) for row in rows],
-        "next_cursor": {
-            "before": cast(datetime, rows[-1]["created_at"]).isoformat(),
-            "cursor": str(rows[-1]["id"]),
-        }
-        if len(rows) == 20
-        else None,
-    }
+    return await views.chat(s.db, leta_id, actor.id, before, cursor, role)
 
 
-@app.get(root_path + "/agents/{agent_id}/history", dependencies=[Depends(usable)])
+class ChatRead(Input):
+    through: UUID
+
+
+@app.put(root_path + "/messages/read", dependencies=[Depends(usable)])
+async def mark_chat_read(
+    leta_id: UUID, body: ChatRead, s: Service, actor: User
+) -> JSON:
+    await views.mark_chat_read(s.db, leta_id, actor.id, body.through)
+    return {"status": "read"}
+
+
+@app.get(root_path + "/agents/{agent_id}/settings", dependencies=[Depends(manageable)])
+async def agent_settings(leta_id: UUID, agent_id: UUID, s: Service) -> JSON:
+    return json_row(await child(s, leta_id, agent_id))
+
+
+@app.get(root_path + "/agents/{agent_id}/activity", dependencies=[Depends(manageable)])
+async def browser_activity(
+    leta_id: UUID,
+    agent_id: UUID,
+    s: Service,
+    before: int | None = None,
+    after: int | None = None,
+) -> JSON:
+    await child(s, leta_id, agent_id)
+    return await views.activity(s.db, agent_id, before, after)
+
+
+@app.get(
+    root_path + "/agents/{agent_id}/activity/{entry_id}",
+    dependencies=[Depends(manageable)],
+)
+async def browser_activity_entry(
+    leta_id: UUID, agent_id: UUID, entry_id: UUID, s: Service
+) -> JSON:
+    await child(s, leta_id, agent_id)
+    return await views.activity_entry(s.db, agent_id, entry_id)
+
+
+@app.get(root_path + "/inbox", dependencies=[Depends(manageable)])
+async def browser_inbox(
+    leta_id: UUID,
+    s: Service,
+    agent_id: UUID | None = None,
+    query: str = "",
+    kind: Literal["user", "agent", "box", "hitl", "schedule"] | None = None,
+    unread: bool = False,
+    before: datetime | None = None,
+    cursor: UUID | None = None,
+) -> JSON:
+    agent_id = agent_id or leta_id
+    await child(s, leta_id, agent_id)
+    return await views.inbox(s.db, agent_id, query, kind, unread, before, cursor)
+
+
+@app.get(
+    root_path + "/inbox/{conversation_id}/messages", dependencies=[Depends(manageable)]
+)
+async def browser_conversation(
+    leta_id: UUID,
+    conversation_id: UUID,
+    s: Service,
+    agent_id: UUID | None = None,
+    before: datetime | None = None,
+    cursor: UUID | None = None,
+    direction: Literal["in", "out"] = "in",
+) -> JSON:
+    agent_id = agent_id or leta_id
+    await child(s, leta_id, agent_id)
+    return await views.conversation(
+        s.db, agent_id, conversation_id, before, cursor, direction
+    )
+
+
+@app.get(root_path + "/agents/{agent_id}/history", dependencies=[Depends(manageable)])
 async def activity_history(
     leta_id: UUID,
     agent_id: UUID,
@@ -390,7 +694,8 @@ async def activity_history(
 
 
 @app.get(
-    root_path + "/agents/{agent_id}/history/{entry_id}", dependencies=[Depends(usable)]
+    root_path + "/agents/{agent_id}/history/{entry_id}",
+    dependencies=[Depends(manageable)],
 )
 async def activity_entry(
     leta_id: UUID,
@@ -404,7 +709,9 @@ async def activity_entry(
     return await history.read(s.db, agent_id, entry_id, start_line, limit)
 
 
-@app.get(root_path + "/agents/{agent_id}/runs/{run_id}", dependencies=[Depends(usable)])
+@app.get(
+    root_path + "/agents/{agent_id}/runs/{run_id}", dependencies=[Depends(manageable)]
+)
 async def get_run(leta_id: UUID, agent_id: UUID, run_id: UUID, s: Service) -> JSON:
     await child(s, leta_id, agent_id)
     async with s.db.connection() as conn:
@@ -420,7 +727,7 @@ async def get_run(leta_id: UUID, agent_id: UUID, run_id: UUID, s: Service) -> JS
 
 @app.post(
     root_path + "/agents/{agent_id}/runs/{run_id}/cancel",
-    dependencies=[Depends(usable)],
+    dependencies=[Depends(manageable)],
 )
 async def cancel_run(leta_id: UUID, agent_id: UUID, run_id: UUID, s: Service) -> JSON:
     await get_run(leta_id, agent_id, run_id, s)
@@ -430,28 +737,67 @@ async def cancel_run(leta_id: UUID, agent_id: UUID, run_id: UUID, s: Service) ->
     return {"run_id": str(run_id), "status": "cancelled"}
 
 
-@app.get(root_path + "/events", dependencies=[Depends(usable)])
-async def stream(
-    leta_id: UUID, request: Request, s: Service, actor: User
+async def event_response(
+    leta_id: UUID,
+    request: Request,
+    s: Services,
+    actor: Actor,
+    permission: str,
+    resource: Row,
+    private: bool = False,
+    permission_kind: str = "agent",
 ) -> EventSourceResponse:
     after = request.headers.get("last-event-id")
     if after:
         events.cursor(after)
+    user = actor.id if private else None
 
     async def generate() -> AsyncIterator[ServerSentEvent]:
-        position = after or await events.tail(s.redis, leta_id)
+        if not await s.auth.allowed(actor, permission_kind, leta_id, permission):
+            return
+        position = after or await events.tail(s.redis, leta_id, user)
         if after is None:
+            snapshot = (
+                events.event(
+                    "CUSTOM",
+                    leta_id,
+                    name="openlet.resource_changed",
+                    value={"resource": "sidebar"},
+                )
+                if permission_kind == "workspace"
+                else (
+                    events.event(
+                        "CUSTOM",
+                        leta_id,
+                        name="openlet.snapshot",
+                        value={
+                            "profile": views.profile(
+                                resource,
+                                await s.auth.allowed(actor, "agent", leta_id, "manage"),
+                            ),
+                            "messages": await views.chat(s.db, leta_id, actor.id),
+                            "requests": await views.requests(
+                                s.db,
+                                cast(UUID, resource["workspace_id"]),
+                                actor.id,
+                                leta_id,
+                            ),
+                        },
+                    )
+                    if private
+                    else await events.snapshot(s.db, leta_id)
+                )
+            )
             yield ServerSentEvent(
-                id=position,
-                data=json.dumps(
-                    await events.snapshot(s.db, leta_id), ensure_ascii=False
-                ),
+                id=position, data=json.dumps(snapshot, ensure_ascii=False)
             )
         checked = asyncio.get_running_loop().time()
-        async for id, event in events.suffix(s.redis, leta_id, position):
+        async for id, event in events.suffix(s.redis, leta_id, position, user):
             now = asyncio.get_running_loop().time()
             if now - checked >= 30:
-                if not await s.auth.allowed(actor, "agent", leta_id, "use"):
+                if not await s.auth.allowed(
+                    actor, permission_kind, leta_id, permission
+                ):
                     return
                 checked = now
             yield (
@@ -467,11 +813,27 @@ async def stream(
     )
 
 
+@app.get(root_path + "/events", dependencies=[Depends(manageable)])
+async def stream(
+    leta_id: UUID, request: Request, s: Service, actor: User, resource: Root
+) -> EventSourceResponse:
+    return await event_response(leta_id, request, s, actor, "manage", resource)
+
+
+@app.get(root_path + "/messages/events", dependencies=[Depends(usable)])
+async def private_stream(
+    leta_id: UUID, request: Request, s: Service, actor: User, resource: Root
+) -> EventSourceResponse:
+    return await event_response(
+        leta_id, request, s, actor, "use", resource, private=True
+    )
+
+
 class BoxInput(CreateBox):
     request_id: UUID
 
 
-@app.post(root_path + "/boxes", dependencies=[Depends(usable)])
+@app.post(root_path + "/boxes", dependencies=[Depends(manageable)])
 async def create_box(leta_id: UUID, body: BoxInput, s: Service) -> JSON:
     id = stable(leta_id, f"box/{body.request_id}")
     creation = BoxCreation(
@@ -493,19 +855,19 @@ async def create_box(leta_id: UUID, body: BoxInput, s: Service) -> JSON:
     )
 
 
-@app.get(root_path + "/boxes", dependencies=[Depends(usable)])
+@app.get(root_path + "/boxes", dependencies=[Depends(manageable)])
 async def list_boxes(leta_id: UUID, s: Service, cursor: UUID | None = None) -> JSON:
     return await boxes.list_boxes(s.db, leta_id, cursor)
 
 
-@app.get(root_path + "/boxes/{box_id}", dependencies=[Depends(usable)])
+@app.get(root_path + "/boxes/{box_id}", dependencies=[Depends(manageable)])
 async def get_box(
     leta_id: UUID, box_id: UUID, s: Service, include_prompts: bool = False
 ) -> JSON:
     return await boxes.get(s.db, leta_id, str(box_id), include_prompts)
 
 
-@app.delete(root_path + "/boxes/{box_id}", dependencies=[Depends(usable)])
+@app.delete(root_path + "/boxes/{box_id}", dependencies=[Depends(manageable)])
 async def delete_box(
     leta_id: UUID, box_id: UUID, body: CommandInput, s: Service
 ) -> JSON:
@@ -576,8 +938,20 @@ async def remove_operator(leta_id: UUID, user_id: UUID, s: Service) -> JSON:
 
 @app.get("/v1/hitl-requests")
 async def incoming_requests(
-    s: Service, actor: User, cursor: UUID | None = None
+    s: Service,
+    actor: User,
+    cursor: UUID | None = None,
+    workspace_id: UUID | None = None,
+    leta_id: UUID | None = None,
+    status: Literal["pending", "answered", "accepted", "denied", "cancelled", "expired"]
+    | None = None,
+    before: datetime | None = None,
 ) -> JSON:
+    if workspace_id is not None:
+        await s.auth.require(actor, "workspace", workspace_id, "participate")
+        return await views.requests(
+            s.db, workspace_id, actor.id, leta_id, status, before, cursor
+        )
     async with s.db.connection() as conn:
         rows = await (
             await conn.execute(
@@ -636,14 +1010,19 @@ async def answer_request(
     )
 
 
-@app.get(root_path + "/hitl-requests", dependencies=[Depends(usable)])
-async def requests(leta_id: UUID, s: Service, cursor: UUID | None = None) -> JSON:
+@app.get(root_path + "/hitl-requests", dependencies=[Depends(manageable)])
+async def requests(
+    leta_id: UUID, s: Service, cursor: UUID | None = None, agent_id: UUID | None = None
+) -> JSON:
+    if agent_id is not None:
+        await child(s, leta_id, agent_id)
     async with s.db.connection() as conn:
         rows = await (
             await conn.execute(
                 """SELECT h.* FROM hitl_requests h JOIN agents a ON a.id=h.requester_agent_id
-            WHERE a.leta_id=%s AND (%s::uuid IS NULL OR h.id>%s) ORDER BY h.id LIMIT 20""",
-                (leta_id, cursor, cursor),
+            WHERE a.leta_id=%s AND (%s::uuid IS NULL OR h.requester_agent_id=%s)
+            AND (%s::uuid IS NULL OR h.id>%s) ORDER BY h.id LIMIT 20""",
+                (leta_id, agent_id, agent_id, cursor, cursor),
             )
         ).fetchall()
     return {
@@ -652,7 +1031,7 @@ async def requests(leta_id: UUID, s: Service, cursor: UUID | None = None) -> JSO
     }
 
 
-@app.get(root_path + "/hitl-requests/{request_id}", dependencies=[Depends(usable)])
+@app.get(root_path + "/hitl-requests/{request_id}", dependencies=[Depends(manageable)])
 async def get_request(leta_id: UUID, request_id: UUID, s: Service) -> JSON:
     value = await hitl.get(s.db, request_id)
     await child(s, leta_id, UUID(str(value["requester_agent_id"])))
@@ -697,7 +1076,7 @@ class Approval(Input):
     reason: str = Field(default="", max_length=4000)
 
 
-@app.post(root_path + "/hitl-requests", dependencies=[Depends(usable)])
+@app.post(root_path + "/hitl-requests", dependencies=[Depends(manageable)])
 async def ask(
     leta_id: UUID,
     body: Annotated[Ask | Approval, Field(discriminator="type")],
@@ -735,7 +1114,7 @@ class ScheduleUpdate(schedules.Timing):
     paused: bool | None = None
 
 
-@app.post(root_path + "/schedules", dependencies=[Depends(usable)])
+@app.post(root_path + "/schedules", dependencies=[Depends(manageable)])
 async def create_schedule(leta_id: UUID, body: ScheduleCreate, s: Service) -> JSON:
     target = leta_id
     if body.target_box_id:
@@ -755,14 +1134,19 @@ async def create_schedule(leta_id: UUID, body: ScheduleCreate, s: Service) -> JS
     )
 
 
-@app.get(root_path + "/schedules", dependencies=[Depends(usable)])
-async def list_schedules(leta_id: UUID, s: Service, cursor: UUID | None = None) -> JSON:
+@app.get(root_path + "/schedules", dependencies=[Depends(manageable)])
+async def list_schedules(
+    leta_id: UUID, s: Service, cursor: UUID | None = None, agent_id: UUID | None = None
+) -> JSON:
+    if agent_id is not None:
+        await child(s, leta_id, agent_id)
     async with s.db.connection() as conn:
         rows = await (
             await conn.execute(
                 """SELECT sc.* FROM schedules sc JOIN agents a ON a.id=sc.creator_agent_id
-            WHERE a.leta_id=%s AND (%s::uuid IS NULL OR sc.id>%s) ORDER BY sc.id LIMIT 20""",
-                (leta_id, cursor, cursor),
+            WHERE a.leta_id=%s AND (%s::uuid IS NULL OR sc.creator_agent_id=%s OR sc.target_agent_id=%s)
+            AND (%s::uuid IS NULL OR sc.id>%s) ORDER BY sc.id LIMIT 20""",
+                (leta_id, agent_id, agent_id, agent_id, cursor, cursor),
             )
         ).fetchall()
     return {
@@ -771,14 +1155,14 @@ async def list_schedules(leta_id: UUID, s: Service, cursor: UUID | None = None) 
     }
 
 
-@app.get(root_path + "/schedules/{schedule_id}", dependencies=[Depends(usable)])
+@app.get(root_path + "/schedules/{schedule_id}", dependencies=[Depends(manageable)])
 async def get_schedule(leta_id: UUID, schedule_id: UUID, s: Service) -> dict[str, JSON]:
     value = await schedules.get(s.db, schedule_id)
     await child(s, leta_id, UUID(str(value["creator_agent_id"])))
     return {**value, **await schedules.upcoming(s.temporal, value)}
 
 
-@app.patch(root_path + "/schedules/{schedule_id}", dependencies=[Depends(usable)])
+@app.patch(root_path + "/schedules/{schedule_id}", dependencies=[Depends(manageable)])
 async def update_schedule(
     leta_id: UUID, schedule_id: UUID, body: ScheduleUpdate, s: Service
 ) -> JSON:
@@ -796,7 +1180,7 @@ async def update_schedule(
     )
 
 
-@app.delete(root_path + "/schedules/{schedule_id}", dependencies=[Depends(usable)])
+@app.delete(root_path + "/schedules/{schedule_id}", dependencies=[Depends(manageable)])
 async def delete_schedule(
     leta_id: UUID, schedule_id: UUID, body: CommandInput, s: Service
 ) -> JSON:
@@ -814,7 +1198,7 @@ async def delete_schedule(
 
 
 @app.get(
-    root_path + "/schedules/{schedule_id}/calendar", dependencies=[Depends(usable)]
+    root_path + "/schedules/{schedule_id}/calendar", dependencies=[Depends(manageable)]
 )
 async def calendar(
     leta_id: UUID, schedule_id: UUID, s: Service, start: datetime, end: datetime

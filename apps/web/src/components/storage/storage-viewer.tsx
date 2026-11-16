@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
@@ -72,18 +72,26 @@ function Spreadsheet({ bytes }: { bytes: Uint8Array }) {
 }
 export function StorageViewer({ node }: { node: StorageNode }) {
   const b = useStorageBrowser();
+  const getTextSession = useCallback(() => b.getTextSession(node.id), [b.getTextSession, node.id]);
+  const setTextSession = useCallback(
+    (session: import('./storage-context').StorageTextSession | null) =>
+      b.setTextSession(node.id, session),
+    [b.setTextSession, node.id],
+  );
   return (
     <FileViewer
+      embedded
+      active={b.file?.id === node.id}
       node={node}
       images={b.visible.filter((file) => file.mime.startsWith('image/'))}
       onOpen={b.open}
-      onClose={b.closeFile}
+      onClose={() => b.closeFile(node.id)}
       onDownload={() => void b.download([node.id])}
       textAccess={{
         writable: b.roots.some((root) => root.id === node.storage && root.write),
         saveText: b.saveText,
-        getTextSession: b.getTextSession,
-        setTextSession: b.setTextSession,
+        getTextSession,
+        setTextSession,
       }}
     />
   );
@@ -218,28 +226,36 @@ export function FileViewer({
           : 'storage-viewer absolute inset-0 z-10 flex flex-col bg-sidebar'
       }
     >
-      <div className="storage-viewer-head flex min-h-11 items-center gap-2 border-b px-3 py-1">
-        {!embedded && (
-          <Button
-            ref={close}
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Close preview"
-            onClick={onClose}
-          >
-            <X />
-          </Button>
-        )}
-        <h2 className="min-w-0 flex-1 truncate text-sm font-medium">{node.name}</h2>
-        <div className="flex shrink-0 gap-1">
-          <Button variant="ghost" size="icon-sm" aria-label="Download file" onClick={onDownload}>
-            <Download />
-          </Button>
+      {!text && (
+        <div className="storage-viewer-head flex min-h-11 items-center gap-2 border-b px-3 py-1">
+          {!embedded && (
+            <Button
+              ref={close}
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Close preview"
+              onClick={onClose}
+            >
+              <X />
+            </Button>
+          )}
+          <h2 className="min-w-0 flex-1 truncate text-sm font-medium">{node.name}</h2>
+          <div className="flex shrink-0 gap-1">
+            <Button variant="ghost" size="icon-sm" aria-label="Download file" onClick={onDownload}>
+              <Download />
+            </Button>
+          </div>
         </div>
-      </div>
+      )}
       <div className="storage-viewer-body min-h-0 flex-1 overflow-auto">
         {text ? (
-          <TextFile key={node.id} node={node} {...textAccess} />
+          <TextFile
+            key={node.id}
+            node={node}
+            onDownload={onDownload}
+            active={active}
+            {...textAccess}
+          />
         ) : error ? (
           <div className="storage-empty flex h-full min-h-60 flex-1 flex-col items-center justify-center p-8 text-center text-muted-foreground">
             <FileQuestion className="mb-4 size-9" />

@@ -70,8 +70,8 @@ test('folder create, rename validation, copy conflict, trash subtree and restore
   await page.getByRole('button', { name: 'Actions for Documents (2)', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Restore', exact: true }).click();
   await page
-    .getByRole('navigation', { name: 'Storages', exact: true })
-    .getByRole('button', { name: 'Personal', exact: true })
+    .getByRole('navigation', { name: 'Storage path', exact: true })
+    .getByRole('button', { name: 'Storage root', exact: true })
     .click();
   await page.reload();
   await contents(page).getByRole('button', { name: 'Open Documents (2)', exact: true }).click();
@@ -95,9 +95,9 @@ test('file upload, actual download, markdown viewer and selection survive view c
     contents(page).getByRole('button', { name: 'Open Review.md', exact: true }),
   ).toBeVisible();
   await contents(page).getByRole('button', { name: 'Open Review.md', exact: true }).click();
-  const viewer = page.getByRole('dialog', { name: 'Preview Review.md', exact: true });
+  const viewer = page.getByRole('region', { name: 'Preview Review.md', exact: true });
   await expect(viewer.getByRole('heading', { name: 'Review draft', exact: true })).toBeVisible();
-  await viewer.getByRole('tab', { name: 'Source', exact: true }).click();
+  await viewer.getByRole('tab', { name: 'Code', exact: true }).click();
   await expect(viewer.locator('.cm-content')).toContainText('# Review draft');
   const download = page.waitForEvent('download');
   await viewer.getByRole('button', { name: 'Download file', exact: true }).click();
@@ -202,18 +202,21 @@ for (const width of [390, 721, 1440]) {
     await contents(page).getByRole('button', { name: 'Open Studio.jpg', exact: true }).click();
     await expect(
       page
-        .getByRole('dialog', { name: 'Preview Studio.jpg', exact: true })
+        .getByRole('region', { name: 'Preview Studio.jpg', exact: true })
         .getByRole('img', { name: 'Studio.jpg', exact: true }),
     ).toBeVisible();
     await page.getByRole('button', { name: 'Zoom in', exact: true }).click();
     await expect(page.getByText('125%', { exact: true })).toBeVisible();
     await capture('storage-viewer');
     await page.getByRole('button', { name: 'Previous image', exact: true }).click();
-    await expect(page.getByRole('dialog', { name: /Preview/ })).not.toHaveAttribute(
+    await expect(page.getByRole('region', { name: /Preview/ })).not.toHaveAttribute(
       'aria-label',
       'Preview Studio.jpg',
     );
-    await page.getByRole('button', { name: 'Close preview', exact: true }).click();
+    await page
+      .getByRole('tablist', { name: 'Storage tabs' })
+      .getByRole('tab', { name: 'Team', exact: true })
+      .click();
     await page.getByRole('radio', { name: 'List', exact: true }).click();
     if (width === 721) {
       await expect(contents(page).locator('.storage-item-date').first()).toBeHidden();
@@ -264,11 +267,14 @@ test('XLSX sheet switching, sandboxed HTML and unsupported file fallback', async
   await contents(page)
     .getByRole('button', { name: 'Open storage-preview.xlsx', exact: true })
     .click();
-  const workbook = page.getByRole('dialog', { name: 'Preview storage-preview.xlsx', exact: true });
+  const workbook = page.getByRole('region', { name: 'Preview storage-preview.xlsx', exact: true });
   await expect(workbook.getByRole('cell', { name: '1200', exact: true })).toBeVisible();
   await workbook.getByRole('tab', { name: 'Notes', exact: true }).click();
   await expect(workbook.getByRole('cell', { name: 'Approved', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Close preview', exact: true }).click();
+  await page
+    .getByRole('tablist', { name: 'Storage tabs' })
+    .getByRole('tab', { selected: true })
+    .press('Delete');
   await page.getByLabel('Upload files', { exact: true }).setInputFiles({
     name: 'Preview.html',
     mimeType: 'text/html',
@@ -283,7 +289,10 @@ test('XLSX sheet switching, sandboxed HTML and unsupported file fallback', async
       .getByRole('heading', { name: 'Document preview' }),
   ).toBeVisible();
   expect(await page.locator('body').getAttribute('data-unsafe')).toBeNull();
-  await page.getByRole('button', { name: 'Close preview', exact: true }).click();
+  await page
+    .getByRole('tablist', { name: 'Storage tabs' })
+    .getByRole('tab', { selected: true })
+    .press('Delete');
   await page.getByLabel('Upload files', { exact: true }).setInputFiles({
     name: 'Design.fig',
     mimeType: 'application/octet-stream',
@@ -291,7 +300,7 @@ test('XLSX sheet switching, sandboxed HTML and unsupported file fallback', async
   });
   await contents(page).getByRole('button', { name: 'Open Design.fig', exact: true }).click();
   await expect(
-    page.getByRole('dialog').getByText('No preview available', { exact: true }),
+    page.getByRole('region', { name: 'Preview Design.fig', exact: true }).getByText('No preview available', { exact: true }),
   ).toBeVisible();
 });
 
@@ -338,7 +347,7 @@ for (const width of [390, 721, 1452]) {
     await page.setViewportSize({ width, height: 932 });
     await page.goto('/app?view=storage');
     const path = page.getByRole('navigation', { name: 'Storage path', exact: true });
-    const root = path.getByRole('button', { name: 'Personal', exact: true });
+    const root = path.getByRole('button', { name: 'Storage root', exact: true });
     await expect(root.locator('svg')).toHaveCount(1);
     const rootBounds = (await root.boundingBox())!;
     const documents = contents(page)
@@ -396,7 +405,12 @@ for (const width of [390, 721, 1452]) {
       .locator('span');
     const documentsPosition = await documentsLabel.boundingBox();
     await contents(page).getByRole('button', { name: 'Open Projects', exact: true }).click();
-    expect(await documentsLabel.boundingBox()).toEqual(documentsPosition);
+    if (width > 720) expect(await documentsLabel.boundingBox()).toEqual(documentsPosition);
+    else {
+      await path.getByRole('button', { name: 'Parent folders', exact: true }).click();
+      await expect(page.getByRole('menuitem', { name: 'Documents', exact: true })).toBeVisible();
+      await page.keyboard.press('Escape');
+    }
     const projectsLabel = path
       .getByRole('button', { name: 'Projects', exact: true })
       .locator('span');
@@ -406,18 +420,23 @@ for (const width of [390, 721, 1452]) {
     await contents(page).getByRole('button', { name: 'Open workspace.json', exact: true }).click();
     await expect(
       page
-        .getByRole('dialog', { name: 'Preview workspace.json', exact: true })
+        .getByRole('region', { name: 'Preview workspace.json', exact: true })
         .locator('.cm-content'),
     ).toContainText('OpenLet');
     await expect(path.getByRole('heading', { name: 'workspace.json', exact: true })).toBeVisible();
     await expect(root.locator('svg')).toHaveCount(1);
-    expect(await documentsLabel.boundingBox()).toEqual(documentsPosition);
-    expect(await projectsLabel.boundingBox()).toEqual(projectsPosition);
+    if (width > 720) expect(await documentsLabel.boundingBox()).toEqual(documentsPosition);
+    else {
+      await path.getByRole('button', { name: 'Parent folders', exact: true }).click();
+      await expect(page.getByRole('menuitem', { name: 'Documents', exact: true })).toBeVisible();
+      await page.keyboard.press('Escape');
+    }
+    if (width > 720) expect(await projectsLabel.boundingBox()).toEqual(projectsPosition);
     await expect(
-      page.getByRole('dialog', { name: 'Preview workspace.json', exact: true }),
+      page.getByRole('region', { name: 'Preview workspace.json', exact: true }),
     ).toBeVisible();
-    const headerActions = await page.locator('.page-header-actions').boundingBox();
-    expect(headerActions!.x + headerActions!.width).toBeLessThanOrEqual(width);
+    const tabs = await page.getByRole('tablist', { name: 'Storage tabs' }).boundingBox();
+    expect(tabs!.x + tabs!.width).toBeLessThanOrEqual(width);
     const main = await page.getByRole('main').boundingBox();
     expect(main!.x + main!.width).toBeLessThanOrEqual(width);
     if (width > 720)
@@ -435,7 +454,7 @@ for (const width of [390, 721, 1452]) {
       });
     await root.click();
     await expect(
-      page.getByRole('dialog', { name: 'Preview workspace.json', exact: true }),
+      page.getByRole('region', { name: 'Preview workspace.json', exact: true }),
     ).toHaveCount(0);
     await expect(
       contents(page).getByRole('button', { name: 'Open Documents', exact: true }),

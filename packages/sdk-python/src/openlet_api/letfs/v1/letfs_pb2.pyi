@@ -62,14 +62,16 @@ class ActorRef(_message.Message):
     def __init__(self, user_id: _Optional[str] = ..., agent_id: _Optional[str] = ...) -> None: ...
 
 class StorageOwnership(_message.Message):
-    __slots__ = ("user_id", "agent_id", "workspace_id")
+    __slots__ = ("user_id", "agent_id", "workspace_id", "conversation_id")
     USER_ID_FIELD_NUMBER: _ClassVar[int]
     AGENT_ID_FIELD_NUMBER: _ClassVar[int]
     WORKSPACE_ID_FIELD_NUMBER: _ClassVar[int]
+    CONVERSATION_ID_FIELD_NUMBER: _ClassVar[int]
     user_id: str
     agent_id: str
     workspace_id: str
-    def __init__(self, user_id: _Optional[str] = ..., agent_id: _Optional[str] = ..., workspace_id: _Optional[str] = ...) -> None: ...
+    conversation_id: str
+    def __init__(self, user_id: _Optional[str] = ..., agent_id: _Optional[str] = ..., workspace_id: _Optional[str] = ..., conversation_id: _Optional[str] = ...) -> None: ...
 
 class StorageCapabilities(_message.Message):
     __slots__ = ("read", "write", "manage_access")

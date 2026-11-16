@@ -1,5 +1,11 @@
 import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
+import type { Page } from '@playwright/test';
+async function showActivity(page: Page) {
+  await page.getByRole('tab', { name: 'Activity', exact: true }).click();
+  if (await page.getByRole('button', { name: 'Back to chat', exact: true }).isVisible())
+    await page.getByRole('button', { name: 'Back to chat', exact: true }).click();
+}
 
 test('pins are centered, previews truncate, compact sidebar keeps agents usable', async ({
   page,
@@ -49,12 +55,29 @@ test('file tabs reuse Storage editor, retain drafts, save and download edited by
   const content = 'export const title = "Đã chỉnh sửa";';
   await editor.fill(content);
   await expect(page.getByText('Unsaved changes', { exact: true })).toBeVisible();
+  const panel = page.getByRole('complementary', { name: 'Agent side panel', exact: true });
+  const initial = (await panel.boundingBox())!;
+  const list = (await page
+    .getByRole('complementary', { name: 'Agent sidebar', exact: true })
+    .boundingBox())!;
+  await page.getByRole('button', { name: 'Expand side panel', exact: true }).click();
+  const expanded = (await panel.boundingBox())!;
+  expect(expanded.x).toBeCloseTo(list.x + list.width + 1, 0);
+  expect(expanded.width).toBeGreaterThan(initial.width * 2);
+  await expect(page.getByRole('tab', { name: 'Forge', exact: true })).toBeHidden();
+  await expect(editor).toContainText('Đã chỉnh sửa');
+  await page.getByRole('button', { name: 'Restore side panel', exact: true }).click();
+  await expect
+    .poll(async () => Math.abs((await panel.boundingBox())!.width - initial.width))
+    .toBeLessThan(2);
+  await expect(editor).toContainText('Đã chỉnh sửa');
+
   await page.getByRole('tab', { name: 'Overview', exact: true }).click();
   await page.getByRole('tab', { name: 'Forge', exact: true }).click();
   await expect(editor).toContainText('Đã chỉnh sửa');
   await page.getByRole('tab', { name: 'release.ts', exact: true }).press('Delete');
-  await expect(page.getByRole('tab', { name: 'release.ts', exact: true })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Open release.ts', exact: true }).click();
+  await expect(page.getByRole('alertdialog')).toContainText('Close without saving?');
+  await page.getByRole('button', { name: 'Keep editing', exact: true }).click();
   await expect(editor).toContainText('Đã chỉnh sửa');
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(editor).toContainText('Đã chỉnh sửa');
@@ -72,15 +95,15 @@ test('Markdown source edits render through the shared viewer and protect route n
 }) => {
   await page.goto('/app');
   await page.getByRole('button', { name: 'Open Launch plan.md', exact: true }).first().click();
-  await page.getByRole('tab', { name: 'Source', exact: true }).click();
+  await page.getByRole('tab', { name: 'Code', exact: true }).click();
   await page
     .getByRole('textbox', { name: 'Edit Launch plan.md', exact: true })
     .fill('# Unsaved launch\n\n**Review** first.');
   await page.getByRole('tab', { name: 'Preview', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Unsaved launch', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Storage', exact: true }).click();
-  await expect(page.getByRole('alertdialog')).toContainText('Leave without saving?');
-  await page.getByRole('button', { name: 'Keep editing', exact: true }).click();
+  await expect(page.getByRole('alertdialog')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Agents', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Unsaved launch', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await page.getByRole('button', { name: 'Storage', exact: true }).click();
@@ -119,39 +142,45 @@ test('assistant-ui composer retains drafts, sends local messages with reply and 
   await page.getByRole('textbox', { name: 'Message Pulse', exact: true }).fill('Pulse draft');
   await page.getByRole('button', { name: 'Forge Builder', exact: true }).click();
   const composer = page.getByRole('textbox', { name: 'Message Forge', exact: true });
-  await expect(composer).toHaveValue('Draft for Forge');
+  await expect(composer).toHaveText('Draft for Forge');
   const answer = page.locator('[data-slot=message][data-align=start]').last();
   await answer.hover();
   await answer.getByRole('button', { name: 'Reply to message', exact: true }).click();
   await page.getByRole('button', { name: 'Attach file', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Research notes.md', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Upload file', exact: true }).click();
+  await page.getByLabel('Attach files', { exact: true }).setInputFiles({
+    name: 'Research notes.md',
+    mimeType: 'text/markdown',
+    buffer: Buffer.from('# Research notes'),
+  });
+  await expect(composer).toContainText('Research notes.md');
+  await page.getByRole('button', { name: 'Dismiss uploads', exact: true }).click();
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
   const message = page.locator('[data-slot=message]').last();
   await expect(message).toContainText('Draft for Forge');
   await expect(message).toContainText('Research notes.md');
-  await expect(composer).toHaveValue('');
+  await expect(composer).toHaveText('');
   await expect(page.getByRole('button', { name: 'Cancel reply', exact: true })).toHaveCount(0);
 });
 
-test('three question types and access decision complete locally', async ({ page }) => {
+test('questions and access decision complete from the composer popup', async ({ page }) => {
   await page.goto('/app');
-  await page.getByRole('radio', { name: 'Workspace owners', exact: true }).click();
+  await page.getByRole('button', { name: '1 questions · 1 requests', exact: true }).click();
+  await page.getByRole('radio', { name: 'Workspace owners', exact: true }).check();
   await page.getByRole('button', { name: 'Next', exact: true }).click();
-  await page.getByRole('checkbox', { name: 'Blog and changelog', exact: true }).click();
-  await page.getByRole('checkbox', { name: 'Newsletter', exact: true }).click();
+  await page.getByRole('checkbox', { name: 'Blog and changelog', exact: true }).check();
+  await page.getByRole('checkbox', { name: 'Newsletter', exact: true }).check();
   await page.getByRole('button', { name: 'Next', exact: true }).click();
   await page
-    .getByRole('textbox', { name: 'Additional launch notes', exact: true })
+    .getByRole('textbox', { name: 'Anything else I should keep in mind?', exact: true })
     .fill('Wait for approval');
   await page.getByRole('button', { name: 'Send answers', exact: true }).click();
-  await expect(page.getByRole('region', { name: 'Answered questions', exact: true })).toContainText(
-    'Blog and changelog, Newsletter',
-  );
-  await page.getByRole('button', { name: 'Scout Research', exact: true }).click();
+  await page.getByRole('button', { name: '0 questions · 1 requests', exact: true }).click();
+  await page
+    .getByRole('button', { name: 'Read your research documents Pending', exact: true })
+    .click();
   await page.getByRole('button', { name: 'Allow access', exact: true }).click();
-  await expect(
-    page.getByRole('region', { name: 'Storage access request', exact: true }),
-  ).toContainText('Allowed in this preview · Read only');
+  await expect(page.getByRole('button', { name: /questions · .*requests/ })).toHaveCount(0);
 });
 
 for (const width of [390, 721, 1344, 1860]) {
@@ -160,9 +189,11 @@ for (const width of [390, 721, 1344, 1860]) {
     await page.goto('/app?agent=forge');
     if (width <= 720)
       await page.getByRole('button', { name: 'Forge Builder', exact: true }).click();
-    const sizes = await page.locator('[aria-label="Forge conversation"]').evaluate((el) => {
+    const sizes = await page.locator('[aria-label="Forge private chat"]').evaluate((el) => {
       const pane = el.getBoundingClientRect();
-      const composer = el.querySelector('form')!.getBoundingClientRect();
+      const composer = el
+        .querySelector('[data-slot=conversation-composer]')!
+        .getBoundingClientRect();
       const content = el.querySelector('[data-slot=message-content]')!.getBoundingClientRect();
       const bubbles = Array.from(el.querySelectorAll('[data-slot=bubble]')).map(
         (b) => b.getBoundingClientRect().width,
@@ -170,16 +201,18 @@ for (const width of [390, 721, 1344, 1860]) {
       return {
         offset: Math.abs(composer.x + composer.width / 2 - (pane.x + pane.width / 2)),
         bubbles,
-        max: Math.min(content.width * 0.8, 720),
+        max: Math.min(content.width - 60, 720),
       };
     });
     expect(sizes.offset).toBeLessThan(1);
     for (const bubble of sizes.bubbles) expect(bubble).toBeLessThanOrEqual(sizes.max + 1);
+    await showActivity(page);
     const toolWidth = await page
       .locator('[data-slot=agent-tool-group]')
       .first()
       .evaluate((el) => el.getBoundingClientRect().width);
     const rowWidth = await page
+      .getByLabel('Forge conversation', { exact: true })
       .locator('[data-slot=message-content]')
       .first()
       .evaluate((el) => el.clientWidth);
@@ -203,7 +236,9 @@ for (const width of [390, 721, 1344, 1860]) {
     expect(
       Math.abs(outputWidth - Math.min(availableWidth, Math.max(720, 0.7 * availableWidth), 1200)),
     ).toBeLessThan(1);
-    await expect(page.getByRole('textbox', { name: 'Message Forge', exact: true })).toBeVisible();
+    await expect(
+      page.getByRole('textbox', { name: 'Activity messages', exact: true }),
+    ).toBeDisabled();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );
@@ -220,6 +255,7 @@ for (const width of [390, 1344]) {
       await page.goto(`/app?agent=${agent}`);
       if (width <= 720)
         await page.getByRole('button', { name: new RegExp(`^${agent} `, 'i') }).click();
+      await showActivity(page);
       await expect(page.locator('[data-tool]').first()).toBeAttached();
       const tools = await page.locator('[data-tool]').evaluateAll((elements) =>
         elements.map((el) => ({
@@ -258,6 +294,7 @@ for (const width of [390, 1344]) {
         'inbox_send',
         'inbox_list',
         'inbox_read',
+        'inbox_react',
         'schedule_create',
         'schedule_get',
         'schedule_update',
@@ -283,6 +320,7 @@ for (const width of [390, 1344]) {
 
 test('tool results show failures, diffs, citations, agenda and next runs', async ({ page }) => {
   await page.goto('/app?agent=forge');
+  await showActivity(page);
   const failed = page.locator('[data-tool-call=forge-failed-check]');
   await expect(failed).toContainText('ERROR: Budget exceeds limit: 350');
   await expect(failed.locator('[data-slot=code-block]')).toHaveAttribute(
@@ -303,16 +341,18 @@ test('tool results show failures, diffs, citations, agenda and next runs', async
     .click();
   await expect(page.getByRole('tab', { name: 'Launch budget.csv', exact: true })).toBeVisible();
   await expect(page.getByRole('cell', { name: 'Newsletter', exact: true })).toBeVisible();
-  await page.getByRole('tab', { name: 'Source', exact: true }).click();
+  await page.getByRole('tab', { name: 'Code', exact: true }).click();
   await expect(
     page.getByRole('textbox', { name: 'Edit Launch budget.csv', exact: true }),
   ).toBeVisible();
 
   await page.goto('/app?agent=scout');
+  await showActivity(page);
   await expect(page.locator('[data-tool-call=scout-search] blockquote')).toHaveCount(2);
   await expect(page.locator('[data-tool-call=scout-no-results]')).toContainText('No evidence');
   await expect(page.getByRole('button', { name: 'Allow editing too', exact: true })).toHaveCount(0);
   await page.goto('/app?agent=pulse');
+  await showActivity(page);
   const update = page.locator('[data-tool=schedule_update]');
   await expect(update).toContainText('Every Friday at 08:30 · paused');
   await expect(update).toContainText('Every Friday at 09:00');
@@ -371,16 +411,17 @@ test('agent identity updates shape and bubble color, and file panels contain onl
   await expect(page.getByRole('tab', { name: 'release.ts', exact: true })).toBeVisible();
   await expect(page.getByRole('tab', { name: 'Agent settings', exact: true })).toHaveCount(0);
   await page.getByRole('tab', { name: 'release.ts', exact: true }).press('Delete');
+  await expect(page.getByRole('tab', { name: 'Files', exact: true })).toBeVisible();
   await expect(
     page.getByRole('complementary', { name: 'Agent side panel', exact: true }),
-  ).toHaveCount(0);
+  ).toBeVisible();
   await page.getByRole('button', { name: 'Storage', exact: true }).click();
   const sidebar = page.getByRole('complementary', { name: 'Storage sidebar', exact: true });
   for (const name of ['Atlas', 'Forge', 'Scout']) {
     const entry = sidebar.getByRole('button', { name, exact: true });
     await entry.click();
     const crumbPath = await page
-      .getByRole('navigation', { name: 'Storage path', exact: true })
+      .getByRole('tablist', { name: 'Storage tabs', exact: true })
       .locator('[data-avatar] g > path')
       .first()
       .getAttribute('d');

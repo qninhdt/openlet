@@ -45,6 +45,8 @@ from .messages import Message
 
 
 async def deliver(s: Services, message: Message) -> dict[str, JSON]:
+    if message.silent:
+        return await messages.admit(s.db, s.auth, message)
     queue = s.config["dependencies"]["temporal"]["queues"]
     start: WithStartWorkflowOperation[Agent, None] = WithStartWorkflowOperation(
         Agent.run,
@@ -86,7 +88,8 @@ async def submit_schedule(s: Services, change: schedules.Change) -> dict[str, JS
         WithStartWorkflowOperation(
             ScheduleChanges.run,
             ScheduleInput(
-                schedule_id=change.schedule_id, bridge_queue=queues["leta_bridge"]
+                schedule_id=change.schedule_id,
+                bridge_queue=queues["leta_bridge"],
             ),
             id=f"schedule-changes/{change.schedule_id}",
             task_queue=queues["leta"],
@@ -210,7 +213,17 @@ class Activities:
 
     @activity.defn
     async def admit_input(self, message: Message) -> dict[str, JSON]:
-        return await messages.admit(self.s.db, self.s.auth, message)
+        result = await messages.admit(self.s.db, self.s.auth, message)
+        if not result.get("skipped"):
+            agent = await get_agent(self.s.db, message.recipient_agent_id)
+            await events.changed(
+                self.s.redis,
+                cast(UUID, agent["leta_id"]),
+                "messages" if message.source_kind == "user" else "inbox",
+                message.id,
+                message.source_id if message.source_kind == "user" else None,
+            )
+        return result
 
     @activity.defn
     async def load_agent_control(self, id: UUID) -> dict[str, JSON]:
@@ -595,21 +608,47 @@ class Activities:
 
     @activity.defn
     async def open_hitl_request(self, request: hitl.OpenRequest) -> dict[str, JSON]:
-        return await hitl.open_request(self.s.db, self.s.auth, self.s.files, request)
+        result = await hitl.open_request(self.s.db, self.s.auth, self.s.files, request)
+        if result.get("status") != "already_granted":
+            await self.notify_request(request.id)
+        return result
 
     @activity.defn
     async def resolve_hitl_request(self, decision: hitl.Decision) -> dict[str, JSON]:
-        return await hitl.resolve(self.s.db, self.s.auth, decision)
+        result = await hitl.resolve(self.s.db, self.s.auth, decision)
+        await self.notify_request(decision.request_id)
+        return result
 
     @activity.defn
     async def apply_hitl_outcome(self, id: UUID) -> dict[str, JSON]:
-        return await hitl.apply(self.s.db, self.s.auth, self.s.files, id)
+        result = await hitl.apply(self.s.db, self.s.auth, self.s.files, id)
+        await self.notify_request(id)
+        return result
+
+    async def notify_request(self, id: UUID) -> None:
+        request = await hitl.get(self.s.db, id)
+        agent = await get_agent(self.s.db, UUID(str(request["requester_agent_id"])))
+        await events.changed(
+            self.s.redis,
+            cast(UUID, agent["leta_id"]),
+            "requests",
+            id,
+            UUID(str(request["recipient_user_id"])),
+        )
 
     @activity.defn
     async def save_schedule_change(
         self, change: schedules.CanonicalChange
     ) -> dict[str, JSON]:
-        return await schedules.save(self.s.db, change)
+        result = await schedules.save(self.s.db, change)
+        agent = await get_agent(self.s.db, change.request.creator_agent_id)
+        await events.changed(
+            self.s.redis,
+            cast(UUID, agent["leta_id"]),
+            "schedules",
+            change.request.schedule_id,
+        )
+        return result
 
     @activity.defn
     async def apply_native_schedule(
@@ -649,6 +688,7 @@ class Activities:
             source_id=id,
             conversation_id=messages.conversation(target, "schedule", id),
             scheduled_at=nominal,
+            schedule_title=str(value["title"]),
             content=str(value["content"]),
         )
 

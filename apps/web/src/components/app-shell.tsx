@@ -1,21 +1,25 @@
-import { useEffect, useState, type ComponentProps } from 'react';
-import { useNavigate, useRouter, useSearch } from '@tanstack/react-router';
+import { useShellLocation, useShellNavigate } from '@/lib/shell-navigation';
+import { UploadsProvider } from './storage/uploads';
+import { useEffect, useRef, useState, type ComponentProps } from 'react';
+import { Outlet, useLocation, useRouter } from '@tanstack/react-router';
 import { useTheme } from 'next-themes';
 import { usePanelRef } from 'react-resizable-panels';
 import {
   ArrowLeft,
   ArrowRight,
   Bot,
-  CalendarClock,
   Check,
   ChevronRight,
   Palette,
+  Plus,
+  FolderPlus,
   Folder,
   HardDrive,
   ChevronsUpDown,
   Globe2,
   MessageCircle,
-  ListTodo,
+  CircleUserRound,
+  Activity,
   Moon,
   PanelLeft,
   PanelRight,
@@ -27,13 +31,10 @@ import {
 } from 'lucide-react';
 
 import { PageHeader } from '@/components/page-header';
+import { FileSessionsProvider } from '@/components/storage/file-sessions';
 import { StorageProvider } from '@/components/storage/storage-context';
 import { StorageSidebar } from '@/components/storage/storage-sidebar';
-import {
-  StoragePage,
-  StorageIdentity,
-  StorageHeaderTools,
-} from '@/components/storage/storage-page';
+import { StorageTabs } from '@/components/storage/storage-page';
 import { AppLogo } from '@/components/app-logo';
 import { AgentAvatar } from '@/components/agent-avatar';
 import { Button } from '@/components/ui/button';
@@ -56,36 +57,36 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
-import { AppSettings } from '@/components/app-settings';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { AgentPreviewProvider, useAgentPreview } from '@/components/agents/agent-preview';
 import { AgentSidebar } from '@/components/agents/agent-sidebar';
-import { AgentConversation } from '@/components/agents/agent-conversation';
 import {
   AgentPanel,
   AgentPanelHeader,
   AgentModelPicker,
   AgentSettingsDialog,
+  AgentCreateDialog,
 } from '@/components/agents/agent-panels';
-import { AgentOverview } from '@/components/agents/agent-overview';
-import { Badge } from '@/components/ui/badge';
+import { BoxSidebar } from '@/components/agents/box-view';
+import { Boxes } from 'lucide-react';
+import { useWorkspaces } from '@/lib/workspace-directory';
 import { EditorTabs } from '@/components/agents/editor-tabs';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { workspaces, type Destination, type ShellSearch } from '@/lib/shell-model';
+import { type Destination, type ShellLocation } from '@/lib/shell-model';
 import { cn } from '@/lib/utils';
 
 const navigation = [
   { id: 'agents', label: 'Agents', icon: Bot },
-  { id: 'schedule', label: 'Schedule', icon: CalendarClock },
+  { id: 'boxes', label: 'Box', icon: Boxes },
   { id: 'storage', label: 'Storage', icon: HardDrive },
 ] as const;
 
 const titles: Record<Destination, string> = {
   agents: 'Agents',
-  schedule: 'Schedule',
+  boxes: 'Box',
   storage: 'Storage',
   settings: 'Settings',
 };
@@ -104,46 +105,64 @@ function IconAction({ label, ...props }: ComponentProps<typeof Button> & { label
 }
 
 export function AppShell() {
-  const search = useSearch({ from: '/app' });
+  const search = useShellLocation();
+  const workspaces = useWorkspaces();
   const workspace = workspaces.find((item) => item.id === search.workspace)!;
+  if (!workspace || !workspace.agents.some((agent) => agent.id === search.agent))
+    return (
+      <p role="alert" className="p-8">
+        This workspace or agent is unavailable.
+      </p>
+    );
   return (
-    <AgentPreviewProvider key={workspace.id}>
-      <StorageProvider workspace={workspace}>
-        <WorkspaceShell />
-      </StorageProvider>
-    </AgentPreviewProvider>
+    <UploadsProvider key={workspace.id}>
+      <FileSessionsProvider>
+        <AgentPreviewProvider>
+          <StorageProvider workspace={workspace}>
+            <WorkspaceShell />
+          </StorageProvider>
+        </AgentPreviewProvider>
+      </FileSessionsProvider>
+    </UploadsProvider>
   );
 }
 
 function WorkspaceShell() {
-  const search = useSearch({ from: '/app' });
-  const navigate = useNavigate();
+  const search = useShellLocation();
+  const workspaces = useWorkspaces();
+  const navigate = useShellNavigate();
   const router = useRouter();
   const { resolvedTheme, setTheme } = useTheme();
   const isMobile = useIsMobile(721);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [sidebarWidth, setSidebarWidth] = useState(280);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const headerRow = useRef<HTMLDivElement>(null);
   const sidebarPanel = usePanelRef();
+  const entry = useLocation({ select: (location) => location.state.shellEntry });
   const [mobilePane, setMobilePane] = useState<'workspace' | 'conversation'>(() =>
-    search.view === 'agents' && window.innerWidth <= 720 ? 'workspace' : 'conversation',
+    entry && search.view === 'agents' && window.innerWidth <= 720 ? 'workspace' : 'conversation',
   );
   const [searchOpen, setSearchOpen] = useState(false);
   const preview = useAgentPreview();
-  const overviewPending = preview.pendingRequests;
-  const { panelOpen, setPanelOpen } = preview;
+
+  const { setPanelOpen } = preview;
+  const panelOpen = search.view === 'agents' && preview.panelOpen;
+  const panelExpanded = panelOpen && preview.panelExpanded && !isMobile;
+  const agentSurface = search.view === 'agents' || search.view === 'boxes';
   const narrowWindow = useIsMobile(panelOpen ? 1125 : 765);
   const autoCompact = !isMobile && narrowWindow && search.view === 'agents';
+  const folderEditing = preview.folderEditor !== null;
   const compactSidebar =
-    !isMobile && search.view === 'agents' && (autoCompact || sidebarWidth < 118);
+    !isMobile && !folderEditing && search.view === 'agents' && (autoCompact || sidebarCollapsed);
   const showSidebar = sidebarOpen || search.view === 'settings';
   useEffect(() => {
     if (isMobile || !showSidebar) return;
     const frame = requestAnimationFrame(() => {
-      if (autoCompact) sidebarPanel.current?.collapse();
+      if (autoCompact && !folderEditing) sidebarPanel.current?.collapse();
       else sidebarPanel.current?.expand();
     });
     return () => cancelAnimationFrame(frame);
-  }, [autoCompact, isMobile, showSidebar, sidebarPanel, search.view]);
+  }, [autoCompact, folderEditing, isMobile, showSidebar, sidebarPanel, search.view]);
   const [settingsFilter, setSettingsFilter] = useState('');
   const [historyState, setHistoryState] = useState(() => ({
     back: router.history.canGoBack(),
@@ -174,8 +193,20 @@ function WorkspaceShell() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
-  function go(next: Partial<ShellSearch>) {
-    void navigate({ to: '/app', search: { ...search, ...next } });
+  function go(next: Partial<ShellLocation>) {
+    const workspaceChanged = !!next.workspace && next.workspace !== search.workspace;
+    const view = next.view ?? search.view;
+    const targetAgent =
+      next.agent ??
+      (workspaceChanged
+        ? (workspaces.find((w) => w.id === next.workspace)?.agents[0]?.id ?? '')
+        : search.agent);
+    void navigate({
+      ...next,
+      agent: targetAgent,
+      mainTab: next.mainTab ?? (view === 'agents' ? preview.mainTabFor(targetAgent) : 'box'),
+      ...(workspaceChanged ? { storage: '', folder: '', file: '', boxAgent: '' } : {}),
+    });
     if (next.agent || (next.view && next.view !== 'agents') || next.section)
       setMobilePane('conversation');
     else if (next.view === 'agents') setMobilePane('workspace');
@@ -212,7 +243,9 @@ function WorkspaceShell() {
             {workspaces.map((item) => (
               <DropdownMenuItem
                 key={item.id}
-                onSelect={() => go({ workspace: item.id, agent: item.agents[0].id })}
+                onSelect={() =>
+                  go({ workspace: item.id, agent: item.agents[0]?.id ?? search.agent })
+                }
               >
                 <Users />
                 {item.name}
@@ -282,6 +315,20 @@ function WorkspaceShell() {
   }
 
   function agentList() {
+    if (search.view === 'boxes')
+      return (
+        <BoxSidebar
+          selected={search.boxAgent}
+          onSelect={(boxAgent) => {
+            go({
+              view: 'boxes',
+              boxAgent,
+              mainTab: 'box',
+              ...(boxAgent ? { agent: boxAgent } : {}),
+            });
+          }}
+        />
+      );
     if (search.view === 'storage')
       return <StorageSidebar onNavigate={() => setMobilePane('conversation')} />;
     if (search.view === 'settings') {
@@ -343,14 +390,19 @@ function WorkspaceShell() {
         )}
         <div
           className={cn(
-            'flex items-center gap-1 px-3 pt-2 pb-1.5',
+            'flex items-center gap-1.5 px-3 pt-2 pb-1.5',
+            compactSidebar && 'flex-wrap',
             compactSidebar && 'justify-center',
           )}
         >
           <Button
             variant={compactSidebar ? 'ghost' : 'outline'}
             size={compactSidebar ? 'icon' : 'default'}
-            className={compactSidebar ? undefined : 'min-w-0 flex-1 justify-start font-normal'}
+            className={
+              compactSidebar
+                ? undefined
+                : 'h-8 min-w-0 flex-1 justify-start bg-muted px-2.5 font-normal text-muted-foreground'
+            }
             aria-label="Search workspace"
             onClick={() => setSearchOpen(true)}
           >
@@ -358,10 +410,44 @@ function WorkspaceShell() {
             {!compactSidebar && (
               <>
                 <span className="flex-1 text-left">Search</span>
-                <span className="text-caption text-muted-foreground">⌘ K</span>
               </>
             )}
           </Button>
+          {search.view === 'agents' && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label="New agent or folder"
+                  disabled={!preview.organization.ready || preview.organization.busy}
+                >
+                  <Plus />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuGroup>
+                  {preview.organization.canCreate && (
+                    <DropdownMenuItem onSelect={() => preview.setCreateOpen(true)}>
+                      <Bot />
+                      New agent
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuItem
+                    onSelect={() => {
+                      if (compactSidebar) {
+                        sidebarPanel.current?.expand();
+                      }
+                      preview.setFolderEditor({ id: null, parent_id: null, name: '' });
+                    }}
+                  >
+                    <FolderPlus />
+                    New folder
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
         <ScrollArea className="min-h-0 flex-1 px-3 pt-1">
           {search.view === 'agents' ? (
@@ -390,22 +476,7 @@ function WorkspaceShell() {
   }
 
   function content() {
-    return search.view === 'storage' ? (
-      <StoragePage />
-    ) : search.view === 'settings' ? (
-      <AppSettings section={search.section} />
-    ) : search.view === 'agents' ? (
-      <div key={agent.id} className="h-full min-h-0">
-        <div hidden={preview.session.mainTab !== 'agent'} className="h-full">
-          <AgentConversation />
-        </div>
-        <div hidden={preview.session.mainTab !== 'overview'} className="h-full">
-          <AgentOverview />
-        </div>
-      </div>
-    ) : (
-      <section aria-label={heading} className="h-full" />
-    );
+    return <Outlet />;
   }
 
   const showWorkspace = isMobile && mobilePane === 'workspace';
@@ -420,22 +491,21 @@ function WorkspaceShell() {
         {(!isMobile || showWorkspace) && pageRail()}
         <div className={cn('flex min-w-0 flex-1 flex-col pb-1 pr-2', isMobile && 'p-0')}>
           {!showWorkspace && (
-            <div className="shell-top-row flex h-(--shell-header-height) shrink-0 text-muted-foreground">
+            <div
+              ref={headerRow}
+              className="shell-top-row flex h-(--shell-header-height) shrink-0 text-muted-foreground"
+            >
               <div
                 className="shell-top-navigation flex shrink-0 items-center gap-1 px-2 max-[721px]:px-1"
                 style={{
-                  width: !isMobile && showSidebar ? sidebarWidth : undefined,
+                  width: !isMobile && showSidebar ? 'var(--agent-sidebar-width, 280px)' : undefined,
                 }}
               >
                 {isMobile ? (
                   <IconAction
-                    label={
-                      panelOpen && search.view === 'agents' ? 'Back to chat' : 'Back to workspace'
-                    }
+                    label={panelOpen && agentSurface ? 'Back to chat' : 'Back to workspace'}
                     onClick={() =>
-                      panelOpen && search.view === 'agents'
-                        ? setPanelOpen(false)
-                        : setMobilePane('workspace')
+                      panelOpen && agentSurface ? setPanelOpen(false) : setMobilePane('workspace')
                     }
                   >
                     <ArrowLeft />
@@ -470,85 +540,147 @@ function WorkspaceShell() {
                   </>
                 )}
               </div>
-              {search.view === 'agents' ? (
+              {agentSurface ? (
                 isMobile && panelOpen ? (
                   <div className="min-w-0 flex-1">
                     <AgentPanelHeader />
                   </div>
                 ) : (
                   <>
-                    <div className="flex min-w-0 flex-1 items-center">
+                    <div
+                      className={cn('flex min-w-0 flex-1 items-center', panelExpanded && 'hidden')}
+                      inert={panelExpanded || undefined}
+                    >
                       <EditorTabs
                         label="Agent tabs"
-                        selected={preview.session.mainTab}
-                        onSelect={(mainTab) =>
-                          preview.updateSession({ mainTab: mainTab as 'agent' | 'overview' })
+                        selected={
+                          search.view === 'boxes' && !preview.session.mainTab.startsWith('leti:')
+                            ? 'box'
+                            : preview.session.mainTab
+                        }
+                        onSelect={(tab) =>
+                          preview.selectMainTab(tab as typeof preview.session.mainTab)
                         }
                         items={[
-                          {
-                            id: 'agent',
-                            label: preview.profile.name,
-                            icon: <AgentAvatar name={agent.name} className="size-5" />,
-                            title: (
-                              <h1
-                                aria-label={preview.profile.name}
-                                className="flex min-w-0 items-center gap-1 font-normal"
-                              >
-                                <span className="truncate">{preview.profile.name}</span>
-                                <span className="truncate text-muted-foreground max-[1000px]:hidden">
-                                  · {preview.profile.title}
-                                </span>
-                              </h1>
-                            ),
-                          },
-                          {
-                            id: 'overview',
-                            label: 'Overview',
-                            icon: <ListTodo />,
-                            title: (
-                              <span className="flex items-center gap-1.5">
-                                Overview
-                                {overviewPending > 0 && (
-                                  <Badge
-                                    aria-hidden="true"
-                                    variant="secondary"
-                                    className="h-4 min-w-4 px-1 text-caption font-normal tabular-nums"
-                                  >
-                                    {overviewPending}
-                                  </Badge>
-                                )}
-                              </span>
-                            ),
-                          },
+                          ...(search.view === 'agents'
+                            ? [
+                                {
+                                  id: 'agent',
+                                  label: preview.profile.name,
+                                  icon: (
+                                    <AgentAvatar
+                                      name={preview.profile.name}
+                                      agentId={preview.fixture.id}
+                                      appearance={preview.profile.appearance}
+                                      className="size-5"
+                                    />
+                                  ),
+                                  title: (
+                                    <h1
+                                      aria-label={preview.profile.name}
+                                      className="flex min-w-0 items-center gap-1 font-normal"
+                                    >
+                                      <span className="truncate">{preview.profile.name}</span>
+                                      <span className="truncate text-muted-foreground max-[1000px]:hidden">
+                                        · {preview.profile.title}
+                                      </span>
+                                    </h1>
+                                  ),
+                                },
+                                {
+                                  id: 'overview',
+                                  label: 'Overview',
+                                  icon: <CircleUserRound />,
+                                },
+                                ...(preview.capabilities.can_view_activity
+                                  ? [
+                                      { id: 'activity', label: 'Activity', icon: <Activity /> },
+                                      { id: 'box', label: 'Box', icon: <Boxes /> },
+                                    ]
+                                  : []),
+                              ]
+                            : [
+                                {
+                                  id: 'box',
+                                  label: search.boxAgent ? preview.profile.name : 'Box',
+                                  icon: search.boxAgent ? (
+                                    <AgentAvatar
+                                      name={preview.profile.name}
+                                      agentId={preview.fixture.id}
+                                      appearance={preview.profile.appearance}
+                                      className="size-5"
+                                    />
+                                  ) : (
+                                    <Boxes />
+                                  ),
+                                  title: search.boxAgent ? (
+                                    <span className="truncate">
+                                      {preview.profile.name}
+                                      <span className="text-muted-foreground">
+                                        {' '}
+                                        · {preview.profile.title}
+                                      </span>
+                                    </span>
+                                  ) : undefined,
+                                },
+                              ]),
+                          ...(preview.capabilities.can_view_activity
+                            ? preview.session.letis.map((leti) => ({
+                                id: `leti:${leti.id}`,
+                                label: `${leti.name} · ${leti.title}`,
+                                icon: (
+                                  <AgentAvatar
+                                    name={leti.name}
+                                    agentId={leti.id}
+                                    appearance={leti.appearance}
+                                    className="size-5"
+                                  />
+                                ),
+                                title: (
+                                  <span className="flex min-w-0 items-center gap-1">
+                                    <span className="truncate">{leti.name}</span>
+                                    <span className="truncate text-muted-foreground">
+                                      · {leti.title}
+                                    </span>
+                                  </span>
+                                ),
+                                onClose: () => preview.closeLeti(leti.id),
+                              }))
+                            : []),
                         ]}
                       />
                       <div className="flex shrink-0 items-center gap-0.5 pr-2">
-                        {preview.session.mainTab === 'agent' && <AgentModelPicker />}
-                        <IconAction
-                          label="Toggle side panel"
-                          aria-expanded={panelOpen}
-                          disabled={!preview.session.files.length}
-                          onClick={preview.togglePanel}
-                        >
-                          <PanelRight />
-                        </IconAction>
+                        {preview.session.mainTab === 'agent' &&
+                          preview.capabilities.can_edit_settings &&
+                          !preview.live.enabled && <AgentModelPicker />}
+                        {search.view === 'agents' && (
+                          <IconAction
+                            label="Toggle side panel"
+                            aria-expanded={panelOpen}
+                            onClick={preview.togglePanel}
+                          >
+                            <PanelRight />
+                          </IconAction>
+                        )}
                       </div>
                     </div>
                     {!isMobile && panelOpen && (
-                      <div className="shrink-0" style={{ width: preview.panelWidth }}>
+                      <div
+                        className={panelExpanded ? 'min-w-0 flex-1' : 'shrink-0'}
+                        style={{
+                          width: panelExpanded ? undefined : 'var(--agent-panel-width, 360px)',
+                        }}
+                      >
                         <AgentPanelHeader />
                       </div>
                     )}
                   </>
                 )
+              ) : search.view === 'storage' ? (
+                <StorageTabs />
               ) : (
-                <PageHeader
-                  title={search.view === 'settings' ? '' : heading}
-                  identity={search.view === 'storage' ? <StorageIdentity /> : undefined}
-                >
-                  {search.view === 'storage' ? (
-                    <StorageHeaderTools />
-                  ) : search.view === 'settings' ? (
+                <PageHeader title={search.view === 'settings' ? '' : heading}>
+                  {search.view === 'settings' ? (
                     <IconAction label="Close settings" onClick={() => go({ view: 'agents' })}>
                       <X />
                     </IconAction>
@@ -598,7 +730,7 @@ function WorkspaceShell() {
                     </nav>
                   )}
                   <div className="min-h-0 flex-1">
-                    {search.view === 'agents' ? (
+                    {agentSurface ? (
                       <>
                         <div hidden={panelOpen} className="h-full">
                           {content()}
@@ -623,7 +755,14 @@ function WorkspaceShell() {
                       collapsible={search.view === 'agents'}
                       collapsedSize="88px"
                       collapsedThreshold="18px"
-                      onResize={(size) => setSidebarWidth(size.inPixels)}
+                      onResize={(size) => {
+                        // Mirror geometry without rerendering both transcripts on every drag step.
+                        headerRow.current?.style.setProperty(
+                          '--agent-sidebar-width',
+                          `${size.inPixels}px`,
+                        );
+                        setSidebarCollapsed(size.inPixels < 118);
+                      }}
                       minSize={search.view === 'settings' ? '220px' : '128px'}
                       maxSize="400px"
                     >
@@ -643,23 +782,39 @@ function WorkspaceShell() {
                     <ResizableHandle aria-label="Resize sidebar" />
                   </>
                 )}
-                <ResizablePanel
-                  id="page"
-                  minSize={panelOpen && search.view === 'agents' ? '540px' : '280px'}
-                >
-                  <ResizablePanelGroup orientation="horizontal">
-                    <ResizablePanel id="conversation" minSize="280px">
+                <ResizablePanel id="page" minSize={panelOpen && agentSurface ? '540px' : '280px'}>
+                  <ResizablePanelGroup orientation="horizontal" className="relative">
+                    <ResizablePanel
+                      id="conversation"
+                      minSize="280px"
+                      className={panelExpanded ? 'invisible pointer-events-none' : undefined}
+                      inert={panelExpanded || undefined}
+                    >
                       {content()}
                     </ResizablePanel>
-                    {panelOpen && search.view === 'agents' && (
+                    {panelOpen && agentSurface && (
                       <>
-                        <ResizableHandle aria-label="Resize side panel" />
+                        <ResizableHandle
+                          aria-label="Resize side panel"
+                          className={panelExpanded ? 'invisible pointer-events-none' : undefined}
+                        />
                         <ResizablePanel
                           id="context"
+                          className={
+                            panelExpanded
+                              ? 'absolute! inset-0! z-20 w-full! max-w-none!'
+                              : undefined
+                          }
                           defaultSize="360px"
                           minSize="260px"
                           maxSize="600px"
-                          onResize={(size) => preview.setPanelWidth(size.inPixels)}
+                          onResize={(size) =>
+                            !panelExpanded &&
+                            headerRow.current?.style.setProperty(
+                              '--agent-panel-width',
+                              `${size.inPixels}px`,
+                            )
+                          }
                         >
                           {panel()}
                         </ResizablePanel>
@@ -685,7 +840,13 @@ function WorkspaceShell() {
               onClick={() => setMobilePane('conversation')}
             >
               <MessageCircle data-icon="inline-start" />
-              {search.view === 'storage' ? 'Storage' : 'Chat'}
+              {search.view === 'storage'
+                ? 'Storage'
+                : search.view === 'boxes' || preview.session.mainTab === 'box'
+                  ? 'Box'
+                  : preview.activityMode
+                    ? 'Activity'
+                    : 'Chat'}
             </Button>
             <Button
               variant={mobilePane === 'workspace' ? 'secondary' : 'ghost'}
@@ -700,6 +861,7 @@ function WorkspaceShell() {
         </nav>
       )}
       <AgentSettingsDialog />
+      <AgentCreateDialog />
       <CommandDialog
         open={searchOpen}
         onOpenChange={setSearchOpen}

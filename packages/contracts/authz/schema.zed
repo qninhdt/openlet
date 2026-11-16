@@ -14,11 +14,12 @@ definition workspace {
 definition storage {
  relation workspace: workspace
  relation public_workspace: workspace
+ relation conversation: conversation
  relation owner: user | agent | agent#owner | workspace#owner
  relation editor: user | agent
  relation viewer: user | agent
- permission read = (owner + editor + viewer + public_workspace->eligible_actor) & workspace->eligible_actor
- permission write = (owner + editor) & workspace->eligible_actor
+ permission read = (owner + editor + viewer + public_workspace->eligible_actor + conversation->participate) & workspace->eligible_actor
+ permission write = (owner + editor + conversation->participate) & workspace->eligible_actor
  permission manage_access = owner & workspace->eligible_actor
  permission delete = (owner & workspace->eligible_actor) + workspace->manage
 }
@@ -37,4 +38,10 @@ definition computer {
  relation operator: user | agent
  permission manage = (manager & workspace->participate) + workspace->manage
  permission use = (operator + manage) & workspace->eligible_actor
+}
+
+definition conversation {
+ relation agent: agent
+ relation member: user | agent
+ permission participate = member & (agent + agent->use)
 }

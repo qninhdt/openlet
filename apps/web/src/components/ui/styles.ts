@@ -1,4 +1,6 @@
 // OpenBot primitive geometry, using the app's shadcn theme in both color schemes.
+export const transcriptStyles =
+  'mx-auto w-full max-w-[clamp(1440px,65vw,1920px)] gap-3 px-3 pt-3 pb-6 sm:px-5';
 export const focusStyles =
   'outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50';
 export const invalidStyles =
@@ -21,3 +23,6 @@ export const dialogOverlayStyles =
 export const dialogFrameStyles =
   'fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 p-4 text-sm';
 export const dialogFooterStyles = 'flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end';
+
+export const fileReferenceStyles =
+  'inline-flex max-w-full cursor-pointer items-center gap-1 align-middle text-inherit outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:text-current [&>span]:truncate [&>span]:underline [&>span]:decoration-current/50 [&>span]:underline-offset-3 hover:[&>span]:decoration-current';

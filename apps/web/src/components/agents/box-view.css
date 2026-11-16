@@ -1,0 +1,32 @@
+/* React Flow owns the viewport; its controls and nodes use the app's semantic palette. */
+.box-canvas {
+  --xy-edge-stroke-default: var(--muted-foreground);
+  --xy-connectionline-stroke-default: var(--border);
+  --xy-background-color: var(--background);
+  --xy-node-color: var(--foreground);
+  --xy-node-background-color: var(--card);
+  --xy-node-border: none;
+  --xy-node-boxshadow-selected: none;
+  --xy-edge-stroke-selected: var(--foreground);
+}
+.box-canvas .react-flow__node:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 4px;
+}
+.box-canvas .react-flow__node-box {
+  pointer-events: none;
+}
+.box-canvas .react-flow__node-box button {
+  pointer-events: auto;
+}
+.box-canvas .react-flow__edge {
+  pointer-events: none;
+}
+.box-canvas .react-flow__edge-path {
+  transition: stroke 150ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .box-canvas .react-flow__edge-path {
+    transition: none;
+  }
+}

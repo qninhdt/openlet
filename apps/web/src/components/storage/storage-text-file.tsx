@@ -8,7 +8,7 @@ import { useTheme } from 'next-themes';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import Papa from 'papaparse';
-import { Copy, Save, WrapText } from 'lucide-react';
+import { Copy, Download, Save, WrapText } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -22,6 +22,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { formatBytes } from '@/lib/storage-preview';
 import { fileBlob, type StorageNode, type StorageTextSession } from './storage-context';
 
 const editorTheme = EditorView.theme({
@@ -118,7 +119,9 @@ export function TextFile({
   saveText,
   getTextSession,
   setTextSession,
-}: { node: StorageNode } & TextFileAccess) {
+  onDownload,
+  active = true,
+}: { node: StorageNode; onDownload: () => void; active?: boolean } & TextFileAccess) {
   const { resolvedTheme } = useTheme();
   const [openedNode] = useState(node);
   const [cached] = useState(() => {
@@ -150,13 +153,18 @@ export function TextFile({
   const [saving, setSaving] = useState(false);
   const [wrap, setWrap] = useState(true);
   const [language, setLanguage] = useState<Extension>([]);
+  const scroll = useRef(cached?.scroll ?? { source: 0, preview: 0 });
+  const preview = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!source && preview.current) preview.current.scrollTop = scroll.current.preview;
+  }, [source, loaded]);
   const saveButton = useRef<HTMLButtonElement>(null);
   const content = draft ?? loaded?.text ?? '';
   const dirty = loaded !== undefined && content !== loaded.text;
   const writable = canWrite && !loaded?.truncated;
   const blocker = useBlocker({
-    shouldBlockFn: () => dirty || saving,
-    enableBeforeUnload: dirty || saving,
+    shouldBlockFn: () => saving,
+    enableBeforeUnload: saving,
     withResolver: true,
   });
 
@@ -193,7 +201,7 @@ export function TextFile({
 
   // The mobile/desktop shell remounts its content, so keep the active draft above it.
   useEffect(() => {
-    if (loaded) setTextSession({ ...loaded, draft, source });
+    if (loaded) setTextSession({ ...loaded, draft, source, scroll: scroll.current });
   }, [loaded, draft, source, setTextSession]);
 
   useEffect(() => {
@@ -264,29 +272,47 @@ export function TextFile({
   return (
     <div
       className="flex h-full min-h-0 min-w-0 flex-col bg-sidebar"
+      onScrollCapture={(event) => {
+        const target = event.target as HTMLElement;
+        if (target.matches('.cm-scroller')) scroll.current.source = target.scrollTop;
+        else if (target.matches('article,.storage-csv-preview'))
+          scroll.current.preview = target.scrollTop;
+        if (loaded) setTextSession({ ...loaded, draft, source, scroll: scroll.current });
+      }}
       onKeyDown={(event) => {
-        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+        if (active && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
           event.preventDefault();
           saveButton.current?.click();
         }
       }}
     >
-      <div className="flex min-h-11 shrink-0 flex-wrap items-center gap-2 border-b px-3 py-1">
-        {rendered && (
-          <Tabs
-            value={source ? 'source' : 'preview'}
-            onValueChange={(value) => setSource(value === 'source')}
-          >
-            <TabsList variant="line">
-              <TabsTrigger value="preview">Preview</TabsTrigger>
-              <TabsTrigger value="source">Source</TabsTrigger>
-            </TabsList>
-          </Tabs>
-        )}
-        <span
-          role="status"
-          className="order-last basis-full text-xs text-muted-foreground min-[1000px]:order-none min-[1000px]:basis-auto"
+      <div className="flex min-h-11 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b bg-muted/40 px-3 py-1.5">
+        <Tabs
+          value={source ? 'source' : 'preview'}
+          onValueChange={(value) => setSource(value === 'source')}
         >
+          <TabsList className="h-7! border border-border bg-sidebar p-0.5">
+            {rendered && (
+              <TabsTrigger
+                className="px-3 py-0.5 text-caption data-active:bg-accent data-active:shadow-none"
+                value="preview"
+              >
+                Preview
+              </TabsTrigger>
+            )}
+            <TabsTrigger
+              className="px-3 py-0.5 text-caption data-active:bg-accent data-active:shadow-none"
+              value="source"
+            >
+              Code
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+        <span className="hidden text-xs tabular-nums text-muted-foreground sm:inline">
+          {content ? content.replace(/\n$/, '').split('\n').length : 0} lines ·{' '}
+          {formatBytes(new Blob([content]).size)}
+        </span>
+        <span role="status" className="text-xs text-muted-foreground">
           {loaded.truncated
             ? 'Read-only · first 1 MB'
             : !writable
@@ -295,42 +321,57 @@ export function TextFile({
                 ? 'Saving…'
                 : dirty
                   ? 'Unsaved changes'
-                  : 'Saved'}
+                  : ''}
         </span>
         <div className="ml-auto flex shrink-0 items-center gap-1">
           {source && (
             <Button
-              variant={wrap ? 'secondary' : 'ghost'}
-              size="icon-sm"
+              variant="ghost"
+              size="icon-xs"
               aria-label="Toggle line wrap"
+              aria-pressed={wrap}
+              title="Line wrap"
               onClick={() => setWrap(!wrap)}
             >
               <WrapText />
             </Button>
           )}
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Copy file text"
-            onClick={() =>
-              void navigator.clipboard.writeText(content).then(
-                () => toast.success('Copied'),
-                () => toast.error('Could not copy. Select the text and copy manually.'),
-              )
-            }
-          >
-            <Copy />
-          </Button>
+          <div className="flex items-center overflow-hidden rounded-md border [&>button]:rounded-none [&>button+button]:border-l">
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label="Copy file text"
+              title="Copy file text"
+              onClick={() =>
+                void navigator.clipboard.writeText(content).then(
+                  () => toast.success('Copied'),
+                  () => toast.error('Could not copy. Select the text and copy manually.'),
+                )
+              }
+            >
+              <Copy />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label="Download file"
+              title="Download file"
+              onClick={onDownload}
+            >
+              <Download />
+            </Button>
+          </div>
           {writable && (
             <Button
               ref={saveButton}
               variant="outline"
-              size="sm"
+              size="icon-xs"
+              aria-label="Save"
+              title="Save (⌘/Ctrl S)"
               disabled={!dirty || saving}
               onClick={() => void save()}
             >
               <Save />
-              Save
             </Button>
           )}
         </div>
@@ -347,6 +388,9 @@ export function TextFile({
           height="100%"
           theme={resolvedTheme === 'dark' ? 'dark' : 'light'}
           extensions={extensions}
+          onCreateEditor={(view) => {
+            view.scrollDOM.scrollTop = scroll.current.source;
+          }}
           editable={writable && !saving}
           readOnly={!writable || saving}
           indentWithTab={false}
@@ -370,7 +414,10 @@ export function TextFile({
             className="min-h-0 w-full flex-1 border-0 bg-background"
           />
         ) : (
-          <article className="storage-markdown min-h-0 w-full min-w-0 flex-1 overflow-auto">
+          <article
+            ref={preview}
+            className="storage-markdown min-h-0 w-full min-w-0 flex-1 overflow-auto"
+          >
             <Markdown remarkPlugins={[remarkGfm]}>{content}</Markdown>
           </article>
         ))}

@@ -1,8 +1,6 @@
 import { useId, useState } from 'react';
 import {
-  ArrowDownLeft,
   CalendarClock,
-  Check,
   CheckCheck,
   ChevronDown,
   CircleHelp,
@@ -10,7 +8,6 @@ import {
   Inbox,
   ListFilter,
   MessageSquare,
-  MoreHorizontal,
   Pause,
   Play,
   Search,
@@ -19,14 +16,12 @@ import {
   UserRound,
 } from 'lucide-react';
 import { AgentAvatar } from '@/components/agent-avatar';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
@@ -47,9 +42,10 @@ import { Textarea } from '@/components/ui/textarea';
 import { focusStyles } from '@/components/ui/styles';
 import { FileIcon } from '@/components/storage/file-icon';
 import { cn } from '@/lib/utils';
-import { AccessRequestCard, AskCard } from './agent-hitl';
 import { previewFiles, useAgentPreview } from './agent-preview';
 import { ProviderLogo } from './provider-logo';
+import { InputMessage } from './agent-inputs';
+import { useAgentScroll } from './agent-scroll';
 
 // shortcut: illustrative activity records; replace with authorized inbox/request/schedule API data when connected.
 const activities = [
@@ -110,7 +106,16 @@ const activities = [
   },
 ] as const;
 
-type Activity = (typeof activities)[number];
+type Activity = {
+  id: string;
+  kind: 'message' | 'question' | 'request' | 'schedule';
+  title: string;
+  sender: string;
+  time: string;
+  content: string;
+  fileId?: string;
+  unread?: boolean;
+};
 const kinds = {
   message: 'Message',
   question: 'Question',
@@ -149,6 +154,7 @@ function ScheduleDetails({
   onSave: (value: Schedule) => void;
 }) {
   const p = useAgentPreview();
+  const child = !!p.activityAgent.box_id;
   const [draft, setDraft] = useState(saved);
   const [editing, setEditing] = useState(false);
   const dirty = JSON.stringify(saved) !== JSON.stringify(draft);
@@ -159,7 +165,8 @@ function ScheduleDetails({
           <CalendarClock className="size-4 shrink-0 text-muted-foreground" />
           <div className="text-sm">
             <p>
-              Every Monday at <span className="tabular-nums">{saved.time}</span>
+              {child ? 'Weekdays' : 'Every Monday'} at{' '}
+              <span className="tabular-nums">{saved.time}</span>
             </p>
             <p className="mt-0.5 text-caption text-muted-foreground">
               Asia/Ho_Chi_Minh · UTC+07:00
@@ -167,7 +174,7 @@ function ScheduleDetails({
           </div>
         </div>
         <Badge variant="outline" className="font-normal">
-          {p.session.schedulePaused ? 'Paused' : 'Active'}
+          {!child && p.session.schedulePaused ? 'Paused' : 'Active'}
         </Badge>
       </div>
       {editing ? (
@@ -244,23 +251,27 @@ function ScheduleDetails({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <span className="flex items-center gap-1.5 text-caption text-muted-foreground">
               <Clock3 className="size-3.5" />
-              {p.session.schedulePaused
-                ? 'No runs while paused'
-                : `Next: Mon, Nov 23 · ${saved.time}`}
+              {child
+                ? `Weekdays · ${saved.time}`
+                : p.session.schedulePaused
+                  ? 'No runs while paused'
+                  : `Next: Mon, Nov 23 · ${saved.time}`}
             </span>
-            <div className="flex gap-1">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => p.updateSession({ schedulePaused: !p.session.schedulePaused })}
-              >
-                {p.session.schedulePaused ? <Play /> : <Pause />}
-                {p.session.schedulePaused ? 'Resume schedule' : 'Pause schedule'}
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
-                Edit schedule
-              </Button>
-            </div>
+            {!child && (
+              <div className="flex gap-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => p.updateSession({ schedulePaused: !p.session.schedulePaused })}
+                >
+                  {p.session.schedulePaused ? <Play /> : <Pause />}
+                  {p.session.schedulePaused ? 'Resume schedule' : 'Pause schedule'}
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
+                  Edit schedule
+                </Button>
+              </div>
+            )}
           </div>
         </>
       )}
@@ -272,33 +283,38 @@ function ActivityRow({ item, hidden }: { item: Activity; hidden: boolean }) {
   const p = useAgentPreview();
   const [open, setOpen] = useState(false);
   const readStatusId = useId();
-  const schedule: Schedule = p.session.schedule ?? {
-    title: activities[3].title,
+  const schedule: Schedule = (!p.activityAgent.box_id ? p.session.schedule : undefined) ?? {
+    title: item.kind === 'schedule' ? item.title : activities[3].title,
     time: '09:00',
-    content: activities[3].content,
+    content: item.kind === 'schedule' ? item.content : activities[3].content,
   };
+  const request = p.requests.find(
+    (request) => request.type === (item.kind === 'question' ? 'ask' : 'approval'),
+  );
   const needsYou =
     item.sender === 'You' &&
-    ((item.kind === 'question' && !p.session.answers) ||
-      (item.kind === 'request' && !p.session.approval));
+    (item.kind === 'question' || item.kind === 'request') &&
+    request?.status === 'pending';
   const Icon = icons[item.kind];
   const status =
     item.kind === 'question'
       ? item.sender === 'Linh'
         ? 'Waiting for Linh'
-        : p.session.answers
+        : request?.status === 'answered'
           ? 'Answered'
           : 'Needs your answer'
       : item.kind === 'request'
-        ? p.session.approval === 'accepted'
-          ? 'Allowed in preview'
-          : p.session.approval === 'denied'
+        ? request?.status === 'accepted'
+          ? 'Allowed'
+          : request?.status === 'denied'
             ? 'Declined'
             : 'Needs your approval'
         : item.kind === 'schedule'
-          ? p.session.schedulePaused
-            ? 'Paused'
-            : `Mon, Nov 23 · ${schedule.time}`
+          ? p.activityAgent.box_id
+            ? 'Weekdays · 09:00'
+            : p.session.schedulePaused
+              ? 'Paused'
+              : `Mon, Nov 23 · ${schedule.time}`
           : item.unread
             ? 'Unread by agent'
             : 'Read by agent';
@@ -316,8 +332,8 @@ function ActivityRow({ item, hidden }: { item: Activity; hidden: boolean }) {
             )}
           >
             <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-              {item.kind === 'message' && item.sender === 'Scout' ? (
-                <AgentAvatar name="Scout" className="size-8" />
+              {item.kind === 'message' && item.sender !== 'You' && item.sender !== 'Linh' ? (
+                <AgentAvatar name={item.sender} className="size-8" />
               ) : item.kind === 'message' ? (
                 <UserRound className="size-4" />
               ) : (
@@ -355,8 +371,8 @@ function ActivityRow({ item, hidden }: { item: Activity; hidden: boolean }) {
                       </TooltipTrigger>
                       <TooltipContent>
                         {item.unread
-                          ? `${p.profile.name} hasn’t read this message yet`
-                          : `Read by ${p.profile.name}`}
+                          ? `${p.activityAgent.name} hasn’t read this message yet`
+                          : `Read by ${p.activityAgent.name}`}
                       </TooltipContent>
                     </Tooltip>
                   )}
@@ -418,9 +434,13 @@ function ActivityRow({ item, hidden }: { item: Activity; hidden: boolean }) {
           className="min-w-0 pt-3 pr-2 pb-5 pl-13 sm:pr-3 sm:pl-15 [&>section]:max-w-2xl"
         >
           {item.kind === 'question' && item.sender === 'You' ? (
-            <AskCard inline />
+            <p className="text-sm text-muted-foreground">
+              This question is shown in the recipient’s chat. Only the addressed person can answer.
+            </p>
           ) : item.kind === 'request' ? (
-            <AccessRequestCard inline />
+            <p className="text-sm text-muted-foreground">
+              Storage permission request. The addressed person can allow or decline it in chat.
+            </p>
           ) : item.kind === 'schedule' ? (
             <ScheduleDetails
               saved={schedule}
@@ -429,7 +449,7 @@ function ActivityRow({ item, hidden }: { item: Activity; hidden: boolean }) {
           ) : (
             <div className="flex flex-col items-start gap-3">
               <p className="whitespace-pre-wrap text-sm leading-relaxed">{item.content}</p>
-              {'fileId' in item && <ActivityFile id={item.fileId} />}
+              {item.fileId && <ActivityFile id={item.fileId} />}
               {item.kind === 'question' && (
                 <p className="flex items-center gap-1.5 text-caption text-muted-foreground">
                   <Clock3 className="size-3.5" />
@@ -444,23 +464,44 @@ function ActivityRow({ item, hidden }: { item: Activity; hidden: boolean }) {
   );
 }
 
-export function AgentOverview() {
+export function PreviewInbox() {
   const p = useAgentPreview();
-  const pending = p.pendingRequests;
-  const [needsYou, setNeedsYou] = useState(false);
   const [kind, setKind] = useState('all');
   const [query, setQuery] = useState('');
-  const provider = p.profile.model.startsWith('Claude')
-    ? 'Anthropic'
-    : p.profile.model.startsWith('GPT')
-      ? 'OpenAI'
-      : 'Google';
-  const visible = activities.filter(
+  const records: Activity[] = p.activityAgent.box_id
+    ? [
+        {
+          id: `${p.activityAgent.id}-parent`,
+          kind: 'message',
+          title: p.activityContact?.name ?? p.profile.name,
+          sender: p.activityContact?.name ?? p.profile.name,
+          time: '2m',
+          content: 'Check the launch evidence and share the findings with the representative.',
+          unread: true,
+        },
+        {
+          id: `${p.activityAgent.id}-peer`,
+          kind: 'message',
+          title: p.activityPeer?.name ?? p.profile.name,
+          sender: p.activityPeer?.name ?? p.profile.name,
+          time: '8m',
+          content:
+            'Keep the announcement limited to workspace owners. The budget is $250 of the $300 cap.',
+          unread: false,
+          fileId: 'research',
+        },
+        {
+          id: `${p.activityAgent.id}-schedule`,
+          kind: 'schedule',
+          title: 'Morning briefing',
+          sender: '',
+          time: '12m',
+          content: 'Review new research before the morning briefing.',
+        },
+      ]
+    : [...activities];
+  const visible = records.filter(
     (item) =>
-      (!needsYou ||
-        (item.sender === 'You' &&
-          ((item.kind === 'question' && !p.session.answers) ||
-            (item.kind === 'request' && !p.session.approval)))) &&
       (kind === 'all' || kind === item.kind) &&
       `${item.kind === 'schedule' && p.session.schedule ? `${p.session.schedule.title} ${p.session.schedule.content}` : `${item.title} ${item.content}`} ${item.sender} ${kinds[item.kind]}`
         .toLowerCase()
@@ -468,88 +509,12 @@ export function AgentOverview() {
   );
   return (
     <section
-      aria-label="Agent overview"
+      aria-label="Agent inbox"
       className="h-full min-w-0 overflow-y-auto overscroll-contain bg-background"
     >
-      <div className="mx-auto flex w-full max-w-5xl flex-col px-4 pt-6 pb-12 sm:px-7 sm:pt-8 lg:px-10">
-        <header className="flex items-start gap-3 sm:gap-4">
-          <AgentAvatar name={p.fixture.name} className="size-12 shrink-0 sm:size-14" />
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="truncate text-xl font-medium tracking-tight">{p.profile.name}</h2>
-              <div className="flex shrink-0 items-center gap-1">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  aria-label="Edit agent settings"
-                  onClick={() => p.openSettings()}
-                >
-                  <Settings />
-                  Settings
-                </Button>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon-sm" aria-label="Agent actions">
-                      <MoreHorizontal />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuGroup>
-                      <DropdownMenuItem
-                        onSelect={() => p.updateSession({ paused: !p.session.paused })}
-                      >
-                        {p.session.paused ? <Play /> : <Pause />}
-                        {p.session.paused ? 'Resume agent' : 'Pause agent'}
-                      </DropdownMenuItem>
-                    </DropdownMenuGroup>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-            </div>
-            <p className="mt-2 max-w-prose text-sm leading-relaxed text-muted-foreground">
-              {p.profile.description}
-            </p>
-            <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-caption text-muted-foreground">
-              <span className="inline-flex items-center gap-1.5 text-foreground">
-                {p.session.paused ? (
-                  <Pause className="size-3.5" />
-                ) : (
-                  <span className="size-1.5 rounded-full bg-foreground/60" />
-                )}
-                {p.session.paused ? 'Paused' : 'Idle'}
-              </span>
-              <span className="inline-flex items-center gap-1.5">
-                <ProviderLogo provider={provider} />
-                {p.profile.model} · {p.profile.effort}
-              </span>
-              <span>Local preview</span>
-            </div>
-          </div>
-        </header>
-        <Separator className="mt-7" />
+      <div className="mx-auto flex w-full flex-col px-3 pt-1 pb-8">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 py-3">
-          <div className="flex items-center gap-1" role="group" aria-label="Activity scope">
-            <Button
-              variant={needsYou ? 'ghost' : 'secondary'}
-              size="sm"
-              aria-pressed={!needsYou}
-              onClick={() => setNeedsYou(false)}
-            >
-              All
-            </Button>
-            <Button
-              variant={needsYou ? 'secondary' : 'ghost'}
-              size="sm"
-              aria-pressed={needsYou}
-              onClick={() => setNeedsYou(true)}
-            >
-              Needs you
-              <Badge variant="secondary" className="h-4.5 min-w-4.5 px-1 font-normal tabular-nums">
-                {pending}
-              </Badge>
-            </Button>
-          </div>
-          <div className="ml-auto flex min-w-0 items-center gap-1">
+          <div className="flex w-full min-w-0 items-center gap-1 [&>[data-slot=input-group]]:flex-1">
             <InputGroup className="w-32 sm:w-44">
               <InputGroupInput
                 aria-label="Search agent activity"
@@ -590,32 +555,39 @@ export function AgentOverview() {
           </div>
         </div>
         <Separator />
-        <div className="flex items-center justify-between px-2 pt-5 pb-1 text-caption text-muted-foreground sm:px-3">
-          <span>Latest activity</span>
-          <span className="inline-flex items-center gap-1">
-            <ArrowDownLeft className="size-3.5" />
-            Newest first
-          </span>
-        </div>
         <ul aria-label="Agent activity" className="flex min-w-0 flex-col divide-y divide-border/60">
-          {activities.map((item) => (
+          {(p.activityAgent.box_id ? [] : p.session.feedback)
+            .filter(
+              (i) =>
+                (kind === 'all' || kind === 'message') &&
+                `${i.content} ${i.input_payload?.target.content}`
+                  .toLowerCase()
+                  .includes(query.toLowerCase()),
+            )
+            .map((item) => (
+              <li
+                key={item.id}
+                className="py-4"
+                title="Waiting silently until the next message, or until the agent reads its inbox"
+              >
+                <InputMessage item={item} />
+                <span className="mt-2 block pl-11 text-xs text-muted-foreground">
+                  Queued silently
+                </span>
+              </li>
+            ))}
+          {records.map((item) => (
             <ActivityRow key={item.id} item={item} hidden={!visible.includes(item)} />
           ))}
         </ul>
-        {!visible.length && (
+        {!visible.length && !p.session.feedback.length && (
           <Empty className="py-16">
             <EmptyHeader>
-              <EmptyMedia variant="icon">{needsYou ? <Check /> : <Inbox />}</EmptyMedia>
-              <EmptyTitle>
-                {needsYou && !query && kind === 'all'
-                  ? 'You’re all caught up'
-                  : 'No matching activity'}
-              </EmptyTitle>
-              <EmptyDescription>
-                {needsYou && !query && kind === 'all'
-                  ? 'There are no questions or requests waiting for you.'
-                  : 'Try another search or clear the filters.'}
-              </EmptyDescription>
+              <EmptyMedia variant="icon">
+                <Inbox />
+              </EmptyMedia>
+              <EmptyTitle>No matching activity</EmptyTitle>
+              <EmptyDescription>Try another search or clear the filters.</EmptyDescription>
             </EmptyHeader>
             {(query || kind !== 'all') && (
               <Button
@@ -631,6 +603,106 @@ export function AgentOverview() {
             )}
           </Empty>
         )}
+      </div>
+    </section>
+  );
+}
+
+export function AgentOverview() {
+  const p = useAgentPreview();
+  const scroll = useAgentScroll<HTMLElement>(`${p.fixture.id}:overview`);
+  const model = p.profile.model.toLowerCase();
+  const provider =
+    model.includes('claude') || model.includes('anthropic')
+      ? 'Anthropic'
+      : model.includes('gpt') || model.includes('openai')
+        ? 'OpenAI'
+        : 'Google';
+  return (
+    <section
+      {...scroll.viewportProps}
+      aria-label="Agent overview"
+      className="h-full min-w-0 overflow-y-auto bg-background"
+    >
+      <div className="mx-auto max-w-3xl px-5 py-8 sm:px-10 sm:py-12">
+        <header className="flex items-start gap-4">
+          <AgentAvatar
+            name={p.profile.name}
+            appearance={p.profile.appearance}
+            className="size-14 shrink-0"
+          />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="truncate text-xl font-medium">{p.profile.name}</h2>
+              {p.capabilities.can_edit_settings && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  aria-label="Edit agent settings"
+                  onClick={() => p.openSettings()}
+                >
+                  <Settings />
+                  Settings
+                </Button>
+              )}
+            </div>
+            <p className="mt-1 text-sm text-muted-foreground">{p.profile.title}</p>
+          </div>
+        </header>
+        <p className="mt-7 max-w-prose text-sm leading-relaxed">{p.profile.description}</p>
+        <dl className="mt-8 divide-y border-y text-sm">
+          <div className="flex justify-between gap-4 py-4">
+            <dt className="text-muted-foreground">Workspace</dt>
+            <dd>{p.workspace.name}</dd>
+          </div>
+          <div className="flex justify-between gap-4 py-4">
+            <dt className="text-muted-foreground">Status</dt>
+            <dd>
+              {p.live.enabled
+                ? p.live.profile.data?.paused
+                  ? 'Paused'
+                  : (p.live.profile.data?.state ?? 'Loading…')
+                : p.session.paused
+                  ? 'Paused'
+                  : 'Idle'}
+            </dd>
+          </div>
+          <div className="flex justify-between gap-4 py-4">
+            <dt className="text-muted-foreground">Model</dt>
+            <dd className="flex min-w-0 items-center gap-2">
+              <ProviderLogo provider={provider} />
+              <span className="truncate">{p.profile.model}</span>
+            </dd>
+          </div>
+        </dl>
+        <section aria-label="For you" className="mt-9">
+          <h3 className="mb-3 text-sm font-medium">For you</h3>
+          {p.requests.filter((request) => request.status === 'pending').length ? (
+            <ul className="divide-y">
+              {p.requests
+                .filter((request) => request.status === 'pending')
+                .map((request) => (
+                  <li key={request.id}>
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-3 rounded-lg px-2 py-3 text-left hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring"
+                      onClick={() => p.updateSession({ mainTab: 'agent', requestOpen: request.id })}
+                    >
+                      {request.type === 'ask' ? (
+                        <CircleHelp className="size-4 shrink-0 text-muted-foreground" />
+                      ) : (
+                        <ShieldCheck className="size-4 shrink-0 text-muted-foreground" />
+                      )}
+                      <span className="min-w-0 flex-1 truncate text-sm">{request.title}</span>
+                      <ChevronDown className="size-3.5 -rotate-90 text-muted-foreground" />
+                    </button>
+                  </li>
+                ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-muted-foreground">Nothing waiting for you.</p>
+          )}
+        </section>
       </div>
     </section>
   );

@@ -45,17 +45,21 @@ export function StorageSidebar({ onNavigate }: { onNavigate: () => void }) {
         </InputGroup>
       </div>
       <nav aria-label="Storages" className="min-h-0 flex-1 overflow-auto px-3 pb-3">
-        {roots
-          .filter((root) => !root.agent)
-          .map((root) => (
-            <StorageRow key={root.id} root={root} onNavigate={onNavigate} />
-          ))}
+        <div className="flex flex-col gap-1">
+          {roots
+            .filter((root) => !root.agent)
+            .map((root) => (
+              <StorageRow key={root.id} root={root} onNavigate={onNavigate} />
+            ))}
+        </div>
         <Separator decorative={false} aria-label="Storage groups" className="my-3" />
-        {roots
-          .filter((root) => root.agent)
-          .map((root) => (
-            <StorageRow key={root.id} root={root} onNavigate={onNavigate} />
-          ))}
+        <div className="flex flex-col gap-1">
+          {roots
+            .filter((root) => root.agent)
+            .map((root) => (
+              <StorageRow key={root.id} root={root} onNavigate={onNavigate} />
+            ))}
+        </div>
         {!roots.length && (
           <p className="p-3 text-sm text-muted-foreground">No matching storages.</p>
         )}

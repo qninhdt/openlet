@@ -1,38 +1,10 @@
+import type { InputItem } from '@/lib/agent-api';
 import type { ThreadMessageLike } from '@assistant-ui/react';
 import { previewFiles } from './agent-preview';
 
-// Presentation data for the local demo; live tool output needs an adapter when the API is connected.
-export type DemoItem = {
-  title: string;
-  detail: string;
-  fileId?: string;
-  kind?: 'folder' | 'file';
-  meta?: string;
-  status?: string;
-  sender?: string;
-  time?: string;
-};
-export type DemoToolResult = {
-  summary?: string;
-  output?: string;
-  exitCode?: number;
-  fileId?: string;
-  items?: DemoItem[];
-  title?: string;
-  content?: string;
-  timing?: string;
-  when?: { day: string; time: string };
-  previousTiming?: string;
-  timezone?: string;
-  upcoming?: string[];
-  target?: string;
-  status?: string;
-  duration?: string;
-  home?: string;
-  representative?: string;
-  edges?: [string, string][];
-  lineRange?: string;
-};
+import type { DemoItem, DemoToolResult } from '@/lib/agent-presentation';
+export type { DemoItem, DemoToolResult } from '@/lib/agent-presentation';
+
 type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
 const call = (
   id: string,
@@ -48,6 +20,7 @@ const call = (
   isError: result.exitCode !== undefined && result.exitCode !== 0,
 });
 const text = (value: string) => ({ type: 'text' as const, text: value });
+const reasoning = (value: string) => ({ type: 'reasoning' as const, text: value });
 const user = (id: string, content: string): ThreadMessageLike => ({ id, role: 'user', content });
 const answer = (id: string, content: ThreadMessageLike['content']): ThreadMessageLike => ({
   id,
@@ -104,6 +77,7 @@ const atlas: ThreadMessageLike[] = [
     'We launch on Friday. Check last week’s decisions, split the review work and put together a launch plan. Do not publish anything yet.',
   ),
   answer('atlas-context', [
+    reasoning('I’ll check the workspace context before looking up the launch decisions.'),
     call(
       'atlas-workspace',
       'workspace_get',
@@ -114,6 +88,9 @@ const atlas: ThreadMessageLike[] = [
         summary: 'Agent context',
         items: [{ title: 'Ninh', detail: 'Workspace owner', status: 'Active' }],
       },
+    ),
+    reasoning(
+      'The workspace is confirmed. I’ll now check the recorded decisions and their source.',
     ),
     call(
       'atlas-history-search',
@@ -721,5 +698,251 @@ export const demoAttachments: Record<string, string[]> = {
   'scout-status': ['announcement', 'research'],
 };
 export function sampleMessages(id: string): ThreadMessageLike[] {
-  return id === 'forge' ? forge : id === 'scout' ? scout : id === 'pulse' ? pulse : atlas;
+  const conversation =
+    id === 'forge' ? forge : id === 'scout' ? scout : id === 'pulse' ? pulse : atlas;
+  return [
+    ...conversation,
+    user(`${id}-batch`, 'New messages from Linh and Scout.'),
+    answer(`${id}-batch-note`, [
+      reasoning(
+        'I’ll acknowledge the approved wording and keep the source link with the quotation. Publishing still needs the workspace owner’s approval.',
+      ),
+      call(
+        `${id}-react`,
+        'inbox_react',
+        { message: 18, emoji: '👍' },
+        {
+          reaction: {
+            emoji: '👍',
+            content:
+              'The revised intro is approved. Keep the launch limited to workspace owners and include the source link below the quotation.',
+          },
+        },
+      ),
+      text(
+        'Linh has approved the wording. Scout found the original quotation; I’ll retain its source link and keep the source document unchanged.',
+      ),
+    ]),
+    answer(`${id}-compaction`, [
+      text(
+        'Launch context retained: $300 cap, $250 planned spend, owners-first audience. Newsletter configuration corrected. Original research stays read-only. Audience and channel questions remain open; publishing is on hold.',
+      ),
+    ]),
+    user(`${id}-scheduled`, 'Prepare the Friday briefing.'),
+    answer(`${id}-briefing`, [
+      reasoning(
+        'I’ll bring the latest budget and release checks into one briefing, and keep the unanswered questions visible as pending decisions.',
+      ),
+      text(
+        '## Friday briefing\n\nThe copy and release checks are ready. Newsletter is **$120** and the total remains **$250**.\n\nPublishing is still on hold until the audience and channels are confirmed. I’ll include any new review notes in the next briefing.',
+      ),
+    ]),
+    user(`${id}-decision`, 'Read-only source access declined.'),
+    answer(`${id}-decision-note`, [
+      reasoning(
+        'The source access request was declined. I’ll omit the unverified quotation and use the research already shared in this workspace.',
+      ),
+      text(
+        'I’ll use only the research already shared with the workspace. I’ve left the unverified quotation out of the announcement.',
+      ),
+    ]),
+  ];
+}
+
+export function demoActivityInputs(agent: string): Record<string, InputItem[]> {
+  return {
+    [`${agent}-batch`]: [
+      {
+        id: 'user-reaction',
+        source_kind: 'user',
+        source_name: 'You',
+        input_type: 'reaction',
+        silent: true,
+        content: 'Reacted 🎉',
+        input_payload: {
+          actor: { kind: 'user', id: 'demo-owner' },
+          target: {
+            message_id: `${agent}-chat-2`,
+            kind: 'outgoing',
+            content: 'The budget is $250 of $300. Nothing has been published.',
+          },
+          previous_emoji: null,
+          emoji: '🎉',
+        },
+      },
+      {
+        id: 'linh-preview',
+        source_kind: 'user',
+        source_name: 'Linh',
+        content: 'Please use the revised intro…',
+        preview: true,
+        presented: false,
+      },
+      {
+        id: 'linh-message',
+        source_kind: 'user',
+        source_name: 'Linh',
+        content:
+          'The revised intro is approved. Keep the launch limited to workspace owners and include the source link below the quotation.',
+        preview: true,
+        reactions: [{ actor_kind: 'agent', actor_id: agent, emoji: '👍' }],
+      },
+      {
+        id: 'scout-message',
+        source_kind: 'agent',
+        source_name: 'Scout',
+        content:
+          'Verified the quotation in Research notes.md. The interview supports shared files and clear ownership. No source supports a productivity percentage.',
+        preview: true,
+      },
+    ],
+    [`${agent}-scheduled`]: [
+      {
+        source_kind: 'schedule',
+        schedule_title: 'Friday launch briefing',
+        scheduled_at: '2026-11-20T02:00:00Z',
+        content:
+          'Prepare the Friday briefing: summarize completed reviews, remaining decisions and the approved budget. Do not publish or send anything to external recipients.',
+      },
+    ],
+    [`${agent}-decision`]: [
+      {
+        source_kind: 'hitl',
+        request_title: 'Read your research documents',
+        request_type: 'approval',
+        content: 'Read-only access declined.',
+        decision: { status: 'denied' },
+        request_payload: { role: 'reader', storage_id: 'Personal storage' },
+      },
+    ],
+  };
+}
+
+export function letiMessages(id: string, recipient = 'root'): ThreadMessageLike[] {
+  return [
+    user(
+      `${id}-assignment`,
+      'Check the launch evidence and share the findings with the representative.',
+    ),
+    answer(`${id}-research`, [
+      reasoning(
+        'I’ll check the shared notes first, verify which claims have evidence, and keep source references with the findings.',
+      ),
+      call(
+        `${id}-search`,
+        'file_semantic_search',
+        { query: 'shared file ownership', paths: ['~'] },
+        {
+          items: [
+            {
+              title: 'Research notes.md',
+              fileId: 'research',
+              detail:
+                '“I lose time finding which file an agent used. A shared place with clear ownership would help.” — Interview P03',
+              meta: 'Shared files and ownership',
+            },
+            {
+              title: 'Launch plan.md',
+              fileId: 'launch-plan',
+              detail:
+                'The first release targets workspace owners. Broader availability is a separate decision.',
+              meta: 'Audience',
+            },
+          ],
+        },
+      ),
+      reasoning(
+        'The search found the relevant notes. I’ll read the original passage before summarizing it.',
+      ),
+      call(
+        `${id}-read`,
+        'file_read',
+        { path: '~/Research notes.md' },
+        { fileId: 'research', content: previewFiles[1].content, summary: 'markdown' },
+      ),
+      text(
+        'Shared files and clear ownership are supported by the notes. There is no measured productivity improvement; percentage claims should be omitted.',
+      ),
+    ]),
+    user(
+      `${id}-teammate`,
+      'Keep the announcement limited to workspace owners. The budget is $250 of the $300 cap.',
+    ),
+    answer(`${id}-draft`, [
+      reasoning(
+        'The audience and budget are clear. I can now send a sourced summary without waiting for publication approval.',
+      ),
+      call(
+        `${id}-write`,
+        'file_write',
+        { path: '~/Launch plan.md', content: previewFiles[0].content },
+        { fileId: 'launch-plan', content: previewFiles[0].content, summary: 'markdown' },
+      ),
+      call(
+        `${id}-send`,
+        'inbox_send',
+        {
+          to: recipient,
+          content:
+            'The launch evidence is checked. Use shared files and clear ownership; omit percentage claims. Budget stays at $250 and the audience is workspace owners.',
+        },
+        {
+          items: [
+            {
+              title: recipient,
+              detail:
+                'The launch evidence is checked. Use shared files and clear ownership; omit percentage claims.',
+            },
+          ],
+        },
+      ),
+      text(
+        'The source references are in the launch plan. I’ve sent the findings to the representative.',
+      ),
+    ]),
+    answer(`${id}-compaction`, [
+      text(
+        'Evidence review retained: shared files and clear ownership are supported. No measured productivity result. Owners-first audience; $250 budget. Findings sent to the representative.',
+      ),
+    ]),
+    user(`${id}-scheduled`, 'Review new research before the morning briefing.'),
+    answer(`${id}-follow-up`, [
+      reasoning(
+        'I’ll check for new evidence before changing the conclusions, then report only the changes.',
+      ),
+      text(
+        'The shared notes contain no additional interviews. The earlier findings still hold; no new claims were added.',
+      ),
+    ]),
+  ];
+}
+export function letiInputs(id: string, parent: string, peer = 'Milo'): Record<string, InputItem[]> {
+  return {
+    [`${id}-assignment`]: [
+      {
+        id: `${id}-input-1`,
+        source_kind: 'agent',
+        source_name: parent,
+        content: 'Check the launch evidence and share the findings with the representative.',
+      },
+    ],
+    [`${id}-teammate`]: [
+      {
+        id: `${id}-input-2`,
+        source_kind: 'agent',
+        source_name: peer,
+        content:
+          'Keep the announcement limited to workspace owners. The budget is $250 of the $300 cap.',
+      },
+    ],
+    [`${id}-scheduled`]: [
+      {
+        id: `${id}-input-3`,
+        source_kind: 'schedule',
+        schedule_title: 'Morning briefing',
+        content: 'Review new research before the morning briefing.',
+        scheduled_at: '2026-11-16T02:00:00Z',
+      },
+    ],
+  };
 }

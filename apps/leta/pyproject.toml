@@ -8,7 +8,7 @@ dependencies = [
   "langchain==1.5.0", "langchain-litellm==0.11.2", "langgraph-checkpoint-postgres==3.2.0",
   "langfuse==5.2.0", "ag-ui-protocol", "mirage-ai==0.0.8", "pydantic-monty",
   "opentelemetry-instrumentation-fastapi", "opentelemetry-instrumentation-psycopg",
-  "opentelemetry-instrumentation-redis",
+  "opentelemetry-instrumentation-redis", "regex>=2026.11.9",
 ]
 
 [build-system]

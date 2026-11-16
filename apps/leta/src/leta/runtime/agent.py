@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from contextlib import AsyncExitStack
 from datetime import datetime, timezone
@@ -42,6 +43,8 @@ from langgraph.types import Command
 from openlet_sdk.config import JSON, ReasoningEffort, secret
 from openlet_sdk.inference import InferenceSettings, response_cost
 from opentelemetry import metrics
+from psycopg import Error as DatabaseError
+from psycopg_pool import PoolTimeout
 from temporalio import activity
 from temporalio.client import WorkflowUpdateFailedError
 from temporalio.exceptions import ApplicationError
@@ -325,7 +328,7 @@ async def box_context(s: Services, agent: Row) -> str:
         ).fetchone()
         members = await (
             await conn.execute(
-                """SELECT a.id,a.name,a.description,EXISTS(SELECT 1 FROM box_edges e
+                """SELECT a.id,a.name,a.title,a.description,EXISTS(SELECT 1 FROM box_edges e
             WHERE e.box_id=a.box_id AND ((e.agent_low_id=%s AND e.agent_high_id=a.id)
             OR (e.agent_high_id=%s AND e.agent_low_id=a.id))) AS connected
             FROM agents a WHERE a.box_id=%s ORDER BY a.name,a.id""",
@@ -337,7 +340,7 @@ async def box_context(s: Services, agent: Row) -> str:
         f"Box: {box['name']}",
         f"Purpose: {box['description']}",
         f"Work directory: ~/.boxes/{box['name']}/",
-        f"You: {agent['name']}",
+        f"You: {agent['name']} ({agent.get('title', '')})",
         "Teammates:",
     ]
     for member in members:
@@ -354,11 +357,34 @@ async def box_context(s: Services, agent: Row) -> str:
             else "; contact through representative"
         )
         lines.append(
-            f"- {member['name']}{representative}: {member['description']}{recipient}"
+            f"- {member['name']} ({member['title']}){representative}: {member['description']}{recipient}"
         )
     if box["representative_agent_id"] == agent["id"]:
         lines.append("You are the representative. Root contact: root")
     return "\n".join(lines)
+
+
+def reasoning_text(message: AIMessage) -> str:
+    parts: list[str] = []
+    for block in message.content_blocks:
+        if block["type"] == "reasoning":
+            text = block.get("reasoning")
+            if isinstance(text, str):
+                parts.append(text)
+    if parts:
+        return "".join(parts)
+    # LiteLLM retains signed Anthropic blocks separately for replay; publish only their readable text.
+    blocks = cast(
+        object, message.additional_kwargs.get("thinking_blocks", message.content)
+    )
+    if isinstance(blocks, list):
+        for value in cast(list[object], blocks):
+            if isinstance(value, dict):
+                block = cast(dict[str, object], value)
+                text = block.get("thinking")
+                if block.get("type") == "thinking" and isinstance(text, str):
+                    parts.append(text)
+    return "".join(parts)
 
 
 async def project(s: Services, ctx: Context, messages: Sequence[BaseMessage]) -> None:
@@ -372,14 +398,24 @@ async def project(s: Services, ctx: Context, messages: Sequence[BaseMessage]) ->
                 if message.additional_kwargs.get("lc_source") == "summarization"
                 else "inbox_input"
             )
-            entries.append((message.id, kind, {"text": message.text}))
+            input_body: dict[str, JSON] = {"text": message.text}
+            metadata = message.additional_kwargs.get("openlet")
+            if isinstance(metadata, dict):
+                public_metadata = cast(dict[str, JSON], metadata)
+                if public_metadata.get("version") == 1:
+                    input_body["ui"] = public_metadata
+            entries.append((message.id, kind, input_body))
         elif isinstance(message, AIMessage):
-            if message.text:
+            reasoning = reasoning_text(message)
+            if message.text or reasoning:
                 entries.append(
                     (
                         message.id,
                         "assistant" if message.tool_calls else "final_note",
-                        {"text": message.text},
+                        {
+                            "text": message.text,
+                            **({"reasoning": reasoning} if reasoning else {}),
+                        },
                     )
                 )
             for call in message.tool_calls:
@@ -395,6 +431,12 @@ async def project(s: Services, ctx: Context, messages: Sequence[BaseMessage]) ->
                     )
                 )
         elif isinstance(message, ToolMessage):
+            artifact = (
+                cast(dict[str, JSON], cast(object, message.artifact))
+                if isinstance(cast(object, message.artifact), dict)
+                else {}
+            )
+            ui = artifact.get("ui")
             entries.append(
                 (
                     f"tool-result/{message.tool_call_id}",
@@ -407,9 +449,19 @@ async def project(s: Services, ctx: Context, messages: Sequence[BaseMessage]) ->
                         "text": message.text,
                         "status": message.status,
                         **(
-                            {"file": {"path": message.artifact, "kind": "image"}}
+                            {"ui": ui}
+                            if isinstance(ui, dict) and ui.get("version") == 1
+                            else {}
+                        ),
+                        **(
+                            {
+                                "file": {
+                                    "path": cast(str, cast(object, message.artifact)),
+                                    "kind": "image",
+                                }
+                            }
                             if message.name == "file_read"
-                            and isinstance(message.artifact, str)
+                            and isinstance(cast(object, message.artifact), str)
                             else {}
                         ),
                     },
@@ -448,6 +500,8 @@ class Live:
     def __init__(self, s: Services, ctx: Context) -> None:
         self.s, self.ctx = s, ctx
         self.text: str | None = None
+        self.reasoning: str | None = None
+        self.message: str | None = None
         self.calls: dict[int, str] = {}
         self.available = True
 
@@ -460,11 +514,19 @@ class Live:
             )
 
     async def chunk(self, message: AIMessageChunk) -> None:
-        if message.text:
+        id = str(history_id(self.ctx.id, message.id)) if message.id else self.message
+        if id and self.message != id:
+            await self.close()
+            self.message = id
+        reasoning = reasoning_text(message)
+        if reasoning and id:
+            if self.reasoning is None:
+                self.reasoning = id
+                await self.emit("REASONING_MESSAGE_START", messageId=id)
+            await self.emit("REASONING_MESSAGE_CONTENT", messageId=id, delta=reasoning)
+        if message.text and id:
             if self.text is None:
-                self.text = (
-                    str(history_id(self.ctx.id, message.id)) if message.id else None
-                )
+                self.text = id
                 await self.emit(
                     "TEXT_MESSAGE_START", messageId=self.text, role="assistant"
                 )
@@ -486,15 +548,32 @@ class Live:
                 )
 
     async def close(self) -> None:
+        if self.reasoning:
+            await self.emit("REASONING_MESSAGE_END", messageId=self.reasoning)
         if self.text:
             await self.emit("TEXT_MESSAGE_END", messageId=self.text)
         for id in self.calls.values():
             await self.emit("TOOL_CALL_END", toolCallId=id)
+        self.reasoning = self.text = None
+        self.calls.clear()
 
 
-async def heartbeat() -> None:
+async def heartbeat(s: Services, run: UUID) -> None:
+    last = 0.0
     while True:
         activity.heartbeat()
+        if monotonic() - last >= 5:
+            last = monotonic()
+            try:
+                async with asyncio.timeout(2), s.db.connection() as conn:
+                    await conn.execute(
+                        "UPDATE runs SET heartbeat_at=now() WHERE id=%s AND status='running'",
+                        (run,),
+                    )
+            except DatabaseError, PoolTimeout, TimeoutError:
+                logging.getLogger(__name__).warning(
+                    "runtime heartbeat summary unavailable", extra={"run_id": str(run)}
+                )
         await asyncio.sleep(2)
 
 
@@ -510,7 +589,7 @@ async def protected[T](work: Awaitable[T]) -> T:
 
 async def run(s: Services, lf: Langfuse, input: RunInput) -> RunResult:
     async with AsyncExitStack() as stack:
-        pulse = asyncio.create_task(heartbeat())
+        pulse = asyncio.create_task(heartbeat(s, input.run_id))
 
         async def stop_heartbeat() -> None:
             pulse.cancel()
@@ -546,7 +625,7 @@ async def run(s: Services, lf: Langfuse, input: RunInput) -> RunResult:
         stack.push_async_callback(ctx.filesystem.close)
         async with s.db.connection() as conn:
             await conn.execute(
-                "INSERT INTO runs(id,agent_id,status) VALUES(%s,%s,'running') ON CONFLICT(id) DO UPDATE SET status='running',finished_at=NULL,error_code=NULL",
+                "INSERT INTO runs(id,agent_id,status,heartbeat_at) VALUES(%s,%s,'running',now()) ON CONFLICT(id) DO UPDATE SET status='running',heartbeat_at=now(),finished_at=NULL,error_code=NULL",
                 (ctx.run_id, ctx.id),
             )
         config: RunnableConfig = {

@@ -1,5 +1,20 @@
-import { lazy, Suspense, useCallback, useState } from 'react';
-import { Check, ChevronDown, FileText, SlidersHorizontal, X, Circle } from 'lucide-react';
+import { useShellNavigate } from '@/lib/shell-navigation';
+import { toast } from 'sonner';
+import { lazy, Suspense, useCallback, useRef, useState } from 'react';
+import {
+  Check,
+  ChevronDown,
+  SlidersHorizontal,
+  Maximize2,
+  Minimize2,
+  X,
+  Circle,
+  Inbox,
+  HardDrive,
+} from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { SHAPES, COLORS } from '@/vendor/bloub/skins';
+import { agentAppearance } from '@/components/agent-appearance';
 import { AgentAvatar } from '@/components/agent-avatar';
 import { Button } from '@/components/ui/button';
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
@@ -18,8 +33,22 @@ import { Textarea } from '@/components/ui/textarea';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { cn } from '@/lib/utils';
 import type { StorageTextSession } from '@/components/storage/storage-context';
-import { previewFiles, useAgentPreview, type AgentProfile } from './agent-preview';
+import { useCreateAgent } from '@/lib/workspace-directory';
+import { ConversationStorage } from './conversation-storage';
+import { FileIcon } from '@/components/storage/file-icon';
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogCancel,
+  AlertDialogAction,
+} from '@/components/ui/alert-dialog';
+import { useAgentPreview, type AgentProfile } from './agent-preview';
 import { EditorTabs } from './editor-tabs';
+import { ActivityInbox } from './activity-inbox';
 import { ProviderLogo } from './provider-logo';
 import {
   Dialog,
@@ -165,17 +194,46 @@ export function AgentPanelHeader() {
     <div className="flex h-(--shell-header-height) min-w-0 items-center">
       <EditorTabs
         label="Agent side panel tabs"
-        selected={p.session.panelTab}
-        onSelect={(panelTab) => p.updateSession({ panelTab })}
+        selected={
+          p.activityMode
+            ? p.session.panelTab
+            : p.session.panelTab === 'inbox'
+              ? 'storage'
+              : p.session.panelTab
+        }
+        onSelect={(panelTab) => {
+          p.updateSession({ panelTab });
+          if (panelTab === 'storage')
+            void p.ensureConversation().catch((error) => toast.error(error.message));
+        }}
         items={[
+          { id: 'storage', label: 'Files', icon: <HardDrive /> },
+          ...(p.activityMode ? [{ id: 'inbox', label: 'Inbox', icon: <Inbox /> }] : []),
           ...p.session.files.flatMap((id) => {
-            const file = previewFiles.find((file) => file.id === id);
+            const file = p.fileNodes[id];
             return file
-              ? [{ id, label: file.name, icon: <FileText />, onClose: () => p.closeFile(id) }]
+              ? [
+                  {
+                    id,
+                    label: file.name,
+                    icon: <FileIcon node={file} />,
+                    onClose: () => p.closeFile(id),
+                  },
+                ]
               : [];
           }),
         ]}
       />
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        aria-label={p.panelExpanded ? 'Restore side panel' : 'Expand side panel'}
+        aria-pressed={p.panelExpanded}
+        className="hidden shrink-0 min-[722px]:inline-flex"
+        onClick={() => p.setPanelExpanded((expanded) => !expanded)}
+      >
+        {p.panelExpanded ? <Minimize2 /> : <Maximize2 />}
+      </Button>
       <Button
         variant="ghost"
         size="icon-sm"
@@ -201,9 +259,49 @@ export function AgentSettingsDialog() {
   );
 }
 
-function AgentSettingsForm() {
+export function AgentCreateDialog() {
   const p = useAgentPreview();
-  const [draft, setDraft] = useState(p.profile);
+  return (
+    <Dialog open={p.createOpen} onOpenChange={p.setCreateOpen}>
+      {p.createOpen && <AgentSettingsForm create />}
+    </Dialog>
+  );
+}
+
+function AgentSettingsForm({ create = false }: { create?: boolean }) {
+  const p = useAgentPreview();
+  const createAgent = useCreateAgent();
+  const navigate = useShellNavigate();
+  const creation = useRef<{ signature: string; id: string } | null>(null);
+  const [draft, setDraft] = useState<AgentProfile>(() =>
+    create
+      ? {
+          name: '',
+          title: 'Assistant',
+          description: '',
+          instructions: '',
+          model: 'Default model',
+          effort: '',
+          appearance: {
+            shape: SHAPES[crypto.getRandomValues(new Uint8Array(1))[0] % SHAPES.length].id,
+            color: COLORS.filter((c) => !['encre', 'creme', 'gris', 'brun'].includes(c.id))[
+              crypto.getRandomValues(new Uint8Array(1))[0] % 8
+            ].id,
+          },
+        }
+      : { ...p.profile, appearance: p.profile.appearance ?? agentAppearance(p.profile.name) },
+  );
+  const close = () => (create ? p.setCreateOpen(false) : p.updateSession({ settingsOpen: false }));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const catalog = useQuery({
+    queryKey: [...p.live.scope, 'models'],
+    enabled: p.live.enabled,
+    queryFn: () =>
+      p.live.api!<{ models: { model_id: string; reasoning_efforts: string[] }[] }>(
+        `/v1/workspaces/${p.workspace.id}/letas/models`,
+      ),
+  });
   const dirty = JSON.stringify(draft) !== JSON.stringify(p.profile);
   const updateDraft = (patch: Partial<AgentProfile>) =>
     setDraft((current) => ({ ...current, ...patch }));
@@ -215,23 +313,133 @@ function AgentSettingsForm() {
       }}
     >
       <DialogHeader className="px-5 pt-5 pb-4">
-        <DialogTitle>Agent settings</DialogTitle>
+        <DialogTitle>{create ? 'New agent' : 'Agent settings'}</DialogTitle>
         <DialogDescription>
-          Identity, model and instructions for {p.profile.name}.
+          {create
+            ? 'Choose a name, model and instructions.'
+            : `Identity, model and instructions for ${p.profile.name}.`}
         </DialogDescription>
       </DialogHeader>
       <form
-        aria-label="Agent settings"
-        onSubmit={(event) => {
+        aria-label={create ? 'New agent' : 'Agent settings'}
+        onSubmit={async (event) => {
           event.preventDefault();
           if (!draft.name.trim()) return;
-          p.updateProfile({ ...draft, name: draft.name.trim() });
-          p.updateSession({ settingsOpen: false });
+          setSaving(true);
+          setError('');
+          try {
+            if (create) {
+              const signature = JSON.stringify(draft);
+              if (creation.current?.signature !== signature)
+                creation.current = { signature, id: crypto.randomUUID() };
+              const id = await createAgent(p.workspace.id, {
+                request_id: creation.current.id,
+                name: draft.name.trim(),
+                title: draft.title,
+                ...(draft.appearance
+                  ? { appearance: { shape: draft.appearance.shape, color: draft.appearance.color } }
+                  : {}),
+                description: draft.description,
+                system_prompt: draft.instructions,
+                model_id: draft.model === 'Default model' ? null : draft.model,
+                reasoning_effort: draft.effort ? draft.effort.toLowerCase() : null,
+              });
+              if (!p.live.enabled) p.rememberProfile(id, draft);
+              close();
+              await navigate({ view: 'agents', agent: id, mainTab: 'agent' });
+            } else {
+              await p.saveProfile(draft);
+              close();
+            }
+          } catch (error) {
+            setError(error instanceof Error ? error.message : 'Could not save settings.');
+          } finally {
+            setSaving(false);
+          }
         }}
       >
+        {error && (
+          <p role="alert" className="px-5 pb-4 text-sm text-destructive">
+            {error}
+          </p>
+        )}
         <FieldGroup className="gap-5 px-5 pb-5">
           <div className="flex items-center gap-4">
-            <AgentAvatar name={p.fixture.name} className="size-14 shrink-0" />
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="size-16 shrink-0 p-1"
+                  aria-label="Choose agent avatar"
+                >
+                  <AgentAvatar
+                    name={draft.name || 'Agent'}
+                    appearance={draft.appearance}
+                    className="size-14"
+                  />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="start" aria-label="Agent avatar">
+                <Field>
+                  <FieldLabel>Shape</FieldLabel>
+                  <ToggleGroup
+                    type="single"
+                    value={draft.appearance?.shape}
+                    onValueChange={(shape) =>
+                      shape &&
+                      updateDraft({
+                        appearance: { ...agentAppearance(draft.name, draft.appearance), shape },
+                      })
+                    }
+                    className="grid w-full grid-cols-4"
+                  >
+                    {SHAPES.map(({ id }) => (
+                      <ToggleGroupItem
+                        key={id}
+                        value={id}
+                        aria-label={`Shape ${id}`}
+                        className="size-12"
+                      >
+                        <AgentAvatar
+                          name={draft.name || 'Agent'}
+                          appearance={{
+                            ...agentAppearance(draft.name, draft.appearance),
+                            shape: id,
+                          }}
+                          className="size-9"
+                        />
+                      </ToggleGroupItem>
+                    ))}
+                  </ToggleGroup>
+                </Field>
+                <Field>
+                  <FieldLabel>Color</FieldLabel>
+                  <ToggleGroup
+                    type="single"
+                    value={draft.appearance?.color}
+                    onValueChange={(color) =>
+                      color &&
+                      updateDraft({
+                        appearance: { ...agentAppearance(draft.name, draft.appearance), color },
+                      })
+                    }
+                    className="grid w-full grid-cols-6"
+                  >
+                    {COLORS.map(({ id, hex }) => (
+                      <ToggleGroupItem
+                        key={id}
+                        value={id}
+                        aria-label={`Color ${id}`}
+                        className="size-8"
+                      >
+                        <span className="size-5 rounded-full border" style={{ background: hex }} />
+                      </ToggleGroupItem>
+                    ))}
+                  </ToggleGroup>
+                </Field>
+              </PopoverContent>
+            </Popover>
             <Field className="min-w-0 flex-1">
               <FieldLabel htmlFor="agent-name">Name</FieldLabel>
               <Input
@@ -243,6 +451,15 @@ function AgentSettingsForm() {
               />
             </Field>
           </div>
+          <Field>
+            <FieldLabel htmlFor="agent-title">Title</FieldLabel>
+            <Input
+              id="agent-title"
+              maxLength={255}
+              value={draft.title}
+              onChange={(event) => updateDraft({ title: event.target.value })}
+            />
+          </Field>
           <Field>
             <FieldLabel htmlFor="agent-description">Description</FieldLabel>
             <Textarea
@@ -256,7 +473,53 @@ function AgentSettingsForm() {
           <Field>
             <FieldLabel>Model</FieldLabel>
             <div className="flex min-w-0 items-center rounded-md border px-1 py-0.5">
-              <AgentModelPicker compact value={draft} onChange={updateDraft} />
+              {p.live.enabled ? (
+                <div className="flex w-full flex-col gap-3">
+                  <Select
+                    value={draft.model}
+                    onValueChange={(model) => updateDraft({ model, effort: '' })}
+                  >
+                    <SelectTrigger aria-label="Agent model" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Default model">Default model</SelectItem>
+                      {catalog.data?.models.map((model) => (
+                        <SelectItem key={model.model_id} value={model.model_id}>
+                          {model.model_id}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select
+                    value={draft.effort || 'default'}
+                    onValueChange={(effort) =>
+                      updateDraft({ effort: effort === 'default' ? '' : effort })
+                    }
+                  >
+                    <SelectTrigger aria-label="Reasoning effort">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="default">Default effort</SelectItem>
+                      {catalog.data?.models
+                        .find((model) => model.model_id === draft.model)
+                        ?.reasoning_efforts.map((effort) => (
+                          <SelectItem key={effort} value={effort}>
+                            {effort}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                  {catalog.error && (
+                    <p role="alert" className="text-caption text-destructive">
+                      {catalog.error.message}
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <AgentModelPicker compact value={draft} onChange={updateDraft} />
+              )}
             </div>
           </Field>
           <Field>
@@ -271,18 +534,11 @@ function AgentSettingsForm() {
           </Field>
         </FieldGroup>
         <DialogFooter className="flex-row flex-wrap items-center justify-end border-t px-5 py-3">
-          <span className="mr-auto text-caption text-muted-foreground max-sm:w-full">
-            Saved in this preview only
-          </span>
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={() => p.updateSession({ settingsOpen: false })}
-          >
+          <Button type="button" variant="ghost" onClick={close}>
             Cancel
           </Button>
-          <Button type="submit" disabled={!dirty || !draft.name.trim()}>
-            Save changes
+          <Button type="submit" disabled={saving || (!create && !dirty) || !draft.name.trim()}>
+            {saving ? (create ? 'Creating…' : 'Saving…') : create ? 'Create agent' : 'Save changes'}
           </Button>
         </DialogFooter>
       </form>
@@ -312,7 +568,12 @@ function FilePreview({ id }: { id: string }) {
         node={p.fileNodes[id]}
         onClose={() => p.closeFile(id)}
         onDownload={() => void p.downloadFile(id)}
-        textAccess={{ writable: true, saveText: p.saveFile, getTextSession, setTextSession }}
+        textAccess={{
+          writable: !p.fileNodes[id].readonly,
+          saveText: p.saveFile,
+          getTextSession,
+          setTextSession,
+        }}
       />
     </Suspense>
   );
@@ -322,10 +583,52 @@ export function AgentPanel() {
   const p = useAgentPreview();
   return (
     <aside aria-label="Agent side panel" className="h-full min-h-0 bg-sidebar">
+      <div
+        hidden={
+          (p.session.panelTab === 'inbox' && !p.activityMode ? 'storage' : p.session.panelTab) !==
+          'storage'
+        }
+        className="h-full"
+      >
+        <ConversationStorage />
+      </div>
+      <AlertDialog
+        open={!!p.fileCloseRequest}
+        onOpenChange={(open) => !open && p.setFileCloseRequest(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Close without saving?</AlertDialogTitle>
+            <AlertDialogDescription>Your changes have not been saved.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep editing</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => p.closeFile(p.fileCloseRequest!, true)}
+            >
+              Discard changes
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      {p.activityMode && (
+        <div hidden={p.session.panelTab !== 'inbox'} className="h-full">
+          <ActivityInbox />
+        </div>
+      )}
       {p.session.files.map((id) => {
-        const file = previewFiles.find((file) => file.id === id);
+        const file = p.fileNodes[id];
         return file ? (
-          <div key={id} hidden={p.session.panelTab !== id} className="h-full">
+          <div
+            key={id}
+            hidden={
+              (p.session.panelTab === 'inbox' && !p.activityMode
+                ? 'storage'
+                : p.session.panelTab) !== id
+            }
+            className="h-full"
+          >
             <FilePreview id={id} />
           </div>
         ) : null;

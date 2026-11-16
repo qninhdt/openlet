@@ -4,6 +4,7 @@ export interface StorageRoot {
   id: string;
   name: string;
   agent?: string;
+  title?: string;
   write: boolean;
 }
 export interface StorageNode {
@@ -16,6 +17,10 @@ export interface StorageNode {
   size: number;
   updated: number;
   blob?: Blob;
+  version?: number;
+  readonly?: boolean;
+  trashId?: string;
+  read?: () => Promise<Blob>;
   url?: string;
   trashed?: boolean;
   originalParent?: string;
@@ -87,7 +92,7 @@ export function validateName(name: string): string {
     throw new Error('Use a name of 1–255 characters without slashes.');
   return value;
 }
-function uniqueName(name: string, nodes: StorageNode[], parent: string): string {
+export function uniqueName(name: string, nodes: StorageNode[], parent: string): string {
   const dot = name.lastIndexOf('.');
   const base = dot > 0 ? name.slice(0, dot) : name;
   const ext = dot > 0 ? name.slice(dot) : '';
@@ -314,7 +319,7 @@ function db(): Promise<IDBDatabase> {
     };
   }));
 }
-// shortcut: browser-local preview adapter; replace these two operations with LetFS after web auth is connected.
+// Browser-local data is used only when authentication is disabled.
 export async function loadStorage(
   workspace: string,
   roots: StorageRoot[],
@@ -337,7 +342,34 @@ export async function saveStorage(workspace: string, snapshot: StorageSnapshot):
       reject(transaction.error ?? new Error('Storage save was interrupted.'));
   });
 }
+export async function updateStorage(
+  workspace: string,
+  roots: StorageRoot[],
+  update: (snapshot: StorageSnapshot) => StorageSnapshot,
+): Promise<StorageSnapshot> {
+  const database = await db();
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction('workspaces', 'readwrite');
+    const store = transaction.objectStore('workspaces');
+    const request = store.get(workspace);
+    let next: StorageSnapshot;
+    request.onsuccess = () => {
+      try {
+        next = update(request.result ?? seedStorage(roots));
+        store.put(next, workspace);
+      } catch (error) {
+        transaction.abort();
+        reject(error);
+      }
+    };
+    transaction.oncomplete = () => resolve(next);
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () =>
+      reject(transaction.error ?? new Error('Storage save was interrupted.'));
+  });
+}
 export async function fileBlob(node: StorageNode): Promise<Blob> {
+  if (node.read) return node.read();
   if (node.blob) return node.blob;
   if (node.url) {
     const response = await fetch(node.url);

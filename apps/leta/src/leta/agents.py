@@ -14,9 +14,64 @@ class Input(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class Appearance(Input):
+    shape: Literal[
+        "cercle",
+        "galet",
+        "squircle",
+        "capsule",
+        "triangle",
+        "hexagone",
+        "nuage",
+        "goutte",
+    ]
+    color: Literal[
+        "rouge",
+        "orange",
+        "ambre",
+        "vert",
+        "turquoise",
+        "bleu",
+        "violet",
+        "rose",
+        "encre",
+        "creme",
+        "brun",
+        "gris",
+    ]
+
+
+def appearance(id: UUID) -> dict[str, str]:
+    # UUID-based selection survives lifecycle retries and does not depend on the name.
+    return {
+        "shape": (
+            "cercle",
+            "galet",
+            "squircle",
+            "capsule",
+            "triangle",
+            "hexagone",
+            "nuage",
+            "goutte",
+        )[id.bytes[0] % 8],
+        "color": (
+            "rouge",
+            "orange",
+            "ambre",
+            "vert",
+            "turquoise",
+            "bleu",
+            "violet",
+            "rose",
+        )[id.bytes[1] % 8],
+    }
+
+
 class CreateLeta(Input):
     request_id: UUID
     name: str = Field(min_length=1, max_length=255)
+    title: str = Field(default="", max_length=255)
+    appearance: Appearance | None = None
     description: str = Field(default="", max_length=4000)
     system_prompt: str = Field(default="", max_length=32000)
     model_id: str | None = None
@@ -25,6 +80,8 @@ class CreateLeta(Input):
 
 class ConfigureAgent(Input):
     name: str | None = Field(default=None, min_length=1, max_length=255)
+    title: str | None = Field(default=None, max_length=255)
+    appearance: Appearance | None = None
     description: str | None = Field(default=None, max_length=4000)
     system_prompt: str | None = Field(default=None, max_length=32000)
     model_id: str | None = None
@@ -34,9 +91,12 @@ class ConfigureAgent(Input):
     def required_values(self) -> "ConfigureAgent":
         if any(
             getattr(self, name) is None
-            for name in self.model_fields_set & {"name", "description", "system_prompt"}
+            for name in self.model_fields_set
+            & {"name", "title", "appearance", "description", "system_prompt"}
         ):
-            raise ValueError("name, description and system_prompt cannot be null")
+            raise ValueError(
+                "name, title, appearance, description and system_prompt cannot be null"
+            )
         if (
             "model_id" in self.model_fields_set
             and self.model_id is None
@@ -121,8 +181,8 @@ async def prepare(db: Pool, creation: RootCreation) -> dict[str, JSON]:
         )
         request = creation.request
         await conn.execute(
-            """INSERT INTO agents(id,leta_id,name,description,system_prompt,model_id,reasoning_effort)
-            VALUES(%s,%s,%s,%s,%s,%s,%s)""",
+            """INSERT INTO agents(id,leta_id,name,description,system_prompt,model_id,reasoning_effort,title,appearance)
+            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
             (
                 creation.leta_id,
                 creation.leta_id,
@@ -131,6 +191,12 @@ async def prepare(db: Pool, creation: RootCreation) -> dict[str, JSON]:
                 request.system_prompt,
                 request.model_id,
                 request.reasoning_effort,
+                request.title,
+                Jsonb(
+                    request.appearance.model_dump()
+                    if request.appearance
+                    else appearance(creation.leta_id)
+                ),
             ),
         )
         result: dict[str, JSON] = {"id": str(creation.leta_id), "state": "provisioning"}

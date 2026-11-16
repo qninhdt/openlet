@@ -4,7 +4,7 @@ from uuid import uuid4
 
 import pytest
 from leta.events import event, fold
-from leta.runtime.agent import protected
+from leta.runtime.agent import Live, project, protected, reasoning_text
 from leta.schedules import Timing, native_spec, normalize
 
 
@@ -42,6 +42,94 @@ def test_stream_folding_preserves_agent_scope_and_terminal_events() -> None:
     assert result[0][1]["delta"] == "first second"
     assert result[1][1]["metadata"] != result[0][1]["metadata"]
     assert result[2][1]["type"] == "TEXT_MESSAGE_END"
+
+
+async def test_reasoning_projection_and_stream_preserve_only_readable_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+    from typing import cast
+
+    from langchain_core.messages import AIMessage, AIMessageChunk
+    from leta.config import Services
+    from leta.runtime import agent as runtime
+    from leta.runtime.agent import Context
+
+    assert (
+        reasoning_text(
+            AIMessage(content="", additional_kwargs={"reasoning_content": "Summary"})
+        )
+        == "Summary"
+    )
+    assert (
+        reasoning_text(
+            AIMessage(content=[{"type": "reasoning", "reasoning": "Summary"}])
+        )
+        == "Summary"
+    )
+    signed = AIMessage(
+        content="",
+        additional_kwargs={
+            "thinking_blocks": [
+                {
+                    "type": "thinking",
+                    "thinking": "Readable summary",
+                    "signature": "opaque-signature",
+                },
+                {"type": "redacted_thinking", "data": "opaque-secret"},
+            ]
+        },
+    )
+    assert reasoning_text(signed) == "Readable summary"
+    root, run = uuid4(), uuid4()
+    ctx = cast(Context, SimpleNamespace(root=root, id=root, run_id=run))
+    services = cast(Services, SimpleNamespace(db=None, redis=None))
+    streamed: list[dict[str, object]] = []
+    projected: list[tuple[str, str, object]] = []
+
+    async def publish(*args: object) -> bool:
+        streamed.append(cast(dict[str, object], args[2]))
+        return True
+
+    async def record(*args: object) -> list[object]:
+        projected.extend(cast(list[tuple[str, str, object]], args[3]))
+        return []
+
+    monkeypatch.setattr(runtime.events, "publish", publish)
+    monkeypatch.setattr(runtime, "record_batch", record)
+    signed.id = "thinking-only"
+    await project(services, ctx, [signed])
+    assert projected == [
+        ("thinking-only", "final_note", {"text": "", "reasoning": "Readable summary"})
+    ]
+    live = Live(services, ctx)
+    await live.chunk(
+        AIMessageChunk(
+            id="first", content="", additional_kwargs={"reasoning_content": "Plan"}
+        )
+    )
+    await live.chunk(AIMessageChunk(id="first", content="Result"))
+    await live.chunk(
+        AIMessageChunk(
+            id="second",
+            content="",
+            additional_kwargs={"reasoning_content": "Next plan"},
+        )
+    )
+    await live.close()
+    assert [e["type"] for e in streamed] == [
+        "REASONING_MESSAGE_START",
+        "REASONING_MESSAGE_CONTENT",
+        "TEXT_MESSAGE_START",
+        "TEXT_MESSAGE_CONTENT",
+        "REASONING_MESSAGE_END",
+        "TEXT_MESSAGE_END",
+        "REASONING_MESSAGE_START",
+        "REASONING_MESSAGE_CONTENT",
+        "REASONING_MESSAGE_END",
+    ]
+    assert streamed[0]["messageId"] == streamed[2]["messageId"]
+    assert streamed[0]["messageId"] != streamed[6]["messageId"]
 
 
 def test_relative_schedule_uses_workflow_time_and_native_spec() -> None:

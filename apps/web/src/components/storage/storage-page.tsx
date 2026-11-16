@@ -15,6 +15,7 @@ import {
   Download,
   File,
   Folder,
+  House,
   FolderInput,
   Grid2X2,
   Info,
@@ -29,6 +30,17 @@ import {
   X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { EditorTabs } from '@/components/agents/editor-tabs';
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogCancel,
+  AlertDialogAction,
+} from '@/components/ui/alert-dialog';
 import { StorageRootIcon } from './storage-root-icon';
 import { FileIcon } from './file-icon';
 import { Button } from '@/components/ui/button';
@@ -66,7 +78,7 @@ import {
   type StorageNode,
   type StorageView,
 } from './storage-context';
-import { storageDragMime, useStorageDrop } from './storage-drag';
+import { useStorageDrop, useStoragePointerDrag } from './storage-drag';
 import { StorageDialogs } from './storage-dialogs';
 const StorageViewer = lazy(() =>
   import('./storage-viewer').then((module) => ({ default: module.StorageViewer })),
@@ -103,7 +115,7 @@ function Crumb({
       }}
     >
       {icon}
-      <span className="truncate">{name}</span>
+      <span className={icon ? 'sr-only' : 'truncate'}>{name}</span>
     </Button>
   );
 }
@@ -126,10 +138,10 @@ export function StorageIdentity() {
       : b.path;
   const root = (
     <Crumb
-      name={b.storage.name}
+      name="Storage root"
       storage={b.storage.id}
       folder=""
-      icon={<StorageRootIcon root={b.storage} />}
+      icon={<House className="size-4" />}
       current={!segments.length}
     />
   );
@@ -145,6 +157,28 @@ export function StorageIdentity() {
           {root}
         </h1>
       )}
+      {segments.length > 1 && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="xs"
+              aria-label="Parent folders"
+              className="hidden max-[721px]:inline-flex"
+            >
+              …
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent>
+            {segments.slice(0, -1).map((node) => (
+              <DropdownMenuItem key={node.id} onSelect={() => b.go(node.storage, node.id)}>
+                <Folder />
+                {node.name}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
       {segments.map((node, index) => {
         const current = index === segments.length - 1;
         const crumb = (
@@ -152,7 +186,10 @@ export function StorageIdentity() {
         );
         return (
           <span
-            className="storage-path-segment inline-flex shrink-0 items-center gap-0.5"
+            className={cn(
+              'storage-path-segment inline-flex shrink-0 items-center gap-0.5',
+              !current && 'max-[721px]:hidden',
+            )}
             key={node.id}
           >
             <PathSeparator />
@@ -167,6 +204,63 @@ export function StorageIdentity() {
         );
       })}
     </nav>
+  );
+}
+export function StorageTabs() {
+  const b = useStorageBrowser();
+  return (
+    <>
+      <EditorTabs
+        label="Storage tabs"
+        selected={b.file?.id ?? 'browser'}
+        onSelect={(id) =>
+          id === 'browser'
+            ? b.go(b.storage.id, b.trash ? 'trash' : b.folderId)
+            : b.open(b.openFiles.find((node) => node.id === id)!)
+        }
+        items={[
+          {
+            id: 'browser',
+            label: b.storage.name,
+            icon: <StorageRootIcon root={b.storage} />,
+            title: (
+              <h1 className="truncate font-normal">
+                {b.storage.name}
+                {b.storage.title && (
+                  <span className="text-muted-foreground"> · {b.storage.title}</span>
+                )}
+              </h1>
+            ),
+          },
+          ...b.openFiles.map((node) => ({
+            id: node.id,
+            label: node.name,
+            icon: <FileIcon node={node} />,
+            onClose: () => b.closeFile(node.id),
+          })),
+        ]}
+      />
+      <AlertDialog
+        open={!!b.closeRequest}
+        onOpenChange={(open) => !open && b.setCloseRequest(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Close without saving?</AlertDialogTitle>
+            <AlertDialogDescription>Your changes have not been saved.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep editing</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => b.closeFile(b.closeRequest!, true)}
+            >
+              Discard changes
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }
 export function StorageHeaderTools() {
@@ -292,33 +386,15 @@ function NodeCard({ node }: { node: StorageNode }) {
         <article
           {...(node.kind === 'folder' ? drop : {})}
           className={cn(
-            'storage-item relative min-w-0 break-inside-avoid rounded-xl border border-transparent bg-muted hover:border-border hover:bg-accent data-selected:border-ring data-selected:bg-accent data-drop:bg-accent data-drop:outline-2 data-drop:-outline-offset-2 data-drop:outline-ring',
+            'storage-item relative min-w-0 break-inside-avoid rounded-xl border border-transparent bg-muted hover:border-border hover:bg-accent data-selected:border-ring data-selected:bg-accent data-dragging:opacity-50 data-drop:bg-accent data-drop:outline-2 data-drop:-outline-offset-2 data-drop:outline-ring',
             b.view === 'list' && 'rounded-md bg-transparent',
             b.view === 'mosaic' && node.kind === 'file' && 'mb-4.5',
           )}
           data-node={node.id}
           data-kind={node.kind}
           data-selected={selected || undefined}
-          draggable={!b.trash}
-          onDragStart={(event) => {
-            const ids = selected ? [...b.selected] : [node.id];
-            b.drag.current = ids;
-            b.setDragging(ids.length);
-            event.dataTransfer.setData(storageDragMime, JSON.stringify(ids));
-            event.dataTransfer.effectAllowed = 'move';
-            const ghost = document.createElement('div');
-            ghost.className =
-              'storage-drag-ghost fixed -top-25 rounded-md border border-ring bg-popover px-3.5 py-2 text-foreground';
-            ghost.textContent = `${ids.length} item${ids.length === 1 ? '' : 's'}`;
-            document.body.append(ghost);
-            event.dataTransfer.setDragImage(ghost, 10, 10);
-            setTimeout(() => ghost.remove(), 0);
-          }}
-          onDragEnd={() => {
-            b.setDragging(0);
-            b.setDropTarget('');
-            b.drag.current = [];
-          }}
+          draggable={false}
+          onDragStart={(event) => event.preventDefault()}
         >
           <button
             className={cn(
@@ -527,13 +603,13 @@ function useMarquee() {
   }
   return { rect, start };
 }
-export function StoragePage() {
+export function StoragePage({ embedded = false }: { embedded?: boolean } = {}) {
   const b = useStorageBrowser();
   const fileInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
   const drop = useStorageDrop(b.storage.id, b.parent);
   const { rect, start } = useMarquee();
-  const [retryFiles, setRetryFiles] = useState<File[]>([]);
+  const dragStart = useStoragePointerDrag();
   const content = useRef<HTMLDivElement>(null);
   useEffect(() => {
     function key(event: KeyboardEvent) {
@@ -541,13 +617,13 @@ export function StoragePage() {
         (event.target as HTMLElement).closest(
           'input,textarea,[contenteditable=true],[role=dialog],[role=menu]',
         ) ||
-        b.file
+        b.file ||
+        (embedded && !content.current?.contains(event.target as Node)) ||
+        (!embedded && !!document.querySelector('[data-embedded-storage]:focus-within'))
       )
         return;
       if (event.key === 'Escape') {
         b.clearSelection();
-        b.setDragging(0);
-        b.drag.current = [];
       }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
         event.preventDefault();
@@ -574,7 +650,6 @@ export function StoragePage() {
   const create = () =>
     b.setNameRequest({ kind: 'create', storage: b.storage.id, parent: b.parent });
   const upload = (files: File[]) => {
-    setRetryFiles(files);
     void b.upload(files.map((file) => ({ file, path: file.webkitRelativePath || file.name })));
   };
   const folders = b.visible.filter((node) => node.kind === 'folder');
@@ -598,13 +673,30 @@ export function StoragePage() {
       </ContextMenuItem>
     </>
   );
+  if (b.unavailable)
+    return (
+      <p role="alert" className="p-6 text-sm">
+        This storage or file is unavailable.
+      </p>
+    );
   return (
-    <div className="storage-page @container/storage relative h-full min-w-0 bg-sidebar">
+    <div
+      className="storage-page @container/storage relative flex h-full min-w-0 flex-col bg-sidebar"
+      data-embedded-storage={embedded || undefined}
+      onPointerDownCapture={dragStart}
+    >
+      <div className="flex min-h-11 items-center gap-2 border-b px-3">
+        <StorageIdentity />
+        {!b.file && (
+          <div className="ml-auto flex shrink-0 items-center gap-1">
+            <StorageHeaderTools />
+          </div>
+        )}
+      </div>
       <div
-        className="storage-browser flex h-full min-w-0 flex-col"
+        className="storage-browser flex min-h-0 flex-1 min-w-0 flex-col"
         ref={content}
-        inert={b.file ? true : undefined}
-        aria-hidden={b.file ? true : undefined}
+        hidden={!!b.file}
       >
         <div className="storage-toolbar flex shrink-0 items-center gap-2 px-5 py-3 @max-[560px]/storage:flex-wrap @max-[560px]/storage:gap-1.5 @max-[560px]/storage:px-3">
           {!b.trash && (
@@ -658,7 +750,7 @@ export function StoragePage() {
             <SelectTrigger
               size="sm"
               aria-label="File type"
-              className="storage-filter w-29 max-[1001px]:hidden"
+              className="storage-filter w-29 @max-[700px]/storage:hidden"
             >
               <SelectValue />
             </SelectTrigger>
@@ -766,11 +858,6 @@ export function StoragePage() {
                         ? 'Deleted items will appear here.'
                         : 'Drop files here or upload something to get started.'}
                   </p>
-                  {retryFiles.length > 0 && (
-                    <Button variant="ghost" onClick={() => upload(retryFiles)}>
-                      Upload again
-                    </Button>
-                  )}
                 </div>
               ) : (
                 <>
@@ -824,11 +911,6 @@ export function StoragePage() {
                   className="storage-marquee pointer-events-none absolute border border-ring bg-ring/16"
                   style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}
                 />
-              )}
-              {b.dragging > 0 && (
-                <div className="storage-drop-hint pointer-events-none sticky bottom-0 mx-auto w-fit rounded-md border bg-popover px-3 py-2 text-caption">
-                  Drop into a folder to move {b.dragging} item{b.dragging === 1 ? '' : 's'}
-                </div>
               )}
             </div>
           </ContextMenuTrigger>
@@ -917,22 +999,19 @@ export function StoragePage() {
         )}
       </div>
       <StorageDialogs />
-      {b.file && (
-        <Suspense
-          fallback={
-            <div className="storage-viewer absolute inset-0 z-10 flex flex-col bg-sidebar">
-              <p
-                className="storage-empty flex h-full min-h-60 flex-1 flex-col items-center justify-center p-8 text-center text-muted-foreground"
-                role="status"
-              >
+      {b.openFiles.map((node) => (
+        <div key={node.id} className="min-h-0 flex-1" hidden={b.file?.id !== node.id}>
+          <Suspense
+            fallback={
+              <p role="status" className="p-4 text-sm text-muted-foreground">
                 Loading preview…
               </p>
-            </div>
-          }
-        >
-          <StorageViewer node={b.file} />
-        </Suspense>
-      )}
+            }
+          >
+            <StorageViewer node={node} />
+          </Suspense>
+        </div>
+      ))}
     </div>
   );
 }

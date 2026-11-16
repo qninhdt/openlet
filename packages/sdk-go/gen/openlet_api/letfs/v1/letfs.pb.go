@@ -315,6 +315,7 @@ type StorageOwnership struct {
 	//	*StorageOwnership_UserId
 	//	*StorageOwnership_AgentId
 	//	*StorageOwnership_WorkspaceId
+	//	*StorageOwnership_ConversationId
 	Owner         isStorageOwnership_Owner `protobuf_oneof:"owner"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -384,6 +385,15 @@ func (x *StorageOwnership) GetWorkspaceId() string {
 	return ""
 }
 
+func (x *StorageOwnership) GetConversationId() string {
+	if x != nil {
+		if x, ok := x.Owner.(*StorageOwnership_ConversationId); ok {
+			return x.ConversationId
+		}
+	}
+	return ""
+}
+
 type isStorageOwnership_Owner interface {
 	isStorageOwnership_Owner()
 }
@@ -400,11 +410,17 @@ type StorageOwnership_WorkspaceId struct {
 	WorkspaceId string `protobuf:"bytes,3,opt,name=workspace_id,json=workspaceId,proto3,oneof"`
 }
 
+type StorageOwnership_ConversationId struct {
+	ConversationId string `protobuf:"bytes,4,opt,name=conversation_id,json=conversationId,proto3,oneof"`
+}
+
 func (*StorageOwnership_UserId) isStorageOwnership_Owner() {}
 
 func (*StorageOwnership_AgentId) isStorageOwnership_Owner() {}
 
 func (*StorageOwnership_WorkspaceId) isStorageOwnership_Owner() {}
+
+func (*StorageOwnership_ConversationId) isStorageOwnership_Owner() {}
 
 type StorageCapabilities struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -5344,11 +5360,12 @@ const file_openlet_api_letfs_v1_letfs_proto_rawDesc = "" +
 	"\bActorRef\x12#\n" +
 	"\auser_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01H\x00R\x06userId\x12%\n" +
 	"\bagent_id\x18\x02 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01H\x00R\aagentIdB\x0e\n" +
-	"\x05actor\x12\x05\xbaH\x02\b\x01\"x\n" +
+	"\x05actor\x12\x05\xbaH\x02\b\x01\"\xa3\x01\n" +
 	"\x10StorageOwnership\x12\x19\n" +
 	"\auser_id\x18\x01 \x01(\tH\x00R\x06userId\x12\x1b\n" +
 	"\bagent_id\x18\x02 \x01(\tH\x00R\aagentId\x12#\n" +
-	"\fworkspace_id\x18\x03 \x01(\tH\x00R\vworkspaceIdB\a\n" +
+	"\fworkspace_id\x18\x03 \x01(\tH\x00R\vworkspaceId\x12)\n" +
+	"\x0fconversation_id\x18\x04 \x01(\tH\x00R\x0econversationIdB\a\n" +
 	"\x05owner\"d\n" +
 	"\x13StorageCapabilities\x12\x12\n" +
 	"\x04read\x18\x01 \x01(\bR\x04read\x12\x14\n" +
@@ -6118,6 +6135,7 @@ func file_openlet_api_letfs_v1_letfs_proto_init() {
 		(*StorageOwnership_UserId)(nil),
 		(*StorageOwnership_AgentId)(nil),
 		(*StorageOwnership_WorkspaceId)(nil),
+		(*StorageOwnership_ConversationId)(nil),
 	}
 	file_openlet_api_letfs_v1_letfs_proto_msgTypes[7].OneofWrappers = []any{
 		(*NodeLocator_NodeId)(nil),

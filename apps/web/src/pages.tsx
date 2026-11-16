@@ -1,8 +1,9 @@
 import { Link, Outlet } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
 
-import { AppShell } from '@/components/app-shell';
 import { Button } from '@/components/ui/button';
+import { BackendProvider } from '@/lib/backend';
+import { WorkspaceDirectory } from '@/lib/workspace-directory';
 
 export function RootLayout() {
   return (
@@ -69,7 +70,13 @@ export function LoginPage() {
 }
 
 export function WorkspacePage() {
-  return <AppShell />;
+  return (
+    <BackendProvider>
+      <WorkspaceDirectory>
+        <Outlet />
+      </WorkspaceDirectory>
+    </BackendProvider>
+  );
 }
 
 export function NotFoundPage() {

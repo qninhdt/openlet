@@ -3,14 +3,16 @@ from uuid import UUID
 
 from openlet_sdk.config import JSON
 from psycopg import sql
+from psycopg.types.json import Jsonb
 from pydantic import Field, model_validator
 
-from .agents import Input, gate, json_row, stable
+from .agents import Input, appearance, gate, json_row, stable
 from .db import Pool, Row, receipt, save_receipt
 
 
 class LetiDefinition(Input):
     name: str = Field(min_length=1, max_length=255)
+    title: str = Field(default="", max_length=255)
     description: str = Field(default="", max_length=4000)
     system_prompt: str = Field(min_length=1, max_length=32000)
 
@@ -86,14 +88,16 @@ async def prepare(db: Pool, creation: BoxCreation, home: UUID) -> dict[str, JSON
                 item.name,
                 item.description,
                 item.system_prompt,
+                item.title,
+                Jsonb(appearance(ids[item.name])),
             )
             for item in creation.request.letis
         ]
         await conn.execute(
             sql.SQL(
-                "INSERT INTO agents(id,leta_id,box_id,name,description,system_prompt) VALUES {}"
+                "INSERT INTO agents(id,leta_id,box_id,name,description,system_prompt,title,appearance) VALUES {}"
             ).format(
-                sql.SQL(",").join(sql.SQL("(%s,%s,%s,%s,%s,%s)") for _ in members)
+                sql.SQL(",").join(sql.SQL("(%s,%s,%s,%s,%s,%s,%s,%s)") for _ in members)
             ),
             tuple(value for member in members for value in member),
         )
@@ -151,7 +155,7 @@ async def get(
             raise LookupError("box not found")
         members = await (
             await conn.execute(
-                "SELECT id,name,description,model_id,reasoning_effort"
+                "SELECT id,name,title,appearance,description,model_id,reasoning_effort"
                 + (",system_prompt" if prompts else "")
                 + " FROM agents WHERE box_id=%s ORDER BY id",
                 (box["id"],),
