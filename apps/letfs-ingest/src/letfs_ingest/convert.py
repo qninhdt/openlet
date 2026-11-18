@@ -4,6 +4,7 @@ from openlet_sdk.config import Config
 
 if TYPE_CHECKING:
     from docling.document_converter import DocumentConverter
+    from docling_core.types.doc.document import DoclingDocument
 import argparse
 import logging
 import os
@@ -14,9 +15,12 @@ from zipfile import BadZipFile, ZipFile
 
 from openlet_sdk.config import load
 
+PDF = "application/pdf"
+DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+REMOTE_MEDIA = {PDF, DOCX}
 MEDIA_SUFFIXES = {
-    "application/pdf": ".pdf",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    PDF: ".pdf",
+    DOCX: ".docx",
     "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
 }
@@ -30,7 +34,7 @@ def preflight(source: Path, media: str, config: Config) -> None:
     limits = config["services"]["letfs_ingest"]["cpu"]["limits"]
     if source.stat().st_size > config["services"]["letfs"]["max_blob_bytes"]:
         raise InvalidDocument("input exceeds blob limit")
-    if media == "application/pdf":
+    if media == PDF:
         import pypdfium2  # pyright: ignore[reportMissingTypeStubs]  # Upstream package does not publish type stubs.
 
         try:
@@ -75,74 +79,58 @@ def preflight(source: Path, media: str, config: Config) -> None:
                 workbook.close()
 
 
-def converter(config: Config) -> DocumentConverter:
-    from docling.datamodel.accelerator_options import AcceleratorOptions
+def converter() -> DocumentConverter:
     from docling.datamodel.base_models import InputFormat
-    from docling.datamodel.pipeline_options import (
-        ConvertPipelineOptions,
-        HeadingHierarchyOptions,
-        PdfPipelineOptions,
-        TesseractCliOcrOptions,
-    )
-    from docling.document_converter import (
-        DocumentConverter,
-        ExcelFormatOption,
-        PdfFormatOption,
-        PowerpointFormatOption,
-        WordFormatOption,
-    )
+    from docling.document_converter import DocumentConverter, PowerpointFormatOption
 
-    from .ocr import PdfPipeline
-    from .office import Powerpoint, Word
+    from .office import Powerpoint
 
-    settings = config["services"]["letfs_ingest"]["cpu"]
-    os.environ["OMP_THREAD_LIMIT"] = str(settings["threads"])
-    options = PdfPipelineOptions(
-        artifacts_path=settings["docling_models_path"],
-        accelerator_options=AcceleratorOptions(
-            device="cpu", num_threads=settings["threads"]
-        ),
-        do_ocr=True,
-        ocr_options=TesseractCliOcrOptions(
-            lang=["eng", "vie"], replace_broken_text_layer=True
-        ),
-        heading_hierarchy_options=HeadingHierarchyOptions(enabled=True),
-        generate_page_images=True,
-        generate_picture_images=True,
-        do_picture_classification=True,
-        ocr_batch_size=1,
-        layout_batch_size=1,
-        table_batch_size=1,
-        queue_max_size=2,
-        document_timeout=config["services"]["letfs"]["processing"][
-            "parse_timeout_seconds"
-        ],
-    )
-    office_options = ConvertPipelineOptions(
-        artifacts_path=options.artifacts_path,
-        accelerator_options=options.accelerator_options,
-        do_picture_classification=True,
-    )
     return DocumentConverter(
-        allowed_formats=[
-            InputFormat.PDF,
-            InputFormat.DOCX,
-            InputFormat.PPTX,
-            InputFormat.XLSX,
-        ],
+        allowed_formats=[InputFormat.PPTX, InputFormat.XLSX],
         format_options={
-            InputFormat.PDF: PdfFormatOption(
-                pipeline_cls=PdfPipeline, pipeline_options=options
-            ),
-            InputFormat.DOCX: WordFormatOption(
-                backend=Word, pipeline_options=office_options
-            ),
-            InputFormat.PPTX: PowerpointFormatOption(
-                backend=Powerpoint, pipeline_options=office_options
-            ),
-            InputFormat.XLSX: ExcelFormatOption(pipeline_options=office_options),
+            InputFormat.PPTX: PowerpointFormatOption(backend=Powerpoint),
         },
     )
+
+
+def spreadsheet_details(source: Path, document: "DoclingDocument") -> None:
+    from contextlib import closing
+
+    from docling_core.types.doc.labels import DocItemLabel, GroupLabel
+    from openpyxl import load_workbook
+    from openpyxl.cell.read_only import ReadOnlyCell
+
+    with (
+        closing(load_workbook(source, read_only=True, keep_links=False)) as formulas,
+        closing(
+            load_workbook(source, read_only=True, keep_links=False, data_only=True)
+        ) as values,
+    ):
+        sheets = {sheet.title: sheet for sheet in formulas.worksheets}
+        cached = {sheet.title: sheet for sheet in values.worksheets}
+        for group in document.groups:
+            if group.label != GroupLabel.SHEET or group.name not in sheets:
+                continue
+            sheet = sheets[group.name]
+            if sheet.sheet_state != "visible":
+                continue
+            document.add_heading(group.name, level=2, parent=group)
+            group.children.insert(0, group.children.pop())
+            for row, value_row in zip(
+                sheet.rows, cached[group.name].values, strict=True
+            ):
+                for cell, value in zip(row, value_row, strict=True):
+                    if not isinstance(cell, ReadOnlyCell) or cell.data_type != "f":
+                        continue
+                    formula = (
+                        cell.value
+                        if isinstance(cell.value, str)
+                        else getattr(cell.value, "text", None)
+                    )
+                    text = f"{cell.coordinate}: {formula or '[formula]'}"
+                    if value is not None:
+                        text += f" (cached value: {value})"
+                    document.add_text(DocItemLabel.PARAGRAPH, text, parent=group)
 
 
 def convert(
@@ -154,16 +142,18 @@ def convert(
     source_name: str | None = None,
 ) -> None:
     from docling.datamodel.base_models import ConversionStatus
+    from docling_core.types.doc.base import ImageRefMode
     from PIL import Image
 
-    from .export import document, spreadsheets
+    from .layout import write_markdown
+    from .tables import externalize_tables
 
     settings = config["services"]["letfs_ingest"]["cpu"]
     limits = settings["limits"]
     preflight(source, media, config)
     Image.MAX_IMAGE_PIXELS = limits["max_page_pixels"]
     warnings.simplefilter("error", Image.DecompressionBombWarning)
-    result = converter(config).convert(
+    result = converter().convert(
         source,
         raises_on_error=False,
         max_num_pages=limits["max_pages"],
@@ -171,27 +161,31 @@ def convert(
     )
     if result.status != ConversionStatus.SUCCESS:
         raise InvalidDocument("document conversion incomplete")
-    if source_name:
-        result.document.name = Path(source_name).stem
+    spreadsheet = media.endswith("spreadsheetml.sheet")
+    if spreadsheet:
+        spreadsheet_details(source, result.document)
+    readme = output / "README.md"
+    result.document.save_as_markdown(
+        readme,
+        artifacts_dir=Path("."),
+        image_mode=ImageRefMode.REFERENCED,
+        traverse_pictures=True,
+        include_picture_classification=False,
+    )
+    body = readme.read_text()
+    if source_name and spreadsheet:
+        body = f"# {' '.join(Path(source_name).stem.split())}\n\n{body}"
+    max_text = config["services"]["letfs"]["max_text_bytes"]
     try:
-        if media.endswith("spreadsheetml.sheet"):
-            spreadsheets(
-                result.document,
-                source,
-                output,
-                config["services"]["letfs"]["max_text_bytes"],
-                split_tokens=settings["split_tokens"],
-            )
-        else:
-            document(
-                result.document,
-                output,
-                settings["split_tokens"],
-                max_text_bytes=config["services"]["letfs"]["max_text_bytes"],
-                presentation=media.endswith("presentationml.presentation"),
-            )
+        body = externalize_tables(body, output, settings["split_tokens"], max_text)
+        write_markdown(body, output, settings["split_tokens"], max_text)
     except ValueError as error:
         raise InvalidDocument(str(error)) from error
+    validate_output(output, config)
+
+
+def validate_output(output: Path, config: Config) -> None:
+    limits = config["services"]["letfs_ingest"]["cpu"]["limits"]
     entries = list(output.rglob("*"))
     texts = [
         path for path in entries if path.suffix in {".md", ".csv", ".json", ".txt"}
@@ -221,7 +215,6 @@ if __name__ == "__main__":
     parser.add_argument("media_type")
     parser.add_argument("--source-name")
     args = parser.parse_args()
-    os.environ["HF_HUB_OFFLINE"] = "1"
     logging.basicConfig(level=logging.ERROR)
     try:
         convert(

@@ -65,7 +65,6 @@ async def download(http: httpx.AsyncClient, url: str, target: Path, limit: int) 
                         "source exceeds blob limit", non_retryable=True
                     )
                 stream.write(chunk)
-                activity.heartbeat()
 
 
 async def publish(
@@ -144,7 +143,6 @@ async def publish(
             artifacts.append(
                 internal.Artifact(path=upload.path, upload_id=upload.upload_id)
             )
-            activity.heartbeat()
     await stub.CommitParse(
         internal.CommitParseRequest(**identity, artifacts=artifacts), timeout=60
     )

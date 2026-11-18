@@ -345,7 +345,9 @@ def configure(output: Path, test: bool = False) -> None:
             dep["qdrant"]["api_key"],
             c["models"]["gateway"]["api_key"],
         ],
-        "ingest-cpu": [],
+        "ingest-cpu": ["${DATALAB_API_KEY}"]
+        if os.environ.get("DATALAB_API_KEY")
+        else [],
         "ingest-io": [dep["qdrant"]["api_key"], c["models"]["gateway"]["api_key"]],
         "databases": [
             deploy["postgres"]["admin_password"],

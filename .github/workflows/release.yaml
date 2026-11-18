@@ -22,20 +22,23 @@ jobs:
       - name: Require successful default-branch CI for this commit
         run: |
           test "$GITHUB_REF" = refs/heads/main
-          test "$(gh run list --workflow ci.yaml --commit "$GITHUB_SHA" --branch main --status success --json headSha --jq length)" -gt 0
+          test "$(gh run list --workflow ci.yaml --commit "$GITHUB_SHA" --branch main --event push --status success --json headSha --jq length)" -gt 0
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: '0.13.7'
           python-version: '3.14'
           enable-cache: true
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - run: df -h . /var/lib/docker
       - uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7.5.0
         env:
           OPENLET_CONFIG: ${{ github.workspace }}/e2e/openlet.test.yaml
           OPENLET_GENERATED: ${{ github.workspace }}/.local/e2e/generated
           OPENLET_BACKUPS: ${{ github.workspace }}/.local/e2e/backups
         with:
-          files: infra/compose.yaml
+          source: infra
+          files: compose.yaml
+          allow: fs.read=${{ github.workspace }}
           targets: |
             platform
             letfs
@@ -45,15 +48,18 @@ jobs:
           load: true
           set: |
             platform.cache-from=type=gha,scope=platform
-            platform.cache-to=type=gha,scope=platform,mode=max
+            platform.cache-to=type=gha,scope=platform,mode=min
             letfs.cache-from=type=gha,scope=letfs
-            letfs.cache-to=type=gha,scope=letfs,mode=max
+            letfs.cache-to=type=gha,scope=letfs,mode=min
             ingest-cpu.cache-from=type=gha,scope=ingest-cpu
-            ingest-cpu.cache-to=type=gha,scope=ingest-cpu,mode=max
+            ingest-cpu.cache-to=type=gha,scope=ingest-cpu,mode=min
             leta-api.cache-from=type=gha,scope=leta
-            leta-api.cache-to=type=gha,scope=leta,mode=max
+            leta-api.cache-to=type=gha,scope=leta,mode=min
             ingest-io.cache-from=type=gha,scope=ingest-io
-            ingest-io.cache-to=type=gha,scope=ingest-io,mode=max
+            ingest-io.cache-to=type=gha,scope=ingest-io,mode=min
+      - name: Report disk usage after Bake
+        if: always()
+        run: df -h . /var/lib/docker
       - name: Verify the built image set
         run: |
           mkdir -p .local
@@ -84,12 +90,14 @@ jobs:
         with:
           name: release-bundle
           path: .local/release.tgz
+          if-no-files-found: error
           retention-days: 30
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: release-e2e
           path: .local/e2e/results/
+          if-no-files-found: ignore
           retention-days: 7
   deploy:
     needs: build-and-verify
@@ -118,4 +126,4 @@ jobs:
           ssh "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$release'"
           scp .local/release.tgz "$DEPLOY_USER@$DEPLOY_HOST:$release/release.tgz"
           # shellcheck disable=SC2029
-          ssh "$DEPLOY_USER@$DEPLOY_HOST" "cd '$release' && tar -xzf release.tgz && COMPOSE_PROJECT_NAME=openlet OPENLET_BACKUPS=/opt/openlet/backups scripts/deploy.sh /opt/openlet/openlet.yaml /opt/openlet/.env '$release/image-lock.yaml'"
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" "cd '$release' && tar -xzf release.tgz && COMPOSE_PROJECT_NAME=openlet COMPOSE_PROFILES=leta,observability OPENLET_BACKUPS=/opt/openlet/backups scripts/deploy.sh /opt/openlet/openlet.yaml /opt/openlet/.env '$release/image-lock.yaml'"

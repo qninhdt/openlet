@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import logging
+import os
 import signal
 from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack
@@ -84,18 +85,19 @@ async def run(role: Literal["cpu", "io"]) -> None:
             activities: list[Callable[[ProcessingIdentity], Awaitable[None]]]
             if role == "cpu":
                 settings = config["services"]["letfs_ingest"]["cpu"]
-                from .parse import Parser, run_child
+                from datalab_sdk import AsyncDatalabClient  # pyright: ignore[reportMissingTypeStubs]
+
+                from .parse import Parser
 
                 if settings["split_tokens"] <= 0:
                     raise ValueError("invalid parser layout limits")
-                if await run_child(
-                    ["letfs_ingest.models", "check"],
-                    config["services"]["letfs"]["processing"]["parse_timeout_seconds"],
-                ):
-                    raise RuntimeError(
-                        "Docling models/runtime unavailable; prepare models before starting CPU worker"
-                    )
-                activities = [Parser(stub, http, config["services"]["letfs"]).run]
+                key = os.environ.get("DATALAB_API_KEY")
+                datalab = (
+                    await stack.enter_async_context(AsyncDatalabClient(api_key=key))
+                    if key
+                    else None
+                )
+                activities = [Parser(stub, http, config, datalab).run]
             else:
                 settings = config["services"]["letfs_ingest"]["io"]
                 from openlet_sdk.config import secret

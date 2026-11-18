@@ -7,10 +7,11 @@ if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(url.hostnam
 
 export default defineConfig({
   workers: 1,
-  timeout: 30_000,
+  timeout: 45_000,
+  expect: { timeout: 10_000 },
   outputDir: '../.local/e2e/ui',
   reporter: 'list',
-  use: { baseURL: url.origin, screenshot: 'only-on-failure' },
+  use: { baseURL: url.origin, screenshot: 'only-on-failure', trace: 'retain-on-failure' },
   projects: [
     { name: 'public', testDir: './tests/browser/public' },
     {

@@ -13,7 +13,10 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-var documentMedia = []string{"application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}
+const pdfMedia = "application/pdf"
+const docxMedia = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+var documentMedia = []string{pdfMedia, docxMedia, "application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}
 
 var imageMedia = []string{"image/png", "image/jpeg", "image/webp", "image/gif"}
 var ingestMedia = append(append([]string{}, documentMedia...), imageMedia...)

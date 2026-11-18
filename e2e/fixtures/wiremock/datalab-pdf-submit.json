@@ -1,0 +1,38 @@
+{
+  "request": {
+    "method": "POST",
+    "urlPath": "/api/v1/convert",
+    "headers": {
+      "X-Api-Key": {
+        "equalTo": "datalab-test-only"
+      }
+    },
+    "multipartPatterns": [
+      {
+        "headers": {
+          "Content-Disposition": {
+            "contains": "filename=\"input.pdf\""
+          }
+        }
+      },
+      {
+        "headers": {"Content-Disposition": {"contains": "name=\"output_format\""}},
+        "bodyPatterns": [
+          {
+            "equalTo": "markdown"
+          }
+        ]
+      }
+    ]
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "success": true,
+      "request_check_url": "/datalab/pdf"
+    }
+  }
+}

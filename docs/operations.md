@@ -12,7 +12,7 @@ The six scripts in [scripts/](../scripts/) own config rendering, bootstrap, E2E,
 
 ## Deploy
 
-The manual [release workflow](../.github/workflows/release.yaml) requires successful default-branch CI for its commit. It builds once, runs E2E, pushes those exact images, records immutable digest references and transfers a bundle to `/opt/openlet/releases/<sha>` using native SSH/SCP. Configure the production GitHub environment's DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY and verified DEPLOY_KNOWN_HOSTS. The VPS needs Docker Compose, Python/uv, registry pull access, `/opt/openlet/openlet.yaml` and private `/opt/openlet/.env`.
+Merge the workflows into `main` and wait for its push CI to pass before dispatching the manual [release workflow](../.github/workflows/release.yaml) for that commit. It builds once, runs API E2E, pushes those exact images, records immutable digest references and transfers a bundle to `/opt/openlet/releases/<sha>` using native SSH/SCP. Configure the production GitHub environment's DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY and verified DEPLOY_KNOWN_HOSTS. The VPS needs Docker Compose, Python/uv, registry pull access, `/opt/openlet/openlet.yaml` and private `/opt/openlet/.env`. The workflow enables the `leta,observability` Compose profiles.
 
 Deploy pulls before stopping ingress/writers, backs up PostgreSQL, runs native initialization/migrations and starts services with bounded health waits. It preserves data volumes. There is no source build on the VPS or automatic destructive rollback. Retain the previous bundle/image lock. Roll back images only if schema-compatible; otherwise restore an appropriate backup into an empty target first.
 

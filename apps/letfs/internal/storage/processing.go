@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"mime"
 	"path"
 	"strings"
 	"time"
@@ -73,7 +74,14 @@ func (s *Server) GetProcessingInput(ctx context.Context, r *pb.ProcessingRequest
 			out.MediaType = node.File.MediaType
 			out.SourceMetadata = node.File.Metadata
 			if key != nil && (stage == "pending" || strings.HasPrefix(out.MediaType, "image/")) {
-				signed, err := s.Presign.PresignGetObject(ctx, &s3.GetObjectInput{Bucket: &s.Bucket, Key: key}, func(o *s3.PresignOptions) { o.Expires = time.Duration(s.Settings.DownloadURLTTLSeconds) * time.Second })
+				presign := s.Presign
+				input := &s3.GetObjectInput{Bucket: &s.Bucket, Key: key}
+				if s.ProcessingPresign != nil && stage == "pending" && (out.MediaType == pdfMedia || out.MediaType == docxMedia) {
+					presign = s.ProcessingPresign
+					disposition := mime.FormatMediaType("attachment", map[string]string{"filename": node.Name})
+					input.ResponseContentDisposition = &disposition
+				}
+				signed, err := presign.PresignGetObject(ctx, input, func(o *s3.PresignOptions) { o.Expires = time.Duration(s.Settings.DownloadURLTTLSeconds) * time.Second })
 				if err != nil {
 					return nil, err
 				}

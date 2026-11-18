@@ -1,4 +1,10 @@
 services:
+  ingest-cpu:
+    environment:
+      DATALAB_API_KEY: datalab-test-only
+      DATALAB_HOST: http://wiremock:8080
+    depends_on:
+      wiremock: {condition: service_healthy}
   litellm:
     volumes: !override [../e2e/fixtures/litellm.yaml:/etc/litellm/config.yaml:ro]
     depends_on:

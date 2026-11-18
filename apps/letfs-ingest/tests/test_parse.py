@@ -31,7 +31,7 @@ async def test_parser_passes_original_name_without_using_it_as_a_local_path(
     monkeypatch.setattr(parse, "download", download)
     monkeypatch.setattr(parse, "publish", publish)
     async with httpx.AsyncClient() as http:
-        await parse.Parser(stub, http, config["services"]["letfs"]).run(
+        await parse.Parser(stub, http, config, None).run(
             {"file_id": "file-123", "version": 1}
         )
     arguments = child.call_args.args[0]

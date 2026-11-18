@@ -40,12 +40,13 @@ import (
 )
 
 type s3Settings struct {
-	Endpoint        string `yaml:"endpoint"`
-	Region          string `yaml:"region"`
-	Bucket          string `yaml:"bucket"`
-	PathStyle       bool   `yaml:"path_style"`
-	AccessKeyID     string `yaml:"access_key_id"`
-	SecretAccessKey string `yaml:"secret_access_key"`
+	ProcessingDownloadEndpoint string `yaml:"processing_download_endpoint"`
+	Endpoint                   string `yaml:"endpoint"`
+	Region                     string `yaml:"region"`
+	Bucket                     string `yaml:"bucket"`
+	PathStyle                  bool   `yaml:"path_style"`
+	AccessKeyID                string `yaml:"access_key_id"`
+	SecretAccessKey            string `yaml:"secret_access_key"`
 }
 type qdrantSettings struct {
 	Address    string `yaml:"address"`
@@ -139,6 +140,17 @@ func run() error {
 		return fmt.Errorf("invalid S3 endpoint")
 	}
 	s3client := s3.New(s3.Options{TracerProvider: smithyoteltracing.Adapt(otel.GetTracerProvider()), MeterProvider: smithyotelmetrics.Adapt(otel.GetMeterProvider()), Region: object.Region, BaseEndpoint: &object.Endpoint, UsePathStyle: object.PathStyle, Credentials: credentials.NewStaticCredentialsProvider(key, secret, "")})
+	var processingPresign *s3.PresignClient
+	if object.ProcessingDownloadEndpoint != "" {
+		external, err := url.ParseRequestURI(object.ProcessingDownloadEndpoint)
+		if err != nil || external.Scheme != "https" || external.Host == "" || external.User != nil || external.RawQuery != "" {
+			return fmt.Errorf("invalid S3 processing download endpoint")
+		}
+		processingPresign = s3.NewPresignClient(s3.New(s3client.Options(), func(o *s3.Options) {
+			o.BaseEndpoint = &object.ProcessingDownloadEndpoint
+		}))
+	}
+
 	host, portText, err := net.SplitHostPort(vector.Address)
 	if err != nil {
 		return err
@@ -174,7 +186,7 @@ func run() error {
 		return err
 	}
 	defer tc.Close()
-	app := &storage.Server{DB: db, Graph: az, S3: s3client, Presign: s3.NewPresignClient(s3client), Bucket: object.Bucket, Temporal: tc, Queues: temporal.Queues, Settings: settings, Qdrant: qc, Collection: vector.Collection, Models: models, EmbeddingModel: embedding, EmbeddingDimensions: dimensions, RerankingModel: reranking}
+	app := &storage.Server{DB: db, Graph: az, S3: s3client, Presign: s3.NewPresignClient(s3client), ProcessingPresign: processingPresign, Bucket: object.Bucket, Temporal: tc, Queues: temporal.Queues, Settings: settings, Qdrant: qc, Collection: vector.Collection, Models: models, EmbeddingModel: embedding, EmbeddingDimensions: dimensions, RerankingModel: reranking}
 	w := worker.New(tc, temporal.Queues.LetFS, worker.Options{WorkerStopTimeout: time.Duration(runtime.ShutdownTimeoutSeconds) * time.Second})
 	storage.RegisterWorker(w, app)
 	if err = w.Start(); err != nil {

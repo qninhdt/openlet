@@ -47,6 +47,7 @@ type Server struct {
 	Graph               *authzed.Client
 	S3                  *s3.Client
 	Presign             *s3.PresignClient
+	ProcessingPresign   *s3.PresignClient
 	Bucket              string
 	Temporal            client.Client
 	Queues              sdk.Queues

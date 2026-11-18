@@ -1,15 +1,5 @@
 from docling.backend.mspowerpoint_backend import MsPowerpointDocumentBackend
-from docling.backend.msword_backend import MsWordDocumentBackend
 from docling_core.types.doc.document import DoclingDocument
-from docx.table import _Cell  # pyright: ignore[reportPrivateUsage]  # python-docx exposes this cell type to backend hooks.
-
-
-class Word(MsWordDocumentBackend):
-    def _is_rich_table_cell(self, cell: _Cell) -> bool:
-        # Docling's plain-cell path loses runs inside content controls and revisions.
-        if cell._tc.xpath(".//w:sdt | .//w:ins"):  # pyright: ignore[reportPrivateUsage]  # The XML check has no public cell API.
-            return True
-        return super()._is_rich_table_cell(cell)
 
 
 class Powerpoint(MsPowerpointDocumentBackend):

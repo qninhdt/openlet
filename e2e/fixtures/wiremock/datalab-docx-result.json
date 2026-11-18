@@ -1,0 +1,19 @@
+{
+  "request": {
+    "method": "GET",
+    "urlPath": "/datalab/docx"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "status": "complete",
+      "success": true,
+      "page_count": 1,
+      "markdown": "# Quarterly document\n\nDatalab DOCX extract.",
+      "images": {}
+    }
+  }
+}

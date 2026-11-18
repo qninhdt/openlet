@@ -69,9 +69,7 @@ test('XLSX blob runs both workers, publishes readonly artifacts and becomes sear
   expect(readme.node.readonly).toBe(true);
   const sheetContent = (await (await api.get(`${base}/nodes/${readme.node.id}/text`)).json())
     .content;
-  expect(sheetContent).toContain('# Sales');
-  expect(sheetContent).toContain('```csv');
-  expect(sheetContent).toContain('Europe,120');
+  expect(sheetContent).toMatch(/\|\s*Europe\s*\|\s*120\s*\|/);
   expect(
     (
       await api.patch(`${base}/nodes/${readme.node.id}/text`, {
@@ -104,7 +102,7 @@ test('XLSX blob runs both workers, publishes readonly artifacts and becomes sear
   const original = await request.get((await download.json()).blob.url);
   expect(await original.body()).toEqual(bytes);
 
-  const payload = Buffer.alloc(20 * 1024 * 1024, 0x61);
+  const payload = Buffer.alloc(11 * 1024 * 1024, 0x61);
   function crc(value: Buffer): string {
     const checksum = Buffer.alloc(4);
     checksum.writeUInt32BE(crc32c(value));

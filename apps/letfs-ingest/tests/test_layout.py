@@ -52,7 +52,7 @@ def test_lists_code_and_table_fences_are_indivisible() -> None:
 
 
 def test_context_ignores_empty_headings_and_does_not_leak_between_siblings() -> None:
-    prefixes, _ = contexts(["# Topic\n\nbody", "more", "# Other\n\nbody", "# \n\nnext"])
+    prefixes = contexts(["# Topic\n\nbody", "more", "# Other\n\nbody", "# \n\nnext"])
     assert prefixes[1] == "# Topic\n\n"
     assert prefixes[2] == ""
     assert not any(re.search(r"^#+\s*$", prefix, re.M) for prefix in prefixes)

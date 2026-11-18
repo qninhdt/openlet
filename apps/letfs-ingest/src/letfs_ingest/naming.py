@@ -155,11 +155,16 @@ def rewrite_artifact_links(
         return f"<{url}>" if angled else url
 
     def links(text: str) -> str:
+        def replace(match: re.Match[str]) -> str:
+            if match["code"]:
+                return match[0]
+            if match["src"] is not None:
+                return match["opening"] + destination(match["src"]) + match["quote"]
+            return "](" + destination(match["target"])
+
         return re.sub(
-            r"(?P<code>`+)(?!`)[\s\S]*?(?P=code)(?!`)|\]\((?P<target><[^>\n]+>|[^\s)]+)",
-            lambda match: (
-                match[0] if match["code"] else "](" + destination(match["target"])
-            ),
+            r"""(?P<code>`+)(?!`)[\s\S]*?(?P=code)(?!`)|\]\((?P<target><[^>\n]+>|[^\s)]+)|(?P<opening><img\b[^>]*?\bsrc=(?P<quote>["']))(?P<src>[^"']+)(?P=quote)""",
+            replace,
             text,
         )
 

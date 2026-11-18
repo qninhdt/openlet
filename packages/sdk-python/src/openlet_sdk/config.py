@@ -64,11 +64,18 @@ class ParseLimits(TypedDict):
     max_output_bytes: int
 
 
+class DatalabSettings(TypedDict):
+    concurrency: int
+    result_concurrency: int
+    requests_per_minute: int
+    max_response_bytes: int
+
+
 class CPUSettings(TypedDict):
     activity_concurrency: int
-    docling_models_path: str
+    office_concurrency: NotRequired[int]
+    datalab: NotRequired[DatalabSettings]
     split_tokens: int
-    threads: int
     limits: ParseLimits
 
 
@@ -149,6 +156,7 @@ class QdrantSettings(TypedDict):
 
 class S3Settings(TypedDict):
     endpoint: str
+    processing_download_endpoint: NotRequired[str]
     region: str
     bucket: str
     path_style: bool
