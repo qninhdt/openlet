@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { agent, expect, test, workspace } from '../../../fixtures/browser.js';
 
 const inline = String.raw`\(y=\dfrac{x-1}{x+2}\)`;
 
@@ -6,8 +6,6 @@ test('chat renders inline and display math, keeps code literal and contains wide
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.goto('/app-preview');
-  await page.getByRole('tab', { name: 'Atlas', exact: true }).click();
   const message = [
     `Mình đọc đề là: Cho hàm số ${inline}. Gọi \\(I\\) là giao điểm hai tiệm cận.`,
     String.raw`Đặt \(a=\sqrt{6-3\sqrt3}\), \(b=\sqrt{6+3\sqrt3}\). Kết quả \(\boxed{A(-2+a;1-b)}\).`,
@@ -21,8 +19,17 @@ test('chat renders inline and display math, keeps code literal and contains wide
     String.raw`Lỗi cú pháp vẫn đọc được: $\frac{$`,
     String.raw`Liên kết không tin cậy: $\href{javascript:alert(1)}{x}$`,
   ].join('\n\n');
-  await page.getByRole('textbox', { name: 'Message Atlas', exact: true }).fill(message);
-  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await page.route(`**/v1/workspaces/${workspace}/letas/${agent}/messages?*`, (route) =>
+    route.fulfill({
+      json: {
+        items: [
+          { id: 'math-user', role: 'user', content: message, created_at: '2026-11-18T00:00:00Z' },
+        ],
+        next_cursor: null,
+      },
+    }),
+  );
+  await page.goto(`/app/${workspace}/agents/${agent}`);
   const article = page
     .locator('[aria-label="Atlas private chat"] article')
     .filter({ hasText: 'Mình đọc đề là:' });
