@@ -8,7 +8,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: release-demo
+  group: release-openlet
   cancel-in-progress: false
 jobs:
   build-and-verify:
@@ -104,10 +104,10 @@ jobs:
         env:
           RELEASE_SHA: ${{ steps.commit.outputs.sha }}
         run: |
-          repository="ghcr.io/${GITHUB_REPOSITORY,,}-demo"
+          repository="ghcr.io/${GITHUB_REPOSITORY,,}"
           printf 'services:\n' > image-lock.yaml
           for service in platform letfs ingest-cpu ingest-io leta; do
-            ref="$repository/$service:$RELEASE_SHA"
+            ref="$repository-$service:$RELEASE_SHA"
             docker tag "openlet/$service:local" "$ref"
             docker push "$ref"
             digest=$(docker image inspect "$ref" --format '{{index .RepoDigests 0}}')
@@ -135,7 +135,7 @@ jobs:
     needs: build-and-verify
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    environment: demo
+    environment: openlet
     permissions:
       contents: read
       packages: read
@@ -172,7 +172,7 @@ jobs:
     needs: [build-and-verify, deploy]
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    environment: demo
+    environment: openlet
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

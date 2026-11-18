@@ -16,7 +16,7 @@ chmod 700 "$OPENLET_BACKUPS"
 "${UV:-uv}" run --env-file "$dotenv" --locked --no-dev --package openlet-tooling python scripts/configure.py --output "$OPENLET_GENERATED"
 export COMPOSE_FILE="$root/infra/compose.yaml:$OPENLET_GENERATED/compose.runtime.yaml:$image_lock"
 if [[ -n $registry_user ]]; then
-  export COMPOSE_FILE="$COMPOSE_FILE:$root/infra/compose.demo.yaml"
+  export COMPOSE_FILE="$COMPOSE_FILE:$root/infra/compose.vps.yaml"
   export DOCKER_CONFIG
   DOCKER_CONFIG=$(mktemp -d)
   trap 'rm -rf -- "$DOCKER_CONFIG"' EXIT

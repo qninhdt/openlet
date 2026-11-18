@@ -1,4 +1,4 @@
-# Openlet demo deployment
+# Openlet deployment
 
 A successful push CI run on `main` starts the Release workflow. It tests the
 backend images, publishes them to GHCR, and deploys by digest to the VPS. Once
@@ -6,13 +6,13 @@ the public API responds through the tunnel, the workflow builds and deploys
 the frontend Worker and checks the public site and API proxy. Use **Run
 workflow** on `main` to retry a release after CI succeeds.
 
-GitHub environment `demo` allows deployments from `main` and holds the VPS SSH
+GitHub environment `openlet` allows deployments from `main` and holds the VPS SSH
 secrets. Repository configuration supplies the Cloudflare account ID, Workers
 deployment token and Clerk publishable key. The VPS keeps its private runtime
 configuration under `/opt/openlet`. Releases live under `releases/<commit>` and
 `current` points to the latest successful backend deployment.
 
-The VPS uses `infra/compose.demo.yaml` for the tunnel, restart policies and
+The VPS uses `infra/compose.vps.yaml` for the tunnel, restart policies and
 memory limits. Routine deploys reuse Openlet's Docker volumes and take a
 database backup before updating an existing stack. Frontend deployment uses
 `apps/web/wrangler.jsonc`.
