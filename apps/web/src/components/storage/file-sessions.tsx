@@ -51,8 +51,9 @@ export function FileSessionsProvider({ children }: { children: ReactNode }) {
     </Context.Provider>
   );
 }
+export const useOptionalFileSessions = () => useContext(Context);
 export function useFileSessions() {
-  const sessions = useContext(Context);
+  const sessions = useOptionalFileSessions();
   if (!sessions) throw new Error('FileSessionsProvider is missing.');
   return sessions;
 }

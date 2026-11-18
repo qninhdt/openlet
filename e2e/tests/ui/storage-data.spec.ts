@@ -5,18 +5,59 @@ import {
   NameConflict,
   restoreNode,
   rootId,
-  seedStorage,
-  storageRoots,
   transferNodes,
   trashNodes,
   validateName,
+  type StorageSnapshot,
 } from '../../../apps/web/src/lib/storage-preview.js';
 
 test('filesystem transactions preserve subtrees, reject cycles and retain replaced files in Trash', () => {
-  const roots = storageRoots({ id: 'test', agents: [] });
-  const original = seedStorage(roots);
-  const personal = roots[0].id;
-  const team = roots[1].id;
+  const personal = 'personal';
+  const team = 'team';
+  const original: StorageSnapshot = {
+    nodes: [
+      {
+        id: 'docs',
+        storage: personal,
+        parent: rootId(personal),
+        name: 'Documents',
+        kind: 'folder',
+        mime: '',
+        size: 0,
+        updated: 0,
+      },
+      {
+        id: 'projects',
+        storage: personal,
+        parent: 'docs',
+        name: 'Projects',
+        kind: 'folder',
+        mime: '',
+        size: 0,
+        updated: 0,
+      },
+      {
+        id: 'brief',
+        storage: personal,
+        parent: 'projects',
+        name: 'Brief.txt',
+        kind: 'file',
+        mime: 'text/plain',
+        size: 0,
+        updated: 0,
+      },
+      {
+        id: 'team-docs',
+        storage: team,
+        parent: rootId(team),
+        name: 'Documents',
+        kind: 'folder',
+        mime: '',
+        size: 0,
+        updated: 0,
+      },
+    ],
+  };
   const folder = original.nodes.find(
     (node) => node.storage === personal && node.name === 'Documents',
   )!;

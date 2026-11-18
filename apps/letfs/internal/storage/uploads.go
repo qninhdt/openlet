@@ -183,10 +183,41 @@ func (s *Server) GetUpload(ctx context.Context, r *pb.UploadRequest) (*pb.Upload
 		return nil, err
 	}
 	u, err := getUpload(ctx, s.DB, r.WorkspaceId, r.StorageId, r.UploadId, a.String(), false)
+	if err == pgx.ErrNoRows {
+		return nil, status.Error(codes.NotFound, "upload has expired or is no longer available")
+	}
 	if err != nil {
 		return nil, err
 	}
-	return s.uploadView(ctx, u)
+	out, err := s.uploadView(ctx, u)
+	if err != nil || out.Completed != nil {
+		return out, err
+	}
+	head, err := s.S3.HeadObject(ctx, &s3.HeadObjectInput{Bucket: &s.Bucket, Key: &u.Key, ChecksumMode: types.ChecksumModeEnabled})
+	if err == nil {
+		if aws.ToInt64(head.ContentLength) != u.Size || aws.ToString(head.ChecksumCRC32C) != u.Checksum {
+			return nil, status.Error(codes.FailedPrecondition, "uploaded object does not match descriptor")
+		}
+		out.Transferred = true
+		return out, nil
+	}
+	var api smithy.APIError
+	if !errors.As(err, &api) || (api.ErrorCode() != "NotFound" && api.ErrorCode() != "NoSuchKey") {
+		return nil, err
+	}
+	if u.Multipart != nil {
+		pages := s3.NewListPartsPaginator(s.S3, &s3.ListPartsInput{Bucket: &s.Bucket, Key: &u.Key, UploadId: u.Multipart})
+		for pages.HasMorePages() {
+			page, err := pages.NextPage(ctx)
+			if err != nil {
+				return nil, err
+			}
+			for _, part := range page.Parts {
+				out.CompletedParts = append(out.CompletedParts, &pb.CompletedPart{PartNumber: uint32(aws.ToInt32(part.PartNumber)), Etag: aws.ToString(part.ETag), Checksum: aws.ToString(part.ChecksumCRC32C)})
+			}
+		}
+	}
+	return out, nil
 }
 func (s *Server) SignParts(ctx context.Context, r *pb.SignPartsRequest) (*pb.SignPartsResponse, error) {
 	a, err := s.check(ctx, "storage", r.StorageId, "write")
@@ -306,9 +337,12 @@ func (s *Server) CompleteUpload(ctx context.Context, r *pb.CompleteUploadRequest
 		}
 		out = current.Node
 		oldSize := out.File.SizeBytes
-		var deleted int64
+		deleted, err := deleteSubtree(ctx, tx, out.Id, false)
+		if err != nil {
+			return nil, err
+		}
 		var at time.Time
-		err = tx.QueryRow(ctx, `WITH RECURSIVE descendants AS(SELECT id FROM nodes WHERE parent_id=$1 UNION ALL SELECT n.id FROM nodes n JOIN descendants d ON n.parent_id=d.id),deleted AS(DELETE FROM nodes n USING descendants d LEFT JOIN files f ON f.node_id=d.id WHERE n.id=d.id RETURNING coalesce(f.size_bytes,0) AS bytes),metadata AS(DELETE FROM file_metadata WHERE node_id=$1),stage AS(DELETE FROM processing WHERE file_id=$1),changed AS(UPDATE files SET text_content=NULL,object_key=$2,size_bytes=$3,media_type=$4,version=version+1 WHERE node_id=$1 RETURNING version),touched AS(UPDATE nodes SET updated_at=now() WHERE id=$1 RETURNING updated_at) SELECT c.version,t.updated_at,(SELECT coalesce(sum(bytes),0) FROM deleted) FROM changed c CROSS JOIN touched t`, out.Id, u.Key, u.Size, u.Media).Scan(&out.File.Version, &at, &deleted)
+		err = tx.QueryRow(ctx, `WITH metadata AS(DELETE FROM file_metadata WHERE node_id=$1),stage AS(DELETE FROM processing WHERE file_id=$1),changed AS(UPDATE files SET text_content=NULL,object_key=$2,size_bytes=$3,media_type=$4,version=version+1 WHERE node_id=$1 RETURNING version),touched AS(UPDATE nodes SET updated_at=now() WHERE id=$1 RETURNING updated_at) SELECT c.version,t.updated_at FROM changed c CROSS JOIN touched t`, out.Id, u.Key, u.Size, u.Media).Scan(&out.File.Version, &at)
 		if err != nil {
 			return nil, err
 		}

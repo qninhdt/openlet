@@ -1,22 +1,35 @@
-import { createContext, useContext, useState, useSyncExternalStore, type ReactNode } from 'react';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react';
 import { Check, LoaderCircle, RotateCcw, Upload, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
+import { useBackend } from '@/lib/backend';
+import { storageApi } from '@/lib/storage-api';
+import { readUploads, type UploadResume } from '@/lib/upload-resume';
+import { useQueryClient } from '@tanstack/react-query';
 
 type Task = {
   id?: string;
   name: string;
   destination: string;
-  run: (progress: (fraction: number) => void) => Promise<void>;
+  run: (progress: (fraction: number) => void, signal: AbortSignal) => Promise<void>;
   onRemove?: () => void;
 };
 type Job = Task & {
   id: string;
-  status: 'uploading' | 'done' | 'failed';
+  status: 'uploading' | 'done' | 'failed' | 'cancelled';
   progress: number;
   error?: string;
 };
 function createUploads() {
+  const controllers = new Map<string, AbortController>();
   let jobs: Job[] = [];
   const listeners = new Set<() => void>();
   const publish = () => {
@@ -28,16 +41,25 @@ function createUploads() {
   };
   async function execute(id: string) {
     const job = jobs.find((job) => job.id === id);
-    if (!job) return;
+    if (!job || controllers.has(id)) return;
+    const controller = new AbortController();
+    controllers.set(id, controller);
     update(id, { status: 'uploading', progress: 0, error: undefined });
     try {
-      await job.run((fraction) => update(id, { progress: Math.max(0, Math.min(1, fraction)) }));
+      await job.run(
+        (fraction) => update(id, { progress: Math.max(0, Math.min(1, fraction)) }),
+        controller.signal,
+      );
       update(id, { status: 'done', progress: 1 });
     } catch (error) {
       update(id, {
-        status: 'failed',
+        status:
+          error instanceof DOMException && error.name === 'AbortError' ? 'cancelled' : 'failed',
         error: error instanceof Error ? error.message : 'Upload failed. Retry this upload.',
       });
+      if (controller.signal.aborted) job.onRemove?.();
+    } finally {
+      controllers.delete(id);
     }
   }
   return {
@@ -55,6 +77,10 @@ function createUploads() {
       await execute(id);
     },
     retry: execute,
+    cancel: (id: string) => controllers.get(id)?.abort(),
+    dispose: () => {
+      for (const controller of controllers.values()) controller.abort('pause');
+    },
     remove: (id: string) => {
       const job = jobs.find((job) => job.id === id);
       if (!job || job.status === 'uploading') return;
@@ -65,12 +91,19 @@ function createUploads() {
   };
 }
 const Context = createContext<ReturnType<typeof createUploads> | null>(null);
-export function UploadsProvider({ children }: { children: ReactNode }) {
+export function UploadsProvider({
+  children,
+  workspaceId,
+}: {
+  children: ReactNode;
+  workspaceId: string;
+}) {
   const [uploads] = useState(createUploads);
+  useEffect(() => () => uploads.dispose(), [uploads]);
   return (
     <Context.Provider value={uploads}>
       {children}
-      <UploadPanel />
+      <UploadPanel workspaceId={workspaceId} />
     </Context.Provider>
   );
 }
@@ -79,15 +112,21 @@ export function useUploads() {
   if (!uploads) throw new Error('UploadsProvider is missing');
   return uploads;
 }
-function UploadPanel() {
+function UploadPanel({ workspaceId }: { workspaceId: string }) {
+  const backend = useBackend();
+  const client = useQueryClient();
+  const [recovery, setRecovery] = useState(() =>
+    readUploads(backend.actorId).filter((item) => item.workspace === workspaceId),
+  );
   const uploads = useUploads();
   const jobs = useSyncExternalStore(uploads.subscribe, uploads.snapshot);
-  if (!jobs.length) return null;
+  if (!jobs.length && !recovery.length) return null;
+  const files = storageApi(backend.api!, workspaceId, backend.request, backend.actorId);
   const active = jobs.filter((job) => job.status === 'uploading').length;
   return (
     <section
       aria-label="Uploads"
-      className="fixed right-4 bottom-20 z-50 w-80 max-w-[calc(100vw-32px)] overflow-hidden rounded-xl border bg-popover text-popover-foreground shadow-lg min-[722px]:bottom-4"
+      className="fixed right-4 bottom-20 z-50 w-80 max-w-[calc(100vw-32px)] overflow-hidden rounded-xl border bg-popover text-popover-foreground shadow-lg"
     >
       <header className="flex items-center gap-2 px-3 py-2">
         <Upload className="size-4 text-muted-foreground" />
@@ -126,9 +165,11 @@ function UploadPanel() {
               <p className="mt-0.5 truncate text-xs text-muted-foreground">
                 {job.status === 'failed'
                   ? job.error
-                  : job.status === 'done'
-                    ? `Uploaded · ${job.destination}`
-                    : job.destination}
+                  : job.status === 'cancelled'
+                    ? 'Cancelled'
+                    : job.status === 'done'
+                      ? `Uploaded · ${job.destination}`
+                      : job.destination}
               </p>
               {job.status === 'uploading' && (
                 <Progress
@@ -138,7 +179,17 @@ function UploadPanel() {
                 />
               )}
             </div>
-            {job.status === 'failed' && (
+            {job.status === 'uploading' && (
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label={`Cancel ${job.name}`}
+                onClick={() => uploads.cancel(job.id)}
+              >
+                <X />
+              </Button>
+            )}
+            {(job.status === 'failed' || job.status === 'cancelled') && (
               <Button
                 variant="ghost"
                 size="icon-xs"
@@ -150,7 +201,105 @@ function UploadPanel() {
             )}
           </div>
         ))}
+        {recovery.map((saved) => (
+          <UploadRecovery
+            key={saved.requestId}
+            saved={saved}
+            files={files}
+            onRemove={() =>
+              setRecovery((items) => items.filter((item) => item.requestId !== saved.requestId))
+            }
+            onResume={(file) => {
+              setRecovery((items) => items.filter((item) => item.requestId !== saved.requestId));
+              void uploads.enqueue({
+                name: saved.name,
+                destination: 'Files',
+                run: async (progress, signal) => {
+                  await files.resumeUpload(
+                    saved,
+                    file,
+                    (loaded, total) => progress(total ? loaded / total : 1),
+                    signal,
+                  );
+                  await client.invalidateQueries({ queryKey: ['storage-folder'] });
+                  await client.invalidateQueries({ queryKey: ['storage-quota'] });
+                },
+              });
+            }}
+          />
+        ))}
       </div>
     </section>
+  );
+}
+
+function UploadRecovery({
+  saved,
+  files,
+  onResume,
+  onRemove,
+}: {
+  saved: UploadResume;
+  files: ReturnType<typeof storageApi>;
+  onResume: (file: File) => void;
+  onRemove: () => void;
+}) {
+  const input = useRef<HTMLInputElement>(null);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState('');
+  return (
+    <div className="border-t px-3 py-3 text-sm">
+      <p className="truncate">{saved.name}</p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        Interrupted upload. Select the original file to resume into Files.
+      </p>
+      <input
+        ref={input}
+        type="file"
+        className="sr-only"
+        tabIndex={-1}
+        aria-label={`Original file for ${saved.name}`}
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = '';
+          if (file) onResume(file);
+        }}
+      />
+      <div className="mt-2 flex gap-2">
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={pending}
+          onClick={() => input.current?.click()}
+        >
+          Resume upload
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={pending}
+          onClick={() => {
+            setPending(true);
+            setError('');
+            void files
+              .cancelUpload(saved)
+              .then(onRemove)
+              .catch((error) =>
+                setError(
+                  error instanceof Error ? error.message : 'Could not cancel upload. Try again.',
+                ),
+              )
+              .finally(() => setPending(false));
+          }}
+        >
+          {pending ? 'Cancelling…' : 'Cancel upload'}
+        </Button>
+      </div>
+      {error && (
+        <p role="alert" className="mt-2 text-destructive">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }

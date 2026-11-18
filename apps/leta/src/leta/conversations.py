@@ -18,6 +18,7 @@ async def storage(s: Services, root: UUID, user: UUID) -> Row:
     agent = await get_agent(s.db, root)
     id = conversation(root, "user", user)
     storage_id = stable(id, "storage")
+    zed_token = ""
     async with s.db.connection() as conn, conn.transaction():
         await conn.execute(
             "INSERT INTO conversations(id,leta_id,user_id,storage_id) VALUES(%s,%s,%s,%s) ON CONFLICT(id) DO NOTHING",
@@ -38,7 +39,7 @@ async def storage(s: Services, root: UUID, user: UUID) -> Row:
                     relationship("conversation", id, "member", "agent", root),
                 ]
             )
-            await s.storage.CreateStorage(
+            creation = s.storage.CreateStorage(
                 internal.CreateStorageRequest(
                     workspace_id=str(agent["workspace_id"]),
                     storage_id=str(storage_id),
@@ -51,10 +52,20 @@ async def storage(s: Services, root: UUID, user: UUID) -> Row:
                 ),
                 timeout=15,
             )
+            await creation
+            zed_token = next(
+                (
+                    value
+                    for key, value in await creation.initial_metadata()
+                    if key == "x-openlet-zed-token"
+                ),
+                "",
+            )
             await conn.execute("UPDATE conversations SET ready=true WHERE id=%s", (id,))
         return {
             **json_row(row),
             "ready": True,
+            "zed_token": zed_token,
             "root_node_id": str(stable(id, "root")),
             "workspace_id": str(cast(UUID, agent["workspace_id"])),
         }

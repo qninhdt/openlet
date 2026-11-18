@@ -1,0 +1,92 @@
+@keyframes openlet-blink {
+  0%,
+  41%,
+  45%,
+  100% {
+    transform: scaleY(1);
+  }
+  43% {
+    transform: scaleY(0.1);
+  }
+}
+.openlet-logo-eyes {
+  transform-origin: 120px 120px;
+  animation: openlet-blink 6s ease-in-out infinite;
+}
+@keyframes public-marquee {
+  to {
+    transform: translateX(-50%);
+  }
+}
+.public-marquee {
+  animation: public-marquee 26s linear infinite;
+}
+.public-marquee-reverse {
+  animation-direction: reverse;
+}
+@keyframes public-signal {
+  to {
+    stroke-dashoffset: -120;
+  }
+}
+.public-signal {
+  stroke-dasharray: 5 9;
+  animation: public-signal 5s linear infinite;
+}
+@keyframes public-message {
+  0%,
+  15% {
+    opacity: 0.25;
+    transform: translateY(7px);
+  }
+  35%,
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+.public-message {
+  animation: public-message 6s ease-out infinite alternate;
+}
+@keyframes public-caret {
+  50% {
+    opacity: 0;
+  }
+}
+.public-caret {
+  animation: public-caret 1s steps(1) infinite;
+}
+.public-network-canvas {
+  mask-image:
+    linear-gradient(
+      transparent calc(var(--network-top, 180px) - 8px),
+      black calc(var(--network-top, 180px) + 90px),
+      black calc(100% - 120px),
+      transparent
+    ),
+    radial-gradient(ellipse 72% 78% at 50% 55%, black 60%, transparent);
+  mask-composite: intersect;
+}
+.public-comb-row {
+  display: flex;
+  gap: 6px;
+  margin-top: -23px;
+}
+.public-comb-row:nth-child(even) {
+  transform: translateX(49px);
+}
+.public-comb-cell {
+  width: 92px;
+  height: 104px;
+  flex: 0 0 auto;
+  clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
+}
+@media (prefers-reduced-motion: reduce) {
+  .openlet-logo-eyes,
+  .public-marquee,
+  .public-signal,
+  .public-message,
+  .public-caret {
+    animation: none;
+  }
+}

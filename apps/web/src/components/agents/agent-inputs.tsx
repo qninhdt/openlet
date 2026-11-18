@@ -1,6 +1,5 @@
 import {
   CalendarClock,
-  ChevronRight,
   Inbox,
   Bell,
   MessageCircleQuestion,
@@ -11,8 +10,9 @@ import {
 } from 'lucide-react';
 import { Bubble, BubbleContent } from '@/components/ui/bubble';
 import { AgentAvatar } from '@/components/agent-avatar';
-import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
 import type { InputItem, Json } from '@/lib/agent-api';
+import { MessagePreview } from './message-preview';
+import { MessageFiles } from './message-files';
 import { AgentMarkdown } from './agent-rich-content';
 import { MessageReactions } from './message-reactions';
 import { useAgentPreview } from './agent-preview';
@@ -29,7 +29,11 @@ function PersonInput({ item }: { item: InputItem }) {
       className="flex min-w-0 gap-2 py-1"
     >
       {item.source_kind === 'agent' || item.source_kind === 'box' ? (
-        <AgentAvatar name={item.source_name ?? 'Agent'} agentId={item.source_id} className="mt-0.5 size-5 shrink-0" />
+        <AgentAvatar
+          name={item.source_name ?? 'Agent'}
+          agentId={item.source_id}
+          className="mt-0.5 size-5 shrink-0"
+        />
       ) : (
         <UserRound className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
       )}
@@ -52,7 +56,8 @@ function PersonInput({ item }: { item: InputItem }) {
               : 'text-sm leading-relaxed'
           }
         >
-          <p className="whitespace-pre-wrap wrap-anywhere">{item.content}</p>
+          <AgentMarkdown text={item.content} />
+          {!item.preview && <MessageFiles references={item.file_refs} />}
           <MessageReactions reactions={item.reactions} actorId={p.actorId} inline />
         </div>
       </div>
@@ -83,9 +88,9 @@ function ScheduleInput({ item }: { item: InputItem }) {
             {due.toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}
           </time>
         )}
-        <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed wrap-anywhere">
-          {item.content}
-        </p>
+        <div className="mt-3 text-sm leading-relaxed wrap-anywhere">
+          <AgentMarkdown text={item.content} />
+        </div>
       </div>
     </article>
   );
@@ -174,7 +179,7 @@ export function InputMessage({ item }: { item: InputItem }) {
           <BellOff className="size-3 shrink-0 text-muted-foreground" aria-label="Silent feedback" />
         </div>
         <blockquote className="mt-2 border-l-2 pl-3 text-sm leading-relaxed text-muted-foreground wrap-anywhere">
-          {item.input_payload.target.content}
+          <MessagePreview text={item.input_payload.target.content} />
         </blockquote>
         {item.presented === false && (
           <span className="mt-1 block text-xs text-muted-foreground">Superseded</span>
@@ -202,14 +207,13 @@ export function InputItems({ items }: { items: InputItem[] }) {
     <Bubble variant="agent-outline" align="end" className="max-w-full">
       <BubbleContent>
         {items.length > 1 ? (
-          <Collapsible defaultOpen data-input="batch">
-            <CollapsibleTrigger className="group flex items-center gap-2 py-1 text-caption">
+          <div data-input="batch">
+            <div className="flex items-center gap-2 py-1 text-caption">
               <Inbox className="size-3.5" />
               {items.length} inputs
-              <ChevronRight className="size-3.5 transition-transform group-data-[state=open]:rotate-90" />
-            </CollapsibleTrigger>
-            <CollapsibleContent className="pt-3">{content}</CollapsibleContent>
-          </Collapsible>
+            </div>
+            <div className="pt-3">{content}</div>
+          </div>
         ) : (
           content
         )}
@@ -220,18 +224,15 @@ export function InputItems({ items }: { items: InputItem[] }) {
 
 export function Compaction({ text }: { text: string }) {
   return (
-    <Collapsible data-input="compaction" className="my-4 w-full min-w-0">
+    <div data-input="compaction" className="my-4 w-full min-w-0">
       <div className="flex items-center gap-3">
         <span className="h-px flex-1 bg-border" />
-        <CollapsibleTrigger className="group flex shrink-0 items-center gap-1.5 rounded-md px-1 py-1 text-xs text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
-          Compacted
-          <ChevronRight className="size-3 transition-transform group-data-[state=open]:rotate-90" />
-        </CollapsibleTrigger>
+        <span className="shrink-0 px-1 py-1 text-xs text-muted-foreground">Compacted</span>
         <span className="h-px flex-1 bg-border" />
       </div>
-      <CollapsibleContent className="mx-auto max-w-3xl pt-3 text-sm text-muted-foreground">
+      <div className="mx-auto max-w-3xl pt-3 text-sm text-muted-foreground">
         <AgentMarkdown text={text} />
-      </CollapsibleContent>
-    </Collapsible>
+      </div>
+    </div>
   );
 }

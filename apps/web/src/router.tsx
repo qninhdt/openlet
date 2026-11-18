@@ -2,26 +2,64 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  lazyRouteComponent,
   type SearchSchemaInput,
 } from '@tanstack/react-router';
-import { LandingPage, LoginPage, NotFoundPage, RootLayout, WorkspacePage } from '@/pages';
-import { AppShell } from '@/components/app-shell';
-import { AgentOverview } from '@/components/agents/agent-overview';
-import {
-  LegacyWorkspaceEntry,
-  WorkspaceEntry,
-  AgentLayout,
-  AgentChat,
-  ActivityPage,
-  AgentBoxPage,
-  BoxPage,
-  StorageEntry,
-  StoragePage,
-  SettingsPage,
-} from '@/workspace-pages';
-import { parseLegacySearch } from '@/lib/shell-model';
+import { RootLayout, WorkspacePage } from '@/pages';
+import { parseLegacySearch, type ShellLocation } from '@/lib/shell-model';
+import { RouteError } from '@/components/public/page-state';
+import { safeReturnTo } from '@/lib/auth-navigation';
 
-const rootRoute = createRootRoute({ component: RootLayout, notFoundComponent: NotFoundPage });
+const LandingPage = lazyRouteComponent(
+  () => import('./components/public/landing-page'),
+  'LandingPage',
+);
+const LoginPage = lazyRouteComponent(() => import('./components/public/auth-page'), 'LoginPage');
+const NotFoundPage = lazyRouteComponent(
+  () => import('./components/public/not-found-page'),
+  'NotFoundPage',
+);
+const SignInCallback = lazyRouteComponent(
+  () => import('./components/public/auth-page'),
+  'SignInCallback',
+);
+const WorkspacesPage = lazyRouteComponent(
+  () => import('./components/public/workspace-pages'),
+  'WorkspacesPage',
+);
+const JoinPage = lazyRouteComponent(
+  () => import('./components/public/workspace-pages'),
+  'JoinPage',
+);
+const LegalPage = lazyRouteComponent(() => import('./components/public/legal-page'), 'LegalPage');
+const AppPreview = lazyRouteComponent(
+  () => import('./components/public/app-preview'),
+  'AppPreview',
+);
+const AppShell = lazyRouteComponent(() => import('./components/app-shell'), 'AppShell');
+const AgentOverview = lazyRouteComponent(
+  () => import('./components/agents/agent-overview'),
+  'AgentOverview',
+);
+const LegacyWorkspaceEntry = lazyRouteComponent(
+  () => import('./workspace-pages'),
+  'LegacyWorkspaceEntry',
+);
+const WorkspaceEntry = lazyRouteComponent(() => import('./workspace-pages'), 'WorkspaceEntry');
+const AgentLayout = lazyRouteComponent(() => import('./workspace-pages'), 'AgentLayout');
+const AgentChat = lazyRouteComponent(() => import('./workspace-pages'), 'AgentChat');
+const ActivityPage = lazyRouteComponent(() => import('./workspace-pages'), 'ActivityPage');
+const AgentBoxPage = lazyRouteComponent(() => import('./workspace-pages'), 'AgentBoxPage');
+const BoxPage = lazyRouteComponent(() => import('./workspace-pages'), 'BoxPage');
+const StorageEntry = lazyRouteComponent(() => import('./workspace-pages'), 'StorageEntry');
+const StoragePage = lazyRouteComponent(() => import('./workspace-pages'), 'StoragePage');
+const SettingsPage = lazyRouteComponent(() => import('./workspace-pages'), 'SettingsPage');
+
+const rootRoute = createRootRoute({
+  component: RootLayout,
+  notFoundComponent: NotFoundPage,
+  errorComponent: RouteError,
+});
 const landingRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
@@ -30,7 +68,43 @@ const landingRoute = createRoute({
 const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/login',
+  validateSearch: (search: Record<string, unknown> & SearchSchemaInput) => ({
+    returnTo: safeReturnTo(search.returnTo),
+  }),
   component: LoginPage,
+});
+const signInCallbackRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/sso-callback',
+  component: SignInCallback,
+});
+const workspacesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/workspaces',
+  component: WorkspacesPage,
+});
+const joinRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/join',
+  validateSearch: (search: Record<string, unknown> & SearchSchemaInput) => ({
+    token: typeof search.token === 'string' ? search.token : '',
+  }),
+  component: JoinPage,
+});
+const privacyRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/privacy',
+  component: () => <LegalPage kind="privacy" />,
+});
+const termsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/terms',
+  component: () => <LegalPage kind="terms" />,
+});
+const previewRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/app-preview',
+  component: AppPreview,
 });
 const appRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -41,7 +115,9 @@ const legacyRoute = createRoute({
   getParentRoute: () => appRoute,
   path: '/',
   validateSearch: (search: Record<string, unknown> & SearchSchemaInput) =>
-    parseLegacySearch(search),
+    Object.fromEntries(
+      Object.entries(parseLegacySearch(search)).filter(([key, value]) => search[key] && value),
+    ) as Partial<ShellLocation>,
   component: LegacyWorkspaceEntry,
 });
 const workspaceRoute = createRoute({
@@ -73,6 +149,10 @@ const chatRoute = createRoute({
   getParentRoute: () => agentRoute,
   path: '/',
   staticData: { agentTab: 'agent' },
+  validateSearch: (search: Record<string, unknown> & SearchSchemaInput) => ({
+    message: typeof search.message === 'string' ? search.message : undefined,
+    role: search.role === 'assistant' ? ('assistant' as const) : ('user' as const),
+  }),
   component: AgentChat,
 });
 const overviewRoute = createRoute({
@@ -128,8 +208,8 @@ const storageIndex = createRoute({
   path: '/',
   component: StorageEntry,
   validateSearch: (search: Record<string, unknown> & SearchSchemaInput) => ({
-    folder: typeof search.folder === 'string' ? search.folder : '',
-    file: typeof search.file === 'string' ? search.file : '',
+    folder: typeof search.folder === 'string' && search.folder ? search.folder : undefined,
+    file: typeof search.file === 'string' && search.file ? search.file : undefined,
   }),
 });
 const storageRootRoute = createRoute({ getParentRoute: () => storageRoute, path: '$storageId' });
@@ -168,6 +248,12 @@ export const router = createRouter({
   routeTree: rootRoute.addChildren([
     landingRoute,
     loginRoute,
+    signInCallbackRoute,
+    workspacesRoute,
+    joinRoute,
+    privacyRoute,
+    termsRoute,
+    previewRoute,
     appRoute.addChildren([
       legacyRoute,
       workspaceRoute.addChildren([

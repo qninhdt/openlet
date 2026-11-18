@@ -15,6 +15,7 @@ import (
 	"go.temporal.io/sdk/client"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -31,13 +32,14 @@ type Settings struct {
 	} `yaml:"maintenance"`
 }
 type Server struct {
-	DB       *pgxpool.Pool
-	Graph    *authzed.Client
-	Clerk    *user.Client
-	Temporal client.Client
-	Settings Settings
-	Queues   sdk.Queues
-	Queue    string
+	DB                *pgxpool.Pool
+	Graph             *authzed.Client
+	Clerk             *user.Client
+	UserIDMetadataKey string
+	Temporal          client.Client
+	Settings          Settings
+	Queues            sdk.Queues
+	Queue             string
 }
 
 var _ pb.PlatformServiceServer = (*Server)(nil)
@@ -80,7 +82,12 @@ func (s *Server) active(ctx context.Context, id string) error {
 }
 func scanUser(row pgx.Row) (*pb.User, error) {
 	u := new(pb.User)
-	err := row.Scan(&u.Id, &u.DisplayName, &u.AvatarUrl)
+	var appearance []byte
+	err := row.Scan(&u.Id, &u.DisplayName, &u.AvatarUrl, &appearance)
+	if err == nil && len(appearance) > 0 {
+		u.Appearance = new(pb.AvatarAppearance)
+		err = protojson.Unmarshal(appearance, u.Appearance)
+	}
 	return u, err
 }
 func scanWorkspace(row pgx.Row) (*pb.Workspace, error) {

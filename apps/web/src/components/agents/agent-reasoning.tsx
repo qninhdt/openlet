@@ -1,12 +1,5 @@
-import type { ComponentType, PropsWithChildren } from 'react';
-import {
-  groupPartByType,
-  MessagePrimitive,
-  useAuiState,
-  type ToolCallMessagePartComponent,
-} from '@assistant-ui/react';
-import { ChevronRight, LoaderCircle, TriangleAlert } from 'lucide-react';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import type { ComponentType } from 'react';
+import { MessagePrimitive, type ToolCallMessagePartComponent } from '@assistant-ui/react';
 import { AgentMarkdown } from './agent-rich-content';
 import { agentToolRenderers } from './agent-tools';
 
@@ -23,52 +16,6 @@ export function AgentReasoning({ text, streaming = false }: { text: string; stre
   );
 }
 
-function AgentSteps({
-  children,
-  indices,
-  running,
-}: PropsWithChildren<{ indices: readonly number[]; running: boolean }>) {
-  const count = useAuiState(
-    (s) => indices.filter((i) => s.message.content[i].type === 'tool-call').length,
-  );
-  const failed = useAuiState(
-    (s) =>
-      indices.filter((i) => {
-        const part = s.message.content[i];
-        return part.type === 'tool-call' && part.isError;
-      }).length,
-  );
-  return (
-    <Collapsible
-      defaultOpen
-      className="mb-1 grid w-full min-w-0 justify-items-start"
-      data-slot="agent-tool-group"
-    >
-      <CollapsibleTrigger className="group/steps flex items-center gap-1.5 rounded-md py-1 text-caption text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
-        {running ? (
-          <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" />
-        ) : failed ? (
-          <TriangleAlert className="size-3.5 text-destructive" />
-        ) : null}
-        <span>
-          {count ? `${count} step${count === 1 ? '' : 's'}` : 'Thoughts'}
-          {failed ? ` · ${failed} failed` : ''}
-        </span>
-        <ChevronRight className="size-3.5 transition-transform group-data-[state=open]/steps:rotate-90 motion-reduce:transition-none" />
-      </CollapsibleTrigger>
-      <CollapsibleContent className="ml-3 grid w-[calc(100%-12px)] min-w-0 gap-2.5 border-l pt-3 pb-1.5 pl-3">
-        {children}
-      </CollapsibleContent>
-    </Collapsible>
-  );
-}
-
-const groupBy = groupPartByType({
-  reasoning: ['group-steps'],
-  'tool-call': ['group-steps'],
-  'tool-call:hitl_ask': [],
-  'tool-call:hitl_request': [],
-});
 const tools = agentToolRenderers as {
   by_name: Record<string, ToolCallMessagePartComponent>;
   Fallback: ToolCallMessagePartComponent;
@@ -76,15 +23,9 @@ const tools = agentToolRenderers as {
 
 export function AgentMessageParts({ Text }: { Text: ComponentType<{ text: string }> }) {
   return (
-    <MessagePrimitive.GroupedParts groupBy={groupBy} indicator="never">
-      {({ part, children }) => {
+    <MessagePrimitive.Parts>
+      {({ part }) => {
         switch (part.type) {
-          case 'group-steps':
-            return (
-              <AgentSteps indices={part.indices} running={part.status.type === 'running'}>
-                {children}
-              </AgentSteps>
-            );
           case 'reasoning':
             return <AgentReasoning text={part.text} streaming={part.status.type === 'running'} />;
           case 'tool-call': {
@@ -97,6 +38,6 @@ export function AgentMessageParts({ Text }: { Text: ComponentType<{ text: string
             return null;
         }
       }}
-    </MessagePrimitive.GroupedParts>
+    </MessagePrimitive.Parts>
   );
 }

@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { Copy, MoreHorizontal, Reply } from 'lucide-react';
+import { Copy, Link, MoreHorizontal, Reply } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
@@ -17,7 +17,7 @@ import {
 import { ReactionPicker, ReactionMenu, type ReactionAction } from './message-reactions';
 import { cn } from '@/lib/utils';
 
-type Actions = { text: string; onReply?: () => void; reaction?: ReactionAction };
+type Actions = { text: string; onReply?: () => void; reaction?: ReactionAction; link?: string };
 
 async function copy(text: string) {
   try {
@@ -28,7 +28,13 @@ async function copy(text: string) {
 }
 
 // Both entry points expose the same actions, as in OpenBot's MessageMenuItems.
-function MenuItems({ text, onReply, reaction, context = false }: Actions & { context?: boolean }) {
+function MenuItems({
+  text,
+  onReply,
+  reaction,
+  link,
+  context = false,
+}: Actions & { context?: boolean }) {
   const Item = context ? ContextMenuItem : DropdownMenuItem;
   return (
     <>
@@ -43,6 +49,12 @@ function MenuItems({ text, onReply, reaction, context = false }: Actions & { con
         <Copy />
         Copy
       </Item>
+      {link && (
+        <Item onSelect={() => void copy(link)}>
+          <Link />
+          Copy message link
+        </Item>
+      )}
     </>
   );
 }
@@ -69,6 +81,7 @@ export function MessageActions({
   wide = false,
   context = true,
   title,
+  link,
 }: Actions & {
   children: ReactNode;
   own?: boolean;
@@ -102,6 +115,7 @@ export function MessageActions({
         className={cn(
           'flex shrink-0 items-center gap-0.5 text-muted-foreground opacity-0 transition-opacity group-hover/actions:opacity-100 group-focus-within/actions:opacity-100 [&:has([data-state=open])]:opacity-100',
           open && 'opacity-100',
+          'max-sm:opacity-100',
         )}
       >
         {reaction && <ReactionPicker {...reaction} />}
@@ -117,14 +131,14 @@ export function MessageActions({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent side="top" align={own ? 'end' : 'start'}>
-            <MenuItems text={text} onReply={onReply} reaction={reaction} />
+            <MenuItems text={text} onReply={onReply} reaction={reaction} link={link} />
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
     </div>
   );
   return context ? (
-    <MessageMenu text={text} onReply={onReply} reaction={reaction}>
+    <MessageMenu text={text} onReply={onReply} reaction={reaction} link={link}>
       {row}
     </MessageMenu>
   ) : (

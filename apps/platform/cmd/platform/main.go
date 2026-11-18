@@ -52,6 +52,7 @@ func run() error {
 	var graph sdk.SpiceDB
 	var temporal sdk.Temporal
 	var clerkURL, clerkKey string
+	userIDMetadataKey := "openlet_user_id"
 	for _, v := range []struct {
 		path   string
 		target any
@@ -59,6 +60,12 @@ func run() error {
 		if err = c.Section(v.path, v.target); err != nil {
 			return err
 		}
+	}
+	if err = c.OptionalSection("auth.clerk.user_id_metadata_key", &userIDMetadataKey); err != nil {
+		return err
+	}
+	if userIDMetadataKey == "" {
+		return fmt.Errorf("auth.clerk.user_id_metadata_key cannot be empty")
 	}
 	if settings.GRPCListen == "" || settings.MaxMembers < 1 || settings.DefaultQuotaBytes < 0 || settings.InvitationTTLSeconds < 1 || settings.IdempotencyRetentionSeconds < 1 || g.MaxReceiveBytes < 1 || runtime.ShutdownTimeoutSeconds < 1 || temporal.Queues.Platform == "" {
 		return fmt.Errorf("invalid platform/runtime settings")
@@ -105,6 +112,7 @@ func run() error {
 		return err
 	}
 	app := &platform.Server{DB: db, Graph: az, Clerk: user.NewClient(&clerk.ClientConfig{BackendConfig: clerk.BackendConfig{URL: &clerkURL, Key: &key, HTTPClient: &http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)}}}), Temporal: tc, Settings: settings, Queue: temporal.Queues.Platform, Queues: temporal.Queues}
+	app.UserIDMetadataKey = userIDMetadataKey
 	w := worker.New(tc, temporal.Queues.Platform, worker.Options{WorkerStopTimeout: time.Duration(runtime.ShutdownTimeoutSeconds) * time.Second})
 	platform.RegisterWorker(w, app)
 	if err = w.Start(); err != nil {

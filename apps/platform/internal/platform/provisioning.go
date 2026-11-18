@@ -117,7 +117,7 @@ func (s *Server) admitWorkspace(ctx context.Context, in ProvisionInput) (*Provis
 	defer tx.Rollback(ctx)
 	out := new(ProvisionResult)
 	if in.Subject != "" {
-		out.User, err = scanUser(tx.QueryRow(ctx, `WITH inserted AS (INSERT INTO users(id,clerk_subject,display_name,avatar_url) VALUES($1,$2,$3,$4) ON CONFLICT(clerk_subject) DO NOTHING RETURNING id,display_name,avatar_url) SELECT id,display_name,avatar_url FROM inserted UNION ALL SELECT id,display_name,avatar_url FROM users WHERE clerk_subject=$2 AND NOT EXISTS(SELECT 1 FROM inserted)`, in.UserID, in.Subject, in.DisplayName, in.AvatarURL))
+		out.User, err = scanUser(tx.QueryRow(ctx, `WITH inserted AS (INSERT INTO users(id,clerk_subject,display_name,avatar_url) VALUES($1,$2,$3,$4) ON CONFLICT(clerk_subject) DO NOTHING RETURNING id,display_name,avatar_url,appearance) SELECT id,display_name,avatar_url,appearance FROM inserted UNION ALL SELECT id,display_name,avatar_url,appearance FROM users WHERE clerk_subject=$2 AND NOT EXISTS(SELECT 1 FROM inserted)`, in.UserID, in.Subject, in.DisplayName, in.AvatarURL))
 		if err != nil {
 			return nil, err
 		}

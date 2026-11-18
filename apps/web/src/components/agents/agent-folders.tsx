@@ -1,6 +1,7 @@
 // Port of OpenBot's SidebarSectionHeader / SidebarSectionEditor / SidebarMoveToSubmenu.
 import { useState } from 'react';
 import {
+  MoreHorizontal,
   ArrowDown,
   ArrowUp,
   Check,
@@ -24,11 +25,28 @@ import {
   ContextMenuSubTrigger,
   ContextMenuSubContent,
 } from '@/components/ui/context-menu';
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuSub,
+  DropdownMenuSubTrigger,
+  DropdownMenuSubContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu';
 import { folderDestination, folderLabel, type AgentFolder } from '@/lib/agent-organization';
 import { useAgentPreview } from './agent-preview';
 import { cn } from '@/lib/utils';
 
-export function AgentMoveMenu({ id }: { id: string }) {
+export function AgentMoveMenu({ id, dropdown = false }: { id: string; dropdown?: boolean }) {
+  const Sub = dropdown ? DropdownMenuSub : ContextMenuSub;
+  const Trigger = dropdown ? DropdownMenuSubTrigger : ContextMenuSubTrigger;
+  const Content = dropdown ? DropdownMenuSubContent : ContextMenuSubContent;
+  const Group = dropdown ? DropdownMenuGroup : ContextMenuGroup;
+  const Item = dropdown ? DropdownMenuItem : ContextMenuItem;
+  const Separator = dropdown ? DropdownMenuSeparator : ContextMenuSeparator;
   const p = useAgentPreview();
   const { layout, save, busy } = p.organization;
   const move = (folder: string | null) => {
@@ -38,36 +56,36 @@ export function AgentMoveMenu({ id }: { id: string }) {
     void save({ ...layout, assignments }).catch(() => {});
   };
   return (
-    <ContextMenuSub>
-      <ContextMenuSubTrigger disabled={busy}>
+    <Sub>
+      <Trigger disabled={busy}>
         <FolderInput />
         Move to…
-      </ContextMenuSubTrigger>
-      <ContextMenuSubContent>
-        <ContextMenuGroup>
+      </Trigger>
+      <Content>
+        <Group>
           {layout.folders.map((f) => (
-            <ContextMenuItem key={f.id} onSelect={() => move(f.id)}>
+            <Item key={f.id} onSelect={() => move(f.id)}>
               {layout.assignments[id] === f.id ? <Check /> : <Folder />}
               <span className="truncate">{folderLabel(layout.folders, f.id)}</span>
-            </ContextMenuItem>
+            </Item>
           ))}
-          <ContextMenuItem onSelect={() => move(null)}>
+          <Item onSelect={() => move(null)}>
             {!layout.assignments[id] ? <Check /> : <Folder />}Unassigned
-          </ContextMenuItem>
-        </ContextMenuGroup>
-        <ContextMenuSeparator />
-        <ContextMenuGroup>
-          <ContextMenuItem
+          </Item>
+        </Group>
+        <Separator />
+        <Group>
+          <Item
             onSelect={() =>
               p.setFolderEditor({ id: null, parent_id: null, name: '', agent_id: id })
             }
           >
             <FolderPlus />
             New folder
-          </ContextMenuItem>
-        </ContextMenuGroup>
-      </ContextMenuSubContent>
-    </ContextMenuSub>
+          </Item>
+        </Group>
+      </Content>
+    </Sub>
   );
 }
 export function FolderEditor() {
@@ -174,6 +192,112 @@ export function AgentFolderSection({
     [folders[from], folders[to]] = [folders[to], folders[from]];
     mutate(folders);
   };
+  function menu(dropdown = false) {
+    const Content = dropdown ? DropdownMenuContent : ContextMenuContent;
+    const Group = dropdown ? DropdownMenuGroup : ContextMenuGroup;
+    const Item = dropdown ? DropdownMenuItem : ContextMenuItem;
+    const Separator = dropdown ? DropdownMenuSeparator : ContextMenuSeparator;
+    const Sub = dropdown ? DropdownMenuSub : ContextMenuSub;
+    const SubTrigger = dropdown ? DropdownMenuSubTrigger : ContextMenuSubTrigger;
+    const SubContent = dropdown ? DropdownMenuSubContent : ContextMenuSubContent;
+    return (
+      <Content>
+        <Group>
+          <Item onSelect={() => p.setFolderEditor({ ...folder })}>
+            <Pencil />
+            Rename
+          </Item>
+          <Item
+            disabled={!folderDestination(layout.folders, 'new', folder.id)}
+            onSelect={() => p.setFolderEditor({ id: null, parent_id: folder.id, name: '' })}
+          >
+            <FolderPlus />
+            New folder inside
+          </Item>
+          <Sub>
+            <SubTrigger>
+              <FolderInput />
+              Move to…
+            </SubTrigger>
+            <SubContent>
+              <Group>
+                {folder.parent_id && (
+                  <Item
+                    onSelect={() =>
+                      mutate(
+                        layout.folders.map((f) =>
+                          f.id === folder.id ? { ...f, parent_id: null } : f,
+                        ),
+                      )
+                    }
+                  >
+                    <FolderOpen />
+                    Top level
+                  </Item>
+                )}
+                {layout.folders
+                  .filter(
+                    (f) =>
+                      f.id !== folder.parent_id &&
+                      folderDestination(layout.folders, folder.id, f.id),
+                  )
+                  .map((f) => (
+                    <Item
+                      key={f.id}
+                      onSelect={() =>
+                        mutate(
+                          layout.folders.map((item) =>
+                            item.id === folder.id ? { ...item, parent_id: f.id } : item,
+                          ),
+                        )
+                      }
+                    >
+                      <Folder />
+                      <span className="truncate">{folderLabel(layout.folders, f.id)}</span>
+                    </Item>
+                  ))}
+              </Group>
+            </SubContent>
+          </Sub>
+          <Item disabled={index === 0} onSelect={() => move(-1)}>
+            <ArrowUp />
+            Move up
+          </Item>
+          <Item disabled={index === siblings.length - 1} onSelect={() => move(1)}>
+            <ArrowDown />
+            Move down
+          </Item>
+        </Group>
+        <Separator />
+        <Group>
+          <Item
+            variant="destructive"
+            onSelect={() => {
+              const assignments = { ...layout.assignments };
+              for (const [id, target] of Object.entries(assignments))
+                if (target === folder.id) {
+                  if (folder.parent_id) assignments[id] = folder.parent_id;
+                  else delete assignments[id];
+                }
+              void save({
+                ...layout,
+                folders: layout.folders
+                  .filter((f) => f.id !== folder.id)
+                  .map((f) =>
+                    f.parent_id === folder.id ? { ...f, parent_id: folder.parent_id } : f,
+                  ),
+                assignments,
+                collapsed: layout.collapsed.filter((f) => f !== folder.id),
+              }).catch(() => {});
+            }}
+          >
+            <Trash2 />
+            Delete folder
+          </Item>
+        </Group>
+      </Content>
+    );
+  }
   return (
     <section
       aria-label={folderLabel(layout.folders, folder.id)}
@@ -197,137 +321,58 @@ export function AgentFolderSection({
       ) : (
         <ContextMenu>
           <ContextMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              aria-label={folder.name}
-              aria-expanded={!collapsed}
-              aria-controls={`folder-${folder.id}`}
-              disabled={busy}
-              draggable
-              onDragStart={(e) => {
-                e.stopPropagation();
-                onDrag('folder:' + folder.id);
-              }}
-              onDragEnd={() => onDrag('')}
-              onClick={() =>
-                void save({
-                  ...layout,
-                  collapsed: collapsed
-                    ? layout.collapsed.filter((f) => f !== folder.id)
-                    : [...layout.collapsed, folder.id],
-                }).catch(() => {})
-              }
-              className={cn(
-                'h-8 w-full justify-between gap-2 px-1.75 text-caption leading-4 font-normal text-foreground hover:bg-transparent aria-expanded:bg-transparent',
-                over === folder.id && 'bg-accent ring-1 ring-ring',
-              )}
-            >
-              <span className="min-w-0 truncate">
-                {parent && <span className="text-muted-foreground">{parent.name} / </span>}
-                {folder.name}
-              </span>
-              {collapsed || empty ? (
-                <Folder className="shrink-0 text-muted-foreground" />
-              ) : (
-                <FolderOpen className="shrink-0 text-muted-foreground" />
-              )}
-            </Button>
-          </ContextMenuTrigger>
-          <ContextMenuContent>
-            <ContextMenuGroup>
-              <ContextMenuItem onSelect={() => p.setFolderEditor({ ...folder })}>
-                <Pencil />
-                Rename
-              </ContextMenuItem>
-              <ContextMenuItem
-                disabled={!folderDestination(layout.folders, 'new', folder.id)}
-                onSelect={() => p.setFolderEditor({ id: null, parent_id: folder.id, name: '' })}
-              >
-                <FolderPlus />
-                New folder inside
-              </ContextMenuItem>
-              <ContextMenuSub>
-                <ContextMenuSubTrigger>
-                  <FolderInput />
-                  Move to…
-                </ContextMenuSubTrigger>
-                <ContextMenuSubContent>
-                  <ContextMenuGroup>
-                    {folder.parent_id && (
-                      <ContextMenuItem
-                        onSelect={() =>
-                          mutate(
-                            layout.folders.map((f) =>
-                              f.id === folder.id ? { ...f, parent_id: null } : f,
-                            ),
-                          )
-                        }
-                      >
-                        <FolderOpen />
-                        Top level
-                      </ContextMenuItem>
-                    )}
-                    {layout.folders
-                      .filter(
-                        (f) =>
-                          f.id !== folder.parent_id &&
-                          folderDestination(layout.folders, folder.id, f.id),
-                      )
-                      .map((f) => (
-                        <ContextMenuItem
-                          key={f.id}
-                          onSelect={() =>
-                            mutate(
-                              layout.folders.map((item) =>
-                                item.id === folder.id ? { ...item, parent_id: f.id } : item,
-                              ),
-                            )
-                          }
-                        >
-                          <Folder />
-                          <span className="truncate">{folderLabel(layout.folders, f.id)}</span>
-                        </ContextMenuItem>
-                      ))}
-                  </ContextMenuGroup>
-                </ContextMenuSubContent>
-              </ContextMenuSub>
-              <ContextMenuItem disabled={index === 0} onSelect={() => move(-1)}>
-                <ArrowUp />
-                Move up
-              </ContextMenuItem>
-              <ContextMenuItem disabled={index === siblings.length - 1} onSelect={() => move(1)}>
-                <ArrowDown />
-                Move down
-              </ContextMenuItem>
-            </ContextMenuGroup>
-            <ContextMenuSeparator />
-            <ContextMenuGroup>
-              <ContextMenuItem
-                variant="destructive"
-                onSelect={() => {
-                  const assignments = { ...layout.assignments };
-                  for (const [id, target] of Object.entries(assignments))
-                    if (target === folder.id) {
-                      if (folder.parent_id) assignments[id] = folder.parent_id;
-                      else delete assignments[id];
-                    }
+            <div className="relative">
+              <Button
+                variant="ghost"
+                aria-label={folder.name}
+                aria-expanded={!collapsed}
+                aria-controls={`folder-${folder.id}`}
+                disabled={busy}
+                draggable
+                onDragStart={(e) => {
+                  e.stopPropagation();
+                  onDrag('folder:' + folder.id);
+                }}
+                onDragEnd={() => onDrag('')}
+                onClick={() =>
                   void save({
                     ...layout,
-                    folders: layout.folders
-                      .filter((f) => f.id !== folder.id)
-                      .map((f) =>
-                        f.parent_id === folder.id ? { ...f, parent_id: folder.parent_id } : f,
-                      ),
-                    assignments,
-                    collapsed: layout.collapsed.filter((f) => f !== folder.id),
-                  }).catch(() => {});
-                }}
+                    collapsed: collapsed
+                      ? layout.collapsed.filter((f) => f !== folder.id)
+                      : [...layout.collapsed, folder.id],
+                  }).catch(() => {})
+                }
+                className={cn(
+                  'h-8 w-full justify-between gap-2 px-1.75 pe-9 text-caption leading-4 font-normal text-foreground hover:bg-transparent aria-expanded:bg-transparent',
+                  over === folder.id && 'bg-accent ring-1 ring-ring',
+                )}
               >
-                <Trash2 />
-                Delete folder
-              </ContextMenuItem>
-            </ContextMenuGroup>
-          </ContextMenuContent>
+                <span className="min-w-0 truncate">
+                  {parent && <span className="text-muted-foreground">{parent.name} / </span>}
+                  {folder.name}
+                </span>
+                {collapsed || empty ? (
+                  <Folder className="shrink-0 text-muted-foreground" />
+                ) : (
+                  <FolderOpen className="shrink-0 text-muted-foreground" />
+                )}
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    className="absolute end-0 top-0 size-8"
+                    aria-label={`Actions for folder ${folder.name}`}
+                  >
+                    <MoreHorizontal />
+                  </Button>
+                </DropdownMenuTrigger>
+                {menu(true)}
+              </DropdownMenu>
+            </div>
+          </ContextMenuTrigger>
+          {menu()}
         </ContextMenu>
       )}
       <div

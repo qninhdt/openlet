@@ -1,5 +1,7 @@
-import { crc32c } from '@aws-crypto/crc32c';
-import type { Api } from './agent-api.js';
+import { Crc32c, crc32c } from '@aws-crypto/crc32c';
+import { ApiError, type Api } from './agent-api.js';
+import { readUploads, rememberUpload, forgetUpload, type UploadResume } from './upload-resume.js';
+import { fileMediaType, isTextFile } from './file-types.js';
 import { rootId, type StorageNode, type StorageRoot } from './storage-preview.js';
 
 type RemoteNode = {
@@ -10,10 +12,21 @@ type RemoteNode = {
   kind: 'NODE_KIND_DIRECTORY' | 'NODE_KIND_FILE';
   updatedAt: string;
   readonly?: boolean;
-  file?: { mediaType: string; sizeBytes: string; version: string };
+  file?: {
+    mediaType: string;
+    sizeBytes: string;
+    version: string;
+    type?: StorageNode['fileType'];
+    processing?: StorageNode['processing'];
+  };
 };
 export type LiveStorage = StorageRoot & { root: string };
-export function storageApi(api: Api, workspace: string) {
+export function storageApi(
+  api: Api,
+  workspace: string,
+  request?: ((path: string, init?: RequestInit) => Promise<Response>) | null,
+  actor = '',
+) {
   const base = `/v1/workspaces/${workspace}/storages`;
   const post = <T>(path: string, body: object) =>
     api<T>(path, { method: 'POST', body: JSON.stringify(body) });
@@ -33,9 +46,17 @@ export function storageApi(api: Api, workspace: string) {
     mime: n.file?.mediaType ?? '',
     size: Number(n.file?.sizeBytes ?? 0),
     version: Number(n.file?.version ?? 0),
+    fileType: n.file?.type,
+    processing: n.file?.processing,
     updated: Date.parse(n.updatedAt),
     readonly: n.readonly,
     read: () => blob(n.storageId, n.id),
+    thumbnail: request
+      ? async () =>
+          (
+            await request(`${base}/${n.storageId}/nodes/${n.id}/image?maxWidth=480&maxHeight=480`)
+          ).blob()
+      : undefined,
   });
   async function listRoots(): Promise<LiveStorage[]> {
     const result: LiveStorage[] = [];
@@ -46,7 +67,7 @@ export function storageApi(api: Api, workspace: string) {
           id: string;
           name: string;
           rootNodeId: string;
-          capabilities?: { write?: boolean };
+          capabilities?: { write?: boolean; manageAccess?: boolean };
         }[];
         nextPageToken?: string;
       }>(`${base}?pageSize=100&pageToken=${cursor}`);
@@ -57,6 +78,7 @@ export function storageApi(api: Api, workspace: string) {
           name: item.name === 'Shared' ? 'Team' : item.name,
           root: item.rootNodeId,
           write: !!item.capabilities?.write,
+          manageAccess: !!item.capabilities?.manageAccess,
         });
       }
       cursor = page.nextPageToken ?? '';
@@ -83,6 +105,31 @@ export function storageApi(api: Api, workspace: string) {
     });
     return (result.hits ?? []).map(node);
   }
+  async function searchContent(
+    storage: string,
+    query: string,
+    mode: 'text' | 'semantic',
+    pageToken = '',
+  ) {
+    const page = await post<{
+      hits?: {
+        node: RemoteNode;
+        snippet?: string;
+        path?: string;
+        lineNumber?: number;
+        score?: number;
+      }[];
+      nextPageToken?: string;
+    }>(`${base}/${storage}/files:${mode === 'text' ? 'textSearch' : 'semanticSearch'}`, {
+      root: locator(storage, rootId(storage)),
+      query,
+      ...(mode === 'text' ? { pageSize: 50, pageToken } : { topK: 30 }),
+    });
+    return {
+      hits: (page.hits ?? []).map((hit) => ({ ...hit, node: node(hit.node) })),
+      nextPageToken: page.nextPageToken,
+    };
+  }
   async function descendants(current: StorageNode): Promise<StorageNode[]> {
     if (current.kind === 'file') return [current];
     const children = await list(current.storage, current.id);
@@ -101,6 +148,27 @@ export function storageApi(api: Api, workspace: string) {
   }
   async function stat(storage: string, id: string) {
     return node(await api<RemoteNode>(`${base}/${storage}/nodes/${id}`));
+  }
+  async function path(current: StorageNode) {
+    const names: string[] = [];
+    const seen = new Set<string>();
+    let at = current;
+    while (!at.id.startsWith('root:')) {
+      if (seen.has(at.id)) throw new Error('Could not resolve the file path.');
+      seen.add(at.id);
+      if (at.name) names.unshift(at.name);
+      if (at.parent.startsWith('root:')) break;
+      at = await stat(current.storage, at.parent);
+    }
+    return '/' + names.join('/');
+  }
+  async function retryProcessing(current: StorageNode, requestId: string) {
+    return node(
+      await post<RemoteNode>(`${base}/${current.storage}/nodes/${current.id}:retryProcessing`, {
+        expectedVersion: String(current.version),
+        requestId,
+      }),
+    );
   }
   async function save(current: StorageNode, text: string) {
     return node(
@@ -158,82 +226,228 @@ export function storageApi(api: Api, workspace: string) {
     file: File,
     name = file.name,
     onProgress?: (loaded: number, total: number) => void,
+    replace?: StorageNode,
+    options: { signal?: AbortSignal; resume?: UploadResume } = {},
   ) {
-    const mediaType =
-      file.type ||
-      (/\.(md|txt|csv|tsv|py|js|ts|tsx|jsx|go|rs|sh|sql|css|yaml|yml|toml|log)$/i.test(name)
-        ? 'text/plain'
-        : 'application/octet-stream');
-    if (/^text\/|^application\/(json|xml|javascript|yaml|toml)$|\+(json|xml)$/.test(mediaType)) {
+    options.signal?.throwIfAborted();
+    const mediaType = fileMediaType(name, file.type);
+    const textFile = isTextFile(name, mediaType);
+    if (replace && (replace.kind !== 'file' || replace.readonly))
+      throw new Error('Only writable files can be replaced. Choose Keep both instead.');
+    if (
+      replace &&
+      textFile !==
+        (replace.fileType
+          ? replace.fileType === 'FILE_TYPE_TEXT'
+          : isTextFile(replace.name, replace.mime))
+    )
+      throw new Error(
+        'Replacing a file with a different storage type is not supported. Choose Keep both instead.',
+      );
+    if (textFile) {
       const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(
         await file.arrayBuffer(),
       );
+      options.signal?.throwIfAborted();
       onProgress?.(0, file.size);
-      const created = await create(storage, parent, name, { content: text, mediaType });
+      const created = replace
+        ? await save(replace, text)
+        : await create(storage, parent, name, { content: text, mediaType });
       onProgress?.(file.size, file.size);
       return created;
     }
+    const signal = options.signal;
+    const hash = new Crc32c();
+    try {
+      signal?.throwIfAborted();
+      for (let offset = 0; offset < file.size; offset += 8 * 1024 * 1024) {
+        signal?.throwIfAborted();
+        hash.update(
+          new Uint8Array(await file.slice(offset, offset + 8 * 1024 * 1024).arrayBuffer()),
+        );
+      }
+      signal?.throwIfAborted();
+    } catch (error) {
+      if (signal?.aborted && signal.reason !== 'pause' && options.resume)
+        await cancelUpload(options.resume);
+      throw error;
+    }
+    const value = hash.digest();
+    const digest = btoa(
+      String.fromCharCode(value >>> 24, (value >>> 16) & 255, (value >>> 8) & 255, value & 255),
+    );
+    let saved =
+      options.resume ??
+      readUploads(actor).find(
+        (item) =>
+          item.workspace === workspace &&
+          item.storage === storage &&
+          item.parent === parent &&
+          item.name === name &&
+          item.checksum === digest &&
+          item.size === file.size &&
+          item.replace?.id === replace?.id &&
+          item.replace?.version === replace?.version,
+      );
+    if (
+      saved &&
+      (saved.fileName !== file.name ||
+        saved.size !== file.size ||
+        saved.modified !== file.lastModified ||
+        saved.checksum !== digest)
+    )
+      throw new Error('Select the original file with the same contents to resume this upload.');
+    saved ??= {
+      workspace,
+      storage,
+      parent,
+      name,
+      fileName: file.name,
+      size: file.size,
+      modified: file.lastModified,
+      checksum: digest,
+      requestId: crypto.randomUUID(),
+      created: Date.now(),
+      ...(replace ? { replace } : {}),
+    };
+    // Persist only transfer metadata; file bytes and signed URLs stay out of browser storage.
+    rememberUpload(actor, saved);
     const put = (url: string, headers: Record<string, string>, body: Blob, offset = 0) =>
       new Promise<string | null>((resolve, reject) => {
-        const request = new XMLHttpRequest();
-        request.open('PUT', url);
-        for (const [key, value] of Object.entries(headers)) request.setRequestHeader(key, value);
-        request.upload.onprogress = (event) => onProgress?.(offset + event.loaded, file.size);
-        request.onload = () =>
-          request.status >= 200 && request.status < 300
-            ? resolve(request.getResponseHeader('etag'))
-            : reject(new Error('Upload failed. Retry this file.'));
-        request.onerror = () =>
-          reject(new Error('Upload failed. Check your connection and retry.'));
-        request.send(body);
+        signal?.throwIfAborted();
+        const xhr = new XMLHttpRequest();
+        const abort = () => xhr.abort();
+        xhr.open('PUT', url);
+        for (const [key, value] of Object.entries(headers)) xhr.setRequestHeader(key, value);
+        xhr.upload.onprogress = (event) => onProgress?.(offset + event.loaded, file.size);
+        xhr.onload = () =>
+          xhr.status >= 200 && xhr.status < 300
+            ? resolve(xhr.getResponseHeader('etag'))
+            : reject(new Error('Upload failed. Retry to resume the parts already sent.'));
+        xhr.onerror = () =>
+          reject(
+            new Error(
+              'Connection interrupted. Retry to resume, or select the same file after reopening the app.',
+            ),
+          );
+        xhr.onabort = () => reject(new DOMException('Upload cancelled.', 'AbortError'));
+        xhr.onloadend = () => signal?.removeEventListener('abort', abort);
+        signal?.addEventListener('abort', abort, { once: true });
+        xhr.send(body);
       });
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    const upload = await post<{
+    type Part = { partNumber: number; etag: string; checksum: string };
+    type Upload = {
       id: string;
       completed?: RemoteNode;
+      transferred?: boolean;
+      completedParts?: Part[];
       transfer: {
         putUrl: string;
         headers: Record<string, string>;
         multipart?: boolean;
         partSizeBytes?: string;
       };
-    }>(`${base}/${storage}/uploads`, {
-      create: { parent: locator(storage, parent), name },
-      mediaType,
-      sizeBytes: String(file.size),
-      checksum: checksum(bytes),
-      requestId: crypto.randomUUID(),
-    });
-    if (upload.completed) {
-      onProgress?.(file.size, file.size);
-      return node(upload.completed);
-    }
+    };
     try {
-      const parts: { partNumber: number; etag: string; checksum: string }[] = [];
-      if (upload.transfer.multipart) {
-        const partSize = Number(upload.transfer.partSizeBytes);
-        for (let offset = 0, partNumber = 1; offset < file.size; offset += partSize, partNumber++) {
-          const body = file.slice(offset, offset + partSize);
-          const digest = checksum(bytes.subarray(offset, offset + partSize));
-          const signed = await post<{ parts: { url: string; headers: Record<string, string> }[] }>(
-            `${base}/${storage}/uploads/${upload.id}:signParts`,
-            { parts: [{ partNumber, checksum: digest }] },
-          );
-          const etag = await put(signed.parts[0].url, signed.parts[0].headers, body, offset);
-          if (!etag) throw new Error('Upload response is missing ETag. Check storage CORS.');
-          parts.push({ partNumber, etag, checksum: digest });
+      let transfer: Upload;
+      if (saved.uploadId) {
+        try {
+          transfer = await api<Upload>(`${base}/${storage}/uploads/${saved.uploadId}`);
+        } catch (error) {
+          if (error instanceof ApiError && error.status === 404) {
+            forgetUpload(actor, saved.requestId);
+            delete saved.uploadId;
+            saved.requestId = crypto.randomUUID();
+            throw new Error('This upload has expired. Retry to start a new transfer.');
+          }
+          throw error;
         }
       } else {
-        await put(upload.transfer.putUrl, upload.transfer.headers, file);
+        transfer = await post<Upload>(`${base}/${storage}/uploads`, {
+          ...(replace
+            ? {
+                replace: {
+                  target: { nodeId: replace.id },
+                  expectedVersion: String(replace.version),
+                },
+              }
+            : { create: { parent: locator(storage, parent), name } }),
+          mediaType,
+          sizeBytes: String(file.size),
+          checksum: digest,
+          requestId: saved.requestId,
+        });
+        saved.uploadId = transfer.id;
+        rememberUpload(actor, saved);
       }
-      return node(
-        await post<RemoteNode>(`${base}/${storage}/uploads/${upload.id}:complete`, { parts }),
+      if (transfer.completed) {
+        forgetUpload(actor, saved.requestId);
+        onProgress?.(file.size, file.size);
+        return node(transfer.completed);
+      }
+      signal?.throwIfAborted();
+      const parts: Part[] = [];
+      if (!transfer.transferred && transfer.transfer.multipart) {
+        const partSize = Number(transfer.transfer.partSizeBytes);
+        if (!Number.isSafeInteger(partSize) || partSize <= 0)
+          throw new Error('Invalid upload part size.');
+        for (let offset = 0, partNumber = 1; offset < file.size; offset += partSize, partNumber++) {
+          signal?.throwIfAborted();
+          const body = file.slice(offset, offset + partSize);
+          const digest = checksum(new Uint8Array(await body.arrayBuffer()));
+          let part = transfer.completedParts?.find(
+            (part) => part.partNumber === partNumber && part.checksum === digest && part.etag,
+          );
+          if (!part) {
+            const signed = await post<{
+              parts: { url: string; headers: Record<string, string> }[];
+            }>(`${base}/${storage}/uploads/${transfer.id}:signParts`, {
+              parts: [{ partNumber, checksum: digest }],
+            });
+            const etag = await put(signed.parts[0].url, signed.parts[0].headers, body, offset);
+            if (!etag) throw new Error('Upload response is missing ETag. Check storage CORS.');
+            part = { partNumber, etag, checksum: digest };
+          }
+          parts.push(part);
+          onProgress?.(Math.min(offset + partSize, file.size), file.size);
+        }
+      } else if (!transfer.transferred) {
+        await put(transfer.transfer.putUrl, transfer.transfer.headers, file);
+      }
+      signal?.throwIfAborted();
+      const result = node(
+        await post<RemoteNode>(`${base}/${storage}/uploads/${transfer.id}:complete`, { parts }),
       );
+      forgetUpload(actor, saved.requestId);
+      onProgress?.(file.size, file.size);
+      return result;
     } catch (error) {
-      await api(`${base}/${storage}/uploads/${upload.id}`, { method: 'DELETE' }).catch(() => {});
+      if (signal?.aborted && signal.reason !== 'pause') {
+        if (saved.uploadId)
+          await api(`${base}/${storage}/uploads/${saved.uploadId}`, { method: 'DELETE' });
+        forgetUpload(actor, saved.requestId);
+        throw new DOMException('Upload cancelled.', 'AbortError');
+      }
       throw error;
     }
   }
+  async function cancelUpload(saved: UploadResume) {
+    if (saved.uploadId)
+      await api(`${base}/${saved.storage}/uploads/${saved.uploadId}`, { method: 'DELETE' });
+    forgetUpload(actor, saved.requestId);
+  }
+  function resumeUpload(
+    saved: UploadResume,
+    file: File,
+    onProgress: (loaded: number, total: number) => void,
+    signal: AbortSignal,
+  ) {
+    return upload(saved.storage, saved.parent, file, saved.name, onProgress, saved.replace, {
+      signal,
+      resume: saved,
+    });
+  }
+
   async function trash(current: StorageNode) {
     await post(`${base}/${current.storage}/nodes/${current.id}:trash`, {
       requestId: crypto.randomUUID(),
@@ -263,20 +477,37 @@ export function storageApi(api: Api, workspace: string) {
       await post<RemoteNode>(`${base}/${current.storage}/trash/${current.trashId}:restore`, {}),
     );
   }
+  async function purge(current: StorageNode) {
+    if (!current.trashId) throw new Error('Reload Trash before deleting this item.');
+    await api(`${base}/${current.storage}/trash/${current.trashId}`, { method: 'DELETE' });
+  }
+  async function quota() {
+    const result = await api<{ usedBytes: string; quotaBytes: string }>(
+      `/v1/workspaces/${workspace}/storage-quota`,
+    );
+    return { used: Number(result.usedBytes ?? 0), total: Number(result.quotaBytes ?? 0) };
+  }
   return {
     bind: (storage: string, root: string) => roots.set(storage, root),
     listRoots,
     list,
     search,
+    searchContent,
     descendants,
     stat,
+    path,
+    retryProcessing,
     blob,
     save,
     create,
     transfer,
     upload,
+    resumeUpload,
+    cancelUpload,
     trash,
     listTrash,
     restore,
+    purge,
+    quota,
   };
 }

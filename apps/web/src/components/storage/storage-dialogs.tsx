@@ -36,10 +36,16 @@ export function StorageDialogs() {
     let active = true;
     setLoading(true);
     setError('');
-    void b.loadFolder(destination.storage, destination.parent)
-      .catch(error => active && setError(error instanceof Error ? error.message : 'Could not load folders.'))
+    void b
+      .loadFolder(destination.storage, destination.parent)
+      .catch(
+        (error) =>
+          active && setError(error instanceof Error ? error.message : 'Could not load folders.'),
+      )
       .finally(() => active && setLoading(false));
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, [!!transfer, destination.storage, destination.parent]);
   const destinationNode = b.snapshot.nodes.find((node) => node.id === destination.parent);
   const invalid = (id: string) =>
@@ -64,14 +70,25 @@ export function StorageDialogs() {
   }
   return (
     <>
-      <Dialog open={!!b.nameRequest} onOpenChange={(open) => !open && b.setNameRequest(null)}>
+      <Dialog
+        open={!!b.nameRequest}
+        onOpenChange={(open) => !open && !b.pending && b.setNameRequest(null)}
+      >
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle>{b.nameRequest?.kind === 'rename' ? 'Rename' : 'New folder'}</DialogTitle>
+            <DialogTitle>
+              {b.nameRequest?.kind === 'rename'
+                ? 'Rename'
+                : b.nameRequest?.kind === 'create-file'
+                  ? 'New file'
+                  : 'New folder'}
+            </DialogTitle>
             <DialogDescription>
               {b.nameRequest?.kind === 'rename'
                 ? 'Choose a name for this item.'
-                : 'Create a folder in this location.'}
+                : b.nameRequest?.kind === 'create-file'
+                  ? 'Create a text or code file and open it in the editor.'
+                  : 'Create a folder in this location.'}
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={submitName} className="flex flex-col gap-4">
@@ -80,6 +97,8 @@ export function StorageDialogs() {
               <Input
                 id="storage-name"
                 autoFocus
+                disabled={b.pending}
+                placeholder={b.nameRequest?.kind === 'create-file' ? 'Untitled.md' : undefined}
                 value={name}
                 onChange={(event) => setName(event.target.value)}
                 aria-invalid={!!error}
@@ -91,7 +110,12 @@ export function StorageDialogs() {
               )}
             </div>
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => b.setNameRequest(null)}>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={b.pending}
+                onClick={() => b.setNameRequest(null)}
+              >
                 Cancel
               </Button>
               <Button type="submit" disabled={!!b.pending || !name.trim()}>
@@ -145,8 +169,16 @@ export function StorageDialogs() {
               </span>
             </div>
             <div className="h-52 overflow-auto p-1">
-              {loading && <p role="status" className="p-3 text-sm text-muted-foreground">Loading folders…</p>}
-              {error && <p role="alert" className="p-3 text-sm text-destructive">{error}</p>}
+              {loading && (
+                <p role="status" className="p-3 text-sm text-muted-foreground">
+                  Loading folders…
+                </p>
+              )}
+              {error && (
+                <p role="alert" className="p-3 text-sm text-destructive">
+                  {error}
+                </p>
+              )}
               {b.snapshot.nodes
                 .filter(
                   (node) =>
@@ -171,7 +203,10 @@ export function StorageDialogs() {
             <Button variant="outline" onClick={() => b.setTransfer(null)}>
               Cancel
             </Button>
-            <Button disabled={loading || !!error || !!b.pending || invalid(destination.parent)} onClick={confirmTransfer}>
+            <Button
+              disabled={loading || !!error || !!b.pending || invalid(destination.parent)}
+              onClick={confirmTransfer}
+            >
               {b.pending ? 'Working…' : transfer?.copy ? 'Copy here' : 'Move here'}
             </Button>
           </DialogFooter>
@@ -182,8 +217,10 @@ export function StorageDialogs() {
           <DialogHeader>
             <DialogTitle>An item with this name already exists</DialogTitle>
             <DialogDescription className="break-words">
-              {b.conflict?.names.join(', ')}. Keep both adds a number to the new name. Replace moves
-              the existing item to Trash.
+              {b.conflict?.names.join(', ')}. Keep both adds a number to the new name.{' '}
+              {b.conflict?.upload
+                ? 'Replace updates the existing file and keeps its links. Folders and changes of storage type cannot be replaced.'
+                : 'Replace moves the existing destination item to Trash.'}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -218,6 +255,28 @@ export function StorageDialogs() {
             </Button>
             <Button variant="destructive" disabled={!!b.pending} onClick={() => void b.remove()}>
               Move to Trash
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={!!b.purgeIds.length}
+        onOpenChange={(open) => !open && !b.pending && b.setPurgeIds([])}
+      >
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Delete permanently?</DialogTitle>
+            <DialogDescription>
+              {b.purgeIds.length} item{b.purgeIds.length === 1 ? '' : 's'} and their contents will
+              be permanently deleted. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" disabled={b.pending} onClick={() => b.setPurgeIds([])}>
+              Cancel
+            </Button>
+            <Button variant="destructive" disabled={b.pending} onClick={() => void b.purge()}>
+              {b.pending ? 'Deleting…' : 'Delete permanently'}
             </Button>
           </DialogFooter>
         </DialogContent>

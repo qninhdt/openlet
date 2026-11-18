@@ -1,6 +1,6 @@
+from collections.abc import Awaitable
 from types import SimpleNamespace
 from typing import cast
-from collections.abc import Awaitable
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -144,3 +144,162 @@ async def test_conversation_membership_drives_storage_permissions() -> None:
         assert await auth.allowed(Actor("agent", root), "storage", storage, "read")
     finally:
         await channel.close()
+
+
+async def test_paths_resolve_without_turning_mentions_into_attachments() -> None:
+    from mirage import FileStat, FileType
+
+    storage, node = uuid4(), uuid4()
+    stat = AsyncMock(
+        return_value=FileStat(
+            name="Bản [cuối].txt",
+            type=FileType.FILE,
+            extra={"storage_id": str(storage), "node_id": str(node)},
+        )
+    )
+    content, attached = await file_refs.resolve(
+        r"Xem :file[Bản \[cuối\]]{path=~/thư mục/file\}.txt}",
+        [],
+        stat,
+    )
+    assert file_refs.references(content) == [("Bản [cuối]", storage, node)]
+    assert attached == ""
+    stat.assert_awaited_once_with("~/thư mục/file}.txt")
+    content, attached = await file_refs.resolve("", ["~/one.txt", "~/two.txt"], stat)
+    assert content == ""
+    assert file_refs.references(attached) == [("Bản [cuối].txt", storage, node)]
+
+
+@pytest.mark.parametrize(
+    "kind,extra",
+    [
+        ("directory", {"storage_id": "storage", "node_id": "node"}),
+        ("file", {}),
+    ],
+)
+async def test_path_attachments_reject_directories_and_nonstored_artifacts(
+    kind: str, extra: dict[str, str]
+) -> None:
+    from mirage import FileStat, FileType
+
+    stat = AsyncMock(
+        return_value=FileStat(name="invalid", type=FileType(kind), extra=extra)
+    )
+    with pytest.raises(ValueError, match="stored file"):
+        await file_refs.resolve("", ["~/invalid"], stat)
+
+
+async def test_private_files_copy_to_conversation_without_granting_source_access(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from leta import conversations
+
+    sender, recipient = Actor("agent", uuid4()), Actor("user", uuid4())
+    storage, node, destination, copied, parent, workspace, request = (
+        uuid4() for _ in range(7)
+    )
+    source = fs.Node(
+        id=str(node),
+        storage_id=str(storage),
+        name="report.txt",
+        kind=fs.NODE_KIND_FILE,
+        file=fs.FileHeader(media_type="text/plain", size_bytes=4, version=7),
+    )
+    result = fs.Node(
+        id=str(copied),
+        storage_id=str(destination),
+        name="report.txt",
+        kind=fs.NODE_KIND_FILE,
+        file=fs.FileHeader(media_type="text/plain", size_bytes=4, version=1),
+    )
+    files = SimpleNamespace(
+        Stat=AsyncMock(return_value=source),
+        CopyNode=AsyncMock(return_value=result),
+        CreateDirectories=AsyncMock(return_value=fs.Node(id=str(parent))),
+    )
+    auth = SimpleNamespace(require=AsyncMock(), allowed=AsyncMock(return_value=False))
+    services = cast(Services, SimpleNamespace(auth=auth, files=files))
+    provision = AsyncMock(
+        return_value={
+            "storage_id": str(destination),
+            "root_node_id": str(uuid4()),
+            "zed_token": "causal-token",
+        }
+    )
+    monkeypatch.setattr(conversations, "storage", provision)
+    for _ in range(2):
+        refs = await file_refs.validate(
+            services,
+            workspace,
+            sender,
+            recipient,
+            file_refs.token("Report", str(storage), str(node)),
+            copy_request=request,
+        )
+        assert refs == [
+            {
+                "storage_id": str(destination),
+                "node_id": str(copied),
+                "label": "Report",
+                "name": "report.txt",
+                "mime": "text/plain",
+                "size": 4,
+                "version": 1,
+            }
+        ]
+    calls = files.CopyNode.await_args_list
+    assert calls[0].args[0].request_id == calls[1].args[0].request_id
+    assert calls[0].args[0].parent.node_id == str(parent)
+    assert ("x-openlet-zed-token", "causal-token") in calls[0].kwargs["metadata"]
+    assert files.CreateDirectories.await_args.args[0].path.endswith(
+        f"/{storage}/{node}"
+    )
+    provision.assert_awaited_with(services, sender.id, recipient.id)
+    assert not hasattr(auth, "write")
+    auth.require.reset_mock(side_effect=True)
+    auth.require.side_effect = PermissionError("source denied")
+    files.CopyNode.reset_mock()
+    with pytest.raises(PermissionError, match="source denied"):
+        await file_refs.validate(
+            services,
+            workspace,
+            sender,
+            recipient,
+            file_refs.token("Report", str(storage), str(node)),
+            copy_request=request,
+        )
+    files.CopyNode.assert_not_awaited()
+
+
+async def test_invalid_batch_is_rejected_before_copying_any_file() -> None:
+    sender, recipient = Actor("agent", uuid4()), Actor("user", uuid4())
+    storage, node, directory = uuid4(), uuid4(), uuid4()
+    files = SimpleNamespace(
+        Stat=AsyncMock(
+            side_effect=[
+                fs.Node(id=str(node), kind=fs.NODE_KIND_FILE),
+                fs.Node(id=str(directory), kind=fs.NODE_KIND_DIRECTORY),
+            ]
+        ),
+        CopyNode=AsyncMock(),
+    )
+    services = cast(
+        Services,
+        SimpleNamespace(
+            files=files,
+            auth=SimpleNamespace(
+                require=AsyncMock(), allowed=AsyncMock(return_value=False)
+            ),
+        ),
+    )
+    with pytest.raises(ValueError, match="only files"):
+        await file_refs.validate(
+            services,
+            uuid4(),
+            sender,
+            recipient,
+            file_refs.token("File", str(storage), str(node))
+            + file_refs.token("Directory", str(storage), str(directory)),
+            copy_request=uuid4(),
+        )
+    files.CopyNode.assert_not_awaited()

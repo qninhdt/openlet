@@ -8,7 +8,7 @@ export function ConversationStorage() {
   const p = useAgentPreview();
   useEffect(() => {
     void p.ensureConversation().catch(() => {});
-  }, [p.fixture.id]);
+  }, [p.resource.id]);
   const storage = p.conversation.data;
   if (!storage)
     return (
@@ -33,8 +33,11 @@ export function ConversationStorage() {
           for (const node of nodes) await p.attachFile(node);
         })();
       }}
-      onOpenFile={(node) =>
-        void p.openFileReference({ storage_id: node.storage, node_id: node.id, label: node.name })
+      onOpenFile={(node, line) =>
+        void p.openFileReference(
+          { storage_id: node.storage, node_id: node.id, label: node.name },
+          line,
+        )
       }
     >
       <StoragePage embedded />

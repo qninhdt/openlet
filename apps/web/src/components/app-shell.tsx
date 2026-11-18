@@ -1,31 +1,29 @@
+import { WorkspaceUsage } from './workspace-usage';
+import { AccountMenu } from './shell-menus';
 import { useShellLocation, useShellNavigate } from '@/lib/shell-navigation';
 import { UploadsProvider } from './storage/uploads';
 import { useEffect, useRef, useState, type ComponentProps } from 'react';
 import { Outlet, useLocation, useRouter } from '@tanstack/react-router';
-import { useTheme } from 'next-themes';
 import { usePanelRef } from 'react-resizable-panels';
 import {
   ArrowLeft,
   ArrowRight,
   Bot,
-  Check,
   ChevronRight,
   Palette,
   Plus,
   FolderPlus,
   Folder,
-  HardDrive,
-  ChevronsUpDown,
+  Folders,
   Globe2,
   MessageCircle,
   CircleUserRound,
   Activity,
-  Moon,
   PanelLeft,
   PanelRight,
   Search,
   Settings,
-  Sun,
+  Layers3,
   Users,
   X,
 } from 'lucide-react';
@@ -52,23 +50,14 @@ import {
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
 import { AgentPreviewProvider, useAgentPreview } from '@/components/agents/agent-preview';
 import { AgentSidebar } from '@/components/agents/agent-sidebar';
-import {
-  AgentPanel,
-  AgentPanelHeader,
-  AgentModelPicker,
-  AgentSettingsDialog,
-  AgentCreateDialog,
-} from '@/components/agents/agent-panels';
+import { AgentPanel, AgentPanelHeader, AgentCreateDialog } from '@/components/agents/agent-panels';
 import { BoxSidebar } from '@/components/agents/box-view';
 import { Boxes } from 'lucide-react';
 import { useWorkspaces } from '@/lib/workspace-directory';
@@ -81,7 +70,7 @@ import { cn } from '@/lib/utils';
 const navigation = [
   { id: 'agents', label: 'Agents', icon: Bot },
   { id: 'boxes', label: 'Box', icon: Boxes },
-  { id: 'storage', label: 'Storage', icon: HardDrive },
+  { id: 'storage', label: 'Storage', icon: Folders },
 ] as const;
 
 const titles: Record<Destination, string> = {
@@ -91,13 +80,22 @@ const titles: Record<Destination, string> = {
   settings: 'Settings',
 };
 
-function IconAction({ label, ...props }: ComponentProps<typeof Button> & { label: string }) {
+function IconAction({
+  label,
+  side = 'bottom',
+  sideOffset = 6,
+  ...props
+}: ComponentProps<typeof Button> & {
+  label: string;
+  side?: ComponentProps<typeof TooltipContent>['side'];
+  sideOffset?: number;
+}) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <Button variant="ghost" size="icon-sm" aria-label={label} {...props} />
       </TooltipTrigger>
-      <TooltipContent side="bottom" className="hidden md:block">
+      <TooltipContent side={side} sideOffset={sideOffset} className="hidden md:block">
         {label}
       </TooltipContent>
     </Tooltip>
@@ -108,14 +106,14 @@ export function AppShell() {
   const search = useShellLocation();
   const workspaces = useWorkspaces();
   const workspace = workspaces.find((item) => item.id === search.workspace)!;
-  if (!workspace || !workspace.agents.some((agent) => agent.id === search.agent))
+  if (!workspace || (search.agent && !workspace.agents.some((agent) => agent.id === search.agent)))
     return (
       <p role="alert" className="p-8">
         This workspace or agent is unavailable.
       </p>
     );
   return (
-    <UploadsProvider key={workspace.id}>
+    <UploadsProvider key={workspace.id} workspaceId={workspace.id}>
       <FileSessionsProvider>
         <AgentPreviewProvider>
           <StorageProvider workspace={workspace}>
@@ -132,7 +130,6 @@ function WorkspaceShell() {
   const workspaces = useWorkspaces();
   const navigate = useShellNavigate();
   const router = useRouter();
-  const { resolvedTheme, setTheme } = useTheme();
   const isMobile = useIsMobile(721);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -140,15 +137,17 @@ function WorkspaceShell() {
   const sidebarPanel = usePanelRef();
   const entry = useLocation({ select: (location) => location.state.shellEntry });
   const [mobilePane, setMobilePane] = useState<'workspace' | 'conversation'>(() =>
-    entry && search.view === 'agents' && window.innerWidth <= 720 ? 'workspace' : 'conversation',
+    (entry || !search.agent) && search.view === 'agents' && window.innerWidth <= 720
+      ? 'workspace'
+      : 'conversation',
   );
   const [searchOpen, setSearchOpen] = useState(false);
   const preview = useAgentPreview();
 
   const { setPanelOpen } = preview;
-  const panelOpen = search.view === 'agents' && preview.panelOpen;
+  const panelOpen = !!search.agent && search.view === 'agents' && preview.panelOpen;
   const panelExpanded = panelOpen && preview.panelExpanded && !isMobile;
-  const agentSurface = search.view === 'agents' || search.view === 'boxes';
+  const agentSurface = (search.view === 'agents' && !!search.agent) || search.view === 'boxes';
   const narrowWindow = useIsMobile(panelOpen ? 1125 : 765);
   const autoCompact = !isMobile && narrowWindow && search.view === 'agents';
   const folderEditing = preview.folderEditor !== null;
@@ -169,8 +168,8 @@ function WorkspaceShell() {
     forward: router.history.location.state.__TSR_index < router.history.length - 1,
   }));
   const workspace = workspaces.find((item) => item.id === search.workspace)!;
-  const agent = workspace.agents.find((item) => item.id === search.agent)!;
-  const heading = search.view === 'agents' ? agent.name : titles[search.view];
+  const agent = workspace.agents.find((item) => item.id === search.agent);
+  const heading = search.view === 'agents' ? (agent?.name ?? 'Agents') : titles[search.view];
 
   useEffect(
     () =>
@@ -213,75 +212,32 @@ function WorkspaceShell() {
     setSearchOpen(false);
   }
 
-  function workspaceMenu(topbar = false) {
-    return (
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="ghost"
-            size={topbar ? 'sm' : 'icon-lg'}
-            aria-label="Switch workspace"
-            className={topbar ? 'max-w-full justify-start' : undefined}
-          >
-            {topbar ? (
-              <>
-                <span className="truncate">{workspace.name}</span>
-                <ChevronsUpDown data-icon="inline-end" />
-              </>
-            ) : (
-              <AppLogo className="size-6" />
-            )}
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent
-          side={topbar ? 'bottom' : 'right'}
-          align={topbar ? 'start' : 'end'}
-          className="w-64"
-        >
-          <DropdownMenuLabel>Workspaces</DropdownMenuLabel>
-          <DropdownMenuGroup>
-            {workspaces.map((item) => (
-              <DropdownMenuItem
-                key={item.id}
-                onSelect={() =>
-                  go({ workspace: item.id, agent: item.agents[0]?.id ?? search.agent })
-                }
-              >
-                <Users />
-                {item.name}
-                {item.id === workspace.id && <Check className="ml-auto" />}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuGroup>
-          <DropdownMenuSeparator />
-          <DropdownMenuGroup>
-            <DropdownMenuItem onSelect={() => go({ view: 'settings' })}>
-              <Settings />
-              Workspace settings
-            </DropdownMenuItem>
-          </DropdownMenuGroup>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    );
-  }
-
   function pageRail() {
     return (
       <nav
         aria-label="Workspace navigation"
         className="page-rail relative flex w-13 shrink-0 flex-col items-center gap-1.5 pt-[calc(var(--shell-header-height)+0.25rem)] pb-3 text-muted-foreground"
       >
-        <a
-          href="/"
-          aria-label="Openlet home"
-          className="absolute top-0 flex h-(--shell-header-height) w-full items-center justify-center rounded-md pt-0.5 focus-visible:outline-2 focus-visible:outline-ring"
-        >
-          <AppLogo />
-        </a>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <a
+              href="/"
+              aria-label="Openlet home"
+              className="absolute top-0 flex h-(--shell-header-height) w-full items-center justify-center rounded-md pt-0.5 focus-visible:outline-2 focus-visible:outline-ring"
+            >
+              <AppLogo />
+            </a>
+          </TooltipTrigger>
+          <TooltipContent side="right" sideOffset={8} className="hidden md:block">
+            Home
+          </TooltipContent>
+        </Tooltip>
         {navigation.map(({ id, label, icon: Icon }) => (
           <IconAction
             key={id}
             label={label}
+            side="right"
+            sideOffset={8}
             size="icon-lg"
             variant={search.view === id ? 'secondary' : 'ghost'}
             aria-current={search.view === id ? 'page' : undefined}
@@ -291,24 +247,19 @@ function WorkspaceShell() {
           </IconAction>
         ))}
         <div className="mt-auto flex flex-col items-center gap-2">
-          <IconAction
-            label={resolvedTheme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-            size="icon-lg"
-            onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
-          >
-            {resolvedTheme === 'dark' ? <Sun /> : <Moon />}
-          </IconAction>
+          <WorkspaceUsage workspace={workspace.id} />
           <IconAction
             label="Settings"
+            side="right"
+            sideOffset={8}
             size="icon-lg"
             aria-current={search.view === 'settings' ? 'page' : undefined}
             variant={search.view === 'settings' ? 'secondary' : 'ghost'}
-            onClick={() => go({ view: 'settings' })}
+            onClick={() => go({ view: 'settings', section: 'general' })}
           >
             <Settings />
           </IconAction>
-          <Separator className="my-1 max-w-6" />
-          {workspaceMenu()}
+          <AccountMenu workspace={workspace.id} />
         </div>
       </nav>
     );
@@ -333,8 +284,17 @@ function WorkspaceShell() {
       return <StorageSidebar onNavigate={() => setMobilePane('conversation')} />;
     if (search.view === 'settings') {
       return (
-        <div className="flex h-full min-h-0 flex-col bg-sidebar text-sidebar-foreground">
-          <h2 className="px-4 pt-3 pb-4 text-lg font-semibold">Your settings</h2>
+        <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-sidebar text-sidebar-foreground">
+          <h2 className="flex shrink-0 items-center gap-2 truncate px-4 pt-4 pb-4 text-sm font-medium">
+            {search.section === 'workspace' || search.section === 'members' ? (
+              <>
+                <Layers3 className="size-4 shrink-0" />
+                <span className="truncate">{workspace.name}</span>
+              </>
+            ) : (
+              'Your settings'
+            )}
+          </h2>
           <div className="px-2 pb-4">
             <InputGroup className="rounded-full">
               <InputGroupInput
@@ -348,11 +308,21 @@ function WorkspaceShell() {
               </InputGroupAddon>
             </InputGroup>
           </div>
-          <nav aria-label="Settings sections" className="flex flex-col gap-1 px-2">
-            {[
-              { id: 'general' as const, label: 'General', icon: Settings },
-              { id: 'appearance' as const, label: 'Appearance', icon: Palette },
-            ]
+          <nav
+            aria-label="Settings sections"
+            className="flex min-h-0 min-w-0 flex-1 flex-col gap-1 overflow-y-auto px-2"
+          >
+            {(search.section === 'workspace' || search.section === 'members'
+              ? [
+                  { id: 'workspace' as const, label: 'General', icon: Settings },
+                  { id: 'members' as const, label: 'Members', icon: Users },
+                ]
+              : [
+                  { id: 'profile' as const, label: 'Your profile', icon: CircleUserRound },
+                  { id: 'general' as const, label: 'General', icon: Settings },
+                  { id: 'appearance' as const, label: 'Appearance', icon: Palette },
+                ]
+            )
               .filter((item) => item.label.toLowerCase().includes(settingsFilter.toLowerCase()))
               .map(({ id, label, icon: Icon }) => (
                 <Button
@@ -367,14 +337,29 @@ function WorkspaceShell() {
                 </Button>
               ))}
           </nav>
-          <div className="mt-auto border-t p-2">
+          <div className="mt-auto min-w-0 shrink-0 border-t p-2">
             <Button
               variant="ghost"
-              className="w-full justify-start"
-              onClick={() => go({ view: 'agents' })}
+              className="w-full min-w-0 justify-start"
+              onClick={() =>
+                go({
+                  section:
+                    search.section === 'workspace' || search.section === 'members'
+                      ? 'general'
+                      : 'workspace',
+                })
+              }
             >
-              <Users data-icon="inline-start" />
-              <span className="truncate">{workspace.name}</span>
+              {search.section === 'workspace' || search.section === 'members' ? (
+                <CircleUserRound data-icon="inline-start" />
+              ) : (
+                <Layers3 data-icon="inline-start" />
+              )}
+              <span className="min-w-0 flex-1 truncate text-left">
+                {search.section === 'workspace' || search.section === 'members'
+                  ? 'Your settings'
+                  : `${workspace.name} settings`}
+              </span>
               <ChevronRight className="ml-auto" />
             </Button>
           </div>
@@ -382,12 +367,7 @@ function WorkspaceShell() {
       );
     }
     return (
-      <div className="flex h-full min-h-0 flex-col bg-sidebar text-sidebar-foreground">
-        {isMobile && (
-          <div className="flex h-(--shell-header-height) shrink-0 items-center border-b px-2">
-            {workspaceMenu(true)}
-          </div>
-        )}
+      <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-sidebar text-sidebar-foreground">
         <div
           className={cn(
             'flex items-center gap-1.5 px-3 pt-2 pb-1.5',
@@ -570,7 +550,7 @@ function WorkspaceShell() {
                                   icon: (
                                     <AgentAvatar
                                       name={preview.profile.name}
-                                      agentId={preview.fixture.id}
+                                      agentId={preview.resource.id}
                                       appearance={preview.profile.appearance}
                                       className="size-5"
                                     />
@@ -606,7 +586,7 @@ function WorkspaceShell() {
                                   icon: search.boxAgent ? (
                                     <AgentAvatar
                                       name={preview.profile.name}
-                                      agentId={preview.fixture.id}
+                                      agentId={preview.resource.id}
                                       appearance={preview.profile.appearance}
                                       className="size-5"
                                     />
@@ -650,9 +630,6 @@ function WorkspaceShell() {
                         ]}
                       />
                       <div className="flex shrink-0 items-center gap-0.5 pr-2">
-                        {preview.session.mainTab === 'agent' &&
-                          preview.capabilities.can_edit_settings &&
-                          !preview.live.enabled && <AgentModelPicker />}
                         {search.view === 'agents' && (
                           <IconAction
                             label="Toggle side panel"
@@ -713,20 +690,25 @@ function WorkspaceShell() {
                       aria-label="Settings sections"
                       className="flex shrink-0 gap-1 overflow-auto border-b p-2"
                     >
-                      <Button
-                        variant={search.section === 'general' ? 'secondary' : 'ghost'}
-                        onClick={() => go({ section: 'general' })}
-                      >
-                        <Settings data-icon="inline-start" />
-                        General
-                      </Button>
-                      <Button
-                        variant={search.section === 'appearance' ? 'secondary' : 'ghost'}
-                        onClick={() => go({ section: 'appearance' })}
-                      >
-                        <Palette data-icon="inline-start" />
-                        Appearance
-                      </Button>
+                      {(search.section === 'workspace' || search.section === 'members'
+                        ? [
+                            { id: 'workspace' as const, label: 'General' },
+                            { id: 'members' as const, label: 'Members' },
+                          ]
+                        : [
+                            { id: 'profile' as const, label: 'Profile' },
+                            { id: 'general' as const, label: 'General' },
+                            { id: 'appearance' as const, label: 'Appearance' },
+                          ]
+                      ).map(({ id, label }) => (
+                        <Button
+                          key={id}
+                          variant={search.section === id ? 'secondary' : 'ghost'}
+                          onClick={() => go({ section: id })}
+                        >
+                          {label}
+                        </Button>
+                      ))}
                     </nav>
                   )}
                   <div className="min-h-0 flex-1">
@@ -763,6 +745,7 @@ function WorkspaceShell() {
                         );
                         setSidebarCollapsed(size.inPixels < 118);
                       }}
+                      style={{ overflow: 'hidden' }}
                       minSize={search.view === 'settings' ? '220px' : '128px'}
                       maxSize="400px"
                     >
@@ -774,7 +757,7 @@ function WorkspaceShell() {
                               ? 'Storage sidebar'
                               : 'Agent sidebar'
                         }
-                        className="h-full"
+                        className="h-full min-w-0"
                       >
                         {agentList()}
                       </aside>
@@ -860,7 +843,6 @@ function WorkspaceShell() {
           </div>
         </nav>
       )}
-      <AgentSettingsDialog />
       <AgentCreateDialog />
       <CommandDialog
         open={searchOpen}

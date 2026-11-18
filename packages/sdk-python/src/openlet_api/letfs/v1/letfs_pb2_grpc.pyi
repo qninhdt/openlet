@@ -42,6 +42,7 @@ class LetFSServiceStub:
     SetStorageAccess: _grpc.UnaryUnaryMultiCallable[_letfs_pb2.SetStorageAccessRequest, _letfs_pb2.AccessGrant]
     RevokeStorageAccess: _grpc.UnaryUnaryMultiCallable[_letfs_pb2.RevokeStorageAccessRequest, _empty_pb2.Empty]
     Stat: _grpc.UnaryUnaryMultiCallable[_letfs_pb2.NodeRequest, _letfs_pb2.Node]
+    RetryProcessing: _grpc.UnaryUnaryMultiCallable[_letfs_pb2.RetryProcessingRequest, _letfs_pb2.Node]
     BatchStat: _grpc.UnaryUnaryMultiCallable[_letfs_pb2.BatchStatRequest, _letfs_pb2.BatchStatResponse]
     ListNodes: _grpc.UnaryUnaryMultiCallable[_letfs_pb2.ListNodesRequest, _letfs_pb2.ListNodesResponse]
     ReadTree: _grpc.UnaryUnaryMultiCallable[_letfs_pb2.ReadTreeRequest, _letfs_pb2.ReadTreeResponse]
@@ -53,6 +54,8 @@ class LetFSServiceStub:
     MutateText: _grpc.UnaryUnaryMultiCallable[_letfs_pb2.MutateTextRequest, _letfs_pb2.Node]
     ReadImage: _grpc.UnaryUnaryMultiCallable[_letfs_pb2.ReadImageRequest, _httpbody_pb2.HttpBody]
     GetDownload: _grpc.UnaryUnaryMultiCallable[_letfs_pb2.NodeRequest, _letfs_pb2.GetDownloadResponse]
+    CreateArchiveDownload: _grpc.UnaryUnaryMultiCallable[_letfs_pb2.DownloadArchiveRequest, _letfs_pb2.ArchiveDownloadTicket]
+    DownloadArchiveTicket: _grpc.UnaryStreamMultiCallable[_letfs_pb2.ArchiveDownloadTicketRequest, _httpbody_pb2.HttpBody]
     DownloadArchive: _grpc.UnaryStreamMultiCallable[_letfs_pb2.DownloadArchiveRequest, _httpbody_pb2.HttpBody]
     SearchFiles: _grpc.UnaryUnaryMultiCallable[_letfs_pb2.SearchFilesRequest, _letfs_pb2.SearchFilesResponse]
     TextSearch: _grpc.UnaryUnaryMultiCallable[_letfs_pb2.TextSearchRequest, _letfs_pb2.TextSearchResponse]
@@ -79,6 +82,7 @@ class LetFSServiceAsyncStub(LetFSServiceStub):
     SetStorageAccess: _aio.UnaryUnaryMultiCallable[_letfs_pb2.SetStorageAccessRequest, _letfs_pb2.AccessGrant]  # type: ignore[assignment]
     RevokeStorageAccess: _aio.UnaryUnaryMultiCallable[_letfs_pb2.RevokeStorageAccessRequest, _empty_pb2.Empty]  # type: ignore[assignment]
     Stat: _aio.UnaryUnaryMultiCallable[_letfs_pb2.NodeRequest, _letfs_pb2.Node]  # type: ignore[assignment]
+    RetryProcessing: _aio.UnaryUnaryMultiCallable[_letfs_pb2.RetryProcessingRequest, _letfs_pb2.Node]  # type: ignore[assignment]
     BatchStat: _aio.UnaryUnaryMultiCallable[_letfs_pb2.BatchStatRequest, _letfs_pb2.BatchStatResponse]  # type: ignore[assignment]
     ListNodes: _aio.UnaryUnaryMultiCallable[_letfs_pb2.ListNodesRequest, _letfs_pb2.ListNodesResponse]  # type: ignore[assignment]
     ReadTree: _aio.UnaryUnaryMultiCallable[_letfs_pb2.ReadTreeRequest, _letfs_pb2.ReadTreeResponse]  # type: ignore[assignment]
@@ -90,6 +94,8 @@ class LetFSServiceAsyncStub(LetFSServiceStub):
     MutateText: _aio.UnaryUnaryMultiCallable[_letfs_pb2.MutateTextRequest, _letfs_pb2.Node]  # type: ignore[assignment]
     ReadImage: _aio.UnaryUnaryMultiCallable[_letfs_pb2.ReadImageRequest, _httpbody_pb2.HttpBody]  # type: ignore[assignment]
     GetDownload: _aio.UnaryUnaryMultiCallable[_letfs_pb2.NodeRequest, _letfs_pb2.GetDownloadResponse]  # type: ignore[assignment]
+    CreateArchiveDownload: _aio.UnaryUnaryMultiCallable[_letfs_pb2.DownloadArchiveRequest, _letfs_pb2.ArchiveDownloadTicket]  # type: ignore[assignment]
+    DownloadArchiveTicket: _aio.UnaryStreamMultiCallable[_letfs_pb2.ArchiveDownloadTicketRequest, _httpbody_pb2.HttpBody]  # type: ignore[assignment]
     DownloadArchive: _aio.UnaryStreamMultiCallable[_letfs_pb2.DownloadArchiveRequest, _httpbody_pb2.HttpBody]  # type: ignore[assignment]
     SearchFiles: _aio.UnaryUnaryMultiCallable[_letfs_pb2.SearchFilesRequest, _letfs_pb2.SearchFilesResponse]  # type: ignore[assignment]
     TextSearch: _aio.UnaryUnaryMultiCallable[_letfs_pb2.TextSearchRequest, _letfs_pb2.TextSearchResponse]  # type: ignore[assignment]
@@ -159,6 +165,12 @@ class LetFSServiceServicer:
         context: _ServicerContext,
     ) -> _typing.Union[_letfs_pb2.Node, _abc.Awaitable[_letfs_pb2.Node]]: ...
 
+    def RetryProcessing(
+        self,
+        request: _letfs_pb2.RetryProcessingRequest,
+        context: _ServicerContext,
+    ) -> _typing.Union[_letfs_pb2.Node, _abc.Awaitable[_letfs_pb2.Node]]: ...
+
     def BatchStat(
         self,
         request: _letfs_pb2.BatchStatRequest,
@@ -224,6 +236,18 @@ class LetFSServiceServicer:
         request: _letfs_pb2.NodeRequest,
         context: _ServicerContext,
     ) -> _typing.Union[_letfs_pb2.GetDownloadResponse, _abc.Awaitable[_letfs_pb2.GetDownloadResponse]]: ...
+
+    def CreateArchiveDownload(
+        self,
+        request: _letfs_pb2.DownloadArchiveRequest,
+        context: _ServicerContext,
+    ) -> _typing.Union[_letfs_pb2.ArchiveDownloadTicket, _abc.Awaitable[_letfs_pb2.ArchiveDownloadTicket]]: ...
+
+    def DownloadArchiveTicket(
+        self,
+        request: _letfs_pb2.ArchiveDownloadTicketRequest,
+        context: _ServicerContext,
+    ) -> _typing.Union[_abc.Iterator[_httpbody_pb2.HttpBody], _abc.AsyncIterator[_httpbody_pb2.HttpBody]]: ...
 
     def DownloadArchive(
         self,

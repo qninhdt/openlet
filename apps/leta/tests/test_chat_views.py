@@ -2,7 +2,8 @@
 
 import json
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Coroutine, Generator
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import LiteralString, cast
@@ -137,6 +138,11 @@ async def test_sidebar_chat_reads_are_private_and_bounded(
             )
     mine = (await views.chat_summaries(db, [root], user))[root]
     assert mine["preview"] == "new reply" and mine["unread_count"] == 2
+    assert mine["latest_reply_id"] == latest
+    assert (
+        cast(datetime, mine["latest_reply_at"]).isoformat()
+        == "2026-11-16T07:01:00+00:00"
+    )
     await views.mark_chat_read(db, root, user, first)
     assert (await views.chat_summaries(db, [root], user))[root]["unread_count"] == 1
     await views.mark_chat_read(
@@ -147,6 +153,7 @@ async def test_sidebar_chat_reads_are_private_and_bounded(
         await views.mark_chat_read(db, root, user, private)
     theirs = (await views.chat_summaries(db, [root], other))[root]
     assert theirs["preview"] == "private reply" and theirs["unread_count"] == 1
+    assert theirs["latest_reply_id"] == private
     await views.mark_chat_read(db, root, user, latest)
     assert (await views.chat_summaries(db, [root], user))[root]["unread_count"] == 0
     # A sent message updates the preview, while a silent reaction never becomes a chat preview.
@@ -1197,9 +1204,23 @@ async def test_conversation_storage_is_lazy_serialized_and_retries_failed_acl(
     db, root, workspace, user, _other = database
     auth = UseAuth()
     auth.write = AsyncMock()  # type: ignore[attr-defined]
-    remote = SimpleNamespace(
-        CreateStorage=AsyncMock(side_effect=RuntimeError("ACL unavailable"))
-    )
+
+    class Creation:
+        def __init__(self, result: Coroutine[object, object, object]) -> None:
+            self.result = result
+
+        def __await__(self) -> Generator[object, object, object]:
+            return self.result.__await__()
+
+        async def initial_metadata(self) -> tuple[tuple[str, str], ...]:
+            return (("x-openlet-zed-token", "created-revision"),)
+
+    create = AsyncMock(side_effect=RuntimeError("ACL unavailable"))
+
+    def create_storage(*args: object, **kwargs: object) -> Creation:
+        return Creation(create(*args, **kwargs))
+
+    remote = SimpleNamespace(CreateStorage=create_storage)
     services = cast(Services, SimpleNamespace(db=db, auth=auth, storage=remote))
     async with db.connection() as conn:
         count = await (
@@ -1208,15 +1229,17 @@ async def test_conversation_storage_is_lazy_serialized_and_retries_failed_acl(
         assert count is not None and count["n"] == 0
     with pytest.raises(RuntimeError, match="ACL unavailable"):
         await conversations.storage(services, root, user)
-    remote.CreateStorage.side_effect = None
+    create.side_effect = None
     values = await asyncio.gather(
         conversations.storage(services, root, user),
         conversations.storage(services, root, user),
     )
     assert values[0]["storage_id"] == values[1]["storage_id"]
     assert values[0]["ready"] is True
-    assert remote.CreateStorage.await_count == 2
-    request = remote.CreateStorage.await_args.args[0]
+    assert {value["zed_token"] for value in values} == {"", "created-revision"}
+    assert create.await_count == 2
+    assert create.await_args is not None
+    request = create.await_args.args[0]
     assert request.owner.conversation_id == str(
         messages.conversation(root, "user", user)
     )
@@ -1226,9 +1249,9 @@ async def test_conversation_storage_is_lazy_serialized_and_retries_failed_acl(
             await conn.execute("SELECT count(*) AS n FROM conversations")
         ).fetchone()
         assert count is not None and count["n"] == 1
-    remote.CreateStorage.reset_mock()
+    create.reset_mock()
     await conversations.storage(services, root, user)
-    remote.CreateStorage.assert_not_awaited()
+    create.assert_not_awaited()
 
 
 async def test_chat_and_inbox_preserve_file_metadata_without_prompt_inventory(
@@ -1277,3 +1300,135 @@ async def test_chat_and_inbox_preserve_file_metadata_without_prompt_inventory(
     assert "\nfiles:" not in prompt
     items = cast(list[dict[str, JSON]], messages.input_data(rows, root=False)["items"])
     assert items[0]["file_refs"] == refs
+
+
+async def test_injected_full_messages_are_read_but_previews_remain_unread(
+    database: tuple[Pool, UUID, UUID, UUID, UUID],
+) -> None:
+    db, root, _, user, _ = database
+    auth = cast(Authorization, UseAuth())
+    contents = ["xin quyền đi", "a" * 120, "\n\t" + " " * 118, "long " * 80, "ok bye"]
+    for text in contents:
+        await messages.admit(
+            db,
+            auth,
+            messages.Message(
+                id=uuid4(),
+                recipient_agent_id=root,
+                source_kind="user",
+                source_id=user,
+                conversation_id=messages.conversation(root, "user", user),
+                content=text,
+            ),
+        )
+    batch = await messages.pending(db, root, 0, root=True)
+    body = messages.input_batch(batch, root=True)
+    assert all(f"message={i}" in body for i in range(1, 6))
+    assert body.count("Full message:") == 4
+    assert f"to={user}" in body
+    assert contents[2] in body
+    async with db.connection() as conn:
+        rows = await (
+            await conn.execute("SELECT seq,read_at FROM agent_messages ORDER BY seq")
+        ).fetchall()
+    assert [row["seq"] for row in rows if row["read_at"] is None] == [4]
+    text, unread = await messages.read(db, root, 5)
+    assert [row["seq"] for row in unread] == [4]
+    assert contents[3] in text and "ok bye" not in text
+    # A failed checkpoint may replay the batch; read marks never suppress delivery.
+    replay = await messages.pending(db, root, 0, root=True)
+    assert [row["seq"] for row in replay] == list(range(1, 6))
+    assert await messages.pending(db, root, 5, root=True) == []
+
+
+async def test_inbox_listing_marks_only_complete_returned_message_read(
+    database: tuple[Pool, UUID, UUID, UUID, UUID],
+) -> None:
+    db, root, _, user, _ = database
+    auth = cast(Authorization, UseAuth())
+    for text in ("long " * 80, "a short follow-up"):
+        await messages.admit(
+            db,
+            auth,
+            messages.Message(
+                id=uuid4(),
+                recipient_agent_id=root,
+                source_kind="user",
+                source_id=user,
+                conversation_id=messages.conversation(root, "user", user),
+                content=text,
+            ),
+        )
+    text, rows = await messages.list_inbox(db, root)
+    assert [row["seq"] for row in rows] == [2] and "Full message:" in text
+    _, unread = await messages.read(db, root, 2)
+    assert [row["seq"] for row in unread] == [1]
+
+
+async def test_chat_context_and_processing_stay_in_the_requesters_conversation(
+    database: tuple[Pool, UUID, UUID, UUID, UUID],
+) -> None:
+    db, root, workspace, user, other = database
+    own, private, run = uuid4(), uuid4(), uuid4()
+    async with db.connection() as conn:
+        for index in range(25):
+            await conn.execute(
+                "INSERT INTO user_messages(id,leta_id,recipient_user_id,conversation_id,content) VALUES(%s,%s,%s,%s,%s)",
+                (
+                    own if index == 0 else uuid4(),
+                    root,
+                    user,
+                    messages.conversation(root, "user", user),
+                    f"báo cáo budget {index}",
+                ),
+            )
+        await conn.execute(
+            "INSERT INTO user_messages(id,leta_id,recipient_user_id,conversation_id,content) VALUES(%s,%s,%s,%s,'private budget')",
+            (private, root, other, messages.conversation(root, "user", other)),
+        )
+        await conn.execute(
+            "INSERT INTO runs(id,agent_id,status,heartbeat_at) VALUES(%s,%s,'running',now())",
+            (run, root),
+        )
+        await conn.execute(
+            "INSERT INTO agent_messages(id,recipient_agent_id,seq,source_kind,source_id,conversation_id,content,processing_run_id) VALUES(%s,%s,1,'user',%s,%s,'budget request',%s)",
+            (uuid4(), root, user, messages.conversation(root, "user", user), run),
+        )
+    services = cast(Services, SimpleNamespace(db=db, auth=UseAuth()))
+    api.app.dependency_overrides[api.services] = lambda: services
+    base = f"/v1/workspaces/{workspace}/letas/{root}"
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=api.app),
+            base_url="http://test",
+            headers={"x-openlet-user-id": str(user)},
+        ) as client:
+            context = await client.get(f"{base}/messages/assistant/{own}/context")
+            assert context.status_code == 200
+            assert any(item["id"] == str(own) for item in context.json()["items"])
+            assert all(
+                item["content"] != "private budget" for item in context.json()["items"]
+            )
+            assert (
+                await client.get(f"{base}/messages/assistant/{private}/context")
+            ).status_code == 404
+            assert (await client.get(f"{base}/processing")).json() == {
+                "working": True,
+                "run_id": None,
+            }
+            assert (
+                await client.get(
+                    f"{base}/processing", headers={"x-openlet-user-id": str(other)}
+                )
+            ).json() == {"working": False, "run_id": None}
+            async with db.connection() as conn:
+                await conn.execute(
+                    "UPDATE runs SET heartbeat_at=now()-interval '1 minute' WHERE id=%s",
+                    (run,),
+                )
+            assert (await client.get(f"{base}/processing")).json() == {
+                "working": False,
+                "run_id": None,
+            }
+    finally:
+        api.app.dependency_overrides.clear()

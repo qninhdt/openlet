@@ -1,29 +1,14 @@
 import { fileText } from '@/lib/file-refs';
-import { useMemo, useRef, useState, type CSSProperties } from 'react';
-import {
-  AssistantRuntimeProvider,
-  useExternalStoreRuntime,
-  ThreadPrimitive,
-  MessagePrimitive,
-  useAuiState,
-  type ThreadMessageLike,
-} from '@assistant-ui/react';
+import { useRef, useState } from 'react';
 import { ArrowUp, Plus, X, Upload, HardDrive } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { agentAppearance } from '@/components/agent-appearance';
-import { Bubble, BubbleContent } from '@/components/ui/bubble';
-import { Message, MessageContent } from '@/components/ui/message';
-import { MessageScrollerContent, MessageScrollerItem } from '@/components/ui/message-scroller';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu';
-import { AgentFileCard } from './agent-tools';
-import { AgentMarkdown } from './agent-rich-content';
-import { AgentMessageParts } from './agent-reasoning';
-import { previewFiles, useAgentPreview } from './agent-preview';
+import { useAgentPreview } from './agent-preview';
 import { ComposerEditor } from './composer-editor';
 import { FilePicker } from './file-picker';
 import {
@@ -38,123 +23,6 @@ import {
 } from '@/components/ui/alert-dialog';
 import { PendingRequests } from './agent-requests';
 import { LiveActivity } from './agent-activity';
-import { AgentMessageScroller } from './agent-scroll';
-import { InputItems, Compaction } from './agent-inputs';
-import { MessageActions, MessageMenu, ActivityComposer } from './message-actions';
-import {
-  demoActivityInputs,
-  demoAttachments,
-  sampleMessages,
-  letiMessages,
-  letiInputs,
-} from './agent-demo';
-import { transcriptStyles } from '@/components/ui/styles';
-
-function TextPart({ text }: { text: string }) {
-  const p = useAgentPreview();
-  const message = useAuiState((state) => state.message);
-  const user = message.role === 'user';
-  const local = p.session.messages.find((item) => item.id === message.id);
-  const files = user
-    ? (local?.files ?? [])
-    : (demoAttachments[message.id] ?? []).flatMap((id) => {
-        const file = previewFiles.find((item) => item.id === id);
-        return file ? [file] : [];
-      });
-  return (
-    <MessageActions
-      own={user}
-      context={false}
-      text={text}
-      onReply={() =>
-        p.updateSession({
-          reply: { id: message.id, role: user ? 'user' : 'assistant', content: text.slice(0, 240) },
-          mainTab: 'agent',
-        })
-      }
-    >
-      <Bubble align={user ? 'end' : 'start'} variant={user ? 'agent' : 'muted'}>
-        <BubbleContent className="flex flex-col gap-2">
-          <AgentMarkdown text={text} />
-          {!!files.length && (
-            <div className="flex flex-wrap gap-2">
-              {files.map((file) => (
-                <AgentFileCard key={file.id} file={file} />
-              ))}
-            </div>
-          )}
-        </BubbleContent>
-      </Bubble>
-    </MessageActions>
-  );
-}
-
-function ConversationMessage() {
-  const p = useAgentPreview();
-  const message = useAuiState((state) => state.message);
-  const user = message.role === 'user';
-  const text = message.content
-    .filter((part) => part.type === 'text')
-    .map((part) => part.text)
-    .join('\n');
-  const local = p.session.messages.find((item) => item.id === message.id);
-  const inputs =
-    local?.inputs ??
-    (p.activityAgent.box_id
-      ? letiInputs(
-          p.activityAgent.id,
-          p.activityContact?.name ?? p.profile.name,
-          p.activityPeer?.name,
-        )
-      : demoActivityInputs(p.fixture.id))[message.id] ??
-    (user
-      ? [{ id: message.id, source_kind: 'user', source_name: 'You', content: text }]
-      : undefined);
-  if (inputs)
-    return (
-      <MessageScrollerItem messageId={message.id}>
-        <MessageActions text={inputs.map((item) => item.content).join('\n\n')} own>
-          <InputItems items={inputs} />
-        </MessageActions>
-      </MessageScrollerItem>
-    );
-  if (message.id === `${p.activityAgent.id}-compaction`)
-    return (
-      <MessageScrollerItem messageId={message.id}>
-        <Compaction text={text} />
-      </MessageScrollerItem>
-    );
-  return (
-    <MessageScrollerItem messageId={message.id} scrollAnchor={user}>
-      <MessageMenu
-        text={text}
-        onReply={() =>
-          p.updateSession({
-            reply: {
-              id: message.id,
-              role: user ? 'user' : 'assistant',
-              content: text.slice(0, 240),
-            },
-            mainTab: 'agent',
-          })
-        }
-      >
-        <MessagePrimitive.Root asChild>
-          <Message align={user ? 'end' : 'start'}>
-            <MessageContent>
-              {local?.reply && (
-                <blockquote className="max-w-[80%] border-l border-border pl-3 text-caption text-muted-foreground">
-                  {fileText(local.reply.content)}
-                </blockquote>
-              )}
-              <AgentMessageParts Text={TextPart} />
-            </MessageContent>
-          </Message>
-        </MessagePrimitive.Root>
-      </MessageMenu>
-    </MessageScrollerItem>
-  );
-}
 
 export function ConversationComposer() {
   const p = useAgentPreview();
@@ -216,7 +84,7 @@ export function ConversationComposer() {
           <ComposerEditor onEmptyChange={setEmpty} />
           <Button
             disabled={!!p.session.uploads.length || empty}
-            onClick={() => p.composers.get(p.fixture.id)?.submit()}
+            onClick={() => p.composers.get(p.resource.id)?.submit()}
             size="icon-sm"
             aria-label="Send message"
             className="rounded-full"
@@ -244,7 +112,12 @@ export function ConversationComposer() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void p.attachFile(p.copyRequest!, true)}>
+            <AlertDialogAction
+              onClick={() => {
+                const request = p.copyRequest!;
+                void p.attachFile(request.node, true, request.label, request.selection);
+              }}
+            >
               Send a copy
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -254,71 +127,6 @@ export function ConversationComposer() {
   );
 }
 
-const convertMessage = (message: ThreadMessageLike) => message;
-
 export function AgentActivity() {
-  const p = useAgentPreview();
-  return p.live.enabled ? <LiveActivity /> : <PreviewActivity />;
-}
-
-function PreviewActivity() {
-  const p = useAgentPreview();
-  const messages = useMemo<ThreadMessageLike[]>(
-    () => [
-      ...(p.activityAgent.box_id
-        ? letiMessages(
-            p.activityAgent.id,
-            p.activityContact?.id === p.fixture.id ? 'root' : p.activityContact?.name,
-          )
-        : sampleMessages(p.fixture.id)),
-      ...(p.activityAgent.box_id ? [] : p.session.messages).map((m) => ({
-        id: m.id,
-        role: 'user' as const,
-        content: m.text || ' ',
-      })),
-    ],
-    [
-      p.fixture.id,
-      p.activityAgent.id,
-      p.activityAgent.box_id,
-      p.activityContact,
-      p.session.messages,
-    ],
-  );
-  const runtime = useExternalStoreRuntime({
-    messages,
-    convertMessage,
-    isRunning: false,
-    onNew: async (message) => {
-      p.send(
-        message.content
-          .filter((part) => part.type === 'text')
-          .map((part) => part.text)
-          .join('\n'),
-      );
-    },
-  });
-  return (
-    <AssistantRuntimeProvider runtime={runtime}>
-      <ThreadPrimitive.Root
-        aria-label={`${p.activityAgent.name} conversation`}
-        style={
-          {
-            '--agent-color': agentAppearance(p.activityAgent.name, p.activityAgent.appearance)
-              .background,
-            '--agent-foreground': agentAppearance(p.activityAgent.name, p.activityAgent.appearance)
-              .foreground,
-          } as CSSProperties
-        }
-        className="flex h-full min-h-0 min-w-0 flex-col [--message-wide-bubble-width:min(100%,max(720px,70%),1200px)]"
-      >
-        <AgentMessageScroller positionKey={`${p.activityAgent.id}:activity`}>
-          <MessageScrollerContent className={transcriptStyles}>
-            <ThreadPrimitive.Messages components={{ Message: ConversationMessage }} />
-          </MessageScrollerContent>
-        </AgentMessageScroller>
-        <ActivityComposer />
-      </ThreadPrimitive.Root>
-    </AssistantRuntimeProvider>
-  );
+  return <LiveActivity />;
 }

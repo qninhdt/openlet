@@ -27,7 +27,11 @@ pnpm test:web
 pnpm preview
 ```
 
+The web config reads only `CLERK_PUBLISHABLE_KEY` from the repository root `.env`; `VITE_CLERK_PUBLISHABLE_KEY` in `apps/web/.env.local` or the process environment can override it. Backend secrets remain server-side. Vite proxies `/v1` to `http://127.0.0.1:8080` in development. For production, route `/v1` to the gateway at the web origin, or set `VITE_API_BASE_URL` and configure the gateway's CORS policy.
+
 `pnpm dev` serves the app at `http://localhost:5173`. `make check-js` runs formatting, type checks, lint and the production build, including this workspace.
+
+The full `pnpm test:web` suite includes real Clerk/gateway/LLM/R2 browser checks and requires signed-in Clerk state plus development workspace/agent IDs; see [integration status, coverage and run instructions](../../docs/frontend-backend-integration.md). It starts/reuses Vite at port 5174. Use `pnpm --dir e2e test:web:public` for public pages and pure adapters without the backend. Development R2 CORS supports localhost and 127.0.0.1 at ports 3000 and 5173–5175.
 
 Add shadcn components from this directory:
 
@@ -39,25 +43,25 @@ The `@/` alias points to `src/`. Shared UI lives in `src/components/ui`, global 
 
 ## Current scope
 
-`/app` includes the page rail, workspace menu, resizable sidebar, quick search, navigation history, OpenBot’s two-pane mobile navigation and an optional context panel. Agents have a local interactive conversation preview with 27 custom tool renderers and four multi-turn demo scenarios; see [Agent UI](AGENT-UI.md). Box includes agent teams, Leti activity and read-only schedules. Without backend configuration these surfaces use local fixtures; configured sessions use the existing authenticated API and streams.
+`/app` includes the page rail, workspace menu, resizable sidebar, quick search, navigation history, OpenBot’s two-pane mobile navigation and an optional context panel. Agents, Box and Storage use the authenticated backend APIs and SSE streams; see [Agent UI](AGENT-UI.md). The application has no demo fallback: missing authentication configuration shows an error.
 
-`/app/:workspaceId/settings/:section` implements General and Appearance with browser-local preferences and theme selection. Chat preferences are stored for the future chat implementation. Desktop-only OpenBot settings, billing, analytics, provider quotas, marketplace, workflows and computer controls are omitted.
+`/app/:workspaceId/settings/:section` includes Your profile, General and Appearance with account preferences saved through Platform. Workspace settings use General/Members in the same dashboard frame; the sidebar footer switches between personal and workspace settings. The bottom avatar menu switches workspaces and opens their settings. Desktop-only OpenBot settings, billing, analytics, provider quotas, marketplace, workflows and computer controls are omitted.
 
-`/app/:workspaceId/storage/:storageId` implements the interactive Storage preview: roots only in the sidebar (no folder tree or group labels), nested folders and breadcrumbs in the content area, Mosaic/Grid/List, multi-selection, drag and drop, file/folder upload, download/ZIP, context menus, rename, copy/move, collision handling and Trash/Restore. Files are saved in IndexedDB per workspace and remain local to this browser; this is not cloud persistence or an authorization boundary. Authenticated mode uses the LetFS API and workspace permissions. Clear browser site data to reset fixtures. Large ZIP downloads are assembled in memory; use backend streaming when connecting real storage.
+`/app/:workspaceId/storage/:storageId` implements Storage: roots only in the sidebar (no folder tree or group labels), nested folders and breadcrumbs in the content area, Mosaic/Grid/List, multi-selection, drag and drop, file/folder upload, download/ZIP, context menus, rename, copy/move, collision handling and Trash/Restore. Files use the LetFS API and workspace permissions. ZIP downloads stream to a writable file when available, with browser-download fallback. Removing the former preview persistence does not erase existing browser-local data or upload it to the backend.
 
 The page header ports OpenBot's page-owned identity/path and trailing controls into a shared frame. The identity accepts React content so conversation tabs use the same row; it does not impose storage controls on other pages. Sidebar resize keeps header alignment.
 
-Storage has a permanent browser tab and closable file tabs; selected files and folders have distinct routes. The shared viewer also renders conversation files in the Agent right panel. It supports images, PDF, audio/video, Markdown, text/code, sandboxed HTML and XLSX sheets. Text previews stop at 1 MB; XLSX previews use OpenBot's bounded parser (500 rows / 50 columns). Unsupported formats can be downloaded. Source and license notices are in `src/vendor/openbot`. Preview images are attributed in `public/storage-preview/README.md`.
+Storage has a permanent browser tab and closable file tabs; selected files and folders have distinct routes. The shared viewer also renders conversation files in the Agent right panel. It supports images, PDF, audio/video, Markdown, text/code, sandboxed HTML and XLSX sheets. Text previews stop at 1 MB; XLSX previews use OpenBot's bounded parser (500 rows / 50 columns). Unsupported formats can be downloaded. Source and license notices are in `src/vendor/openbot`.
 
-Set `OPENLET_STORAGE_SCREENSHOTS` to an absolute directory when running `pnpm test:web` to capture Storage in all three modes and the image viewer at 390, 721 and 1440 pixels.
+The live suite exercises real file transfers and Grid/Mosaic/List conversation drags. Screenshots and failure context are written beneath `.local/e2e`.
 
 All 63 official shadcn component modules are installed as source in `src/components/ui`. The shell composes these primitives and uses only semantic theme colors from `globals.css`. OpenBot's SolidJS shell structure was rewritten in React; its UI package is not bundled. The temporary blue logo adapts its original mark, with notices in `public/third-party/openbot`.
 
-`pnpm test:web` runs browser checks independently of the backend API test suite. Set `OPENLET_SHELL_SCREENSHOTS` to an absolute directory to capture the shell, panels and Settings at desktop, tablet and mobile sizes.
+`pnpm test:web` runs browser checks independently of the backend API test runner, against the running local services. The empty-workspace test captures Settings at mobile and desktop sizes.
 
-Landing remains a placeholder. Authentication/API configuration and preview behavior are described in [Agent UI](AGENT-UI.md).
+The public playground is isolated from authenticated application data. Authentication/API configuration is described in [Agent UI](AGENT-UI.md).
 
-This is a client-rendered SPA. Production hosting must serve `index.html` for application routes such as `/login` and every `/app/*` path. There is no frontend production host configuration in this repository; configure the SPA fallback at the chosen host. Public-page SSR or prerendering has not been configured.
+This is a client-rendered SPA. Production uses the Cloudflare Worker `openlet-web` at `openlet.qninhdt.com`. `worker.js` proxies `/v1` to the API gateway, preserves streaming responses and disables API/HTML caching. Other requests use the `ASSETS` binding with SPA fallback, configured in `worker.config.json`. Build `dist` using the production Clerk publishable key, package the Worker and assets into Cloudflare Build Output, then run `cf deploy --prebuilt`. Check the proxy with `node --test apps/web/worker.test.mjs` from the repository root. Public-page SSR or prerendering has not been configured.
 
 ## Agent avatars
 
@@ -69,10 +73,10 @@ Mobile follows OpenBot’s 720px breakpoint: the Workspace pane contains the pag
 
 Examples (IDs are stable; display names are independent):
 
-- `/app/personal/agents/atlas`, with `/overview`, `/activity`, `/box` and `/letis/:letiId/activity` children.
-- `/app/personal/boxes` or `/app/personal/boxes/atlas`.
-- `/app/personal/storage/:storageId`, with `/folders/:folderId` or `/files/:nodeId` children.
-- `/app/personal/settings/general` and `/appearance`.
+- `/app/:workspaceId/agents/:agentId`, with `/overview`, `/activity`, `/box` and `/letis/:letiId/activity` children.
+- `/app/:workspaceId/boxes` or `/app/:workspaceId/boxes/:agentId`.
+- `/app/:workspaceId/storage/:storageId`, with `/folders/:folderId` or `/files/:nodeId` children.
+- `/app/:workspaceId/settings/general` and `/appearance`.
 
 `/app?workspace=…&view=…&agent=…` links redirect with replace. Header tabs, sidebar, breadcrumbs and Back/Forward share route state. Unknown canonical resources show an unavailable state rather than falling back to another resource. API access controls still enforce authorization.
 

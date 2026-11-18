@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useBlocker } from '@tanstack/react-router';
 import CodeMirror, { Prec, type Extension } from '@uiw/react-codemirror';
 import { EditorView } from '@codemirror/view';
@@ -23,7 +23,16 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { formatBytes } from '@/lib/storage-preview';
-import { fileBlob, type StorageNode, type StorageTextSession } from './storage-context';
+import { type StorageNode, type StorageTextSession } from './storage-context';
+import { readTextFile, serializeTextFile } from '@/lib/text-file';
+import { ApiError } from '@/lib/agent-api';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog';
 
 const editorTheme = EditorView.theme({
   '&': { backgroundColor: 'transparent', color: 'var(--foreground)', height: '100%' },
@@ -109,25 +118,38 @@ function CsvPreview({ text, tabSeparated }: { text: string; tabSeparated: boolea
 export type TextFileAccess = {
   writable: boolean;
   saveText: (node: StorageNode, text: string) => Promise<StorageNode>;
+  saveCopy?: (node: StorageNode, text: string) => Promise<StorageNode>;
+  refreshNode?: () => Promise<StorageNode>;
   getTextSession: () => StorageTextSession | null;
   setTextSession: (session: StorageTextSession | null) => void;
 };
 
 export function TextFile({
   node,
+  focusLine,
   writable: canWrite,
   saveText,
+  saveCopy,
+  refreshNode,
   getTextSession,
   setTextSession,
   onDownload,
+  toolbarEnd,
   active = true,
-}: { node: StorageNode; onDownload: () => void; active?: boolean } & TextFileAccess) {
+}: {
+  node: StorageNode;
+  focusLine?: { line: number; request: string };
+  onDownload: () => void;
+  toolbarEnd?: ReactNode;
+  active?: boolean;
+} & TextFileAccess) {
   const { resolvedTheme } = useTheme();
-  const [openedNode] = useState(node);
   const [cached] = useState(() => {
     const session = getTextSession();
     return session?.node.id === node.id &&
-      ((session.node.blob === node.blob && session.node.updated === node.updated) ||
+      ((session.node.version === node.version &&
+        session.node.blob === node.blob &&
+        session.node.updated === node.updated) ||
         (session.draft !== undefined && session.draft !== session.text))
       ? session
       : undefined;
@@ -151,16 +173,38 @@ export function TextFile({
   const [error, setError] = useState('');
   const [saveError, setSaveError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [conflict, setConflict] = useState(false);
+  const [reload, setReload] = useState(false);
+  const [serverText, setServerText] = useState<string | null>(null);
   const [wrap, setWrap] = useState(true);
   const [language, setLanguage] = useState<Extension>([]);
   const scroll = useRef(cached?.scroll ?? { source: 0, preview: 0 });
   const preview = useRef<HTMLElement>(null);
+  const editor = useRef<EditorView | null>(null);
+  const jumped = useRef('');
+  useEffect(() => {
+    if (!loaded || !focusLine || !editor.current || jumped.current === focusLine.request) return;
+    jumped.current = focusLine.request;
+    const view = editor.current;
+    const line = view.state.doc.line(
+      Math.min(view.state.doc.lines, Math.max(1, Math.floor(focusLine.line))),
+    );
+    setSource(true);
+    requestAnimationFrame(() =>
+      view.dispatch({
+        selection: { anchor: line.from, head: line.to },
+        effects: EditorView.scrollIntoView(line.from, { y: 'center' }),
+      }),
+    );
+  }, [loaded, focusLine]);
   useEffect(() => {
     if (!source && preview.current) preview.current.scrollTop = scroll.current.preview;
   }, [source, loaded]);
   const saveButton = useRef<HTMLButtonElement>(null);
   const content = draft ?? loaded?.text ?? '';
   const dirty = loaded !== undefined && content !== loaded.text;
+  const changed =
+    !!loaded && (loaded.node.version !== node.version || loaded.node.updated !== node.updated);
   const writable = canWrite && !loaded?.truncated;
   const blocker = useBlocker({
     shouldBlockFn: () => saving,
@@ -169,23 +213,15 @@ export function TextFile({
   });
 
   useEffect(() => {
-    if (cached) return;
+    if (dirty || saving || (loaded && !changed)) return;
     let alive = true;
-    void fileBlob(openedNode)
-      .then(async (blob) => {
-        const truncated = blob.size > 1_000_000;
-        const bytes = new Uint8Array(await blob.slice(0, 1_000_000).arrayBuffer());
-        const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes, { stream: truncated });
-        if (text.includes('\0'))
-          throw new Error('This file contains binary data and cannot be edited as text.');
-        if (alive)
-          setLoaded({
-            node: openedNode,
-            text: text.replace(/\r\n/g, '\n'),
-            bom: bytes[0] === 239 && bytes[1] === 187 && bytes[2] === 191,
-            crlf: text.includes('\r\n'),
-            truncated,
-          });
+    setError('');
+    void readTextFile(node)
+      .then((value) => {
+        if (alive) {
+          setLoaded(value);
+          setDraft(undefined);
+        }
       })
       .catch(
         () =>
@@ -197,7 +233,7 @@ export function TextFile({
     return () => {
       alive = false;
     };
-  }, [openedNode, cached]);
+  }, [node.id, node.version, node.updated, node.blob, changed, dirty, saving, loaded]);
 
   // The mobile/desktop shell remounts its content, so keep the active draft above it.
   useEffect(() => {
@@ -234,17 +270,49 @@ export function TextFile({
     setSaving(true);
     setSaveError('');
     try {
-      const text =
-        (loaded.bom ? '\uFEFF' : '') + (loaded.crlf ? content.replace(/\n/g, '\r\n') : content);
+      const text = serializeTextFile(content, loaded);
       const updated = await saveText(loaded.node, text);
       setLoaded({ ...loaded, node: updated, text: content });
       setDraft(undefined);
+      setConflict(false);
       toast.success('File saved');
     } catch (error) {
+      if (error instanceof ApiError && error.status === 409) setConflict(true);
       setSaveError(
         error instanceof Error
           ? error.message
           : 'Could not save. Your changes are still in the editor.',
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function recover(action: 'view' | 'reload' | 'copy') {
+    if (!loaded || saving) return;
+    setSaving(true);
+    setSaveError('');
+    try {
+      if (action === 'copy') {
+        if (!saveCopy) return;
+        const copy = await saveCopy(loaded.node, serializeTextFile(content, loaded));
+        toast.success(`Saved as ${copy.name}. Your draft is still open.`);
+      } else {
+        const latest = refreshNode ? await refreshNode() : node;
+        const value = await readTextFile(latest);
+        if (action === 'view') setServerText(value.text);
+        else {
+          setLoaded(value);
+          setDraft(undefined);
+          setConflict(false);
+          setReload(false);
+        }
+      }
+    } catch (error) {
+      setSaveError(
+        error instanceof Error
+          ? error.message
+          : 'Could not recover the file. Your draft is still open.',
       );
     } finally {
       setSaving(false);
@@ -286,7 +354,7 @@ export function TextFile({
         }
       }}
     >
-      <div className="flex min-h-11 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b bg-muted/40 px-3 py-1.5">
+      <div className="storage-viewer-head flex min-h-11 shrink-0 items-center gap-2 overflow-x-auto border-b px-3 py-1">
         <Tabs
           value={source ? 'source' : 'preview'}
           onValueChange={(value) => setSource(value === 'source')}
@@ -308,11 +376,14 @@ export function TextFile({
             </TabsTrigger>
           </TabsList>
         </Tabs>
-        <span className="hidden text-xs tabular-nums text-muted-foreground sm:inline">
+        <span className="hidden shrink-0 text-xs tabular-nums text-muted-foreground @min-[680px]/file-viewer:inline">
           {content ? content.replace(/\n$/, '').split('\n').length : 0} lines ·{' '}
           {formatBytes(new Blob([content]).size)}
         </span>
-        <span role="status" className="text-xs text-muted-foreground">
+        <span
+          role="status"
+          className="sr-only text-xs text-muted-foreground @min-[520px]/file-viewer:not-sr-only @min-[520px]/file-viewer:shrink-0"
+        >
           {loaded.truncated
             ? 'Read-only · first 1 MB'
             : !writable
@@ -324,6 +395,7 @@ export function TextFile({
                   : ''}
         </span>
         <div className="ml-auto flex shrink-0 items-center gap-1">
+          {toolbarEnd}
           {source && (
             <Button
               variant="ghost"
@@ -381,6 +453,27 @@ export function TextFile({
           {saveError}
         </p>
       )}
+      {(conflict || (dirty && changed)) && (
+        <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2 text-sm" role="status">
+          <p className="mr-auto">This file changed on the server. Your draft is preserved.</p>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={saving}
+            onClick={() => void recover('view')}
+          >
+            View server version
+          </Button>
+          <Button size="sm" variant="outline" disabled={saving} onClick={() => setReload(true)}>
+            Reload
+          </Button>
+          {saveCopy && (
+            <Button size="sm" disabled={saving} onClick={() => void recover('copy')}>
+              Save as copy
+            </Button>
+          )}
+        </div>
+      )}
       <div className="min-h-0 min-w-0 flex-1 overflow-hidden" hidden={!source}>
         <CodeMirror
           className="h-full"
@@ -389,6 +482,7 @@ export function TextFile({
           theme={resolvedTheme === 'dark' ? 'dark' : 'light'}
           extensions={extensions}
           onCreateEditor={(view) => {
+            editor.current = view;
             view.scrollDOM.scrollTop = scroll.current.source;
           }}
           editable={writable && !saving}
@@ -418,9 +512,52 @@ export function TextFile({
             ref={preview}
             className="storage-markdown min-h-0 w-full min-w-0 flex-1 overflow-auto"
           >
-            <Markdown remarkPlugins={[remarkGfm]}>{content}</Markdown>
+            <Markdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                table: ({ children }) => (
+                  <div
+                    role="region"
+                    aria-label="Scrollable table"
+                    tabIndex={0}
+                    className="max-w-full overflow-x-auto rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <table className="w-max min-w-full [overflow-wrap:normal]">{children}</table>
+                  </div>
+                ),
+              }}
+            >
+              {content}
+            </Markdown>
           </article>
         ))}
+      <AlertDialog open={reload} onOpenChange={(open) => !saving && setReload(open)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Discard draft and reload?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your unsaved changes will be replaced by the latest server version.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={saving}>Keep editing</AlertDialogCancel>
+            <Button variant="destructive" disabled={saving} onClick={() => void recover('reload')}>
+              {saving ? 'Loading…' : 'Discard and reload'}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <Dialog open={serverText !== null} onOpenChange={(open) => !open && setServerText(null)}>
+        <DialogContent className="sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Server version · {node.name}</DialogTitle>
+            <DialogDescription>Your draft remains in the editor.</DialogDescription>
+          </DialogHeader>
+          <pre className="max-h-[65dvh] overflow-auto whitespace-pre-wrap break-words text-sm">
+            {serverText}
+          </pre>
+        </DialogContent>
+      </Dialog>
       <AlertDialog
         open={blocker.status === 'blocked'}
         onOpenChange={(open) => {

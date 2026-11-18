@@ -21,39 +21,42 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	LetFSService_GetWorkspaceStorage_FullMethodName = "/openlet.letfs.v1.LetFSService/GetWorkspaceStorage"
-	LetFSService_UpdateStorageQuota_FullMethodName  = "/openlet.letfs.v1.LetFSService/UpdateStorageQuota"
-	LetFSService_ListStorages_FullMethodName        = "/openlet.letfs.v1.LetFSService/ListStorages"
-	LetFSService_GetStorage_FullMethodName          = "/openlet.letfs.v1.LetFSService/GetStorage"
-	LetFSService_UpdateStorage_FullMethodName       = "/openlet.letfs.v1.LetFSService/UpdateStorage"
-	LetFSService_ListStorageAccess_FullMethodName   = "/openlet.letfs.v1.LetFSService/ListStorageAccess"
-	LetFSService_SetStorageAccess_FullMethodName    = "/openlet.letfs.v1.LetFSService/SetStorageAccess"
-	LetFSService_RevokeStorageAccess_FullMethodName = "/openlet.letfs.v1.LetFSService/RevokeStorageAccess"
-	LetFSService_Stat_FullMethodName                = "/openlet.letfs.v1.LetFSService/Stat"
-	LetFSService_BatchStat_FullMethodName           = "/openlet.letfs.v1.LetFSService/BatchStat"
-	LetFSService_ListNodes_FullMethodName           = "/openlet.letfs.v1.LetFSService/ListNodes"
-	LetFSService_ReadTree_FullMethodName            = "/openlet.letfs.v1.LetFSService/ReadTree"
-	LetFSService_CreateNode_FullMethodName          = "/openlet.letfs.v1.LetFSService/CreateNode"
-	LetFSService_CreateDirectories_FullMethodName   = "/openlet.letfs.v1.LetFSService/CreateDirectories"
-	LetFSService_MoveNode_FullMethodName            = "/openlet.letfs.v1.LetFSService/MoveNode"
-	LetFSService_CopyNode_FullMethodName            = "/openlet.letfs.v1.LetFSService/CopyNode"
-	LetFSService_ReadText_FullMethodName            = "/openlet.letfs.v1.LetFSService/ReadText"
-	LetFSService_MutateText_FullMethodName          = "/openlet.letfs.v1.LetFSService/MutateText"
-	LetFSService_ReadImage_FullMethodName           = "/openlet.letfs.v1.LetFSService/ReadImage"
-	LetFSService_GetDownload_FullMethodName         = "/openlet.letfs.v1.LetFSService/GetDownload"
-	LetFSService_DownloadArchive_FullMethodName     = "/openlet.letfs.v1.LetFSService/DownloadArchive"
-	LetFSService_SearchFiles_FullMethodName         = "/openlet.letfs.v1.LetFSService/SearchFiles"
-	LetFSService_TextSearch_FullMethodName          = "/openlet.letfs.v1.LetFSService/TextSearch"
-	LetFSService_SemanticSearch_FullMethodName      = "/openlet.letfs.v1.LetFSService/SemanticSearch"
-	LetFSService_TrashNode_FullMethodName           = "/openlet.letfs.v1.LetFSService/TrashNode"
-	LetFSService_ListTrash_FullMethodName           = "/openlet.letfs.v1.LetFSService/ListTrash"
-	LetFSService_RestoreTrash_FullMethodName        = "/openlet.letfs.v1.LetFSService/RestoreTrash"
-	LetFSService_PurgeTrash_FullMethodName          = "/openlet.letfs.v1.LetFSService/PurgeTrash"
-	LetFSService_CreateUpload_FullMethodName        = "/openlet.letfs.v1.LetFSService/CreateUpload"
-	LetFSService_GetUpload_FullMethodName           = "/openlet.letfs.v1.LetFSService/GetUpload"
-	LetFSService_SignParts_FullMethodName           = "/openlet.letfs.v1.LetFSService/SignParts"
-	LetFSService_CompleteUpload_FullMethodName      = "/openlet.letfs.v1.LetFSService/CompleteUpload"
-	LetFSService_AbortUpload_FullMethodName         = "/openlet.letfs.v1.LetFSService/AbortUpload"
+	LetFSService_GetWorkspaceStorage_FullMethodName   = "/openlet.letfs.v1.LetFSService/GetWorkspaceStorage"
+	LetFSService_UpdateStorageQuota_FullMethodName    = "/openlet.letfs.v1.LetFSService/UpdateStorageQuota"
+	LetFSService_ListStorages_FullMethodName          = "/openlet.letfs.v1.LetFSService/ListStorages"
+	LetFSService_GetStorage_FullMethodName            = "/openlet.letfs.v1.LetFSService/GetStorage"
+	LetFSService_UpdateStorage_FullMethodName         = "/openlet.letfs.v1.LetFSService/UpdateStorage"
+	LetFSService_ListStorageAccess_FullMethodName     = "/openlet.letfs.v1.LetFSService/ListStorageAccess"
+	LetFSService_SetStorageAccess_FullMethodName      = "/openlet.letfs.v1.LetFSService/SetStorageAccess"
+	LetFSService_RevokeStorageAccess_FullMethodName   = "/openlet.letfs.v1.LetFSService/RevokeStorageAccess"
+	LetFSService_Stat_FullMethodName                  = "/openlet.letfs.v1.LetFSService/Stat"
+	LetFSService_RetryProcessing_FullMethodName       = "/openlet.letfs.v1.LetFSService/RetryProcessing"
+	LetFSService_BatchStat_FullMethodName             = "/openlet.letfs.v1.LetFSService/BatchStat"
+	LetFSService_ListNodes_FullMethodName             = "/openlet.letfs.v1.LetFSService/ListNodes"
+	LetFSService_ReadTree_FullMethodName              = "/openlet.letfs.v1.LetFSService/ReadTree"
+	LetFSService_CreateNode_FullMethodName            = "/openlet.letfs.v1.LetFSService/CreateNode"
+	LetFSService_CreateDirectories_FullMethodName     = "/openlet.letfs.v1.LetFSService/CreateDirectories"
+	LetFSService_MoveNode_FullMethodName              = "/openlet.letfs.v1.LetFSService/MoveNode"
+	LetFSService_CopyNode_FullMethodName              = "/openlet.letfs.v1.LetFSService/CopyNode"
+	LetFSService_ReadText_FullMethodName              = "/openlet.letfs.v1.LetFSService/ReadText"
+	LetFSService_MutateText_FullMethodName            = "/openlet.letfs.v1.LetFSService/MutateText"
+	LetFSService_ReadImage_FullMethodName             = "/openlet.letfs.v1.LetFSService/ReadImage"
+	LetFSService_GetDownload_FullMethodName           = "/openlet.letfs.v1.LetFSService/GetDownload"
+	LetFSService_CreateArchiveDownload_FullMethodName = "/openlet.letfs.v1.LetFSService/CreateArchiveDownload"
+	LetFSService_DownloadArchiveTicket_FullMethodName = "/openlet.letfs.v1.LetFSService/DownloadArchiveTicket"
+	LetFSService_DownloadArchive_FullMethodName       = "/openlet.letfs.v1.LetFSService/DownloadArchive"
+	LetFSService_SearchFiles_FullMethodName           = "/openlet.letfs.v1.LetFSService/SearchFiles"
+	LetFSService_TextSearch_FullMethodName            = "/openlet.letfs.v1.LetFSService/TextSearch"
+	LetFSService_SemanticSearch_FullMethodName        = "/openlet.letfs.v1.LetFSService/SemanticSearch"
+	LetFSService_TrashNode_FullMethodName             = "/openlet.letfs.v1.LetFSService/TrashNode"
+	LetFSService_ListTrash_FullMethodName             = "/openlet.letfs.v1.LetFSService/ListTrash"
+	LetFSService_RestoreTrash_FullMethodName          = "/openlet.letfs.v1.LetFSService/RestoreTrash"
+	LetFSService_PurgeTrash_FullMethodName            = "/openlet.letfs.v1.LetFSService/PurgeTrash"
+	LetFSService_CreateUpload_FullMethodName          = "/openlet.letfs.v1.LetFSService/CreateUpload"
+	LetFSService_GetUpload_FullMethodName             = "/openlet.letfs.v1.LetFSService/GetUpload"
+	LetFSService_SignParts_FullMethodName             = "/openlet.letfs.v1.LetFSService/SignParts"
+	LetFSService_CompleteUpload_FullMethodName        = "/openlet.letfs.v1.LetFSService/CompleteUpload"
+	LetFSService_AbortUpload_FullMethodName           = "/openlet.letfs.v1.LetFSService/AbortUpload"
 )
 
 // LetFSServiceClient is the client API for LetFSService service.
@@ -69,6 +72,7 @@ type LetFSServiceClient interface {
 	SetStorageAccess(ctx context.Context, in *SetStorageAccessRequest, opts ...grpc.CallOption) (*AccessGrant, error)
 	RevokeStorageAccess(ctx context.Context, in *RevokeStorageAccessRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	Stat(ctx context.Context, in *NodeRequest, opts ...grpc.CallOption) (*Node, error)
+	RetryProcessing(ctx context.Context, in *RetryProcessingRequest, opts ...grpc.CallOption) (*Node, error)
 	BatchStat(ctx context.Context, in *BatchStatRequest, opts ...grpc.CallOption) (*BatchStatResponse, error)
 	ListNodes(ctx context.Context, in *ListNodesRequest, opts ...grpc.CallOption) (*ListNodesResponse, error)
 	ReadTree(ctx context.Context, in *ReadTreeRequest, opts ...grpc.CallOption) (*ReadTreeResponse, error)
@@ -80,6 +84,8 @@ type LetFSServiceClient interface {
 	MutateText(ctx context.Context, in *MutateTextRequest, opts ...grpc.CallOption) (*Node, error)
 	ReadImage(ctx context.Context, in *ReadImageRequest, opts ...grpc.CallOption) (*httpbody.HttpBody, error)
 	GetDownload(ctx context.Context, in *NodeRequest, opts ...grpc.CallOption) (*GetDownloadResponse, error)
+	CreateArchiveDownload(ctx context.Context, in *DownloadArchiveRequest, opts ...grpc.CallOption) (*ArchiveDownloadTicket, error)
+	DownloadArchiveTicket(ctx context.Context, in *ArchiveDownloadTicketRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[httpbody.HttpBody], error)
 	DownloadArchive(ctx context.Context, in *DownloadArchiveRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[httpbody.HttpBody], error)
 	SearchFiles(ctx context.Context, in *SearchFilesRequest, opts ...grpc.CallOption) (*SearchFilesResponse, error)
 	TextSearch(ctx context.Context, in *TextSearchRequest, opts ...grpc.CallOption) (*TextSearchResponse, error)
@@ -187,6 +193,16 @@ func (c *letFSServiceClient) Stat(ctx context.Context, in *NodeRequest, opts ...
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Node)
 	err := c.cc.Invoke(ctx, LetFSService_Stat_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *letFSServiceClient) RetryProcessing(ctx context.Context, in *RetryProcessingRequest, opts ...grpc.CallOption) (*Node, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Node)
+	err := c.cc.Invoke(ctx, LetFSService_RetryProcessing_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -303,9 +319,38 @@ func (c *letFSServiceClient) GetDownload(ctx context.Context, in *NodeRequest, o
 	return out, nil
 }
 
+func (c *letFSServiceClient) CreateArchiveDownload(ctx context.Context, in *DownloadArchiveRequest, opts ...grpc.CallOption) (*ArchiveDownloadTicket, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ArchiveDownloadTicket)
+	err := c.cc.Invoke(ctx, LetFSService_CreateArchiveDownload_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *letFSServiceClient) DownloadArchiveTicket(ctx context.Context, in *ArchiveDownloadTicketRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[httpbody.HttpBody], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &LetFSService_ServiceDesc.Streams[0], LetFSService_DownloadArchiveTicket_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ArchiveDownloadTicketRequest, httpbody.HttpBody]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type LetFSService_DownloadArchiveTicketClient = grpc.ServerStreamingClient[httpbody.HttpBody]
+
 func (c *letFSServiceClient) DownloadArchive(ctx context.Context, in *DownloadArchiveRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[httpbody.HttpBody], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &LetFSService_ServiceDesc.Streams[0], LetFSService_DownloadArchive_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &LetFSService_ServiceDesc.Streams[1], LetFSService_DownloadArchive_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -455,6 +500,7 @@ type LetFSServiceServer interface {
 	SetStorageAccess(context.Context, *SetStorageAccessRequest) (*AccessGrant, error)
 	RevokeStorageAccess(context.Context, *RevokeStorageAccessRequest) (*emptypb.Empty, error)
 	Stat(context.Context, *NodeRequest) (*Node, error)
+	RetryProcessing(context.Context, *RetryProcessingRequest) (*Node, error)
 	BatchStat(context.Context, *BatchStatRequest) (*BatchStatResponse, error)
 	ListNodes(context.Context, *ListNodesRequest) (*ListNodesResponse, error)
 	ReadTree(context.Context, *ReadTreeRequest) (*ReadTreeResponse, error)
@@ -466,6 +512,8 @@ type LetFSServiceServer interface {
 	MutateText(context.Context, *MutateTextRequest) (*Node, error)
 	ReadImage(context.Context, *ReadImageRequest) (*httpbody.HttpBody, error)
 	GetDownload(context.Context, *NodeRequest) (*GetDownloadResponse, error)
+	CreateArchiveDownload(context.Context, *DownloadArchiveRequest) (*ArchiveDownloadTicket, error)
+	DownloadArchiveTicket(*ArchiveDownloadTicketRequest, grpc.ServerStreamingServer[httpbody.HttpBody]) error
 	DownloadArchive(*DownloadArchiveRequest, grpc.ServerStreamingServer[httpbody.HttpBody]) error
 	SearchFiles(context.Context, *SearchFilesRequest) (*SearchFilesResponse, error)
 	TextSearch(context.Context, *TextSearchRequest) (*TextSearchResponse, error)
@@ -515,6 +563,9 @@ func (UnimplementedLetFSServiceServer) RevokeStorageAccess(context.Context, *Rev
 func (UnimplementedLetFSServiceServer) Stat(context.Context, *NodeRequest) (*Node, error) {
 	return nil, status.Error(codes.Unimplemented, "method Stat not implemented")
 }
+func (UnimplementedLetFSServiceServer) RetryProcessing(context.Context, *RetryProcessingRequest) (*Node, error) {
+	return nil, status.Error(codes.Unimplemented, "method RetryProcessing not implemented")
+}
 func (UnimplementedLetFSServiceServer) BatchStat(context.Context, *BatchStatRequest) (*BatchStatResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method BatchStat not implemented")
 }
@@ -547,6 +598,12 @@ func (UnimplementedLetFSServiceServer) ReadImage(context.Context, *ReadImageRequ
 }
 func (UnimplementedLetFSServiceServer) GetDownload(context.Context, *NodeRequest) (*GetDownloadResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetDownload not implemented")
+}
+func (UnimplementedLetFSServiceServer) CreateArchiveDownload(context.Context, *DownloadArchiveRequest) (*ArchiveDownloadTicket, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateArchiveDownload not implemented")
+}
+func (UnimplementedLetFSServiceServer) DownloadArchiveTicket(*ArchiveDownloadTicketRequest, grpc.ServerStreamingServer[httpbody.HttpBody]) error {
+	return status.Error(codes.Unimplemented, "method DownloadArchiveTicket not implemented")
 }
 func (UnimplementedLetFSServiceServer) DownloadArchive(*DownloadArchiveRequest, grpc.ServerStreamingServer[httpbody.HttpBody]) error {
 	return status.Error(codes.Unimplemented, "method DownloadArchive not implemented")
@@ -769,6 +826,24 @@ func _LetFSService_Stat_Handler(srv interface{}, ctx context.Context, dec func(i
 	return interceptor(ctx, in, info, handler)
 }
 
+func _LetFSService_RetryProcessing_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RetryProcessingRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LetFSServiceServer).RetryProcessing(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LetFSService_RetryProcessing_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LetFSServiceServer).RetryProcessing(ctx, req.(*RetryProcessingRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _LetFSService_BatchStat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(BatchStatRequest)
 	if err := dec(in); err != nil {
@@ -966,6 +1041,35 @@ func _LetFSService_GetDownload_Handler(srv interface{}, ctx context.Context, dec
 	}
 	return interceptor(ctx, in, info, handler)
 }
+
+func _LetFSService_CreateArchiveDownload_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DownloadArchiveRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LetFSServiceServer).CreateArchiveDownload(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LetFSService_CreateArchiveDownload_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LetFSServiceServer).CreateArchiveDownload(ctx, req.(*DownloadArchiveRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _LetFSService_DownloadArchiveTicket_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(ArchiveDownloadTicketRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(LetFSServiceServer).DownloadArchiveTicket(m, &grpc.GenericServerStream[ArchiveDownloadTicketRequest, httpbody.HttpBody]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type LetFSService_DownloadArchiveTicketServer = grpc.ServerStreamingServer[httpbody.HttpBody]
 
 func _LetFSService_DownloadArchive_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(DownloadArchiveRequest)
@@ -1238,6 +1342,10 @@ var LetFSService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _LetFSService_Stat_Handler,
 		},
 		{
+			MethodName: "RetryProcessing",
+			Handler:    _LetFSService_RetryProcessing_Handler,
+		},
+		{
 			MethodName: "BatchStat",
 			Handler:    _LetFSService_BatchStat_Handler,
 		},
@@ -1280,6 +1388,10 @@ var LetFSService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetDownload",
 			Handler:    _LetFSService_GetDownload_Handler,
+		},
+		{
+			MethodName: "CreateArchiveDownload",
+			Handler:    _LetFSService_CreateArchiveDownload_Handler,
 		},
 		{
 			MethodName: "SearchFiles",
@@ -1331,6 +1443,11 @@ var LetFSService_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "DownloadArchiveTicket",
+			Handler:       _LetFSService_DownloadArchiveTicket_Handler,
+			ServerStreams: true,
+		},
 		{
 			StreamName:    "DownloadArchive",
 			Handler:       _LetFSService_DownloadArchive_Handler,

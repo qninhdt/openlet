@@ -1,7 +1,7 @@
 import { Navigate, Outlet, useLocation, useParams, useSearch } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
 import { useWorkspaces } from '@/lib/workspace-directory';
-import { parseLegacySearch } from '@/lib/shell-model';
+import { settingsSections, type SettingsSection, parseLegacySearch } from '@/lib/shell-model';
 import { shellTarget, useShellLocation } from '@/lib/shell-navigation';
 import { AgentChat } from '@/components/agents/agent-chat';
 import { AgentActivity } from '@/components/agents/agent-conversation';
@@ -25,13 +25,14 @@ export function LegacyWorkspaceEntry() {
   const agent = workspace.agents.find((a) => a.id === raw.agent) ?? workspace.agents[0];
   return (
     <Navigate
+      search={{}}
       {...shellTarget({
         ...legacy,
         workspace: workspace.id,
-        agent: agent.id,
+        agent: agent?.id ?? '',
         mainTab: legacy.view === 'boxes' ? 'box' : 'agent',
       })}
-      state={{ shellEntry: entry, shellAgent: agent.id }}
+      state={{ shellEntry: entry, shellAgent: agent?.id }}
       replace
     />
   );
@@ -39,13 +40,20 @@ export function LegacyWorkspaceEntry() {
 
 export function WorkspaceEntry() {
   const location = useShellLocation();
-  return <Navigate {...shellTarget({ ...location, view: 'agents', mainTab: 'agent' })} replace />;
+  if (!location.agent) return null;
+  return (
+    <Navigate
+      search={{}}
+      {...shellTarget({ ...location, view: 'agents', mainTab: 'agent' })}
+      replace
+    />
+  );
 }
 
 export function AgentLayout() {
   const p = useAgentPreview();
   return (
-    <div key={p.fixture.id} className="h-full min-h-0">
+    <div key={p.resource.id} className="h-full min-h-0">
       <Outlet />
     </div>
   );
@@ -75,7 +83,7 @@ function AgentAccess({ children }: { children: ReactNode }) {
           Loading agent…
         </p>
       );
-    if (!p.graph.agents.some((a) => a.id === letiId && a.leta_id === p.fixture.id && a.box_id))
+    if (!p.graph.agents.some((a) => a.id === letiId && a.leta_id === p.resource.id && a.box_id))
       return (
         <p role="alert" className="p-6 text-sm">
           This agent is unavailable.
@@ -98,7 +106,7 @@ export function AgentBoxPage() {
   const p = useAgentPreview();
   return (
     <AgentAccess>
-      <BoxView root={p.fixture.id} />
+      <BoxView root={p.resource.id} />
     </AgentAccess>
   );
 }
@@ -131,6 +139,7 @@ export function StorageEntry() {
     );
   return (
     <Navigate
+      search={{}}
       {...shellTarget({
         ...location,
         storage: b.storage.id,
@@ -149,13 +158,17 @@ export function SettingsPage() {
   const location = useShellLocation();
   if (!section)
     return (
-      <Navigate {...shellTarget({ ...location, view: 'settings', section: 'general' })} replace />
+      <Navigate
+        search={{}}
+        {...shellTarget({ ...location, view: 'settings', section: 'general' })}
+        replace
+      />
     );
-  if (section !== 'general' && section !== 'appearance')
+  if (!settingsSections.includes(section as SettingsSection))
     return (
       <p role="alert" className="p-6 text-sm">
         This settings page is unavailable.
       </p>
     );
-  return <AppSettings section={section} />;
+  return <AppSettings section={section as SettingsSection} />;
 }

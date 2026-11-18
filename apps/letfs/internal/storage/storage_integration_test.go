@@ -44,7 +44,7 @@ func TestStorageSQLInvariants(t *testing.T) {
 		sql  string
 		args []any
 	}{
-		{`INSERT INTO workspace_storage(workspace_id,quota_bytes,used_bytes) VALUES($1,100,5)`, []any{workspace}},
+		{`INSERT INTO workspace_storage(workspace_id,quota_bytes,used_bytes) VALUES($1,1000,5)`, []any{workspace}},
 		{`INSERT INTO storages(id,workspace_id,name,visibility,root_node_id,allow_blob_files,allow_indexing) VALUES($1,$2,'Test','private',$3,true,true)`, []any{storage, workspace, root}},
 		{`INSERT INTO nodes(id,storage_id,parent_id,name,kind) VALUES($1,$2,NULL,'','directory'),($3,$2,$1,'docs','directory'),($4,$2,$3,'note.txt','file'),($5,$2,$1,'source.pdf','file')`, []any{root, storage, folder, text, source}},
 		{`INSERT INTO files(node_id,version,size_bytes,media_type,text_content,object_key) VALUES($1,1,3,'text/plain','a'||chr(13)||chr(10),NULL),($2,1,2,'application/pdf',NULL,'objects/test-source')`, []any{text, source}},
@@ -100,7 +100,7 @@ func TestStorageSQLInvariants(t *testing.T) {
 		t.Fatalf("detached descendant visible: %v", err)
 	}
 	_ = tx.Rollback(ctx)
-	s := &Server{DB: pool, Settings: Settings{IdempotencyRetentionSeconds: 3600}}
+	s := &Server{DB: pool, Settings: Settings{IdempotencyRetentionSeconds: 3600, MaxTextBytes: 1024}}
 	s.Settings.Processing.MaxArtifacts = 10
 	s.Settings.Processing.MaxManifestTextBytes = 100
 	request := &pb.CommitParseRequest{FileId: source, Version: 1, Artifacts: []*pb.Artifact{
@@ -178,10 +178,50 @@ func TestStorageSQLInvariants(t *testing.T) {
 	if actual["b.md"] != ids["a.md"] || actual["a.md"] != ids["b.md"] || actual["renamed/README.md"] != ids["section/README.md"] {
 		t.Fatalf("names/descendant IDs changed incorrectly: %+v", actual)
 	}
+	if _, err = s.FailProcessing(ctx, &pb.FailProcessingRequest{FileId: source, Version: 1, ErrorCode: "INDEX_FAILED"}); err != nil {
+		t.Fatal(err)
+	}
+	retry := &pb.RetryProcessingRequest{WorkspaceId: workspace, StorageId: storage, Target: &pb.NodeLocator{Locator: &pb.NodeLocator_NodeId{NodeId: source}}, ExpectedVersion: 2}
+	tx, err = pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = resetProcessing(ctx, tx, retry); status.Code(err) != codes.Aborted {
+		t.Fatalf("retry overwrote new version: %v", err)
+	}
+	_ = tx.Rollback(ctx)
+	retry.ExpectedVersion = 1
+	tx, err = pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := resetProcessing(ctx, tx, retry)
+	if err != nil || restarted.File.Version != 1 || restarted.File.Processing.Stage != "enriched" || restarted.File.Processing.ErrorCode != nil {
+		t.Fatalf("retry changed source or stage: %+v %v", restarted, err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tx, err = pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = resetProcessing(ctx, tx, retry); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("duplicate retry admitted: %v", err)
+	}
+	_ = tx.Rollback(ctx)
+	out, err = s.FailProcessing(ctx, &pb.FailProcessingRequest{FileId: source, Version: 1, ErrorCode: "STALE_FAILURE"})
+	if err != nil || !out.Obsolete {
+		t.Fatalf("old workflow failed new attempt: %+v %v", out, err)
+	}
+	input, err = s.GetProcessingInput(ctx, &pb.ProcessingRequest{FileId: source, Version: 1})
+	if err != nil || len(input.Artifacts) != 5 || input.Outcome.Stage != "enriched" {
+		t.Fatalf("retry lost artifacts: %+v %v", input, err)
+	}
 	if _, err = s.CompleteIndex(ctx, &pb.ProcessingRequest{FileId: source, Version: 1}); err != nil {
 		t.Fatal(err)
 	}
-	out, err = s.FailProcessing(ctx, &pb.FailProcessingRequest{FileId: source, Version: 1, ErrorCode: "late"})
+	out, err = s.FailProcessing(ctx, &pb.FailProcessingRequest{FileId: source, Version: 1, ErrorCode: "late", Attempt: 1})
 	if err != nil || out.Stage != "ready" {
 		t.Fatalf("ready regressed: %+v %v", out, err)
 	}
@@ -197,7 +237,7 @@ func TestStorageSQLInvariants(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.quota(ctx, tx, workspace, 100); status.Code(err) != codes.ResourceExhausted {
+	if err = s.quota(ctx, tx, workspace, 1000); status.Code(err) != codes.ResourceExhausted {
 		t.Fatalf("quota admitted: %v", err)
 	}
 	_ = tx.Rollback(ctx)
@@ -240,4 +280,28 @@ func TestStorageSQLInvariants(t *testing.T) {
 	if duplicate, err = sdk.Replay(ctx, pool, caller, "test", uuid.NewString(), &emptypb.Empty{}, new(pb.Node)); err != nil || duplicate {
 		t.Fatalf("missing receipt: %v %v", duplicate, err)
 	}
+
+	t.Run("archive and upload transfers", func(t *testing.T) { testTransfers(t, s, workspace, storage, folder) })
+	var logical int64
+	if err = pool.QueryRow(ctx, `SELECT (SELECT used_bytes FROM workspace_storage WHERE workspace_id=$1),(SELECT coalesce(sum(size_bytes),0) FROM files f JOIN nodes n ON n.id=f.node_id WHERE n.storage_id=$2)`, workspace, storage).Scan(&used, &logical); err != nil || used != logical {
+		t.Fatalf("file quota used=%d logical=%d: %v", used, logical, err)
+	}
+	tx, err = pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	removed, err := deleteSubtree(ctx, tx, folder, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.quota(ctx, tx, workspace, -removed); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err = pool.QueryRow(ctx, `SELECT used_bytes FROM workspace_storage WHERE workspace_id=$1`, workspace).Scan(&used); err != nil || used != 16 {
+		t.Fatalf("purge did not free file bytes: %d %v", used, err)
+	}
+
 }

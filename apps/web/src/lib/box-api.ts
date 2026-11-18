@@ -15,6 +15,7 @@ export type BoxAgent = {
   reasoning_effort?: string | null;
   status: 'working' | 'queued' | 'idle' | 'paused' | 'error' | 'unknown' | 'inactive';
   started_at?: string | null;
+  run_id?: string | null;
   heartbeat_at?: string | null;
   tool_name?: string | null;
   activity_kind?: string | null;

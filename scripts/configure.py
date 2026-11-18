@@ -4,6 +4,7 @@ import argparse
 import json
 import math
 import os
+import re
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import TypedDict, cast
@@ -168,6 +169,11 @@ def configure(output: Path, test: bool = False) -> None:
     ph, pp = svc["platform"]["grpc_target"].rsplit(":", 1)
     fh, fp = svc["letfs"]["grpc_target"].rsplit(":", 1)
     auth = c["auth"]["clerk"]
+    user_id_key = auth.get("user_id_metadata_key", "openlet_user_id")
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", user_id_key):
+        raise ValueError(
+            "auth.clerk.user_id_metadata_key must be a metadata field name"
+        )
     jwks = urlparse(auth["jwks_url"])
     if jwks.scheme not in ("http", "https") or not jwks.hostname:
         raise ValueError("JWKS URL must be HTTP(S)")
@@ -183,6 +189,7 @@ def configure(output: Path, test: bool = False) -> None:
                 LETFS_HOST=fh,
                 LETFS_PORT=int(fp),
                 ISSUER=auth["issuer"],
+                USER_ID_CLAIM="public_metadata." + user_id_key,
                 AUDIENCE=auth["audience"],
                 JWKS_URL=auth["jwks_url"],
                 JWKS_HOST=jwks.hostname,

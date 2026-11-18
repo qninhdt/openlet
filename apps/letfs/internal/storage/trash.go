@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	sdk "github.com/qninhdt/openlet/packages/sdk-go"
 	pb "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/letfs/v1"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -163,8 +164,7 @@ func (s *Server) PurgeTrash(ctx context.Context, r *pb.PurgeTrashRequest) (*empt
 	if err != nil {
 		return nil, err
 	}
-	var bytes int64
-	err = tx.QueryRow(ctx, `WITH RECURSIVE doomed AS(SELECT id FROM nodes WHERE id=$1 UNION ALL SELECT n.id FROM nodes n JOIN doomed d ON n.parent_id=d.id),deleted AS(DELETE FROM nodes n USING doomed d LEFT JOIN files f ON f.node_id=d.id WHERE n.id=d.id RETURNING coalesce(f.size_bytes,0) AS bytes) SELECT coalesce(sum(bytes),0) FROM deleted`, root).Scan(&bytes)
+	bytes, err := deleteSubtree(ctx, tx, root, true)
 	if err != nil {
 		return nil, err
 	}
@@ -172,4 +172,10 @@ func (s *Server) PurgeTrash(ctx context.Context, r *pb.PurgeTrashRequest) (*empt
 		return nil, err
 	}
 	return &emptypb.Empty{}, tx.Commit(ctx)
+}
+
+func deleteSubtree(ctx context.Context, tx pgx.Tx, root string, includeRoot bool) (int64, error) {
+	var bytes int64
+	err := tx.QueryRow(ctx, `WITH RECURSIVE doomed AS(SELECT id FROM nodes WHERE ($2 AND id=$1) OR (NOT $2 AND parent_id=$1) UNION ALL SELECT n.id FROM nodes n JOIN doomed d ON n.parent_id=d.id),sizes AS MATERIALIZED(SELECT d.id,coalesce(f.size_bytes,0) AS bytes FROM doomed d LEFT JOIN files f ON f.node_id=d.id),deleted AS(DELETE FROM nodes n USING sizes d WHERE n.id=d.id RETURNING d.bytes) SELECT coalesce(sum(bytes),0) FROM deleted`, root, includeRoot).Scan(&bytes)
+	return bytes, err
 }

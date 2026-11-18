@@ -34,10 +34,7 @@ def stat(node: fs.Node) -> FileStat:
     return FileStat(
         name=node.name,
         type=(
-            FileType.DIRECTORY
-            if node.kind == fs.NODE_KIND_DIRECTORY
-            or (node.HasField("file") and node.file.type == fs.FILE_TYPE_BLOB)
-            else FileType.FILE
+            FileType.DIRECTORY if node.kind == fs.NODE_KIND_DIRECTORY else FileType.FILE
         ),
         size=node.file.size_bytes if node.HasField("file") else None,
         modified=(
@@ -51,6 +48,7 @@ def stat(node: fs.Node) -> FileStat:
         ),
         extra={
             "node_id": node.id,
+            "storage_id": node.storage_id,
             "media_type": node.file.media_type,
             "readonly": node.readonly,
         },
@@ -300,6 +298,8 @@ class LetFS(BaseVFS):
             "items": [
                 {
                     "path": posixpath.join(path.virtual, item.path),
+                    "storage_id": str(self.storage),
+                    "node_id": item.node.id,
                     "kind": "directory"
                     if item.node.kind == fs.NODE_KIND_DIRECTORY
                     else "file",
@@ -333,7 +333,7 @@ class LetFS(BaseVFS):
             if item.path not in ("", ".")
         }
 
-    @vfs_call(effect=Effect.READ, target=Target.DIR)
+    @vfs_call(effect=Effect.READ, target=Target.ANY)
     async def list_page(
         self, path: PathSpec, cursor: str = "", depth: int = 1
     ) -> dict[str, JSON]:
@@ -358,11 +358,13 @@ class LetFS(BaseVFS):
                 items.append(
                     {
                         "path": posixpath.join(path.virtual, entry.path),
+                        "storage_id": str(self.storage),
+                        "node_id": entry.node.id,
                         "kind": "directory"
                         if stat(entry.node).type == FileType.DIRECTORY
                         else "file",
                         "artifacts": entry.node.HasField("file")
-                        and stat(entry.node).type == FileType.DIRECTORY,
+                        and entry.node.file.type == fs.FILE_TYPE_BLOB,
                         "media_type": entry.node.file.media_type,
                         "size_bytes": entry.node.file.size_bytes
                         if entry.node.HasField("file")
@@ -392,11 +394,13 @@ class LetFS(BaseVFS):
             items.append(
                 {
                     "path": posixpath.join(path.virtual, node.name),
+                    "storage_id": str(self.storage),
+                    "node_id": node.id,
                     "kind": "directory"
                     if stat(node).type == FileType.DIRECTORY
                     else "file",
                     "artifacts": node.HasField("file")
-                    and stat(node).type == FileType.DIRECTORY,
+                    and node.file.type == fs.FILE_TYPE_BLOB,
                     "media_type": node.file.media_type,
                     "size_bytes": node.file.size_bytes
                     if node.HasField("file")
@@ -662,6 +666,8 @@ class LetFS(BaseVFS):
                         path, posixpath.join("/", path.vfs_path, hit.path)
                     ).virtual,
                     "text": hit.snippet,
+                    "storage_id": str(self.storage),
+                    "node_id": hit.node.id,
                 }
                 for hit in response.hits
             ],

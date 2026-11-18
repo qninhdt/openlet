@@ -75,6 +75,8 @@ COMMANDS = (
     "seq",
     "basename",
     "dirname",
+    "curl",
+    "wget",
 )
 
 
@@ -139,14 +141,11 @@ class Filesystem:
             )
             home = UUID(home_storage.root_node_id)
             driver = LetFS(self.s.files, actor, workspace, storage, home)
-            cache_id = f"leta:vfs:{self.agent['leta_id']}:{storage}:{home}"
+            # Old indexes classified blobs as directories.
+            cache_id = f"leta:vfs:2:{self.agent['leta_id']}:{storage}:{home}"
             self.workspace = Workspace(
                 {"/home": Mount(vfs=driver, mode=MountMode.EXEC, read=ReadSpec())},
-                network={
-                    "allowed_domains": [
-                        self.s.config["dependencies"]["redis"]["address"]
-                    ]
-                },
+                network=True,
                 max_memory="32MB",
                 cache=RedisCacheConfig(
                     url=redis_url(self.s.config), key_prefix=cache_id + ":content:"
@@ -165,7 +164,7 @@ class Filesystem:
                 if id not in self.bindings or self.bindings[id].root != binding.root:
                     await ws.unmount(f"/mnt/{id}")
             for id, binding in self.bindings.items():
-                mode = MountMode.WRITE if binding.writable else MountMode.READ
+                mode = MountMode.EXEC if binding.writable else MountMode.READ
                 old = previous.get(id)
                 if old is None or old.root != binding.root:
                     ws.add_mount(

@@ -2,8 +2,38 @@
 @import 'tw-animate-css';
 @import 'shadcn/tailwind.css';
 @import '@fontsource-variable/geist';
+@import '@fontsource-variable/inter';
 
 @custom-variant dark (&:is(.dark *));
+
+.agent-markdown .katex {
+  font-size: 1.1em;
+  overflow-wrap: normal;
+}
+.agent-markdown :not(.katex-display) > .katex {
+  display: inline-block;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-block: 0.2em;
+  vertical-align: middle;
+}
+.agent-markdown :not(.katex-display) > .katex > .katex-html {
+  display: inline-block;
+  /* Absorb the 2px overhang of KaTeX's vertical lists before measuring overflow. */
+  padding-right: 2px;
+}
+.agent-markdown .katex-display {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  margin: 0;
+  padding-block: 0.5em;
+}
+.agent-markdown .katex-display > .katex {
+  width: max-content;
+  min-width: 100%;
+}
 
 @theme inline {
   --shadow-menu:
@@ -129,6 +159,29 @@
   --sidebar-ring: oklch(0.556 0 0);
 }
 
+/* Public-site theme; the workspace keeps its own appearance preference. */
+.public-theme {
+  color-scheme: dark;
+  --background: oklch(0.243 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.265 0 0);
+  --card-foreground: var(--foreground);
+  --popover: oklch(0.285 0 0);
+  --popover-foreground: var(--foreground);
+  --primary: oklch(0.95 0 0);
+  --primary-foreground: oklch(0.2 0 0);
+  --secondary: oklch(0.31 0 0);
+  --secondary-foreground: var(--foreground);
+  --muted: oklch(0.3 0 0);
+  --muted-foreground: oklch(0.77 0 0);
+  --accent: oklch(0.34 0 0);
+  --accent-foreground: var(--foreground);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 16%);
+  --ring: var(--brand);
+  --sidebar: oklch(0.22 0 0);
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -223,6 +276,45 @@
 }
 .shiki {
   background-color: transparent !important;
+}
+
+.agent-thinking-dots {
+  position: absolute;
+  top: -4px;
+  right: 0;
+  display: flex;
+  gap: 3px;
+}
+.agent-thinking-dots i {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.55;
+  animation: agent-thinking-dot 1.5s ease-in-out infinite;
+}
+.agent-thinking-dots i:nth-child(2) {
+  animation-delay: 0.5s;
+}
+.agent-thinking-dots i:nth-child(3) {
+  animation-delay: 1s;
+}
+@keyframes agent-thinking-dot {
+  0%,
+  50%,
+  100% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  25% {
+    opacity: 1;
+    transform: scale(1.5);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-thinking-dots i {
+    animation: none;
+  }
 }
 
 @media (max-width: 720px) {

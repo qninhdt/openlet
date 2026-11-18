@@ -1,16 +1,19 @@
 import asyncio
 import json
 import posixpath
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Annotated, Literal, cast
 from uuid import UUID
 
+import grpc
+from fastapi import HTTPException
 from langchain.tools import ToolRuntime, tool
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.tools import BaseTool
 from langfuse import propagate_attributes
-from mirage import ContentType, Session
+from mirage import ContentType, FileStat, Session
 from openlet_sdk.config import JSON
 from pydantic import Field
 
@@ -35,6 +38,14 @@ type Status = Literal[
 
 def presented(kind: str, content: JSON, data: JSON) -> tuple[JSON, dict[str, JSON]]:
     return content, {"ui": {"version": 1, "kind": kind, "data": data}}
+
+
+def file_reference(metadata: FileStat) -> dict[str, JSON]:
+    return {
+        key: metadata.extra[key]
+        for key in ("storage_id", "node_id")
+        if isinstance(metadata.extra.get(key), str) and metadata.extra[key]
+    }
 
 
 @dataclass
@@ -65,15 +76,21 @@ async def session(runtime: ToolRuntime[Context, State]) -> Session:
 @tool(response_format="content_and_artifact")
 async def inbox_send(
     runtime: ToolRuntime[Context, State],
-    content: str,
+    content: Annotated[str, Field(max_length=32000)] = "",
     to: str | None = None,
     in_reply_to: Annotated[int | None, Field(ge=1)] = None,
+    attachments: Annotated[
+        list[Annotated[str, Field(min_length=1, max_length=4096)]] | None,
+        Field(max_length=20),
+    ] = None,
 ) -> tuple[JSON, dict[str, JSON]]:
-    """Send to a box name, permitted teammate name, root, or human user_id. in_reply_to replies to the sender of that incoming message; omit to for replies, or omit in_reply_to when messaging someone else. Mention a shared file with :file[label]{name=storage_uuid/node_uuid}; both sender and recipient must have read access."""
+    """Send to a box name, permitted teammate name, root, or human user_id; use the inbox's to address for ordinary messages. Optional in_reply_to quotes a specific incoming message: use it only when that reference matters, such as an older request or parallel tasks; then to may be omitted. attachments accepts file paths; mention a file inline with :file[label]{path=path}. Mentions are inline links; only attachments creates file cards. Send text, files, or both, up to 20 distinct files. Files a user cannot read are copied into the private conversation storage."""
     from ..worker import deliver
 
     ctx = runtime.context
     s, agent = ctx.services, ctx.agent
+    if not content.strip() and not attachments:
+        raise ValueError("A message requires content or attachments")
     original = (
         await messages.incoming(s.db, ctx.id, in_reply_to)
         if in_reply_to is not None
@@ -157,13 +174,59 @@ async def inbox_send(
             cast(UUID, agent["workspace_id"]),
             "participate",
         )
-        refs = await file_refs.validate(
+    attachment_content = ""
+    if attachments or file_refs.PATH_PATTERN.search(content):
+        vfs = (await session(runtime)).vfs
+
+        async def stat(path: str) -> FileStat:
+            return await vfs.stat(file_path(path))
+
+        content, attachment_content = await file_refs.resolve(
+            content, attachments or [], stat
+        )
+    try:
+        refs: list[JSON] = await file_refs.validate(
             s,
             cast(UUID, agent["workspace_id"]),
             Actor("agent", ctx.root),
-            Actor("user", target),
-            content,
+            Actor("user", target) if human else Actor("agent", ctx.root),
+            content + "\n" + attachment_content,
+            copy_request=id if human else None,
         )
+    except HTTPException as error:
+        raise PermissionError(str(error.detail)) from error
+    except grpc.aio.AioRpcError as error:
+        if error.code() not in (
+            grpc.StatusCode.NOT_FOUND,
+            grpc.StatusCode.PERMISSION_DENIED,
+            grpc.StatusCode.INVALID_ARGUMENT,
+            grpc.StatusCode.ALREADY_EXISTS,
+            grpc.StatusCode.FAILED_PRECONDITION,
+            grpc.StatusCode.RESOURCE_EXHAUSTED,
+            grpc.StatusCode.ABORTED,
+        ):
+            raise
+        raise ValueError(error.details() or "Could not attach files") from error
+    replacements = {
+        f"{storage}/{node}": ref
+        for (_, storage, node), ref in zip(
+            file_refs.references(content + "\n" + attachment_content), refs, strict=True
+        )
+        if isinstance(ref, dict)
+    }
+    content = file_refs.PATTERN.sub(
+        lambda match: file_refs.token(
+            re.sub(r"\\(.)", r"\1", match[1]),
+            str(replacements[match[2]]["storage_id"]),
+            str(replacements[match[2]]["node_id"]),
+        ),
+        content,
+    )
+    refs = [
+        replacements[f"{storage}/{node}"]
+        for _, storage, node in file_refs.references(attachment_content)
+    ]
+    if human:
         await messages.deliver_user(
             s.db,
             ctx.root,
@@ -202,11 +265,14 @@ async def inbox_send(
                 source_id=source,
                 conversation_id=conversation,
                 content=content,
+                file_refs=refs,
                 in_reply_to_message_id=cast(UUID, original["id"]) if original else None,
             ),
         )
     result: JSON = {"sent": True}
-    return presented("inbox_send", result, result)
+    return presented(
+        "inbox_send", result, {"sent": True, "content": content, "file_refs": refs}
+    )
 
 
 @tool(response_format="content_and_artifact")
@@ -278,6 +344,11 @@ async def inbox_read(
     for user in {
         cast(UUID, row["source_id"]) for row in rows if row["source_kind"] == "user"
     }:
+        async with ctx.services.db.connection() as conn:
+            await conn.execute(
+                "UPDATE agent_messages SET processing_run_id=%s WHERE recipient_agent_id=%s AND source_kind='user' AND source_id=%s AND id=ANY(%s)",
+                (ctx.run_id, ctx.id, user, [row["id"] for row in rows]),
+            )
         await events.changed(ctx.services.redis, ctx.root, "messages", ctx.id, user)
     return text, {"ui": messages.input_data(rows, root=False)}
 
@@ -1072,7 +1143,7 @@ async def file_read(
     path: str,
     start_line: Annotated[int, Field(ge=1)] = 1,
     limit: Annotated[int | None, Field(ge=1, le=2000)] = None,
-) -> tuple[JSON, str | dict[str, JSON] | None]:
+) -> tuple[JSON, dict[str, JSON]]:
     """Read file text, an image, or an uploaded document's extracted files. For text, start_line and limit select lines; omitted limit reads up to the output cap. Follow the continuation when more content is needed."""
     vfs = (await session(runtime)).vfs
     metadata = await vfs.stat(file_path(path))
@@ -1084,7 +1155,15 @@ async def file_read(
             "preview", scope(path), image=media.startswith("image/")
         )
         if media.startswith("image/"):
-            return cast(JSON, result), path
+            return presented(
+                "file_read",
+                cast(JSON, result),
+                {
+                    "path": path,
+                    "content": f"Image: {path}",
+                    **file_reference(metadata),
+                },
+            )
         return presented(
             "file_list",
             directory_text(path, cast(dict[str, JSON], result)),
@@ -1093,7 +1172,14 @@ async def file_read(
     data = await vfs.read(file_path(path))
     page = text_page(data.decode(), start_line, limit)
     return presented(
-        "file_read", page, {"path": path, "content": page, "start_line": start_line}
+        "file_read",
+        page,
+        {
+            "path": path,
+            "content": page,
+            "start_line": start_line,
+            **file_reference(metadata),
+        },
     )
 
 
@@ -1107,13 +1193,13 @@ async def file_write(
     """Create text; overwrite=true replaces the entire file. Use file_edit for partial changes."""
     token = current_operation.set(request_id(runtime))
     try:
-        await (await session(runtime)).vfs.dispatch(
+        metadata, _ = await (await session(runtime)).vfs.dispatch(
             "write_text", scope(path), content=content, overwrite=overwrite
         )
     finally:
         current_operation.reset(token)
     result: JSON = {"path": path}
-    return presented("file_write", result, result)
+    return presented("file_write", result, {**result, **file_reference(metadata)})
 
 
 @tool(response_format="content_and_artifact")
@@ -1127,7 +1213,7 @@ async def file_edit(
     """Replace literal text; exactly one match unless replace_all=true. Empty new_text deletes the match."""
     token = current_operation.set(request_id(runtime))
     try:
-        await (await session(runtime)).vfs.dispatch(
+        metadata, _ = await (await session(runtime)).vfs.dispatch(
             "edit_text",
             scope(path),
             old_text=old_text,
@@ -1137,7 +1223,7 @@ async def file_edit(
     finally:
         current_operation.reset(token)
     result: JSON = {"path": path}
-    return presented("file_edit", result, result)
+    return presented("file_edit", result, {**result, **file_reference(metadata)})
 
 
 @tool(response_format="content_and_artifact")
@@ -1187,8 +1273,8 @@ async def file_semantic_search(
         for hit in cast(list[dict[str, JSON]], result["hits"]):
             name = posixpath.relpath(str(hit["path"]), base)
             excerpt = str(hit["text"])
-            if len(excerpt) > 800:
-                excerpt = excerpt[:800] + " [excerpt truncated]"
+            if len(excerpt) > 1024:
+                excerpt = excerpt[:1024] + " [excerpt truncated]"
             size = len(excerpt.encode())
             if used + size <= BYTE_BUDGET:
                 lines.append(name + "\n" + excerpt)
@@ -1205,7 +1291,7 @@ async def file_semantic_search(
 async def execute(
     runtime: ToolRuntime[Context, State], command: str, cwd: str = "~"
 ) -> ToolMessage:
-    """Run supported shell commands and Python over workspace files. Use cwd for the working directory. Output is capped; read the saved output when needed. No host programs or network access."""
+    """Run supported shell commands and Python over workspace files; use curl or wget for HTTP requests. Use cwd for the working directory. Output is capped; read the saved output when needed. No host programs."""
     output, code = await shell(
         await session(runtime),
         command,

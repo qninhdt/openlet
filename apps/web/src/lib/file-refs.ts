@@ -1,3 +1,5 @@
+import { mapMarkdownText } from './markdown.js';
+
 export type FileRef = {
   storage_id: string;
   node_id: string;
@@ -27,6 +29,10 @@ export function fileText(content: string) {
   return content.replace(fileTokenPattern(), (_, label: string) => label.replace(/\\(.)/g, '$1'));
 }
 export function fileMarkdown(content: string) {
+  return mapMarkdownText(content, markdownReferences);
+}
+
+function markdownReferences(content: string) {
   let result = '',
     end = 0;
   for (const match of content.matchAll(fileTokenPattern())) {

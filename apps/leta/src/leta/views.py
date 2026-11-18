@@ -12,7 +12,7 @@ from .file_refs import plaintext
 from .reactions import attach
 
 
-def profile(row: Row, manage: bool) -> dict[str, JSON]:
+def profile(row: Row, manage: bool, delete: bool = False) -> dict[str, JSON]:
     return {
         **json_row(
             {
@@ -37,6 +37,7 @@ def profile(row: Row, manage: bool) -> dict[str, JSON]:
             "can_chat": row.get("state") == "active",
             "can_view_activity": manage,
             "can_edit_settings": manage,
+            "can_delete": delete,
         },
     }
 
@@ -46,6 +47,7 @@ async def chat_summaries(db: Pool, roots: list[UUID], user: UUID) -> dict[UUID, 
         rows = await (
             await conn.execute(
                 """SELECT r.id,last.content AS preview,last.created_at AS updated_at,
+                reply.id AS latest_reply_id,reply.created_at AS latest_reply_at,
                 (SELECT count(*) FROM user_messages WHERE leta_id=r.id
                     AND recipient_user_id=%s AND read_at IS NULL) AS unread_count
             FROM unnest(%s::uuid[]) r(id)
@@ -58,8 +60,13 @@ async def chat_summaries(db: Pool, roots: list[UUID], user: UUID) -> dict[UUID, 
                         WHERE recipient_agent_id=r.id AND source_kind='user'
                         AND source_id=%s AND input_type='message'
                 ) chat ORDER BY created_at DESC,id DESC LIMIT 1
-            ) last ON true""",
-                (user, roots, user, user),
+            ) last ON true
+            LEFT JOIN LATERAL (
+                SELECT id,created_at FROM user_messages
+                WHERE leta_id=r.id AND recipient_user_id=%s
+                ORDER BY created_at DESC,id DESC LIMIT 1
+            ) reply ON true""",
+                (user, roots, user, user, user),
             )
         ).fetchall()
     return {
@@ -91,6 +98,18 @@ async def mark_chat_read(db: Pool, root: UUID, user: UUID, through: UUID) -> Non
         )
 
 
+CHAT = """WITH chat AS (
+            SELECT id,content,file_refs,created_at,source_id AS user_id,'user'::text AS role,
+                conversation_id,read_at,in_reply_to_message_id AS in_reply_to,
+                coalesce(in_reply_to_role,'user') AS in_reply_to_role
+            FROM agent_messages WHERE recipient_agent_id=%s AND source_kind='user' AND source_id=%s AND input_type='message'
+            UNION ALL
+            SELECT id,content,file_refs,created_at,recipient_user_id,'assistant',conversation_id,
+                NULL::timestamptz,in_reply_to_message_id,'user'
+            FROM user_messages WHERE leta_id=%s AND recipient_user_id=%s
+            ) """
+
+
 async def chat(
     db: Pool,
     root: UUID,
@@ -104,16 +123,8 @@ async def chat(
     async with db.connection() as conn:
         rows = await (
             await conn.execute(
-                """WITH chat AS (
-            SELECT id,content,file_refs,created_at,source_id AS user_id,'user'::text AS role,
-                conversation_id,read_at,in_reply_to_message_id AS in_reply_to,
-                coalesce(in_reply_to_role,'user') AS in_reply_to_role
-            FROM agent_messages WHERE recipient_agent_id=%s AND source_kind='user' AND source_id=%s AND input_type='message'
-            UNION ALL
-            SELECT id,content,file_refs,created_at,recipient_user_id,'assistant',conversation_id,
-                NULL::timestamptz,in_reply_to_message_id,'user'
-            FROM user_messages WHERE leta_id=%s AND recipient_user_id=%s
-            ) SELECT c.*,CASE WHEN q.id IS NULL THEN NULL ELSE
+                CHAT
+                + """ SELECT c.*,CASE WHEN q.id IS NULL THEN NULL ELSE
                 jsonb_build_object('id',q.id,'role',q.role,'content',q.content) END AS reply
             FROM chat c LEFT JOIN chat q ON q.id=c.in_reply_to AND q.role=c.in_reply_to_role
             WHERE (%s::timestamptz IS NULL OR (c.created_at,c.id,c.role)<(%s,%s,%s))
@@ -136,6 +147,34 @@ async def chat(
         if len(rows) == 20
         else None,
     }
+
+
+async def chat_context(
+    db: Pool, root: UUID, user: UUID, message: UUID, role: str
+) -> dict[str, JSON]:
+    async with db.connection() as conn:
+        rows = await (
+            await conn.execute(
+                CHAT
+                + """, target AS (
+            SELECT created_at,id,role FROM chat WHERE id=%s AND role=%s
+        ), around AS (
+            (SELECT c.* FROM chat c,target t WHERE (c.created_at,c.id,c.role)<=(t.created_at,t.id,t.role)
+             ORDER BY c.created_at DESC,c.id DESC,c.role DESC LIMIT 16)
+            UNION ALL
+            (SELECT c.* FROM chat c,target t WHERE (c.created_at,c.id,c.role)>(t.created_at,t.id,t.role)
+             ORDER BY c.created_at,c.id,c.role LIMIT 15)
+        ) SELECT c.*,CASE WHEN q.id IS NULL THEN NULL ELSE
+            jsonb_build_object('id',q.id,'role',q.role,'content',q.content) END AS reply
+        FROM around c LEFT JOIN chat q ON q.id=c.in_reply_to AND q.role=c.in_reply_to_role
+        ORDER BY c.created_at,c.id,c.role""",
+                (root, user, root, user, message, role),
+            )
+        ).fetchall()
+    if not rows:
+        raise LookupError("message not found in your conversation")
+    await attach(db, root, rows)
+    return {"items": [json_row(row) for row in rows], "next_cursor": None}
 
 
 async def requests(

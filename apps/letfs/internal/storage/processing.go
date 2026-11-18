@@ -11,7 +11,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	sdk "github.com/qninhdt/openlet/packages/sdk-go"
 	pb "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/letfs/v1"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 const sourceCTE = `WITH RECURSIVE source AS (SELECT n.id,n.storage_id,n.parent_id FROM nodes n JOIN files f ON f.node_id=n.id WHERE n.id=$1 AND f.version=$2 AND f.object_key IS NOT NULL),chain AS(SELECT id,storage_id,parent_id,0 AS depth FROM source UNION ALL SELECT n.id,n.storage_id,n.parent_id,c.depth+1 FROM chain c JOIN nodes n ON n.id=c.parent_id),live AS(SELECT src.id,src.storage_id,s.workspace_id,s.allow_indexing FROM source src JOIN storages s ON s.id=src.storage_id WHERE EXISTS(SELECT 1 FROM chain c WHERE c.id=s.root_node_id) AND NOT EXISTS(SELECT 1 FROM chain c JOIN nodes n ON n.id=c.id WHERE c.depth>0 AND n.kind='file')) `
@@ -308,12 +311,12 @@ func (s *Server) CommitEnrichment(ctx context.Context, r *pb.CommitEnrichmentReq
 	return &pb.ProcessingOutcome{Stage: stage}, tx.Commit(ctx)
 }
 func (s *Server) CompleteIndex(ctx context.Context, r *pb.ProcessingRequest) (*pb.ProcessingOutcome, error) {
-	return s.finishProcessing(ctx, r.FileId, r.Version, "")
+	return s.finishProcessing(ctx, r.FileId, r.Version, "", nil)
 }
 func (s *Server) FailProcessing(ctx context.Context, r *pb.FailProcessingRequest) (*pb.ProcessingOutcome, error) {
-	return s.finishProcessing(ctx, r.FileId, r.Version, r.ErrorCode)
+	return s.finishProcessing(ctx, r.FileId, r.Version, r.ErrorCode, &r.Attempt)
 }
-func (s *Server) finishProcessing(ctx context.Context, id string, version int64, code string) (*pb.ProcessingOutcome, error) {
+func (s *Server) finishProcessing(ctx context.Context, id string, version int64, code string, attempt *int64) (*pb.ProcessingOutcome, error) {
 	tx, err := s.DB.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -323,9 +326,68 @@ func (s *Server) finishProcessing(ctx context.Context, id string, version int64,
 		return obsolete(err)
 	}
 	var stage string
-	err = tx.QueryRow(ctx, `UPDATE processing SET stage=CASE WHEN $2='' AND stage='enriched' THEN 'ready' ELSE stage END,error_code=CASE WHEN stage='ready' OR $2='' THEN NULL ELSE $2 END WHERE file_id=$1 RETURNING stage`, id, code).Scan(&stage)
+	err = tx.QueryRow(ctx, `UPDATE processing SET stage=CASE WHEN $2='' AND stage='enriched' THEN 'ready' ELSE stage END,error_code=CASE WHEN stage='ready' OR $2='' THEN NULL ELSE $2 END WHERE file_id=$1 AND ($3::bigint IS NULL OR attempt=$3) RETURNING stage`, id, code, attempt).Scan(&stage)
 	if err != nil {
 		return obsolete(err)
 	}
 	return &pb.ProcessingOutcome{Stage: stage}, tx.Commit(ctx)
+}
+
+func resetProcessing(ctx context.Context, tx pgx.Tx, r *pb.RetryProcessingRequest) (*pb.Node, error) {
+	current, err := oneResolved(ctx, tx, r.WorkspaceId, r.StorageId, r.Target, false, true)
+	if err != nil {
+		return nil, err
+	}
+	if err = writable(current); err != nil {
+		return nil, err
+	}
+	if current.Node.File == nil || current.Node.File.Type != pb.FileType_FILE_TYPE_BLOB {
+		return nil, status.Error(codes.FailedPrecondition, "only source blob files can be reprocessed")
+	}
+	if current.Node.File.Version != r.ExpectedVersion {
+		return nil, conflict("content version changed")
+	}
+	tag, err := tx.Exec(ctx, `UPDATE processing SET attempt=attempt+1,error_code=NULL WHERE file_id=$1 AND error_code IS NOT NULL AND stage<>'ready'`, current.Node.Id)
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() != 1 {
+		return nil, status.Error(codes.FailedPrecondition, "only failed processing can be retried")
+	}
+	current.Node.File.Processing.ErrorCode = nil
+	return current.Node, nil
+}
+
+func (s *Server) RetryProcessing(ctx context.Context, r *pb.RetryProcessingRequest) (*pb.Node, error) {
+	actor, err := s.check(ctx, "storage", r.StorageId, "write")
+	if err != nil {
+		return nil, err
+	}
+	tx, err := s.DB.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	out := new(pb.Node)
+	duplicate, err := sdk.Claim(ctx, tx, actor.String(), "RetryProcessing", r.RequestId, r, out, s.ttl())
+	if err != nil {
+		return nil, err
+	}
+	if !duplicate {
+		out, err = resetProcessing(ctx, tx, r)
+		if err != nil {
+			return nil, err
+		}
+		if err = sdk.Finish(ctx, tx, actor.String(), "RetryProcessing", r.RequestId, out); err != nil {
+			return nil, err
+		}
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	// Maintenance recovers dispatch if the service stops after committing the retry.
+	if err = s.dispatch(ctx, out.Id, out.File.Version, requiresParse(out.File.MediaType)); err != nil {
+		return nil, err
+	}
+	return out, nil
 }

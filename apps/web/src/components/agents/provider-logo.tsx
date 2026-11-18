@@ -1,3 +1,4 @@
+import { Cpu } from 'lucide-react';
 // Official provider marks, as used by OpenBot @ e500257. Origins: claude.ai/favicon.svg, OpenAI, Simple Icons (Gemini, CC0).
 const marks = {
   Anthropic: {
@@ -17,8 +18,9 @@ const marks = {
   },
 };
 
-export function ProviderLogo({ provider }: { provider: keyof typeof marks }) {
-  const mark = marks[provider];
+export function ProviderLogo({ provider }: { provider: string }) {
+  const mark = marks[provider as keyof typeof marks];
+  if (!mark) return <Cpu aria-hidden="true" className="size-4 shrink-0" />;
   return (
     <svg
       viewBox={mark.viewBox}

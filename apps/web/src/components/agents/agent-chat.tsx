@@ -9,7 +9,8 @@ import {
   useAuiState,
   type ThreadMessageLike,
 } from '@assistant-ui/react';
-import { Upload, RotateCcw, MessageCircleQuestion, ShieldCheck } from 'lucide-react';
+import { Upload, RotateCcw, Check, CheckCheck } from 'lucide-react';
+import { AgentAvatar } from '@/components/agent-avatar';
 import { Button } from '@/components/ui/button';
 import { Bubble, BubbleContent } from '@/components/ui/bubble';
 import { Message, MessageContent } from '@/components/ui/message';
@@ -17,28 +18,41 @@ import { MessageScrollerContent, MessageScrollerItem } from '@/components/ui/mes
 import { agentAppearance } from '@/components/agent-appearance';
 import { messageKey } from '@/lib/agent-api';
 import { AgentMarkdown } from './agent-rich-content';
-import { previewFiles, useAgentPreview } from './agent-preview';
-import { AgentFileCard } from './agent-tools';
+import { useAgentPreview } from './agent-preview';
 import { ConversationComposer } from './agent-conversation';
 import { MessageActions } from './message-actions';
 import { MessageReactions } from './message-reactions';
 import { cn } from '@/lib/utils';
 import { transcriptStyles } from '@/components/ui/styles';
+import { MessageFiles } from './message-files';
 
 function ChatBubble() {
   const p = useAgentPreview();
   const id = useAuiState((s) => s.message.id);
-  const message = p.chatMessages.find((m) => messageKey(m) === id)!;
+  const message = p.chatMessages.find((m) => messageKey(m) === id);
+  // The external runtime can render an evicted row until it reconciles a refreshed page.
+  if (!message) return null;
   const user = message.role === 'user';
+  const lastMessage = p.chatMessages.at(-1);
+  const latestMessage = p.live.chat.data?.pages[0]?.items[0];
+  const showReceipt =
+    user &&
+    message === lastMessage &&
+    (!p.linkedMessage || (latestMessage?.role === message.role && latestMessage.id === message.id));
   return (
-    <MessageScrollerItem messageId={id} scrollAnchor={user}>
+    <MessageScrollerItem messageId={id}>
       <MessagePrimitive.Root asChild>
         <Message align={user ? 'end' : 'start'}>
-          <MessageContent>
+          <MessageContent className="gap-0.5">
             <MessageActions
               own={user}
               text={message.content}
               title={new Date(message.created_at).toLocaleString()}
+              link={
+                !message.status
+                  ? `${window.location.origin}/app/${p.workspace.id}/agents/${p.resource.id}?${new URLSearchParams({ message: message.id, role: message.role })}`
+                  : undefined
+              }
               reaction={
                 !message.status
                   ? {
@@ -60,45 +74,47 @@ function ChatBubble() {
                 })
               }
             >
-              <Bubble
-                align={user ? 'end' : 'start'}
-                variant={user ? 'agent' : 'muted'}
-                className={cn(!!message.reactions?.length && 'mb-6')}
+              <div
+                id={`chat-${message.role}-${message.id}`}
+                className={cn(
+                  'relative flex min-w-0 max-w-full flex-col gap-1 rounded-lg transition-shadow data-[linked=true]:ring-2 data-[linked=true]:ring-ring data-[linked=true]:ring-offset-4 data-[linked=true]:ring-offset-background',
+                  user && 'items-end',
+                  !!message.reactions?.length && !showReceipt && 'mb-6',
+                )}
               >
-                <BubbleContent className="flex flex-col gap-2">
-                  {message.reply && (
-                    <button
-                      type="button"
-                      className="min-w-0 rounded-lg bg-foreground/5 px-3 py-2 text-left text-caption"
-                      onClick={() => {
-                        const target = document.getElementById(
-                          `chat-${message.reply!.role}-${message.reply!.id}`,
-                        );
-                        if (target) target.scrollIntoView({ block: 'center', behavior: 'smooth' });
-                        else if (p.live.chat.hasNextPage) void p.live.chat.fetchNextPage();
-                      }}
-                    >
-                      <span className="block font-medium">
-                        {message.reply.role === 'user' ? 'You' : p.profile.name}
-                      </span>
-                      <span className="line-clamp-2">{fileText(message.reply.content)}</span>
-                    </button>
-                  )}
-                  <div id={`chat-${message.role}-${message.id}`}>
-                    <AgentMarkdown text={message.content} />
-                  </div>
-                  {message.file_ids?.map((id) => {
-                    const file = previewFiles.find((f) => f.id === id);
-                    return file ? <AgentFileCard key={id} file={file} /> : null;
-                  })}
-                </BubbleContent>
+                {(message.content || message.reply) && (
+                  <Bubble
+                    align={user ? 'end' : 'start'}
+                    variant={user ? 'agent' : 'muted'}
+                    className="max-w-full"
+                  >
+                    <BubbleContent className="flex flex-col gap-2">
+                      {message.reply && (
+                        <button
+                          type="button"
+                          className="min-w-0 rounded-lg bg-foreground/5 px-3 py-2 text-left text-caption"
+                          onClick={() => {
+                            void p.jumpToMessage(message.reply!);
+                          }}
+                        >
+                          <span className="block font-medium">
+                            {message.reply.role === 'user' ? 'You' : p.profile.name}
+                          </span>
+                          <span className="line-clamp-2">{fileText(message.reply.content)}</span>
+                        </button>
+                      )}
+                      {message.content && <AgentMarkdown text={message.content} />}
+                    </BubbleContent>
+                  </Bubble>
+                )}
+                <MessageFiles references={message.file_refs} />
                 <MessageReactions
                   reactions={message.reactions}
                   actorId={p.actorId}
                   own={user}
                   onReact={(emoji) => void p.reactMessage(message, emoji)}
                 />
-              </Bubble>
+              </div>
             </MessageActions>
             {message.status === 'failed' ? (
               <div
@@ -115,6 +131,22 @@ function ChatBubble() {
               <span role="status" className="self-end text-xs text-muted-foreground">
                 Sending…
               </span>
+            ) : showReceipt ? (
+              <span
+                className="mr-2 self-end text-xs text-muted-foreground"
+                title={
+                  message.read_at
+                    ? `Read ${new Date(message.read_at).toLocaleString()}`
+                    : 'Delivered to inbox'
+                }
+                aria-label={message.read_at ? 'Read by agent' : 'Delivered'}
+              >
+                {message.read_at ? (
+                  <CheckCheck className="size-3.5" />
+                ) : (
+                  <Check className="size-3.5" />
+                )}
+              </span>
             ) : null}
           </MessageContent>
         </Message>
@@ -127,6 +159,23 @@ const convertMessage = (message: ThreadMessageLike) => message;
 export function AgentChat() {
   const [dropping, setDropping] = useState(false);
   const p = useAgentPreview();
+  useEffect(() => {
+    if (!p.linkedMessage || !p.messageContext.data) return;
+    let target: HTMLElement | null = null;
+    const frame = requestAnimationFrame(() => {
+      target = document.getElementById(`chat-${p.linkedRole}-${p.linkedMessage}`);
+      target?.scrollIntoView({ block: 'center' });
+      if (target) target.dataset.linked = 'true';
+    });
+    const timer = setTimeout(() => {
+      if (target) delete target.dataset.linked;
+    }, 3000);
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(timer);
+      if (target) delete target.dataset.linked;
+    };
+  }, [p.linkedMessage, p.linkedRole, p.messageContext.data]);
   const lastDelivery = p.chatMessages.findLast((message) => message.role === 'assistant');
   useEffect(() => {
     const read = () => {
@@ -153,7 +202,7 @@ export function AgentChat() {
   const runtime = useExternalStoreRuntime({
     messages,
     convertMessage,
-    isRunning: false,
+    isRunning: !!p.live.processing.data?.working,
     onNew: async (message) => {
       await p.send(
         message.content
@@ -163,7 +212,7 @@ export function AgentChat() {
       );
     },
   });
-  const error = p.live.profile.error ?? p.live.chat.error;
+  const error = p.live.profile.error ?? p.live.chat.error ?? p.messageContext.error;
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <ThreadPrimitive.Root
@@ -210,9 +259,16 @@ export function AgentChat() {
             {error.message}
           </p>
         )}
-        <AgentMessageScroller positionKey={`${p.fixture.id}:chat`}>
-          <MessageScrollerContent className={transcriptStyles}>
-            {p.live.enabled && p.live.chat.hasNextPage && (
+        {p.linkedMessage && (
+          <div className="px-3 py-1">
+            <Button variant="ghost" size="sm" onClick={() => void p.jumpToMessage(null)}>
+              Return to latest messages
+            </Button>
+          </div>
+        )}
+        <AgentMessageScroller positionKey={`${p.resource.id}:chat:${p.linkedMessage ?? ''}`}>
+          <MessageScrollerContent className={cn(transcriptStyles, 'gap-2')}>
+            {!p.linkedMessage && p.live.enabled && p.live.chat.hasNextPage && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -221,6 +277,11 @@ export function AgentChat() {
               >
                 Load earlier messages
               </Button>
+            )}
+            {p.linkedMessage && p.messageContext.isPending && (
+              <p role="status" className="py-6 text-center text-sm text-muted-foreground">
+                Loading message context…
+              </p>
             )}
             {p.live.enabled && p.live.profile.data?.state === 'provisioning' && (
               <p role="status" className="py-8 text-center text-sm text-muted-foreground">
@@ -238,25 +299,24 @@ export function AgentChat() {
               </p>
             )}
             <ThreadPrimitive.Messages components={{ Message: ChatBubble }} />
-            {p.requests.map((request) => (
-              <MessageScrollerItem key={request.id} messageId={`request:${request.id}`}>
-                <button
-                  type="button"
-                  className="mx-auto flex max-w-full items-center gap-2 rounded-lg px-3 py-2 text-caption text-muted-foreground hover:bg-muted hover:text-foreground"
-                  onClick={() => p.updateSession({ requestOpen: request.id })}
-                >
-                  {request.type === 'ask' ? (
-                    <MessageCircleQuestion className="size-3.5 shrink-0" />
-                  ) : (
-                    <ShieldCheck className="size-3.5 shrink-0" />
-                  )}
-                  <span className="truncate">{request.title}</span>
-                  <span className="shrink-0">
-                    · {request.status === 'pending' ? 'Waiting for you' : request.status}
+            {p.live.processing.data?.working && (
+              <div role="status" className="pointer-events-none flex items-center pt-3 pb-2 pl-2">
+                <span className="sr-only">{p.profile.name} is thinking…</span>
+                <span className="relative inline-flex" style={{ color: 'var(--agent-color)' }}>
+                  <span className="agent-thinking-dots" aria-hidden="true">
+                    <i />
+                    <i />
+                    <i />
                   </span>
-                </button>
-              </MessageScrollerItem>
-            ))}
+                  <AgentAvatar
+                    name={p.profile.name}
+                    appearance={p.profile.appearance}
+                    working
+                    className="size-8"
+                  />
+                </span>
+              </div>
+            )}
           </MessageScrollerContent>
         </AgentMessageScroller>
         {p.capabilities.can_chat && <ConversationComposer />}

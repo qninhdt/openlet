@@ -5,24 +5,37 @@ import { createJavaScriptRegexEngine } from 'shiki/engine/javascript';
 // Add the languages you need. Each one loads the first time it is used.
 const languages = {
   bash: () => import('shiki/langs/shellscript.mjs'),
+  c: () => import('shiki/langs/c.mjs'),
+  cpp: () => import('shiki/langs/cpp.mjs'),
+  csharp: () => import('shiki/langs/csharp.mjs'),
   css: () => import('shiki/langs/css.mjs'),
   diff: () => import('shiki/langs/diff.mjs'),
   html: () => import('shiki/langs/html.mjs'),
+  go: () => import('shiki/langs/go.mjs'),
+  java: () => import('shiki/langs/java.mjs'),
   javascript: () => import('shiki/langs/javascript.mjs'),
   json: () => import('shiki/langs/json.mjs'),
   jsx: () => import('shiki/langs/jsx.mjs'),
   markdown: () => import('shiki/langs/markdown.mjs'),
   python: () => import('shiki/langs/python.mjs'),
+  rust: () => import('shiki/langs/rust.mjs'),
   sql: () => import('shiki/langs/sql.mjs'),
+  toml: () => import('shiki/langs/toml.mjs'),
+  xml: () => import('shiki/langs/xml.mjs'),
   tsx: () => import('shiki/langs/tsx.mjs'),
   typescript: () => import('shiki/langs/typescript.mjs'),
   yaml: () => import('shiki/langs/yaml.mjs'),
 };
 
 const aliases: Record<string, keyof typeof languages> = {
+  'c++': 'cpp',
+  'c#': 'csharp',
+  cs: 'csharp',
+  golang: 'go',
   js: 'javascript',
   md: 'markdown',
   py: 'python',
+  rs: 'rust',
   sh: 'bash',
   shell: 'bash',
   shellscript: 'bash',
@@ -44,7 +57,7 @@ function getHighlighter() {
 }
 
 function getLanguage(language: string) {
-  const name = language.toLowerCase();
+  const name = language.trim().toLowerCase();
 
   if (name === 'ansi') {
     return name;

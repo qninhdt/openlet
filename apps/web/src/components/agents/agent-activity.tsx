@@ -13,6 +13,7 @@ import { MessageScrollerContent, MessageScrollerItem } from '@/components/ui/mes
 import { agentAppearance } from '@/components/agent-appearance';
 import type { ActivityEntry } from '@/lib/agent-api';
 import { useAgentPreview } from './agent-preview';
+import { StopRun } from './stop-run';
 import { AgentMarkdown } from './agent-rich-content';
 import { AgentMessageParts } from './agent-reasoning';
 import { activityMessages } from '@/lib/agent-activity-messages';
@@ -156,6 +157,14 @@ export function LiveActivity() {
           <p role="status" className="px-4 py-2 text-xs text-muted-foreground">
             {p.live.connection}
           </p>
+        )}
+        {p.activityAgent.status === 'working' && p.activityAgent.run_id && (
+          <div className="flex items-center justify-end gap-3 px-4 py-2">
+            <span role="status" className="text-xs text-muted-foreground">
+              {p.activityAgent.name} is working…
+            </span>
+            <StopRun agent={p.activityAgent.id} run={p.activityAgent.run_id} />
+          </div>
         )}
         <AgentMessageScroller positionKey={`${p.activityAgent.id}:activity`}>
           <MessageScrollerContent className={transcriptStyles}>

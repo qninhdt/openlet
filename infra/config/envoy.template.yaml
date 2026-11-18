@@ -34,6 +34,10 @@ static_resources:
                         - name: platform
                           match: {prefix: /openlet.platform.v1.PlatformService/}
                           route: {cluster: platform, timeout: 120s}
+                        - name: letfs-archive
+                          match:
+                            safe_regex: {regex: '/openlet\.letfs\.v1\.LetFSService/(DownloadArchive|DownloadArchiveTicket)'}
+                          route: {cluster: letfs, timeout: 0s}
                         - name: letfs
                           match: {prefix: /openlet.letfs.v1.LetFSService/}
                           route: {cluster: letfs, timeout: 120s}
@@ -58,8 +62,12 @@ static_resources:
                             cache_duration: {seconds: 300}
                           claim_to_headers:
                             - {header_name: x-openlet-clerk-subject, claim_name: sub}
-                            - {header_name: x-openlet-user-id, claim_name: public_metadata.openlet_user_id}
+                            - {header_name: x-openlet-user-id, claim_name: @USER_ID_CLAIM@}
                       rules:
+                        - match:
+                            safe_regex: {regex: '/v1/archive-downloads/[a-f0-9]+'}
+                            headers: [{name: ':method', exact_match: GET}]
+                          requires: {allow_missing: {}}
                         - match: {prefix: /}
                           requires: {provider_name: clerk}
                   - name: envoy.filters.http.grpc_json_transcoder

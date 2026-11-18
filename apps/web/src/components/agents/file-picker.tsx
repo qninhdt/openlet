@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAgentPreview } from './agent-preview';
-import { loadStorage, storageRoots, rootId, type StorageNode } from '@/lib/storage-preview';
+import { rootId, type StorageNode } from '@/lib/storage-preview';
 import { StorageProvider } from '@/components/storage/storage-context';
 import { StoragePage } from '@/components/storage/storage-page';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -18,8 +18,7 @@ export function useFileChoices(enabled: boolean, search = '') {
   const roots = useQuery({
     queryKey: ['storage-roots', p.actorId, p.workspace.id],
     enabled,
-    queryFn: () =>
-      p.filesApi ? p.filesApi.listRoots() : Promise.resolve(storageRoots(p.workspace)),
+    queryFn: () => p.filesApi.listRoots(),
   });
   const [storage, setStorage] = useState('');
   const current = storage || roots.data?.[0]?.id || '';
@@ -32,17 +31,7 @@ export function useFileChoices(enabled: boolean, search = '') {
     queryKey: ['file-choices', p.actorId, p.workspace.id, current, filter],
     enabled: enabled && !!current,
     queryFn: async () => {
-      if (!p.filesApi) {
-        const snapshot = await loadStorage(p.workspace.id, storageRoots(p.workspace));
-        return snapshot.nodes.filter(
-          (n) =>
-            !n.trashed &&
-            n.kind === 'file' &&
-            (filter
-              ? n.name.toLowerCase().includes(filter.toLowerCase())
-              : n.storage === current && n.parent === rootId(current)),
-        );
-      }
+      for (const root of roots.data ?? []) p.filesApi.bind(root.id, root.root);
       if (!filter) return p.filesApi.list(current, rootId(current));
       // shortcut: show the first 100 matches per storage; use the file browser for larger result sets.
       return (

@@ -1010,6 +1010,7 @@ type FailProcessingRequest struct {
 	FileId        string                 `protobuf:"bytes,1,opt,name=file_id,json=fileId,proto3" json:"file_id,omitempty"`
 	Version       int64                  `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
 	ErrorCode     string                 `protobuf:"bytes,3,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
+	Attempt       int64                  `protobuf:"varint,4,opt,name=attempt,proto3" json:"attempt,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1063,6 +1064,13 @@ func (x *FailProcessingRequest) GetErrorCode() string {
 		return x.ErrorCode
 	}
 	return ""
+}
+
+func (x *FailProcessingRequest) GetAttempt() int64 {
+	if x != nil {
+		return x.Attempt
+	}
+	return 0
 }
 
 var File_openlet_api_letfs_v1_internal_proto protoreflect.FileDescriptor
@@ -1156,12 +1164,13 @@ const file_openlet_api_letfs_v1_internal_proto_rawDesc = "" +
 	"\afile_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x06fileId\x12!\n" +
 	"\aversion\x18\x02 \x01(\x03B\a\xbaH\x04\"\x02 \x00R\aversion\x12@\n" +
 	"\tartifacts\x18\x03 \x03(\v2\".openlet.letfs.v1.EnrichedArtifactR\tartifacts\x12G\n" +
-	"\x0fsource_metadata\x18\x04 \x01(\v2\x1e.openlet.letfs.v1.FileMetadataR\x0esourceMetadata\"\x85\x01\n" +
+	"\x0fsource_metadata\x18\x04 \x01(\v2\x1e.openlet.letfs.v1.FileMetadataR\x0esourceMetadata\"\xa8\x01\n" +
 	"\x15FailProcessingRequest\x12!\n" +
 	"\afile_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x06fileId\x12!\n" +
 	"\aversion\x18\x02 \x01(\x03B\a\xbaH\x04\"\x02 \x00R\aversion\x12&\n" +
 	"\n" +
-	"error_code\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\terrorCode2\xfe\x06\n" +
+	"error_code\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\terrorCode\x12!\n" +
+	"\aattempt\x18\x04 \x01(\x03B\a\xbaH\x04\"\x02(\x00R\aattempt2\xfe\x06\n" +
 	"\x14LetFSInternalService\x12s\n" +
 	"\x19ProvisionWorkspaceStorage\x122.openlet.letfs.v1.ProvisionWorkspaceStorageRequest\x1a\".openlet.letfs.v1.WorkspaceStorage\x12R\n" +
 	"\rCreateStorage\x12&.openlet.letfs.v1.CreateStorageRequest\x1a\x19.openlet.letfs.v1.Storage\x12I\n" +

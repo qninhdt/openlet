@@ -33,15 +33,41 @@ WORKSPACE_STATE_PROVISIONING: WorkspaceState
 WORKSPACE_STATE_ACTIVE: WorkspaceState
 WORKSPACE_STATE_DELETING: WorkspaceState
 
+class AvatarAppearance(_message.Message):
+    __slots__ = ("shape", "color")
+    SHAPE_FIELD_NUMBER: _ClassVar[int]
+    COLOR_FIELD_NUMBER: _ClassVar[int]
+    shape: str
+    color: str
+    def __init__(self, shape: _Optional[str] = ..., color: _Optional[str] = ...) -> None: ...
+
+class AccountPreferences(_message.Message):
+    __slots__ = ("theme", "send_shortcut", "show_agent_steps", "compact_message_actions", "message_sound")
+    THEME_FIELD_NUMBER: _ClassVar[int]
+    SEND_SHORTCUT_FIELD_NUMBER: _ClassVar[int]
+    SHOW_AGENT_STEPS_FIELD_NUMBER: _ClassVar[int]
+    COMPACT_MESSAGE_ACTIONS_FIELD_NUMBER: _ClassVar[int]
+    MESSAGE_SOUND_FIELD_NUMBER: _ClassVar[int]
+    theme: str
+    send_shortcut: str
+    show_agent_steps: bool
+    compact_message_actions: bool
+    message_sound: bool
+    def __init__(self, theme: _Optional[str] = ..., send_shortcut: _Optional[str] = ..., show_agent_steps: _Optional[bool] = ..., compact_message_actions: _Optional[bool] = ..., message_sound: _Optional[bool] = ...) -> None: ...
+
 class User(_message.Message):
-    __slots__ = ("id", "display_name", "avatar_url")
+    __slots__ = ("id", "display_name", "avatar_url", "appearance", "preferences")
     ID_FIELD_NUMBER: _ClassVar[int]
     DISPLAY_NAME_FIELD_NUMBER: _ClassVar[int]
     AVATAR_URL_FIELD_NUMBER: _ClassVar[int]
+    APPEARANCE_FIELD_NUMBER: _ClassVar[int]
+    PREFERENCES_FIELD_NUMBER: _ClassVar[int]
     id: str
     display_name: str
     avatar_url: str
-    def __init__(self, id: _Optional[str] = ..., display_name: _Optional[str] = ..., avatar_url: _Optional[str] = ...) -> None: ...
+    appearance: AvatarAppearance
+    preferences: AccountPreferences
+    def __init__(self, id: _Optional[str] = ..., display_name: _Optional[str] = ..., avatar_url: _Optional[str] = ..., appearance: _Optional[_Union[AvatarAppearance, _Mapping]] = ..., preferences: _Optional[_Union[AccountPreferences, _Mapping]] = ...) -> None: ...
 
 class Workspace(_message.Message):
     __slots__ = ("id", "name", "state", "created_at", "role")
@@ -82,12 +108,16 @@ class Invitation(_message.Message):
     def __init__(self, id: _Optional[str] = ..., workspace_id: _Optional[str] = ..., email: _Optional[str] = ..., expires_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., accepted_by_user_id: _Optional[str] = ...) -> None: ...
 
 class UpdateMeRequest(_message.Message):
-    __slots__ = ("display_name", "avatar_url")
+    __slots__ = ("display_name", "avatar_url", "appearance", "preferences")
     DISPLAY_NAME_FIELD_NUMBER: _ClassVar[int]
     AVATAR_URL_FIELD_NUMBER: _ClassVar[int]
+    APPEARANCE_FIELD_NUMBER: _ClassVar[int]
+    PREFERENCES_FIELD_NUMBER: _ClassVar[int]
     display_name: str
     avatar_url: str
-    def __init__(self, display_name: _Optional[str] = ..., avatar_url: _Optional[str] = ...) -> None: ...
+    appearance: AvatarAppearance
+    preferences: AccountPreferences
+    def __init__(self, display_name: _Optional[str] = ..., avatar_url: _Optional[str] = ..., appearance: _Optional[_Union[AvatarAppearance, _Mapping]] = ..., preferences: _Optional[_Union[AccountPreferences, _Mapping]] = ...) -> None: ...
 
 class ListWorkspacesRequest(_message.Message):
     __slots__ = ("page_size", "page_token")

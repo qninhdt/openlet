@@ -1,9 +1,16 @@
 import csv
 import re
+from collections.abc import Iterator
 from pathlib import Path
 from typing import cast
+from unittest.mock import patch
 
 import pytest
+from docling.datamodel.accelerator_options import AcceleratorOptions
+from docling.datamodel.pipeline_options import ConvertPipelineOptions
+from docling.models.stages.picture_classifier.document_picture_classifier import (
+    DocumentPictureClassifier,
+)
 from docling_core.types.doc.common.reference import ImageRef
 from docling_core.types.doc.document import DoclingDocument
 from docling_core.types.doc.labels import DocItemLabel
@@ -13,6 +20,23 @@ from markdown_it import MarkdownIt
 from openlet_sdk.config import Config
 from openpyxl import Workbook
 from PIL import Image
+
+
+@pytest.fixture(name="config")
+def export_config(config: Config, tmp_path: Path) -> Iterator[Config]:
+    config["services"]["letfs_ingest"]["cpu"]["docling_models_path"] = str(tmp_path)
+    # Export tests exercise document conversion without loading model weights.
+    with patch(
+        "docling.pipeline.base_pipeline.DocumentPictureClassifier",
+        return_value=DocumentPictureClassifier(
+            enabled=False,
+            artifacts_path=tmp_path,
+            options=ConvertPipelineOptions().picture_classification_options,
+            accelerator_options=AcceleratorOptions(device="cpu"),
+            enable_remote_services=False,
+        ),
+    ):
+        yield config
 
 
 def exported_tables(folder: Path) -> list[list[list[str]]]:

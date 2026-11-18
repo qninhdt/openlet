@@ -8,6 +8,129 @@ from leta.runtime.agent import Live, project, protected, reasoning_text
 from leta.schedules import Timing, native_spec, normalize
 
 
+@pytest.mark.parametrize(
+    ("names", "fail"),
+    [
+        (["inbox_send"], False),
+        (["inbox_react"], False),
+        (["inbox_send", "inbox_react"], False),
+        (["inbox_send", "inbox_send"], False),
+        (["inbox_send", "file_read"], False),
+        (["inbox_send", "inbox_react"], True),
+    ],
+)
+async def test_delivery_batch_ends_without_inference_and_resumes_after_checkpoint(
+    names: list[str], fail: bool
+) -> None:
+    from typing import cast
+
+    from langchain.agents import create_agent  # pyright: ignore[reportUnknownVariableType]  # Native overload contains an unspecialized checkpoint generic.
+    from langchain_core.language_models.fake_chat_models import (
+        FakeMessagesListChatModel,
+    )
+    from langchain_core.messages import (
+        AIMessage,
+        BaseMessage,
+        HumanMessage,
+        ToolMessage,
+    )
+    from langchain_core.runnables import RunnableConfig
+    from langchain_core.tools import tool
+    from langgraph.checkpoint.memory import InMemorySaver
+    from langgraph.graph.state import CompiledStateGraph  # pyright: ignore[reportMissingTypeStubs]  # Upstream package does not publish type stubs.
+    from leta.runtime.agent import ToolEffects
+    from leta.runtime.inbox import State
+    from leta.runtime.tools import Context
+
+    class Model(FakeMessagesListChatModel):
+        def bind_tools(self, tools: object, **kwargs: object) -> "Model":
+            return self
+
+    delivered: list[str] = []
+
+    @tool
+    async def inbox_send(content: str) -> str:
+        """Send a message."""
+        delivered.append(content)
+        return "sent"
+
+    @tool
+    async def inbox_react(content: str) -> str:
+        """React to a message."""
+        if content == "fail":
+            raise ValueError("invalid emoji")
+        delivered.append(content)
+        return "reacted"
+
+    @tool
+    async def file_read(content: str) -> str:
+        """Read a file."""
+        return "file contents"
+
+    initial = AIMessage(
+        content="Final activity" if len(names) > 1 else "",
+        tool_calls=[
+            {
+                "name": name,
+                "id": str(index),
+                "args": {
+                    "content": "fail" if fail and name == "inbox_react" else str(index)
+                },
+            }
+            for index, name in enumerate(names)
+        ],
+    )
+    responses: list[BaseMessage] = [initial]
+    if fail:
+        responses.append(
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"name": "inbox_react", "id": "retry", "args": {"content": "fixed"}}
+                ],
+            )
+        )
+    elif "file_read" in names:
+        responses.append(AIMessage(content="Used the file result."))
+    responses.append(AIMessage(content="Next incoming message."))
+    model = Model(responses=responses)
+    graph = cast(
+        CompiledStateGraph[State, Context, State, State],
+        create_agent(
+            model,
+            [inbox_send, inbox_react, file_read],
+            middleware=[ToolEffects()],
+            state_schema=State,
+            context_schema=Context,
+            checkpointer=InMemorySaver(),
+            interrupt_after=["model", "tools"],
+        ),
+    )
+    config: RunnableConfig = {"configurable": {"thread_id": str(uuid4())}}
+
+    async def advance(text: str) -> None:
+        input: State | None = {"messages": [HumanMessage(content=text)]}
+        for _ in range(10):
+            await graph.ainvoke(input, config)  # pyright: ignore[reportUnknownMemberType]  # Native overload includes an unspecialized Command generic.
+            if not (await graph.aget_state(config)).next:
+                return
+            input = None
+        pytest.fail("graph did not finish")
+
+    await advance("incoming")
+    assert model.i == (2 if fail or "file_read" in names else 1)
+    state = await graph.aget_state(config)
+    results = [m for m in state.values["messages"] if isinstance(m, ToolMessage)]
+    assert len(results) == len(names) + int(fail)
+    assert sum(m.status == "error" for m in results) == int(fail)
+    assert delivered.count("0") == 1
+    await advance("new incoming")
+    assert model.i == 0
+    assert (await graph.aget_state(config)).values["messages"][
+        -1
+    ].text == "Next incoming message."
+
+
 async def test_cancellation_waits_for_boundary_to_settle() -> None:
     entered, finish = asyncio.Event(), asyncio.Event()
     durable = False

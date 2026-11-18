@@ -4,8 +4,11 @@ export interface StorageRoot {
   id: string;
   name: string;
   agent?: string;
+  agentId?: string;
+  isConversation?: boolean;
   title?: string;
   write: boolean;
+  manageAccess?: boolean;
 }
 export interface StorageNode {
   id: string;
@@ -18,9 +21,12 @@ export interface StorageNode {
   updated: number;
   blob?: Blob;
   version?: number;
+  fileType?: 'FILE_TYPE_TEXT' | 'FILE_TYPE_BLOB';
+  processing?: { stage: string; errorCode?: string };
   readonly?: boolean;
   trashId?: string;
   read?: () => Promise<Blob>;
+  thumbnail?: () => Promise<Blob>;
   url?: string;
   trashed?: boolean;
   originalParent?: string;
@@ -37,21 +43,6 @@ export class NameConflict extends Error {
   }
 }
 export const rootId = (storage: string) => `root:${storage}`;
-export function storageRoots(workspace: {
-  id: string;
-  agents: readonly { name: string }[];
-}): StorageRoot[] {
-  return [
-    { id: `${workspace.id}:personal`, name: 'Personal', write: true },
-    { id: `${workspace.id}:team`, name: 'Team', write: true },
-    ...workspace.agents.map((agent) => ({
-      id: `${workspace.id}:${agent.name.toLowerCase()}`,
-      name: agent.name,
-      agent: agent.name,
-      write: true,
-    })),
-  ];
-}
 export function ancestors(nodes: StorageNode[], id: string): StorageNode[] {
   const path: StorageNode[] = [];
   const seen = new Set<string>();
@@ -187,186 +178,6 @@ export function restoreNode(snapshot: StorageSnapshot, id: string): StorageSnaps
       item.id === id ? { ...item, parent, name, trashed: false, originalParent: undefined } : item,
     ),
   };
-}
-export function seedStorage(roots: StorageRoot[]): StorageSnapshot {
-  const nodes: StorageNode[] = [];
-  const updated = new Date('2026-11-15T09:30:00Z').getTime();
-  const folder = (storage: string, parent: string, id: string, name: string) => {
-    const node = {
-      id: `${storage}:${id}`,
-      storage,
-      parent,
-      name,
-      kind: 'folder' as const,
-      mime: '',
-      size: 0,
-      updated,
-    };
-    nodes.push(node);
-    return node.id;
-  };
-  const text = (
-    storage: string,
-    parent: string,
-    id: string,
-    name: string,
-    body: string,
-    mime = 'text/plain',
-  ) => {
-    const blob = new Blob([body], { type: mime });
-    nodes.push({
-      id: `${storage}:${id}`,
-      storage,
-      parent,
-      name,
-      kind: 'file',
-      mime,
-      size: blob.size,
-      updated,
-      blob,
-    });
-  };
-  for (const root of roots) {
-    const parent = rootId(root.id);
-    if (root.agent) {
-      const reports = folder(root.id, parent, 'reports', 'Reports');
-      text(
-        root.id,
-        parent,
-        'notes',
-        'Notes.md',
-        `# ${root.agent}\n\nWorking notes and files for this agent.\n\n- Research\n- Drafts\n- Reports\n`,
-        'text/markdown',
-      );
-      text(
-        root.id,
-        reports,
-        'summary',
-        'Summary.md',
-        '# Weekly summary\n\nThe first draft is ready for review.\n',
-        'text/markdown',
-      );
-      continue;
-    }
-    const documents = folder(root.id, parent, 'documents', 'Documents');
-    const images = folder(root.id, parent, 'images', 'Images');
-    const projects = folder(root.id, documents, 'projects', 'Projects');
-    text(
-      root.id,
-      parent,
-      'readme',
-      'Getting started.md',
-      '# A place for your work\n\nKeep documents, references, and agent output together.\n\n## This folder\n\n- **Documents** — briefs and project notes\n- **Images** — visual references\n\nChoose a storage on the left, or open a folder to explore.\n',
-      'text/markdown',
-    );
-    text(
-      root.id,
-      documents,
-      'brief',
-      'Project brief.md',
-      '# OpenLet\n\n## Goal\n\nA shared workspace for people, agents, and files.\n\n| Milestone | Status |\n| --- | --- |\n| App shell | Ready |\n| Storage | In review |\n\n> Keep the useful things close.\n',
-      'text/markdown',
-    );
-    text(
-      root.id,
-      projects,
-      'config',
-      'workspace.json',
-      '{\n  "name": "OpenLet",\n  "storage": "cloud",\n  "agents": ["Atlas", "Scout"]\n}\n',
-      'application/json',
-    );
-    text(
-      root.id,
-      parent,
-      'budget',
-      'Budget.csv',
-      'Item,Planned,Actual\nDesign,2400,2100\nDevelopment,6800,6400\nOperations,900,750\n',
-      'text/csv',
-    );
-    for (const [image, name, size] of [
-      ['studio', 'Studio.jpg', 117227],
-      ['forest', 'Forest.jpg', 219300],
-      ['coast', 'Coast.jpg', 169615],
-    ] as const) {
-      nodes.push({
-        id: `${root.id}:${image}`,
-        storage: root.id,
-        parent: images,
-        name,
-        kind: 'file',
-        mime: 'image/jpeg',
-        size,
-        updated,
-        url: `/storage-preview/${image}.jpg`,
-      });
-    }
-    if (root.name === 'Team') {
-      for (const image of nodes.filter((node) => node.parent === images))
-        nodes.push({ ...image, id: `${image.id}:root`, parent });
-    }
-  }
-  return { nodes };
-}
-let database: Promise<IDBDatabase> | undefined;
-function db(): Promise<IDBDatabase> {
-  return (database ??= new Promise((resolve, reject) => {
-    const request = indexedDB.open('openlet-storage-preview', 1);
-    request.onupgradeneeded = () => request.result.createObjectStore('workspaces');
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => {
-      database = undefined;
-      reject(request.error);
-    };
-  }));
-}
-// Browser-local data is used only when authentication is disabled.
-export async function loadStorage(
-  workspace: string,
-  roots: StorageRoot[],
-): Promise<StorageSnapshot> {
-  const database = await db();
-  return new Promise((resolve, reject) => {
-    const request = database.transaction('workspaces').objectStore('workspaces').get(workspace);
-    request.onsuccess = () => resolve(request.result ?? seedStorage(roots));
-    request.onerror = () => reject(request.error);
-  });
-}
-export async function saveStorage(workspace: string, snapshot: StorageSnapshot): Promise<void> {
-  const database = await db();
-  return new Promise((resolve, reject) => {
-    const transaction = database.transaction('workspaces', 'readwrite');
-    transaction.objectStore('workspaces').put(snapshot, workspace);
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error);
-    transaction.onabort = () =>
-      reject(transaction.error ?? new Error('Storage save was interrupted.'));
-  });
-}
-export async function updateStorage(
-  workspace: string,
-  roots: StorageRoot[],
-  update: (snapshot: StorageSnapshot) => StorageSnapshot,
-): Promise<StorageSnapshot> {
-  const database = await db();
-  return new Promise((resolve, reject) => {
-    const transaction = database.transaction('workspaces', 'readwrite');
-    const store = transaction.objectStore('workspaces');
-    const request = store.get(workspace);
-    let next: StorageSnapshot;
-    request.onsuccess = () => {
-      try {
-        next = update(request.result ?? seedStorage(roots));
-        store.put(next, workspace);
-      } catch (error) {
-        transaction.abort();
-        reject(error);
-      }
-    };
-    transaction.oncomplete = () => resolve(next);
-    transaction.onerror = () => reject(transaction.error);
-    transaction.onabort = () =>
-      reject(transaction.error ?? new Error('Storage save was interrupted.'));
-  });
 }
 export async function fileBlob(node: StorageNode): Promise<Blob> {
   if (node.read) return node.read();

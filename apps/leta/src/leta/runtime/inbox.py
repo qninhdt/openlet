@@ -45,6 +45,18 @@ class Inbox(AgentMiddleware[State, "Context"]):
         )
         if not rows:
             return None
+        ctx = runtime.context
+        async with self.db.connection() as conn:
+            await conn.execute(
+                "UPDATE agent_messages SET processing_run_id=%s WHERE recipient_agent_id=%s AND id=ANY(%s)",
+                (ctx.run_id, self.agent, [row["id"] for row in rows]),
+            )
+        from .. import events
+
+        for user in {
+            cast(UUID, row["source_id"]) for row in rows if row["source_kind"] == "user"
+        }:
+            await events.changed(ctx.services.redis, ctx.root, "messages", ctx.id, user)
         if any(row["source_kind"] == "hitl" for row in rows):
             runtime.context.filesystem.discovered = 0
         last = cast(int, rows[-1]["seq"])

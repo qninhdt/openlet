@@ -21,6 +21,32 @@ test('activity adapters preserve actual snapshots and legacy tool text', () => {
   const adapt = (name: string, data: NonNullable<ActivityEntry['payload']['ui']>['data']) =>
     activityToolResult({ ...entry, payload: { name, ui: { version: 1, kind: name, data } } });
   expect(
+    adapt('file_write', { path: '~/report.txt', storage_id: 'storage', node_id: 'node' }),
+  ).toMatchObject({ file: { storage_id: 'storage', node_id: 'node', label: '~/report.txt' } });
+  expect(
+    adapt('inbox_send', {
+      content: ':file[Report]{name=storage/node}',
+      file_refs: [{ storage_id: 'storage', node_id: 'image', label: 'Photo', mime: 'image/png' }],
+    }),
+  ).toMatchObject({
+    content: ':file[Report]{name=storage/node}',
+    fileRefs: [{ storage_id: 'storage', node_id: 'image', label: 'Photo', mime: 'image/png' }],
+  });
+  expect(adapt('file_read', { path: '~/legacy.txt', content: 'snapshot' })).toMatchObject({
+    content: 'snapshot',
+    file: undefined,
+  });
+  expect(
+    adapt('file_list', {
+      items: [
+        { path: '~/report.txt', kind: 'file', storage_id: 'storage', node_id: 'node' },
+        { path: '~/folder', kind: 'directory', storage_id: 'storage', node_id: 'folder' },
+      ],
+    }),
+  ).toMatchObject({
+    items: [{ file: { storage_id: 'storage', node_id: 'node' } }, { file: undefined }],
+  });
+  expect(
     adapt('history_search', {
       entries: [{ seq: 4, kind: 'final_note', text_preview: 'Actual note' }],
     }),

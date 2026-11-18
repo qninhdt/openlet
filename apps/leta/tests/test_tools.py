@@ -1,9 +1,11 @@
+import posixpath
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import cast
 from uuid import uuid4
 
+import pytest
 from langchain.tools import ToolRuntime
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 from langchain_core.messages.tool import ToolCall
@@ -17,6 +19,7 @@ from leta.runtime.inbox import State
 from leta.runtime.tools import Context, tools
 from mirage import MountMode, Session, Workspace
 from mirage.runtime.python.monty import MontyRuntime  # pyright: ignore[reportMissingTypeStubs]  # Upstream package does not publish type stubs.
+from openlet_sdk.config import JSON
 from pydantic import BaseModel
 
 
@@ -351,7 +354,6 @@ async def test_search_keeps_ranked_paths_and_caps_multibyte_excerpts() -> None:
     from leta.filesystem.workspace import path as file_path
     from leta.runtime.tools import file_semantic_search
     from mirage import PathSpec
-    from openlet_sdk.config import JSON
 
     class VFS:
         async def dispatch(
@@ -414,10 +416,279 @@ async def test_search_keeps_ranked_paths_and_caps_multibyte_excerpts() -> None:
         "[excerpt truncated]" in reply.text
         and "[excerpt omitted; read source]" in reply.text
     )
-    assert "Thông tin báo giá. " * 43 not in reply.text
+    excerpt = "Thông tin báo giá. " * 300
+    assert excerpt[:1024] + " [excerpt truncated]" in reply.text
+    assert excerpt[:1025] not in reply.text
     for path in paths:
         group = reply.text.split(f"Search scope: {file_path(path)}\n\n", 1)[1].split(
             "Search scope:", 1
         )[0]
         positions = [group.index(f"document-{i}.md") for i in range(10)]
         assert positions == sorted(positions)
+
+
+@pytest.mark.parametrize("image", [False, True])
+async def test_file_tool_snapshots_reuse_metadata_without_extra_reads(
+    image: bool,
+) -> None:
+    from leta.runtime.tools import file_edit, file_read, file_write
+    from mirage import ContentType, FileStat, FileType
+
+    storage, node = str(uuid4()), str(uuid4())
+    metadata = FileStat(
+        name="report.txt",
+        type=FileType.FILE,
+        content=ContentType.IMAGE_PNG if image else ContentType.TEXT,
+        extra={
+            "storage_id": storage,
+            "node_id": node,
+            "media_type": "image/png" if image else "text/plain",
+        },
+    )
+    calls: list[str] = []
+
+    class VFS:
+        async def stat(self, path: str) -> FileStat:
+            calls.append("stat")
+            return metadata
+
+        async def read(self, path: str) -> bytes:
+            calls.append("read")
+            return b"report"
+
+        async def dispatch(
+            self, name: str, *args: object, **kwargs: object
+        ) -> tuple[object, None]:
+            calls.append(name)
+            if name == "preview":
+                return [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,AA=="},
+                    }
+                ], None
+            return metadata, None
+
+    class Files:
+        async def open(self) -> Session:
+            return cast(Session, SimpleNamespace(vfs=VFS()))
+
+    identity = uuid4()
+    context = Context(
+        services=cast(Services, None),
+        agent={"id": identity, "leta_id": identity},
+        run_id=uuid4(),
+        filesystem=cast(Filesystem, Files()),
+    )
+    graph = StateGraph(State, context_schema=Context)
+    graph.add_node("tools", ToolNode([file_read, file_write, file_edit]))  # pyright: ignore[reportUnknownMemberType]
+    graph.add_edge(START, "tools")
+    graph.add_edge("tools", END)
+    result = await graph.compile().ainvoke(  # pyright: ignore[reportUnknownMemberType]
+        {
+            "messages": [
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "read",
+                            "name": "file_read",
+                            "args": {"path": "~/report.txt"},
+                        },
+                        {
+                            "id": "write",
+                            "name": "file_write",
+                            "args": {"path": "~/report.txt", "content": "report"},
+                        },
+                        {
+                            "id": "edit",
+                            "name": "file_edit",
+                            "args": {
+                                "path": "~/report.txt",
+                                "old_text": "report",
+                                "new_text": "updated",
+                            },
+                        },
+                    ],
+                )
+            ]
+        },
+        context=context,
+    )
+    replies = [m for m in result["messages"] if isinstance(m, ToolMessage)]
+    assert len(replies) == 3
+    for reply in replies:
+        assert reply.status == "success"
+        assert reply.artifact["ui"]["data"]["storage_id"] == storage
+        assert reply.artifact["ui"]["data"]["node_id"] == node
+    assert sorted(calls) == [
+        "edit_text",
+        "preview" if image else "read",
+        "stat",
+        "write_text",
+    ]
+    if image:
+        assert replies[0].content == [
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}}
+        ]
+
+
+@pytest.mark.parametrize(
+    ("case", "expected_files"),
+    [
+        ("mention", 0),
+        ("files-only", 2),
+        ("mixed", 2),
+        ("teammate", 2),
+        ("missing", None),
+        ("directory", None),
+        ("empty", None),
+        ("too-many", None),
+    ],
+)
+async def test_inbox_send_paths_and_explicit_attachments(
+    monkeypatch: pytest.MonkeyPatch,
+    case: str,
+    expected_files: int | None,
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from leta import events, messages, worker
+    from leta.runtime.tools import inbox_send
+    from mirage import FileStat, FileType
+    from openlet_api.letfs.v1 import letfs_pb2 as fs
+
+    root, user, storage, one, two, teammate = (uuid4() for _ in range(6))
+    nodes = {
+        "one.txt": fs.Node(
+            id=str(one),
+            storage_id=str(storage),
+            name="one.txt",
+            kind=fs.NODE_KIND_FILE,
+            file=fs.FileHeader(media_type="text/plain", size_bytes=3, version=1),
+        ),
+        "two.png": fs.Node(
+            id=str(two),
+            storage_id=str(storage),
+            name="two.png",
+            kind=fs.NODE_KIND_FILE,
+            file=fs.FileHeader(media_type="image/png", size_bytes=10, version=1),
+        ),
+    }
+
+    async def stat(path: str) -> FileStat:
+        assert path.startswith("/home/")
+        if path.endswith("missing"):
+            raise FileNotFoundError("file not found")
+        if path.endswith("directory"):
+            return FileStat(name="directory", type=FileType.DIRECTORY)
+        node = nodes[posixpath.basename(path)]
+        return FileStat(
+            name=node.name,
+            type=FileType.FILE,
+            extra={"storage_id": str(storage), "node_id": node.id},
+        )
+
+    class Connection:
+        async def execute(self, query: str, parameters: object) -> "Connection":
+            return self
+
+        async def fetchone(self) -> Row | None:
+            return {"id": teammate, "box_id": None} if case == "teammate" else None
+
+    class Database:
+        @asynccontextmanager
+        async def connection(self) -> AsyncGenerator[Connection]:
+            yield Connection()
+
+    async def metadata(request: fs.NodeRequest, **kwargs: object) -> fs.Node:
+        return next(
+            node for node in nodes.values() if node.id == request.target.node_id
+        )
+
+    services = cast(
+        Services,
+        SimpleNamespace(
+            db=Database(),
+            redis=None,
+            auth=SimpleNamespace(
+                require=AsyncMock(), allowed=AsyncMock(return_value=True)
+            ),
+            files=SimpleNamespace(Stat=AsyncMock(side_effect=metadata)),
+        ),
+    )
+    context = Context(
+        services=services,
+        agent={"id": root, "leta_id": root, "workspace_id": uuid4(), "box_id": None},
+        run_id=uuid4(),
+        filesystem=cast(
+            Filesystem,
+            SimpleNamespace(
+                open=AsyncMock(
+                    return_value=SimpleNamespace(vfs=SimpleNamespace(stat=stat))
+                )
+            ),
+        ),
+    )
+    delivered, handoff = AsyncMock(), AsyncMock()
+    monkeypatch.setattr(messages, "deliver_user", delivered)
+    monkeypatch.setattr(worker, "deliver", handoff)
+    monkeypatch.setattr(events, "changed", AsyncMock())
+    builder = StateGraph(State, context_schema=Context)
+    builder.add_node(  # pyright: ignore[reportUnknownMemberType]  # Native overload leaves cache generics unspecified.
+        "tools", ToolNode([inbox_send], awrap_tool_call=ToolEffects().awrap_tool_call)
+    )
+    builder.add_edge(START, "tools")
+    builder.add_edge("tools", END)
+    graph = builder.compile()  # pyright: ignore[reportUnknownMemberType]  # Native overload leaves checkpoint generics unspecified.
+    arguments: dict[str, object] = {"to": str(user)}
+    if case in ("mention", "mixed"):
+        arguments["content"] = "Xem :file[Bản mới]{path=~/one.txt}"
+    if case in ("files-only", "mixed", "teammate"):
+        arguments["attachments"] = ["~/one.txt", "two.png", "/home/one.txt"]
+    if case in ("missing", "directory"):
+        arguments["attachments"] = ["~/one.txt", "~/" + case]
+    if case == "too-many":
+        arguments["attachments"] = ["~/one.txt"] * 21
+    result = await graph.ainvoke(  # pyright: ignore[reportUnknownMemberType]  # Native invocation overload.
+        {
+            "messages": [
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "send-files",
+                            "name": "inbox_send",
+                            "args": arguments,
+                        }
+                    ],
+                )
+            ]
+        },
+        context=context,
+    )
+    reply = result["messages"][-1]
+    assert isinstance(reply, ToolMessage)
+    if expected_files is None:
+        assert reply.status == "error"
+        delivered.assert_not_awaited()
+        handoff.assert_not_awaited()
+        return
+    assert reply.status == "success", reply.text
+    assert reply.text == '{"sent": true}'
+    snapshot = cast(dict[str, dict[str, dict[str, JSON]]], reply.artifact)["ui"]["data"]
+    assert isinstance(snapshot["file_refs"], list)
+    assert isinstance(snapshot["content"], str)
+    assert len(snapshot["file_refs"]) == expected_files
+    assert "{path=" not in snapshot["content"]
+    if case == "mention":
+        assert f"{{name={storage}/{one}}}" in snapshot["content"]
+    if case == "teammate":
+        assert handoff.await_args is not None
+        message = cast(messages.Message, handoff.await_args.args[1])
+        assert message.content == "" and len(message.file_refs) == 2
+        delivered.assert_not_awaited()
+    else:
+        assert delivered.await_args is not None
+        assert delivered.await_args.args[3] == snapshot["content"]
+        assert delivered.await_args.args[-1] == snapshot["file_refs"]

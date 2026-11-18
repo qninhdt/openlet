@@ -10,10 +10,12 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/jackc/pgx/v5"
 	pb "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/letfs/v1"
 	"google.golang.org/genproto/googleapis/api/httpbody"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -41,8 +43,8 @@ func (s *Server) GetDownload(ctx context.Context, r *pb.NodeRequest) (*pb.GetDow
 }
 
 type zipEntry struct {
-	Name, Kind string
-	Text, Key  *string
+	ID, Name, Kind string
+	Key            *string
 }
 type bodyWriter struct {
 	stream  grpc.ServerStreamingServer[httpbody.HttpBody]
@@ -77,7 +79,12 @@ func (s *Server) DownloadArchive(r *pb.DownloadArchiveRequest, stream grpc.Serve
 	if err != nil {
 		return err
 	}
-	rows, err := s.DB.Query(ctx, batchResolverCTE+`,tree AS(SELECT n.id,n.kind,n.name AS path FROM resolved r JOIN nodes n ON n.id=r.id UNION ALL SELECT n.id,n.kind,CASE WHEN t.path='' THEN n.name ELSE t.path||'/'||n.name END FROM tree t JOIN nodes n ON n.parent_id=t.id WHERE t.kind='directory') SELECT DISTINCT ON(t.id) (SELECT count(*) FROM resolved),t.path,t.kind,f.text_content,f.object_key FROM tree t LEFT JOIN files f ON f.node_id=t.id ORDER BY t.id,t.path`, r.WorkspaceId, r.StorageId, input)
+	tx, err := s.DB.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx, batchResolverCTE+`,tree AS(SELECT n.id,n.kind,n.name AS path FROM resolved r JOIN nodes n ON n.id=r.id UNION ALL SELECT n.id,n.kind,CASE WHEN t.path='' THEN n.name ELSE t.path||'/'||n.name END FROM tree t JOIN nodes n ON n.parent_id=t.id WHERE t.kind='directory') SELECT DISTINCT ON(t.id) (SELECT count(*) FROM resolved),t.id,t.path,t.kind,f.object_key FROM tree t LEFT JOIN files f ON f.node_id=t.id ORDER BY t.id,t.path`, r.WorkspaceId, r.StorageId, input)
 	if err != nil {
 		return err
 	}
@@ -86,7 +93,7 @@ func (s *Server) DownloadArchive(r *pb.DownloadArchiveRequest, stream grpc.Serve
 	names := map[string]bool{}
 	for rows.Next() {
 		var e zipEntry
-		if err = rows.Scan(&resolvedCount, &e.Name, &e.Kind, &e.Text, &e.Key); err != nil {
+		if err = rows.Scan(&resolvedCount, &e.ID, &e.Name, &e.Kind, &e.Key); err != nil {
 			rows.Close()
 			return err
 		}
@@ -107,6 +114,9 @@ func (s *Server) DownloadArchive(r *pb.DownloadArchiveRequest, stream grpc.Serve
 	if resolvedCount != len(r.Targets) {
 		return notFound()
 	}
+	if err = stream.SendHeader(metadata.Pairs("content-disposition", `attachment; filename="Openlet files.zip"`)); err != nil {
+		return err
+	}
 	z := zip.NewWriter(&bodyWriter{stream: stream})
 	for _, e := range entries {
 		if e.Kind == "directory" {
@@ -120,8 +130,12 @@ func (s *Server) DownloadArchive(r *pb.DownloadArchiveRequest, stream grpc.Serve
 		if err != nil {
 			return err
 		}
-		if e.Text != nil {
-			if _, err = io.Copy(w, strings.NewReader(*e.Text)); err != nil {
+		if e.Key == nil {
+			var text string
+			if err = tx.QueryRow(ctx, `SELECT text_content FROM files WHERE node_id=$1`, e.ID).Scan(&text); err != nil {
+				return err
+			}
+			if _, err = io.Copy(w, strings.NewReader(text)); err != nil {
 				return err
 			}
 		} else {

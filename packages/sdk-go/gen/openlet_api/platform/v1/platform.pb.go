@@ -126,18 +126,149 @@ func (WorkspaceState) EnumDescriptor() ([]byte, []int) {
 	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{1}
 }
 
+type AvatarAppearance struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Shape         string                 `protobuf:"bytes,1,opt,name=shape,proto3" json:"shape,omitempty"`
+	Color         string                 `protobuf:"bytes,2,opt,name=color,proto3" json:"color,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AvatarAppearance) Reset() {
+	*x = AvatarAppearance{}
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AvatarAppearance) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AvatarAppearance) ProtoMessage() {}
+
+func (x *AvatarAppearance) ProtoReflect() protoreflect.Message {
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AvatarAppearance.ProtoReflect.Descriptor instead.
+func (*AvatarAppearance) Descriptor() ([]byte, []int) {
+	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *AvatarAppearance) GetShape() string {
+	if x != nil {
+		return x.Shape
+	}
+	return ""
+}
+
+func (x *AvatarAppearance) GetColor() string {
+	if x != nil {
+		return x.Color
+	}
+	return ""
+}
+
+type AccountPreferences struct {
+	state                 protoimpl.MessageState `protogen:"open.v1"`
+	Theme                 *string                `protobuf:"bytes,1,opt,name=theme,proto3,oneof" json:"theme,omitempty"`
+	SendShortcut          *string                `protobuf:"bytes,2,opt,name=send_shortcut,json=sendShortcut,proto3,oneof" json:"send_shortcut,omitempty"`
+	ShowAgentSteps        *bool                  `protobuf:"varint,3,opt,name=show_agent_steps,json=showAgentSteps,proto3,oneof" json:"show_agent_steps,omitempty"`
+	CompactMessageActions *bool                  `protobuf:"varint,4,opt,name=compact_message_actions,json=compactMessageActions,proto3,oneof" json:"compact_message_actions,omitempty"`
+	MessageSound          *bool                  `protobuf:"varint,5,opt,name=message_sound,json=messageSound,proto3,oneof" json:"message_sound,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
+}
+
+func (x *AccountPreferences) Reset() {
+	*x = AccountPreferences{}
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AccountPreferences) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AccountPreferences) ProtoMessage() {}
+
+func (x *AccountPreferences) ProtoReflect() protoreflect.Message {
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AccountPreferences.ProtoReflect.Descriptor instead.
+func (*AccountPreferences) Descriptor() ([]byte, []int) {
+	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *AccountPreferences) GetTheme() string {
+	if x != nil && x.Theme != nil {
+		return *x.Theme
+	}
+	return ""
+}
+
+func (x *AccountPreferences) GetSendShortcut() string {
+	if x != nil && x.SendShortcut != nil {
+		return *x.SendShortcut
+	}
+	return ""
+}
+
+func (x *AccountPreferences) GetShowAgentSteps() bool {
+	if x != nil && x.ShowAgentSteps != nil {
+		return *x.ShowAgentSteps
+	}
+	return false
+}
+
+func (x *AccountPreferences) GetCompactMessageActions() bool {
+	if x != nil && x.CompactMessageActions != nil {
+		return *x.CompactMessageActions
+	}
+	return false
+}
+
+func (x *AccountPreferences) GetMessageSound() bool {
+	if x != nil && x.MessageSound != nil {
+		return *x.MessageSound
+	}
+	return false
+}
+
+// Preferences are included only in the authenticated user's own account response.
 type User struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	DisplayName   string                 `protobuf:"bytes,2,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
 	AvatarUrl     *string                `protobuf:"bytes,3,opt,name=avatar_url,json=avatarUrl,proto3,oneof" json:"avatar_url,omitempty"`
+	Appearance    *AvatarAppearance      `protobuf:"bytes,4,opt,name=appearance,proto3" json:"appearance,omitempty"`
+	Preferences   *AccountPreferences    `protobuf:"bytes,5,opt,name=preferences,proto3" json:"preferences,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *User) Reset() {
 	*x = User{}
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[0]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -149,7 +280,7 @@ func (x *User) String() string {
 func (*User) ProtoMessage() {}
 
 func (x *User) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[0]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -162,7 +293,7 @@ func (x *User) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use User.ProtoReflect.Descriptor instead.
 func (*User) Descriptor() ([]byte, []int) {
-	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{0}
+	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *User) GetId() string {
@@ -186,6 +317,20 @@ func (x *User) GetAvatarUrl() string {
 	return ""
 }
 
+func (x *User) GetAppearance() *AvatarAppearance {
+	if x != nil {
+		return x.Appearance
+	}
+	return nil
+}
+
+func (x *User) GetPreferences() *AccountPreferences {
+	if x != nil {
+		return x.Preferences
+	}
+	return nil
+}
+
 type Workspace struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -199,7 +344,7 @@ type Workspace struct {
 
 func (x *Workspace) Reset() {
 	*x = Workspace{}
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[1]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -211,7 +356,7 @@ func (x *Workspace) String() string {
 func (*Workspace) ProtoMessage() {}
 
 func (x *Workspace) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[1]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -224,7 +369,7 @@ func (x *Workspace) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Workspace.ProtoReflect.Descriptor instead.
 func (*Workspace) Descriptor() ([]byte, []int) {
-	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{1}
+	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *Workspace) GetId() string {
@@ -273,7 +418,7 @@ type WorkspaceMember struct {
 
 func (x *WorkspaceMember) Reset() {
 	*x = WorkspaceMember{}
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[2]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -285,7 +430,7 @@ func (x *WorkspaceMember) String() string {
 func (*WorkspaceMember) ProtoMessage() {}
 
 func (x *WorkspaceMember) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[2]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -298,7 +443,7 @@ func (x *WorkspaceMember) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkspaceMember.ProtoReflect.Descriptor instead.
 func (*WorkspaceMember) Descriptor() ([]byte, []int) {
-	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{2}
+	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *WorkspaceMember) GetUser() *User {
@@ -335,7 +480,7 @@ type Invitation struct {
 
 func (x *Invitation) Reset() {
 	*x = Invitation{}
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[3]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -347,7 +492,7 @@ func (x *Invitation) String() string {
 func (*Invitation) ProtoMessage() {}
 
 func (x *Invitation) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[3]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -360,7 +505,7 @@ func (x *Invitation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Invitation.ProtoReflect.Descriptor instead.
 func (*Invitation) Descriptor() ([]byte, []int) {
-	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{3}
+	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *Invitation) GetId() string {
@@ -402,13 +547,15 @@ type UpdateMeRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	DisplayName   *string                `protobuf:"bytes,1,opt,name=display_name,json=displayName,proto3,oneof" json:"display_name,omitempty"`
 	AvatarUrl     *string                `protobuf:"bytes,2,opt,name=avatar_url,json=avatarUrl,proto3,oneof" json:"avatar_url,omitempty"`
+	Appearance    *AvatarAppearance      `protobuf:"bytes,3,opt,name=appearance,proto3" json:"appearance,omitempty"`
+	Preferences   *AccountPreferences    `protobuf:"bytes,4,opt,name=preferences,proto3" json:"preferences,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *UpdateMeRequest) Reset() {
 	*x = UpdateMeRequest{}
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[4]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -420,7 +567,7 @@ func (x *UpdateMeRequest) String() string {
 func (*UpdateMeRequest) ProtoMessage() {}
 
 func (x *UpdateMeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[4]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -433,7 +580,7 @@ func (x *UpdateMeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateMeRequest.ProtoReflect.Descriptor instead.
 func (*UpdateMeRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{4}
+	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *UpdateMeRequest) GetDisplayName() string {
@@ -450,6 +597,20 @@ func (x *UpdateMeRequest) GetAvatarUrl() string {
 	return ""
 }
 
+func (x *UpdateMeRequest) GetAppearance() *AvatarAppearance {
+	if x != nil {
+		return x.Appearance
+	}
+	return nil
+}
+
+func (x *UpdateMeRequest) GetPreferences() *AccountPreferences {
+	if x != nil {
+		return x.Preferences
+	}
+	return nil
+}
+
 type ListWorkspacesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	PageSize      int32                  `protobuf:"varint,1,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
@@ -460,7 +621,7 @@ type ListWorkspacesRequest struct {
 
 func (x *ListWorkspacesRequest) Reset() {
 	*x = ListWorkspacesRequest{}
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[5]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -472,7 +633,7 @@ func (x *ListWorkspacesRequest) String() string {
 func (*ListWorkspacesRequest) ProtoMessage() {}
 
 func (x *ListWorkspacesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[5]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -485,7 +646,7 @@ func (x *ListWorkspacesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListWorkspacesRequest.ProtoReflect.Descriptor instead.
 func (*ListWorkspacesRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{5}
+	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ListWorkspacesRequest) GetPageSize() int32 {
@@ -512,7 +673,7 @@ type ListWorkspacesResponse struct {
 
 func (x *ListWorkspacesResponse) Reset() {
 	*x = ListWorkspacesResponse{}
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[6]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -524,7 +685,7 @@ func (x *ListWorkspacesResponse) String() string {
 func (*ListWorkspacesResponse) ProtoMessage() {}
 
 func (x *ListWorkspacesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[6]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -537,7 +698,7 @@ func (x *ListWorkspacesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListWorkspacesResponse.ProtoReflect.Descriptor instead.
 func (*ListWorkspacesResponse) Descriptor() ([]byte, []int) {
-	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{6}
+	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ListWorkspacesResponse) GetWorkspaces() []*Workspace {
@@ -564,7 +725,7 @@ type CreateMyWorkspaceRequest struct {
 
 func (x *CreateMyWorkspaceRequest) Reset() {
 	*x = CreateMyWorkspaceRequest{}
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[7]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -576,7 +737,7 @@ func (x *CreateMyWorkspaceRequest) String() string {
 func (*CreateMyWorkspaceRequest) ProtoMessage() {}
 
 func (x *CreateMyWorkspaceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[7]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -589,7 +750,7 @@ func (x *CreateMyWorkspaceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateMyWorkspaceRequest.ProtoReflect.Descriptor instead.
 func (*CreateMyWorkspaceRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{7}
+	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *CreateMyWorkspaceRequest) GetName() string {
@@ -615,7 +776,7 @@ type WorkspaceRequest struct {
 
 func (x *WorkspaceRequest) Reset() {
 	*x = WorkspaceRequest{}
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[8]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -627,7 +788,7 @@ func (x *WorkspaceRequest) String() string {
 func (*WorkspaceRequest) ProtoMessage() {}
 
 func (x *WorkspaceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[8]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -640,7 +801,7 @@ func (x *WorkspaceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkspaceRequest.ProtoReflect.Descriptor instead.
 func (*WorkspaceRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{8}
+	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *WorkspaceRequest) GetWorkspaceId() string {
@@ -660,7 +821,7 @@ type UpdateWorkspaceRequest struct {
 
 func (x *UpdateWorkspaceRequest) Reset() {
 	*x = UpdateWorkspaceRequest{}
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[9]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -672,7 +833,7 @@ func (x *UpdateWorkspaceRequest) String() string {
 func (*UpdateWorkspaceRequest) ProtoMessage() {}
 
 func (x *UpdateWorkspaceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[9]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -685,7 +846,7 @@ func (x *UpdateWorkspaceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateWorkspaceRequest.ProtoReflect.Descriptor instead.
 func (*UpdateWorkspaceRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{9}
+	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *UpdateWorkspaceRequest) GetWorkspaceId() string {
@@ -712,7 +873,7 @@ type TransferWorkspaceOwnershipRequest struct {
 
 func (x *TransferWorkspaceOwnershipRequest) Reset() {
 	*x = TransferWorkspaceOwnershipRequest{}
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[10]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -724,7 +885,7 @@ func (x *TransferWorkspaceOwnershipRequest) String() string {
 func (*TransferWorkspaceOwnershipRequest) ProtoMessage() {}
 
 func (x *TransferWorkspaceOwnershipRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[10]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -737,7 +898,7 @@ func (x *TransferWorkspaceOwnershipRequest) ProtoReflect() protoreflect.Message 
 
 // Deprecated: Use TransferWorkspaceOwnershipRequest.ProtoReflect.Descriptor instead.
 func (*TransferWorkspaceOwnershipRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{10}
+	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *TransferWorkspaceOwnershipRequest) GetWorkspaceId() string {
@@ -765,7 +926,7 @@ type ListMembersRequest struct {
 
 func (x *ListMembersRequest) Reset() {
 	*x = ListMembersRequest{}
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[11]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -777,7 +938,7 @@ func (x *ListMembersRequest) String() string {
 func (*ListMembersRequest) ProtoMessage() {}
 
 func (x *ListMembersRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[11]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -790,7 +951,7 @@ func (x *ListMembersRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListMembersRequest.ProtoReflect.Descriptor instead.
 func (*ListMembersRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{11}
+	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ListMembersRequest) GetWorkspaceId() string {
@@ -824,7 +985,7 @@ type ListMembersResponse struct {
 
 func (x *ListMembersResponse) Reset() {
 	*x = ListMembersResponse{}
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[12]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -836,7 +997,7 @@ func (x *ListMembersResponse) String() string {
 func (*ListMembersResponse) ProtoMessage() {}
 
 func (x *ListMembersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[12]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -849,7 +1010,7 @@ func (x *ListMembersResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListMembersResponse.ProtoReflect.Descriptor instead.
 func (*ListMembersResponse) Descriptor() ([]byte, []int) {
-	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{12}
+	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ListMembersResponse) GetMembers() []*WorkspaceMember {
@@ -877,7 +1038,7 @@ type AddMemberRequest struct {
 
 func (x *AddMemberRequest) Reset() {
 	*x = AddMemberRequest{}
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[13]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -889,7 +1050,7 @@ func (x *AddMemberRequest) String() string {
 func (*AddMemberRequest) ProtoMessage() {}
 
 func (x *AddMemberRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[13]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -902,7 +1063,7 @@ func (x *AddMemberRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AddMemberRequest.ProtoReflect.Descriptor instead.
 func (*AddMemberRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{13}
+	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *AddMemberRequest) GetWorkspaceId() string {
@@ -936,7 +1097,7 @@ type RemoveMemberRequest struct {
 
 func (x *RemoveMemberRequest) Reset() {
 	*x = RemoveMemberRequest{}
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[14]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -948,7 +1109,7 @@ func (x *RemoveMemberRequest) String() string {
 func (*RemoveMemberRequest) ProtoMessage() {}
 
 func (x *RemoveMemberRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[14]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -961,7 +1122,7 @@ func (x *RemoveMemberRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoveMemberRequest.ProtoReflect.Descriptor instead.
 func (*RemoveMemberRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{14}
+	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *RemoveMemberRequest) GetWorkspaceId() string {
@@ -989,7 +1150,7 @@ type CreateInvitationRequest struct {
 
 func (x *CreateInvitationRequest) Reset() {
 	*x = CreateInvitationRequest{}
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[15]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1001,7 +1162,7 @@ func (x *CreateInvitationRequest) String() string {
 func (*CreateInvitationRequest) ProtoMessage() {}
 
 func (x *CreateInvitationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[15]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1014,7 +1175,7 @@ func (x *CreateInvitationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateInvitationRequest.ProtoReflect.Descriptor instead.
 func (*CreateInvitationRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{15}
+	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *CreateInvitationRequest) GetWorkspaceId() string {
@@ -1048,7 +1209,7 @@ type CreateInvitationResponse struct {
 
 func (x *CreateInvitationResponse) Reset() {
 	*x = CreateInvitationResponse{}
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[16]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1060,7 +1221,7 @@ func (x *CreateInvitationResponse) String() string {
 func (*CreateInvitationResponse) ProtoMessage() {}
 
 func (x *CreateInvitationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[16]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1073,7 +1234,7 @@ func (x *CreateInvitationResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateInvitationResponse.ProtoReflect.Descriptor instead.
 func (*CreateInvitationResponse) Descriptor() ([]byte, []int) {
-	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{16}
+	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *CreateInvitationResponse) GetInvitation() *Invitation {
@@ -1101,7 +1262,7 @@ type ListInvitationsRequest struct {
 
 func (x *ListInvitationsRequest) Reset() {
 	*x = ListInvitationsRequest{}
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[17]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1113,7 +1274,7 @@ func (x *ListInvitationsRequest) String() string {
 func (*ListInvitationsRequest) ProtoMessage() {}
 
 func (x *ListInvitationsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[17]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1126,7 +1287,7 @@ func (x *ListInvitationsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListInvitationsRequest.ProtoReflect.Descriptor instead.
 func (*ListInvitationsRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{17}
+	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ListInvitationsRequest) GetWorkspaceId() string {
@@ -1160,7 +1321,7 @@ type ListInvitationsResponse struct {
 
 func (x *ListInvitationsResponse) Reset() {
 	*x = ListInvitationsResponse{}
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[18]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1172,7 +1333,7 @@ func (x *ListInvitationsResponse) String() string {
 func (*ListInvitationsResponse) ProtoMessage() {}
 
 func (x *ListInvitationsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[18]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1185,7 +1346,7 @@ func (x *ListInvitationsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListInvitationsResponse.ProtoReflect.Descriptor instead.
 func (*ListInvitationsResponse) Descriptor() ([]byte, []int) {
-	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{18}
+	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ListInvitationsResponse) GetInvitations() []*Invitation {
@@ -1212,7 +1373,7 @@ type RevokeInvitationRequest struct {
 
 func (x *RevokeInvitationRequest) Reset() {
 	*x = RevokeInvitationRequest{}
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[19]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1224,7 +1385,7 @@ func (x *RevokeInvitationRequest) String() string {
 func (*RevokeInvitationRequest) ProtoMessage() {}
 
 func (x *RevokeInvitationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[19]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1237,7 +1398,7 @@ func (x *RevokeInvitationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokeInvitationRequest.ProtoReflect.Descriptor instead.
 func (*RevokeInvitationRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{19}
+	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *RevokeInvitationRequest) GetWorkspaceId() string {
@@ -1263,7 +1424,7 @@ type AcceptInvitationRequest struct {
 
 func (x *AcceptInvitationRequest) Reset() {
 	*x = AcceptInvitationRequest{}
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[20]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1275,7 +1436,7 @@ func (x *AcceptInvitationRequest) String() string {
 func (*AcceptInvitationRequest) ProtoMessage() {}
 
 func (x *AcceptInvitationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[20]
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1288,7 +1449,7 @@ func (x *AcceptInvitationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AcceptInvitationRequest.ProtoReflect.Descriptor instead.
 func (*AcceptInvitationRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{20}
+	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *AcceptInvitationRequest) GetToken() string {
@@ -1302,12 +1463,30 @@ var File_openlet_api_platform_v1_platform_proto protoreflect.FileDescriptor
 
 const file_openlet_api_platform_v1_platform_proto_rawDesc = "" +
 	"\n" +
-	"&openlet_api/platform/v1/platform.proto\x12\x13openlet.platform.v1\x1a\x1cgoogle/api/annotations.proto\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1bbuf/validate/validate.proto\"l\n" +
+	"&openlet_api/platform/v1/platform.proto\x12\x13openlet.platform.v1\x1a\x1cgoogle/api/annotations.proto\x1a\x1bgoogle/protobuf/empty.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1bbuf/validate/validate.proto\"\xe6\x01\n" +
+	"\x10AvatarAppearance\x12`\n" +
+	"\x05shape\x18\x01 \x01(\tBJ\xbaHGrER\x06cercleR\x05galetR\bsquircleR\acapsuleR\btriangleR\bhexagoneR\x05nuageR\x06goutteR\x05shape\x12p\n" +
+	"\x05color\x18\x02 \x01(\tBZ\xbaHWrUR\x05rougeR\x06orangeR\x05ambreR\x04vertR\tturquoiseR\x04bleuR\x06violetR\x04roseR\x05encreR\x05cremeR\x04brunR\x04grisR\x05color\"\x88\x03\n" +
+	"\x12AccountPreferences\x125\n" +
+	"\x05theme\x18\x01 \x01(\tB\x1a\xbaH\x17r\x15R\x06systemR\x05lightR\x04darkH\x00R\x05theme\x88\x01\x01\x12F\n" +
+	"\rsend_shortcut\x18\x02 \x01(\tB\x1c\xbaH\x19r\x17R\x05enterR\x0emodifier-enterH\x01R\fsendShortcut\x88\x01\x01\x12-\n" +
+	"\x10show_agent_steps\x18\x03 \x01(\bH\x02R\x0eshowAgentSteps\x88\x01\x01\x12;\n" +
+	"\x17compact_message_actions\x18\x04 \x01(\bH\x03R\x15compactMessageActions\x88\x01\x01\x12(\n" +
+	"\rmessage_sound\x18\x05 \x01(\bH\x04R\fmessageSound\x88\x01\x01B\b\n" +
+	"\x06_themeB\x10\n" +
+	"\x0e_send_shortcutB\x13\n" +
+	"\x11_show_agent_stepsB\x1a\n" +
+	"\x18_compact_message_actionsB\x10\n" +
+	"\x0e_message_sound\"\xfe\x01\n" +
 	"\x04User\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12!\n" +
 	"\fdisplay_name\x18\x02 \x01(\tR\vdisplayName\x12\"\n" +
 	"\n" +
-	"avatar_url\x18\x03 \x01(\tH\x00R\tavatarUrl\x88\x01\x01B\r\n" +
+	"avatar_url\x18\x03 \x01(\tH\x00R\tavatarUrl\x88\x01\x01\x12E\n" +
+	"\n" +
+	"appearance\x18\x04 \x01(\v2%.openlet.platform.v1.AvatarAppearanceR\n" +
+	"appearance\x12I\n" +
+	"\vpreferences\x18\x05 \x01(\v2'.openlet.platform.v1.AccountPreferencesR\vpreferencesB\r\n" +
 	"\v_avatar_url\"\xeb\x01\n" +
 	"\tWorkspace\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
@@ -1330,11 +1509,16 @@ const file_openlet_api_platform_v1_platform_proto_rawDesc = "" +
 	"\n" +
 	"expires_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\x122\n" +
 	"\x13accepted_by_user_id\x18\x05 \x01(\tH\x00R\x10acceptedByUserId\x88\x01\x01B\x16\n" +
-	"\x14_accepted_by_user_id\"\x86\x01\n" +
-	"\x0fUpdateMeRequest\x12/\n" +
-	"\fdisplay_name\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01H\x00R\vdisplayName\x88\x01\x01\x12\"\n" +
+	"\x14_accepted_by_user_id\"\xa5\x02\n" +
+	"\x0fUpdateMeRequest\x122\n" +
+	"\fdisplay_name\x18\x01 \x01(\tB\n" +
+	"\xbaH\ar\x05\x10\x01\x18\xff\x01H\x00R\vdisplayName\x88\x01\x01\x12,\n" +
 	"\n" +
-	"avatar_url\x18\x02 \x01(\tH\x01R\tavatarUrl\x88\x01\x01B\x0f\n" +
+	"avatar_url\x18\x02 \x01(\tB\b\xbaH\x05r\x03\x18\x80\x10H\x01R\tavatarUrl\x88\x01\x01\x12E\n" +
+	"\n" +
+	"appearance\x18\x03 \x01(\v2%.openlet.platform.v1.AvatarAppearanceR\n" +
+	"appearance\x12I\n" +
+	"\vpreferences\x18\x04 \x01(\v2'.openlet.platform.v1.AccountPreferencesR\vpreferencesB\x0f\n" +
 	"\r_display_nameB\r\n" +
 	"\v_avatar_url\"^\n" +
 	"\x15ListWorkspacesRequest\x12&\n" +
@@ -1440,82 +1624,88 @@ func file_openlet_api_platform_v1_platform_proto_rawDescGZIP() []byte {
 }
 
 var file_openlet_api_platform_v1_platform_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_openlet_api_platform_v1_platform_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
+var file_openlet_api_platform_v1_platform_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
 var file_openlet_api_platform_v1_platform_proto_goTypes = []any{
 	(WorkspaceRole)(0),                        // 0: openlet.platform.v1.WorkspaceRole
 	(WorkspaceState)(0),                       // 1: openlet.platform.v1.WorkspaceState
-	(*User)(nil),                              // 2: openlet.platform.v1.User
-	(*Workspace)(nil),                         // 3: openlet.platform.v1.Workspace
-	(*WorkspaceMember)(nil),                   // 4: openlet.platform.v1.WorkspaceMember
-	(*Invitation)(nil),                        // 5: openlet.platform.v1.Invitation
-	(*UpdateMeRequest)(nil),                   // 6: openlet.platform.v1.UpdateMeRequest
-	(*ListWorkspacesRequest)(nil),             // 7: openlet.platform.v1.ListWorkspacesRequest
-	(*ListWorkspacesResponse)(nil),            // 8: openlet.platform.v1.ListWorkspacesResponse
-	(*CreateMyWorkspaceRequest)(nil),          // 9: openlet.platform.v1.CreateMyWorkspaceRequest
-	(*WorkspaceRequest)(nil),                  // 10: openlet.platform.v1.WorkspaceRequest
-	(*UpdateWorkspaceRequest)(nil),            // 11: openlet.platform.v1.UpdateWorkspaceRequest
-	(*TransferWorkspaceOwnershipRequest)(nil), // 12: openlet.platform.v1.TransferWorkspaceOwnershipRequest
-	(*ListMembersRequest)(nil),                // 13: openlet.platform.v1.ListMembersRequest
-	(*ListMembersResponse)(nil),               // 14: openlet.platform.v1.ListMembersResponse
-	(*AddMemberRequest)(nil),                  // 15: openlet.platform.v1.AddMemberRequest
-	(*RemoveMemberRequest)(nil),               // 16: openlet.platform.v1.RemoveMemberRequest
-	(*CreateInvitationRequest)(nil),           // 17: openlet.platform.v1.CreateInvitationRequest
-	(*CreateInvitationResponse)(nil),          // 18: openlet.platform.v1.CreateInvitationResponse
-	(*ListInvitationsRequest)(nil),            // 19: openlet.platform.v1.ListInvitationsRequest
-	(*ListInvitationsResponse)(nil),           // 20: openlet.platform.v1.ListInvitationsResponse
-	(*RevokeInvitationRequest)(nil),           // 21: openlet.platform.v1.RevokeInvitationRequest
-	(*AcceptInvitationRequest)(nil),           // 22: openlet.platform.v1.AcceptInvitationRequest
-	(*timestamppb.Timestamp)(nil),             // 23: google.protobuf.Timestamp
-	(*emptypb.Empty)(nil),                     // 24: google.protobuf.Empty
+	(*AvatarAppearance)(nil),                  // 2: openlet.platform.v1.AvatarAppearance
+	(*AccountPreferences)(nil),                // 3: openlet.platform.v1.AccountPreferences
+	(*User)(nil),                              // 4: openlet.platform.v1.User
+	(*Workspace)(nil),                         // 5: openlet.platform.v1.Workspace
+	(*WorkspaceMember)(nil),                   // 6: openlet.platform.v1.WorkspaceMember
+	(*Invitation)(nil),                        // 7: openlet.platform.v1.Invitation
+	(*UpdateMeRequest)(nil),                   // 8: openlet.platform.v1.UpdateMeRequest
+	(*ListWorkspacesRequest)(nil),             // 9: openlet.platform.v1.ListWorkspacesRequest
+	(*ListWorkspacesResponse)(nil),            // 10: openlet.platform.v1.ListWorkspacesResponse
+	(*CreateMyWorkspaceRequest)(nil),          // 11: openlet.platform.v1.CreateMyWorkspaceRequest
+	(*WorkspaceRequest)(nil),                  // 12: openlet.platform.v1.WorkspaceRequest
+	(*UpdateWorkspaceRequest)(nil),            // 13: openlet.platform.v1.UpdateWorkspaceRequest
+	(*TransferWorkspaceOwnershipRequest)(nil), // 14: openlet.platform.v1.TransferWorkspaceOwnershipRequest
+	(*ListMembersRequest)(nil),                // 15: openlet.platform.v1.ListMembersRequest
+	(*ListMembersResponse)(nil),               // 16: openlet.platform.v1.ListMembersResponse
+	(*AddMemberRequest)(nil),                  // 17: openlet.platform.v1.AddMemberRequest
+	(*RemoveMemberRequest)(nil),               // 18: openlet.platform.v1.RemoveMemberRequest
+	(*CreateInvitationRequest)(nil),           // 19: openlet.platform.v1.CreateInvitationRequest
+	(*CreateInvitationResponse)(nil),          // 20: openlet.platform.v1.CreateInvitationResponse
+	(*ListInvitationsRequest)(nil),            // 21: openlet.platform.v1.ListInvitationsRequest
+	(*ListInvitationsResponse)(nil),           // 22: openlet.platform.v1.ListInvitationsResponse
+	(*RevokeInvitationRequest)(nil),           // 23: openlet.platform.v1.RevokeInvitationRequest
+	(*AcceptInvitationRequest)(nil),           // 24: openlet.platform.v1.AcceptInvitationRequest
+	(*timestamppb.Timestamp)(nil),             // 25: google.protobuf.Timestamp
+	(*emptypb.Empty)(nil),                     // 26: google.protobuf.Empty
 }
 var file_openlet_api_platform_v1_platform_proto_depIdxs = []int32{
-	1,  // 0: openlet.platform.v1.Workspace.state:type_name -> openlet.platform.v1.WorkspaceState
-	23, // 1: openlet.platform.v1.Workspace.created_at:type_name -> google.protobuf.Timestamp
-	0,  // 2: openlet.platform.v1.Workspace.role:type_name -> openlet.platform.v1.WorkspaceRole
-	2,  // 3: openlet.platform.v1.WorkspaceMember.user:type_name -> openlet.platform.v1.User
-	0,  // 4: openlet.platform.v1.WorkspaceMember.role:type_name -> openlet.platform.v1.WorkspaceRole
-	23, // 5: openlet.platform.v1.Invitation.expires_at:type_name -> google.protobuf.Timestamp
-	3,  // 6: openlet.platform.v1.ListWorkspacesResponse.workspaces:type_name -> openlet.platform.v1.Workspace
-	4,  // 7: openlet.platform.v1.ListMembersResponse.members:type_name -> openlet.platform.v1.WorkspaceMember
-	5,  // 8: openlet.platform.v1.CreateInvitationResponse.invitation:type_name -> openlet.platform.v1.Invitation
-	5,  // 9: openlet.platform.v1.ListInvitationsResponse.invitations:type_name -> openlet.platform.v1.Invitation
-	24, // 10: openlet.platform.v1.PlatformService.Onboard:input_type -> google.protobuf.Empty
-	24, // 11: openlet.platform.v1.PlatformService.GetMe:input_type -> google.protobuf.Empty
-	6,  // 12: openlet.platform.v1.PlatformService.UpdateMe:input_type -> openlet.platform.v1.UpdateMeRequest
-	7,  // 13: openlet.platform.v1.PlatformService.ListWorkspaces:input_type -> openlet.platform.v1.ListWorkspacesRequest
-	9,  // 14: openlet.platform.v1.PlatformService.CreateMyWorkspace:input_type -> openlet.platform.v1.CreateMyWorkspaceRequest
-	10, // 15: openlet.platform.v1.PlatformService.GetWorkspace:input_type -> openlet.platform.v1.WorkspaceRequest
-	11, // 16: openlet.platform.v1.PlatformService.UpdateWorkspace:input_type -> openlet.platform.v1.UpdateWorkspaceRequest
-	10, // 17: openlet.platform.v1.PlatformService.DeleteWorkspace:input_type -> openlet.platform.v1.WorkspaceRequest
-	12, // 18: openlet.platform.v1.PlatformService.TransferWorkspaceOwnership:input_type -> openlet.platform.v1.TransferWorkspaceOwnershipRequest
-	13, // 19: openlet.platform.v1.PlatformService.ListMembers:input_type -> openlet.platform.v1.ListMembersRequest
-	15, // 20: openlet.platform.v1.PlatformService.AddMember:input_type -> openlet.platform.v1.AddMemberRequest
-	16, // 21: openlet.platform.v1.PlatformService.RemoveMember:input_type -> openlet.platform.v1.RemoveMemberRequest
-	17, // 22: openlet.platform.v1.PlatformService.CreateInvitation:input_type -> openlet.platform.v1.CreateInvitationRequest
-	19, // 23: openlet.platform.v1.PlatformService.ListInvitations:input_type -> openlet.platform.v1.ListInvitationsRequest
-	21, // 24: openlet.platform.v1.PlatformService.RevokeInvitation:input_type -> openlet.platform.v1.RevokeInvitationRequest
-	22, // 25: openlet.platform.v1.PlatformService.AcceptInvitation:input_type -> openlet.platform.v1.AcceptInvitationRequest
-	2,  // 26: openlet.platform.v1.PlatformService.Onboard:output_type -> openlet.platform.v1.User
-	2,  // 27: openlet.platform.v1.PlatformService.GetMe:output_type -> openlet.platform.v1.User
-	2,  // 28: openlet.platform.v1.PlatformService.UpdateMe:output_type -> openlet.platform.v1.User
-	8,  // 29: openlet.platform.v1.PlatformService.ListWorkspaces:output_type -> openlet.platform.v1.ListWorkspacesResponse
-	3,  // 30: openlet.platform.v1.PlatformService.CreateMyWorkspace:output_type -> openlet.platform.v1.Workspace
-	3,  // 31: openlet.platform.v1.PlatformService.GetWorkspace:output_type -> openlet.platform.v1.Workspace
-	3,  // 32: openlet.platform.v1.PlatformService.UpdateWorkspace:output_type -> openlet.platform.v1.Workspace
-	3,  // 33: openlet.platform.v1.PlatformService.DeleteWorkspace:output_type -> openlet.platform.v1.Workspace
-	4,  // 34: openlet.platform.v1.PlatformService.TransferWorkspaceOwnership:output_type -> openlet.platform.v1.WorkspaceMember
-	14, // 35: openlet.platform.v1.PlatformService.ListMembers:output_type -> openlet.platform.v1.ListMembersResponse
-	4,  // 36: openlet.platform.v1.PlatformService.AddMember:output_type -> openlet.platform.v1.WorkspaceMember
-	24, // 37: openlet.platform.v1.PlatformService.RemoveMember:output_type -> google.protobuf.Empty
-	18, // 38: openlet.platform.v1.PlatformService.CreateInvitation:output_type -> openlet.platform.v1.CreateInvitationResponse
-	20, // 39: openlet.platform.v1.PlatformService.ListInvitations:output_type -> openlet.platform.v1.ListInvitationsResponse
-	24, // 40: openlet.platform.v1.PlatformService.RevokeInvitation:output_type -> google.protobuf.Empty
-	4,  // 41: openlet.platform.v1.PlatformService.AcceptInvitation:output_type -> openlet.platform.v1.WorkspaceMember
-	26, // [26:42] is the sub-list for method output_type
-	10, // [10:26] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	2,  // 0: openlet.platform.v1.User.appearance:type_name -> openlet.platform.v1.AvatarAppearance
+	3,  // 1: openlet.platform.v1.User.preferences:type_name -> openlet.platform.v1.AccountPreferences
+	1,  // 2: openlet.platform.v1.Workspace.state:type_name -> openlet.platform.v1.WorkspaceState
+	25, // 3: openlet.platform.v1.Workspace.created_at:type_name -> google.protobuf.Timestamp
+	0,  // 4: openlet.platform.v1.Workspace.role:type_name -> openlet.platform.v1.WorkspaceRole
+	4,  // 5: openlet.platform.v1.WorkspaceMember.user:type_name -> openlet.platform.v1.User
+	0,  // 6: openlet.platform.v1.WorkspaceMember.role:type_name -> openlet.platform.v1.WorkspaceRole
+	25, // 7: openlet.platform.v1.Invitation.expires_at:type_name -> google.protobuf.Timestamp
+	2,  // 8: openlet.platform.v1.UpdateMeRequest.appearance:type_name -> openlet.platform.v1.AvatarAppearance
+	3,  // 9: openlet.platform.v1.UpdateMeRequest.preferences:type_name -> openlet.platform.v1.AccountPreferences
+	5,  // 10: openlet.platform.v1.ListWorkspacesResponse.workspaces:type_name -> openlet.platform.v1.Workspace
+	6,  // 11: openlet.platform.v1.ListMembersResponse.members:type_name -> openlet.platform.v1.WorkspaceMember
+	7,  // 12: openlet.platform.v1.CreateInvitationResponse.invitation:type_name -> openlet.platform.v1.Invitation
+	7,  // 13: openlet.platform.v1.ListInvitationsResponse.invitations:type_name -> openlet.platform.v1.Invitation
+	26, // 14: openlet.platform.v1.PlatformService.Onboard:input_type -> google.protobuf.Empty
+	26, // 15: openlet.platform.v1.PlatformService.GetMe:input_type -> google.protobuf.Empty
+	8,  // 16: openlet.platform.v1.PlatformService.UpdateMe:input_type -> openlet.platform.v1.UpdateMeRequest
+	9,  // 17: openlet.platform.v1.PlatformService.ListWorkspaces:input_type -> openlet.platform.v1.ListWorkspacesRequest
+	11, // 18: openlet.platform.v1.PlatformService.CreateMyWorkspace:input_type -> openlet.platform.v1.CreateMyWorkspaceRequest
+	12, // 19: openlet.platform.v1.PlatformService.GetWorkspace:input_type -> openlet.platform.v1.WorkspaceRequest
+	13, // 20: openlet.platform.v1.PlatformService.UpdateWorkspace:input_type -> openlet.platform.v1.UpdateWorkspaceRequest
+	12, // 21: openlet.platform.v1.PlatformService.DeleteWorkspace:input_type -> openlet.platform.v1.WorkspaceRequest
+	14, // 22: openlet.platform.v1.PlatformService.TransferWorkspaceOwnership:input_type -> openlet.platform.v1.TransferWorkspaceOwnershipRequest
+	15, // 23: openlet.platform.v1.PlatformService.ListMembers:input_type -> openlet.platform.v1.ListMembersRequest
+	17, // 24: openlet.platform.v1.PlatformService.AddMember:input_type -> openlet.platform.v1.AddMemberRequest
+	18, // 25: openlet.platform.v1.PlatformService.RemoveMember:input_type -> openlet.platform.v1.RemoveMemberRequest
+	19, // 26: openlet.platform.v1.PlatformService.CreateInvitation:input_type -> openlet.platform.v1.CreateInvitationRequest
+	21, // 27: openlet.platform.v1.PlatformService.ListInvitations:input_type -> openlet.platform.v1.ListInvitationsRequest
+	23, // 28: openlet.platform.v1.PlatformService.RevokeInvitation:input_type -> openlet.platform.v1.RevokeInvitationRequest
+	24, // 29: openlet.platform.v1.PlatformService.AcceptInvitation:input_type -> openlet.platform.v1.AcceptInvitationRequest
+	4,  // 30: openlet.platform.v1.PlatformService.Onboard:output_type -> openlet.platform.v1.User
+	4,  // 31: openlet.platform.v1.PlatformService.GetMe:output_type -> openlet.platform.v1.User
+	4,  // 32: openlet.platform.v1.PlatformService.UpdateMe:output_type -> openlet.platform.v1.User
+	10, // 33: openlet.platform.v1.PlatformService.ListWorkspaces:output_type -> openlet.platform.v1.ListWorkspacesResponse
+	5,  // 34: openlet.platform.v1.PlatformService.CreateMyWorkspace:output_type -> openlet.platform.v1.Workspace
+	5,  // 35: openlet.platform.v1.PlatformService.GetWorkspace:output_type -> openlet.platform.v1.Workspace
+	5,  // 36: openlet.platform.v1.PlatformService.UpdateWorkspace:output_type -> openlet.platform.v1.Workspace
+	5,  // 37: openlet.platform.v1.PlatformService.DeleteWorkspace:output_type -> openlet.platform.v1.Workspace
+	6,  // 38: openlet.platform.v1.PlatformService.TransferWorkspaceOwnership:output_type -> openlet.platform.v1.WorkspaceMember
+	16, // 39: openlet.platform.v1.PlatformService.ListMembers:output_type -> openlet.platform.v1.ListMembersResponse
+	6,  // 40: openlet.platform.v1.PlatformService.AddMember:output_type -> openlet.platform.v1.WorkspaceMember
+	26, // 41: openlet.platform.v1.PlatformService.RemoveMember:output_type -> google.protobuf.Empty
+	20, // 42: openlet.platform.v1.PlatformService.CreateInvitation:output_type -> openlet.platform.v1.CreateInvitationResponse
+	22, // 43: openlet.platform.v1.PlatformService.ListInvitations:output_type -> openlet.platform.v1.ListInvitationsResponse
+	26, // 44: openlet.platform.v1.PlatformService.RevokeInvitation:output_type -> google.protobuf.Empty
+	6,  // 45: openlet.platform.v1.PlatformService.AcceptInvitation:output_type -> openlet.platform.v1.WorkspaceMember
+	30, // [30:46] is the sub-list for method output_type
+	14, // [14:30] is the sub-list for method input_type
+	14, // [14:14] is the sub-list for extension type_name
+	14, // [14:14] is the sub-list for extension extendee
+	0,  // [0:14] is the sub-list for field type_name
 }
 
 func init() { file_openlet_api_platform_v1_platform_proto_init() }
@@ -1523,20 +1713,21 @@ func file_openlet_api_platform_v1_platform_proto_init() {
 	if File_openlet_api_platform_v1_platform_proto != nil {
 		return
 	}
-	file_openlet_api_platform_v1_platform_proto_msgTypes[0].OneofWrappers = []any{}
 	file_openlet_api_platform_v1_platform_proto_msgTypes[1].OneofWrappers = []any{}
 	file_openlet_api_platform_v1_platform_proto_msgTypes[2].OneofWrappers = []any{}
 	file_openlet_api_platform_v1_platform_proto_msgTypes[3].OneofWrappers = []any{}
 	file_openlet_api_platform_v1_platform_proto_msgTypes[4].OneofWrappers = []any{}
-	file_openlet_api_platform_v1_platform_proto_msgTypes[9].OneofWrappers = []any{}
-	file_openlet_api_platform_v1_platform_proto_msgTypes[16].OneofWrappers = []any{}
+	file_openlet_api_platform_v1_platform_proto_msgTypes[5].OneofWrappers = []any{}
+	file_openlet_api_platform_v1_platform_proto_msgTypes[6].OneofWrappers = []any{}
+	file_openlet_api_platform_v1_platform_proto_msgTypes[11].OneofWrappers = []any{}
+	file_openlet_api_platform_v1_platform_proto_msgTypes[18].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_openlet_api_platform_v1_platform_proto_rawDesc), len(file_openlet_api_platform_v1_platform_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   21,
+			NumMessages:   23,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -1688,6 +1688,82 @@ func (x *NodeRequest) GetTarget() *NodeLocator {
 	return nil
 }
 
+type RetryProcessingRequest struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	WorkspaceId     string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
+	StorageId       string                 `protobuf:"bytes,2,opt,name=storage_id,json=storageId,proto3" json:"storage_id,omitempty"`
+	Target          *NodeLocator           `protobuf:"bytes,3,opt,name=target,proto3" json:"target,omitempty"`
+	ExpectedVersion int64                  `protobuf:"varint,4,opt,name=expected_version,json=expectedVersion,proto3" json:"expected_version,omitempty"`
+	RequestId       string                 `protobuf:"bytes,5,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *RetryProcessingRequest) Reset() {
+	*x = RetryProcessingRequest{}
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RetryProcessingRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RetryProcessingRequest) ProtoMessage() {}
+
+func (x *RetryProcessingRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RetryProcessingRequest.ProtoReflect.Descriptor instead.
+func (*RetryProcessingRequest) Descriptor() ([]byte, []int) {
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *RetryProcessingRequest) GetWorkspaceId() string {
+	if x != nil {
+		return x.WorkspaceId
+	}
+	return ""
+}
+
+func (x *RetryProcessingRequest) GetStorageId() string {
+	if x != nil {
+		return x.StorageId
+	}
+	return ""
+}
+
+func (x *RetryProcessingRequest) GetTarget() *NodeLocator {
+	if x != nil {
+		return x.Target
+	}
+	return nil
+}
+
+func (x *RetryProcessingRequest) GetExpectedVersion() int64 {
+	if x != nil {
+		return x.ExpectedVersion
+	}
+	return 0
+}
+
+func (x *RetryProcessingRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
 type BatchStatRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	WorkspaceId   string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
@@ -1699,7 +1775,7 @@ type BatchStatRequest struct {
 
 func (x *BatchStatRequest) Reset() {
 	*x = BatchStatRequest{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[21]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1711,7 +1787,7 @@ func (x *BatchStatRequest) String() string {
 func (*BatchStatRequest) ProtoMessage() {}
 
 func (x *BatchStatRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[21]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1724,7 +1800,7 @@ func (x *BatchStatRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BatchStatRequest.ProtoReflect.Descriptor instead.
 func (*BatchStatRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{21}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *BatchStatRequest) GetWorkspaceId() string {
@@ -1761,7 +1837,7 @@ type StatResult struct {
 
 func (x *StatResult) Reset() {
 	*x = StatResult{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[22]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1773,7 +1849,7 @@ func (x *StatResult) String() string {
 func (*StatResult) ProtoMessage() {}
 
 func (x *StatResult) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[22]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1786,7 +1862,7 @@ func (x *StatResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatResult.ProtoReflect.Descriptor instead.
 func (*StatResult) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{22}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *StatResult) GetResult() isStatResult_Result {
@@ -1839,7 +1915,7 @@ type BatchStatResponse struct {
 
 func (x *BatchStatResponse) Reset() {
 	*x = BatchStatResponse{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[23]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1851,7 +1927,7 @@ func (x *BatchStatResponse) String() string {
 func (*BatchStatResponse) ProtoMessage() {}
 
 func (x *BatchStatResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[23]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1864,7 +1940,7 @@ func (x *BatchStatResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BatchStatResponse.ProtoReflect.Descriptor instead.
 func (*BatchStatResponse) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{23}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *BatchStatResponse) GetResults() []*StatResult {
@@ -1887,7 +1963,7 @@ type ListNodesRequest struct {
 
 func (x *ListNodesRequest) Reset() {
 	*x = ListNodesRequest{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[24]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1899,7 +1975,7 @@ func (x *ListNodesRequest) String() string {
 func (*ListNodesRequest) ProtoMessage() {}
 
 func (x *ListNodesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[24]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1912,7 +1988,7 @@ func (x *ListNodesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListNodesRequest.ProtoReflect.Descriptor instead.
 func (*ListNodesRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{24}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *ListNodesRequest) GetWorkspaceId() string {
@@ -1960,7 +2036,7 @@ type ListNodesResponse struct {
 
 func (x *ListNodesResponse) Reset() {
 	*x = ListNodesResponse{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[25]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1972,7 +2048,7 @@ func (x *ListNodesResponse) String() string {
 func (*ListNodesResponse) ProtoMessage() {}
 
 func (x *ListNodesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[25]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1985,7 +2061,7 @@ func (x *ListNodesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListNodesResponse.ProtoReflect.Descriptor instead.
 func (*ListNodesResponse) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{25}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *ListNodesResponse) GetNodes() []*Node {
@@ -2015,7 +2091,7 @@ type ReadTreeRequest struct {
 
 func (x *ReadTreeRequest) Reset() {
 	*x = ReadTreeRequest{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[26]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2027,7 +2103,7 @@ func (x *ReadTreeRequest) String() string {
 func (*ReadTreeRequest) ProtoMessage() {}
 
 func (x *ReadTreeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[26]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2040,7 +2116,7 @@ func (x *ReadTreeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadTreeRequest.ProtoReflect.Descriptor instead.
 func (*ReadTreeRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{26}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *ReadTreeRequest) GetWorkspaceId() string {
@@ -2089,7 +2165,7 @@ type TreeEntry struct {
 
 func (x *TreeEntry) Reset() {
 	*x = TreeEntry{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[27]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2101,7 +2177,7 @@ func (x *TreeEntry) String() string {
 func (*TreeEntry) ProtoMessage() {}
 
 func (x *TreeEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[27]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2114,7 +2190,7 @@ func (x *TreeEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TreeEntry.ProtoReflect.Descriptor instead.
 func (*TreeEntry) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{27}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *TreeEntry) GetNode() *Node {
@@ -2148,7 +2224,7 @@ type ReadTreeResponse struct {
 
 func (x *ReadTreeResponse) Reset() {
 	*x = ReadTreeResponse{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[28]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2160,7 +2236,7 @@ func (x *ReadTreeResponse) String() string {
 func (*ReadTreeResponse) ProtoMessage() {}
 
 func (x *ReadTreeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[28]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2173,7 +2249,7 @@ func (x *ReadTreeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadTreeResponse.ProtoReflect.Descriptor instead.
 func (*ReadTreeResponse) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{28}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *ReadTreeResponse) GetEntries() []*TreeEntry {
@@ -2200,7 +2276,7 @@ type TextContent struct {
 
 func (x *TextContent) Reset() {
 	*x = TextContent{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[29]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2212,7 +2288,7 @@ func (x *TextContent) String() string {
 func (*TextContent) ProtoMessage() {}
 
 func (x *TextContent) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[29]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2225,7 +2301,7 @@ func (x *TextContent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TextContent.ProtoReflect.Descriptor instead.
 func (*TextContent) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{29}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *TextContent) GetContent() string {
@@ -2260,7 +2336,7 @@ type CreateNodeRequest struct {
 
 func (x *CreateNodeRequest) Reset() {
 	*x = CreateNodeRequest{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[30]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2272,7 +2348,7 @@ func (x *CreateNodeRequest) String() string {
 func (*CreateNodeRequest) ProtoMessage() {}
 
 func (x *CreateNodeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[30]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2285,7 +2361,7 @@ func (x *CreateNodeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateNodeRequest.ProtoReflect.Descriptor instead.
 func (*CreateNodeRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{30}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *CreateNodeRequest) GetWorkspaceId() string {
@@ -2376,7 +2452,7 @@ type CreateDirectoriesRequest struct {
 
 func (x *CreateDirectoriesRequest) Reset() {
 	*x = CreateDirectoriesRequest{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[31]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2388,7 +2464,7 @@ func (x *CreateDirectoriesRequest) String() string {
 func (*CreateDirectoriesRequest) ProtoMessage() {}
 
 func (x *CreateDirectoriesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[31]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2401,7 +2477,7 @@ func (x *CreateDirectoriesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateDirectoriesRequest.ProtoReflect.Descriptor instead.
 func (*CreateDirectoriesRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{31}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *CreateDirectoriesRequest) GetWorkspaceId() string {
@@ -2447,7 +2523,7 @@ type TransferNodeRequest struct {
 
 func (x *TransferNodeRequest) Reset() {
 	*x = TransferNodeRequest{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[32]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2459,7 +2535,7 @@ func (x *TransferNodeRequest) String() string {
 func (*TransferNodeRequest) ProtoMessage() {}
 
 func (x *TransferNodeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[32]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2472,7 +2548,7 @@ func (x *TransferNodeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TransferNodeRequest.ProtoReflect.Descriptor instead.
 func (*TransferNodeRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{32}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *TransferNodeRequest) GetWorkspaceId() string {
@@ -2534,7 +2610,7 @@ type ByteRange struct {
 
 func (x *ByteRange) Reset() {
 	*x = ByteRange{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[33]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2546,7 +2622,7 @@ func (x *ByteRange) String() string {
 func (*ByteRange) ProtoMessage() {}
 
 func (x *ByteRange) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[33]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2559,7 +2635,7 @@ func (x *ByteRange) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ByteRange.ProtoReflect.Descriptor instead.
 func (*ByteRange) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{33}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *ByteRange) GetOffset() int64 {
@@ -2586,7 +2662,7 @@ type LineRange struct {
 
 func (x *LineRange) Reset() {
 	*x = LineRange{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[34]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2598,7 +2674,7 @@ func (x *LineRange) String() string {
 func (*LineRange) ProtoMessage() {}
 
 func (x *LineRange) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[34]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2611,7 +2687,7 @@ func (x *LineRange) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LineRange.ProtoReflect.Descriptor instead.
 func (*LineRange) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{34}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *LineRange) GetFirst() uint32 {
@@ -2647,7 +2723,7 @@ type ReadTextRequest struct {
 
 func (x *ReadTextRequest) Reset() {
 	*x = ReadTextRequest{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[35]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2659,7 +2735,7 @@ func (x *ReadTextRequest) String() string {
 func (*ReadTextRequest) ProtoMessage() {}
 
 func (x *ReadTextRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[35]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2672,7 +2748,7 @@ func (x *ReadTextRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadTextRequest.ProtoReflect.Descriptor instead.
 func (*ReadTextRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{35}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *ReadTextRequest) GetWorkspaceId() string {
@@ -2784,7 +2860,7 @@ type TextMetrics struct {
 
 func (x *TextMetrics) Reset() {
 	*x = TextMetrics{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[36]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2796,7 +2872,7 @@ func (x *TextMetrics) String() string {
 func (*TextMetrics) ProtoMessage() {}
 
 func (x *TextMetrics) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[36]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2809,7 +2885,7 @@ func (x *TextMetrics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TextMetrics.ProtoReflect.Descriptor instead.
 func (*TextMetrics) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{36}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *TextMetrics) GetBytes() int64 {
@@ -2837,7 +2913,7 @@ type ReadTextResponse struct {
 
 func (x *ReadTextResponse) Reset() {
 	*x = ReadTextResponse{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[37]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2849,7 +2925,7 @@ func (x *ReadTextResponse) String() string {
 func (*ReadTextResponse) ProtoMessage() {}
 
 func (x *ReadTextResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[37]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2862,7 +2938,7 @@ func (x *ReadTextResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadTextResponse.ProtoReflect.Descriptor instead.
 func (*ReadTextResponse) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{37}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *ReadTextResponse) GetContent() string {
@@ -2897,7 +2973,7 @@ type TextEdit struct {
 
 func (x *TextEdit) Reset() {
 	*x = TextEdit{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[38]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2909,7 +2985,7 @@ func (x *TextEdit) String() string {
 func (*TextEdit) ProtoMessage() {}
 
 func (x *TextEdit) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[38]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2922,7 +2998,7 @@ func (x *TextEdit) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TextEdit.ProtoReflect.Descriptor instead.
 func (*TextEdit) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{38}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *TextEdit) GetStartByte() int64 {
@@ -2955,7 +3031,7 @@ type TextPatch struct {
 
 func (x *TextPatch) Reset() {
 	*x = TextPatch{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[39]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2967,7 +3043,7 @@ func (x *TextPatch) String() string {
 func (*TextPatch) ProtoMessage() {}
 
 func (x *TextPatch) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[39]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2980,7 +3056,7 @@ func (x *TextPatch) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TextPatch.ProtoReflect.Descriptor instead.
 func (*TextPatch) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{39}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *TextPatch) GetEdits() []*TextEdit {
@@ -3000,7 +3076,7 @@ type TextOverwrite struct {
 
 func (x *TextOverwrite) Reset() {
 	*x = TextOverwrite{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[40]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3012,7 +3088,7 @@ func (x *TextOverwrite) String() string {
 func (*TextOverwrite) ProtoMessage() {}
 
 func (x *TextOverwrite) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[40]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3025,7 +3101,7 @@ func (x *TextOverwrite) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TextOverwrite.ProtoReflect.Descriptor instead.
 func (*TextOverwrite) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{40}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *TextOverwrite) GetOffset() int64 {
@@ -3053,7 +3129,7 @@ type TextReplace struct {
 
 func (x *TextReplace) Reset() {
 	*x = TextReplace{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[41]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3065,7 +3141,7 @@ func (x *TextReplace) String() string {
 func (*TextReplace) ProtoMessage() {}
 
 func (x *TextReplace) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[41]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3078,7 +3154,7 @@ func (x *TextReplace) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TextReplace.ProtoReflect.Descriptor instead.
 func (*TextReplace) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{41}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *TextReplace) GetOldText() string {
@@ -3124,7 +3200,7 @@ type MutateTextRequest struct {
 
 func (x *MutateTextRequest) Reset() {
 	*x = MutateTextRequest{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[42]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3136,7 +3212,7 @@ func (x *MutateTextRequest) String() string {
 func (*MutateTextRequest) ProtoMessage() {}
 
 func (x *MutateTextRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[42]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3149,7 +3225,7 @@ func (x *MutateTextRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MutateTextRequest.ProtoReflect.Descriptor instead.
 func (*MutateTextRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{42}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *MutateTextRequest) GetWorkspaceId() string {
@@ -3301,7 +3377,7 @@ type ReadImageRequest struct {
 
 func (x *ReadImageRequest) Reset() {
 	*x = ReadImageRequest{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[43]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3313,7 +3389,7 @@ func (x *ReadImageRequest) String() string {
 func (*ReadImageRequest) ProtoMessage() {}
 
 func (x *ReadImageRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[43]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3326,7 +3402,7 @@ func (x *ReadImageRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadImageRequest.ProtoReflect.Descriptor instead.
 func (*ReadImageRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{43}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *ReadImageRequest) GetWorkspaceId() string {
@@ -3374,7 +3450,7 @@ type SignedDownload struct {
 
 func (x *SignedDownload) Reset() {
 	*x = SignedDownload{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[44]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3386,7 +3462,7 @@ func (x *SignedDownload) String() string {
 func (*SignedDownload) ProtoMessage() {}
 
 func (x *SignedDownload) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[44]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3399,7 +3475,7 @@ func (x *SignedDownload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SignedDownload.ProtoReflect.Descriptor instead.
 func (*SignedDownload) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{44}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *SignedDownload) GetUrl() string {
@@ -3427,7 +3503,7 @@ type TextDownload struct {
 
 func (x *TextDownload) Reset() {
 	*x = TextDownload{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[45]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3439,7 +3515,7 @@ func (x *TextDownload) String() string {
 func (*TextDownload) ProtoMessage() {}
 
 func (x *TextDownload) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[45]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3452,7 +3528,7 @@ func (x *TextDownload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TextDownload.ProtoReflect.Descriptor instead.
 func (*TextDownload) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{45}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *TextDownload) GetFilename() string {
@@ -3489,7 +3565,7 @@ type GetDownloadResponse struct {
 
 func (x *GetDownloadResponse) Reset() {
 	*x = GetDownloadResponse{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[46]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3501,7 +3577,7 @@ func (x *GetDownloadResponse) String() string {
 func (*GetDownloadResponse) ProtoMessage() {}
 
 func (x *GetDownloadResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[46]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3514,7 +3590,7 @@ func (x *GetDownloadResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetDownloadResponse.ProtoReflect.Descriptor instead.
 func (*GetDownloadResponse) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{46}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *GetDownloadResponse) GetDownload() isGetDownloadResponse_Download {
@@ -3558,6 +3634,102 @@ func (*GetDownloadResponse_Blob) isGetDownloadResponse_Download() {}
 
 func (*GetDownloadResponse_Text) isGetDownloadResponse_Download() {}
 
+type ArchiveDownloadTicket struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ticket        string                 `protobuf:"bytes,1,opt,name=ticket,proto3" json:"ticket,omitempty"`
+	ExpiresAt     *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ArchiveDownloadTicket) Reset() {
+	*x = ArchiveDownloadTicket{}
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[48]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ArchiveDownloadTicket) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ArchiveDownloadTicket) ProtoMessage() {}
+
+func (x *ArchiveDownloadTicket) ProtoReflect() protoreflect.Message {
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[48]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ArchiveDownloadTicket.ProtoReflect.Descriptor instead.
+func (*ArchiveDownloadTicket) Descriptor() ([]byte, []int) {
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{48}
+}
+
+func (x *ArchiveDownloadTicket) GetTicket() string {
+	if x != nil {
+		return x.Ticket
+	}
+	return ""
+}
+
+func (x *ArchiveDownloadTicket) GetExpiresAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ExpiresAt
+	}
+	return nil
+}
+
+type ArchiveDownloadTicketRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ticket        string                 `protobuf:"bytes,1,opt,name=ticket,proto3" json:"ticket,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ArchiveDownloadTicketRequest) Reset() {
+	*x = ArchiveDownloadTicketRequest{}
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[49]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ArchiveDownloadTicketRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ArchiveDownloadTicketRequest) ProtoMessage() {}
+
+func (x *ArchiveDownloadTicketRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[49]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ArchiveDownloadTicketRequest.ProtoReflect.Descriptor instead.
+func (*ArchiveDownloadTicketRequest) Descriptor() ([]byte, []int) {
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{49}
+}
+
+func (x *ArchiveDownloadTicketRequest) GetTicket() string {
+	if x != nil {
+		return x.Ticket
+	}
+	return ""
+}
+
 type DownloadArchiveRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	WorkspaceId   string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
@@ -3569,7 +3741,7 @@ type DownloadArchiveRequest struct {
 
 func (x *DownloadArchiveRequest) Reset() {
 	*x = DownloadArchiveRequest{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[47]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3581,7 +3753,7 @@ func (x *DownloadArchiveRequest) String() string {
 func (*DownloadArchiveRequest) ProtoMessage() {}
 
 func (x *DownloadArchiveRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[47]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3594,7 +3766,7 @@ func (x *DownloadArchiveRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DownloadArchiveRequest.ProtoReflect.Descriptor instead.
 func (*DownloadArchiveRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{47}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *DownloadArchiveRequest) GetWorkspaceId() string {
@@ -3633,7 +3805,7 @@ type SearchFilesRequest struct {
 
 func (x *SearchFilesRequest) Reset() {
 	*x = SearchFilesRequest{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[48]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3645,7 +3817,7 @@ func (x *SearchFilesRequest) String() string {
 func (*SearchFilesRequest) ProtoMessage() {}
 
 func (x *SearchFilesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[48]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3658,7 +3830,7 @@ func (x *SearchFilesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SearchFilesRequest.ProtoReflect.Descriptor instead.
 func (*SearchFilesRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{48}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *SearchFilesRequest) GetWorkspaceId() string {
@@ -3720,7 +3892,7 @@ type SearchFilesResponse struct {
 
 func (x *SearchFilesResponse) Reset() {
 	*x = SearchFilesResponse{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[49]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3732,7 +3904,7 @@ func (x *SearchFilesResponse) String() string {
 func (*SearchFilesResponse) ProtoMessage() {}
 
 func (x *SearchFilesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[49]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3745,7 +3917,7 @@ func (x *SearchFilesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SearchFilesResponse.ProtoReflect.Descriptor instead.
 func (*SearchFilesResponse) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{49}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *SearchFilesResponse) GetHits() []*Node {
@@ -3778,7 +3950,7 @@ type TextSearchRequest struct {
 
 func (x *TextSearchRequest) Reset() {
 	*x = TextSearchRequest{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[50]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3790,7 +3962,7 @@ func (x *TextSearchRequest) String() string {
 func (*TextSearchRequest) ProtoMessage() {}
 
 func (x *TextSearchRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[50]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3803,7 +3975,7 @@ func (x *TextSearchRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TextSearchRequest.ProtoReflect.Descriptor instead.
 func (*TextSearchRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{50}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{53}
 }
 
 func (x *TextSearchRequest) GetWorkspaceId() string {
@@ -3874,7 +4046,7 @@ type TextHit struct {
 
 func (x *TextHit) Reset() {
 	*x = TextHit{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[51]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3886,7 +4058,7 @@ func (x *TextHit) String() string {
 func (*TextHit) ProtoMessage() {}
 
 func (x *TextHit) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[51]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3899,7 +4071,7 @@ func (x *TextHit) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TextHit.ProtoReflect.Descriptor instead.
 func (*TextHit) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{51}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{54}
 }
 
 func (x *TextHit) GetNode() *Node {
@@ -3940,7 +4112,7 @@ type TextSearchResponse struct {
 
 func (x *TextSearchResponse) Reset() {
 	*x = TextSearchResponse{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[52]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[55]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3952,7 +4124,7 @@ func (x *TextSearchResponse) String() string {
 func (*TextSearchResponse) ProtoMessage() {}
 
 func (x *TextSearchResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[52]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[55]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3965,7 +4137,7 @@ func (x *TextSearchResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TextSearchResponse.ProtoReflect.Descriptor instead.
 func (*TextSearchResponse) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{52}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{55}
 }
 
 func (x *TextSearchResponse) GetHits() []*TextHit {
@@ -3995,7 +4167,7 @@ type SemanticSearchRequest struct {
 
 func (x *SemanticSearchRequest) Reset() {
 	*x = SemanticSearchRequest{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[53]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[56]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4007,7 +4179,7 @@ func (x *SemanticSearchRequest) String() string {
 func (*SemanticSearchRequest) ProtoMessage() {}
 
 func (x *SemanticSearchRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[53]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[56]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4020,7 +4192,7 @@ func (x *SemanticSearchRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SemanticSearchRequest.ProtoReflect.Descriptor instead.
 func (*SemanticSearchRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{53}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{56}
 }
 
 func (x *SemanticSearchRequest) GetWorkspaceId() string {
@@ -4070,7 +4242,7 @@ type SemanticHit struct {
 
 func (x *SemanticHit) Reset() {
 	*x = SemanticHit{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[54]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[57]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4082,7 +4254,7 @@ func (x *SemanticHit) String() string {
 func (*SemanticHit) ProtoMessage() {}
 
 func (x *SemanticHit) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[54]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[57]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4095,7 +4267,7 @@ func (x *SemanticHit) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SemanticHit.ProtoReflect.Descriptor instead.
 func (*SemanticHit) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{54}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{57}
 }
 
 func (x *SemanticHit) GetNode() *Node {
@@ -4135,7 +4307,7 @@ type SemanticSearchResponse struct {
 
 func (x *SemanticSearchResponse) Reset() {
 	*x = SemanticSearchResponse{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[55]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[58]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4147,7 +4319,7 @@ func (x *SemanticSearchResponse) String() string {
 func (*SemanticSearchResponse) ProtoMessage() {}
 
 func (x *SemanticSearchResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[55]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[58]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4160,7 +4332,7 @@ func (x *SemanticSearchResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SemanticSearchResponse.ProtoReflect.Descriptor instead.
 func (*SemanticSearchResponse) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{55}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{58}
 }
 
 func (x *SemanticSearchResponse) GetHits() []*SemanticHit {
@@ -4182,7 +4354,7 @@ type TrashNodeRequest struct {
 
 func (x *TrashNodeRequest) Reset() {
 	*x = TrashNodeRequest{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[56]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[59]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4194,7 +4366,7 @@ func (x *TrashNodeRequest) String() string {
 func (*TrashNodeRequest) ProtoMessage() {}
 
 func (x *TrashNodeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[56]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[59]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4207,7 +4379,7 @@ func (x *TrashNodeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TrashNodeRequest.ProtoReflect.Descriptor instead.
 func (*TrashNodeRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{56}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{59}
 }
 
 func (x *TrashNodeRequest) GetWorkspaceId() string {
@@ -4251,7 +4423,7 @@ type TrashEntry struct {
 
 func (x *TrashEntry) Reset() {
 	*x = TrashEntry{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[57]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[60]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4263,7 +4435,7 @@ func (x *TrashEntry) String() string {
 func (*TrashEntry) ProtoMessage() {}
 
 func (x *TrashEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[57]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[60]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4276,7 +4448,7 @@ func (x *TrashEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TrashEntry.ProtoReflect.Descriptor instead.
 func (*TrashEntry) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{57}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{60}
 }
 
 func (x *TrashEntry) GetId() string {
@@ -4326,7 +4498,7 @@ type ListTrashRequest struct {
 
 func (x *ListTrashRequest) Reset() {
 	*x = ListTrashRequest{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[58]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[61]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4338,7 +4510,7 @@ func (x *ListTrashRequest) String() string {
 func (*ListTrashRequest) ProtoMessage() {}
 
 func (x *ListTrashRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[58]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[61]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4351,7 +4523,7 @@ func (x *ListTrashRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTrashRequest.ProtoReflect.Descriptor instead.
 func (*ListTrashRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{58}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{61}
 }
 
 func (x *ListTrashRequest) GetWorkspaceId() string {
@@ -4392,7 +4564,7 @@ type ListTrashResponse struct {
 
 func (x *ListTrashResponse) Reset() {
 	*x = ListTrashResponse{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[59]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[62]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4404,7 +4576,7 @@ func (x *ListTrashResponse) String() string {
 func (*ListTrashResponse) ProtoMessage() {}
 
 func (x *ListTrashResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[59]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[62]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4417,7 +4589,7 @@ func (x *ListTrashResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTrashResponse.ProtoReflect.Descriptor instead.
 func (*ListTrashResponse) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{59}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{62}
 }
 
 func (x *ListTrashResponse) GetEntries() []*TrashEntry {
@@ -4447,7 +4619,7 @@ type RestoreTrashRequest struct {
 
 func (x *RestoreTrashRequest) Reset() {
 	*x = RestoreTrashRequest{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[60]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[63]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4459,7 +4631,7 @@ func (x *RestoreTrashRequest) String() string {
 func (*RestoreTrashRequest) ProtoMessage() {}
 
 func (x *RestoreTrashRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[60]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[63]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4472,7 +4644,7 @@ func (x *RestoreTrashRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RestoreTrashRequest.ProtoReflect.Descriptor instead.
 func (*RestoreTrashRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{60}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{63}
 }
 
 func (x *RestoreTrashRequest) GetWorkspaceId() string {
@@ -4521,7 +4693,7 @@ type PurgeTrashRequest struct {
 
 func (x *PurgeTrashRequest) Reset() {
 	*x = PurgeTrashRequest{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[61]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[64]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4533,7 +4705,7 @@ func (x *PurgeTrashRequest) String() string {
 func (*PurgeTrashRequest) ProtoMessage() {}
 
 func (x *PurgeTrashRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[61]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[64]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4546,7 +4718,7 @@ func (x *PurgeTrashRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PurgeTrashRequest.ProtoReflect.Descriptor instead.
 func (*PurgeTrashRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{61}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{64}
 }
 
 func (x *PurgeTrashRequest) GetWorkspaceId() string {
@@ -4580,7 +4752,7 @@ type UploadCreate struct {
 
 func (x *UploadCreate) Reset() {
 	*x = UploadCreate{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[62]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[65]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4592,7 +4764,7 @@ func (x *UploadCreate) String() string {
 func (*UploadCreate) ProtoMessage() {}
 
 func (x *UploadCreate) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[62]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[65]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4605,7 +4777,7 @@ func (x *UploadCreate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UploadCreate.ProtoReflect.Descriptor instead.
 func (*UploadCreate) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{62}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{65}
 }
 
 func (x *UploadCreate) GetParent() *NodeLocator {
@@ -4632,7 +4804,7 @@ type UploadReplace struct {
 
 func (x *UploadReplace) Reset() {
 	*x = UploadReplace{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[63]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[66]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4644,7 +4816,7 @@ func (x *UploadReplace) String() string {
 func (*UploadReplace) ProtoMessage() {}
 
 func (x *UploadReplace) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[63]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[66]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4657,7 +4829,7 @@ func (x *UploadReplace) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UploadReplace.ProtoReflect.Descriptor instead.
 func (*UploadReplace) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{63}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{66}
 }
 
 func (x *UploadReplace) GetTarget() *NodeLocator {
@@ -4693,7 +4865,7 @@ type CreateUploadRequest struct {
 
 func (x *CreateUploadRequest) Reset() {
 	*x = CreateUploadRequest{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[64]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[67]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4705,7 +4877,7 @@ func (x *CreateUploadRequest) String() string {
 func (*CreateUploadRequest) ProtoMessage() {}
 
 func (x *CreateUploadRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[64]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[67]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4718,7 +4890,7 @@ func (x *CreateUploadRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateUploadRequest.ProtoReflect.Descriptor instead.
 func (*CreateUploadRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{64}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{67}
 }
 
 func (x *CreateUploadRequest) GetWorkspaceId() string {
@@ -4815,7 +4987,7 @@ type SignedPart struct {
 
 func (x *SignedPart) Reset() {
 	*x = SignedPart{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[65]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[68]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4827,7 +4999,7 @@ func (x *SignedPart) String() string {
 func (*SignedPart) ProtoMessage() {}
 
 func (x *SignedPart) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[65]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[68]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4840,7 +5012,7 @@ func (x *SignedPart) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SignedPart.ProtoReflect.Descriptor instead.
 func (*SignedPart) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{65}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{68}
 }
 
 func (x *SignedPart) GetPartNumber() uint32 {
@@ -4874,7 +5046,7 @@ type UploadPart struct {
 
 func (x *UploadPart) Reset() {
 	*x = UploadPart{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[66]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[69]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4886,7 +5058,7 @@ func (x *UploadPart) String() string {
 func (*UploadPart) ProtoMessage() {}
 
 func (x *UploadPart) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[66]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[69]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4899,7 +5071,7 @@ func (x *UploadPart) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UploadPart.ProtoReflect.Descriptor instead.
 func (*UploadPart) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{66}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{69}
 }
 
 func (x *UploadPart) GetPartNumber() uint32 {
@@ -4928,7 +5100,7 @@ type TransferDescriptor struct {
 
 func (x *TransferDescriptor) Reset() {
 	*x = TransferDescriptor{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[67]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[70]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4940,7 +5112,7 @@ func (x *TransferDescriptor) String() string {
 func (*TransferDescriptor) ProtoMessage() {}
 
 func (x *TransferDescriptor) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[67]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[70]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4953,7 +5125,7 @@ func (x *TransferDescriptor) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TransferDescriptor.ProtoReflect.Descriptor instead.
 func (*TransferDescriptor) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{67}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{70}
 }
 
 func (x *TransferDescriptor) GetPutUrl() string {
@@ -4985,18 +5157,20 @@ func (x *TransferDescriptor) GetPartSizeBytes() int64 {
 }
 
 type Upload struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	ExpiresAt     *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
-	Transfer      *TransferDescriptor    `protobuf:"bytes,3,opt,name=transfer,proto3" json:"transfer,omitempty"`
-	Completed     *Node                  `protobuf:"bytes,4,opt,name=completed,proto3" json:"completed,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Id             string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	ExpiresAt      *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	Transfer       *TransferDescriptor    `protobuf:"bytes,3,opt,name=transfer,proto3" json:"transfer,omitempty"`
+	Completed      *Node                  `protobuf:"bytes,4,opt,name=completed,proto3" json:"completed,omitempty"`
+	CompletedParts []*CompletedPart       `protobuf:"bytes,5,rep,name=completed_parts,json=completedParts,proto3" json:"completed_parts,omitempty"`
+	Transferred    bool                   `protobuf:"varint,6,opt,name=transferred,proto3" json:"transferred,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *Upload) Reset() {
 	*x = Upload{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[68]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[71]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5008,7 +5182,7 @@ func (x *Upload) String() string {
 func (*Upload) ProtoMessage() {}
 
 func (x *Upload) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[68]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[71]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5021,7 +5195,7 @@ func (x *Upload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Upload.ProtoReflect.Descriptor instead.
 func (*Upload) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{68}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{71}
 }
 
 func (x *Upload) GetId() string {
@@ -5052,6 +5226,20 @@ func (x *Upload) GetCompleted() *Node {
 	return nil
 }
 
+func (x *Upload) GetCompletedParts() []*CompletedPart {
+	if x != nil {
+		return x.CompletedParts
+	}
+	return nil
+}
+
+func (x *Upload) GetTransferred() bool {
+	if x != nil {
+		return x.Transferred
+	}
+	return false
+}
+
 type UploadRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	WorkspaceId   string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
@@ -5063,7 +5251,7 @@ type UploadRequest struct {
 
 func (x *UploadRequest) Reset() {
 	*x = UploadRequest{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[69]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[72]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5075,7 +5263,7 @@ func (x *UploadRequest) String() string {
 func (*UploadRequest) ProtoMessage() {}
 
 func (x *UploadRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[69]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[72]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5088,7 +5276,7 @@ func (x *UploadRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UploadRequest.ProtoReflect.Descriptor instead.
 func (*UploadRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{69}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{72}
 }
 
 func (x *UploadRequest) GetWorkspaceId() string {
@@ -5124,7 +5312,7 @@ type SignPartsRequest struct {
 
 func (x *SignPartsRequest) Reset() {
 	*x = SignPartsRequest{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[70]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[73]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5136,7 +5324,7 @@ func (x *SignPartsRequest) String() string {
 func (*SignPartsRequest) ProtoMessage() {}
 
 func (x *SignPartsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[70]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[73]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5149,7 +5337,7 @@ func (x *SignPartsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SignPartsRequest.ProtoReflect.Descriptor instead.
 func (*SignPartsRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{70}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{73}
 }
 
 func (x *SignPartsRequest) GetWorkspaceId() string {
@@ -5189,7 +5377,7 @@ type SignPartsResponse struct {
 
 func (x *SignPartsResponse) Reset() {
 	*x = SignPartsResponse{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[71]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[74]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5201,7 +5389,7 @@ func (x *SignPartsResponse) String() string {
 func (*SignPartsResponse) ProtoMessage() {}
 
 func (x *SignPartsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[71]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[74]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5214,7 +5402,7 @@ func (x *SignPartsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SignPartsResponse.ProtoReflect.Descriptor instead.
 func (*SignPartsResponse) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{71}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{74}
 }
 
 func (x *SignPartsResponse) GetParts() []*SignedPart {
@@ -5235,7 +5423,7 @@ type CompletedPart struct {
 
 func (x *CompletedPart) Reset() {
 	*x = CompletedPart{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[72]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[75]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5247,7 +5435,7 @@ func (x *CompletedPart) String() string {
 func (*CompletedPart) ProtoMessage() {}
 
 func (x *CompletedPart) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[72]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[75]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5260,7 +5448,7 @@ func (x *CompletedPart) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CompletedPart.ProtoReflect.Descriptor instead.
 func (*CompletedPart) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{72}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{75}
 }
 
 func (x *CompletedPart) GetPartNumber() uint32 {
@@ -5296,7 +5484,7 @@ type CompleteUploadRequest struct {
 
 func (x *CompleteUploadRequest) Reset() {
 	*x = CompleteUploadRequest{}
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[73]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[76]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5308,7 +5496,7 @@ func (x *CompleteUploadRequest) String() string {
 func (*CompleteUploadRequest) ProtoMessage() {}
 
 func (x *CompleteUploadRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[73]
+	mi := &file_openlet_api_letfs_v1_letfs_proto_msgTypes[76]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5321,7 +5509,7 @@ func (x *CompleteUploadRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CompleteUploadRequest.ProtoReflect.Descriptor instead.
 func (*CompleteUploadRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{73}
+	return file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP(), []int{76}
 }
 
 func (x *CompleteUploadRequest) GetWorkspaceId() string {
@@ -5495,7 +5683,15 @@ const file_openlet_api_letfs_v1_letfs_proto_rawDesc = "" +
 	"\fworkspace_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\vworkspaceId\x12'\n" +
 	"\n" +
 	"storage_id\x18\x02 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\tstorageId\x12=\n" +
-	"\x06target\x18\x03 \x01(\v2\x1d.openlet.letfs.v1.NodeLocatorB\x06\xbaH\x03\xc8\x01\x01R\x06target\"\xad\x01\n" +
+	"\x06target\x18\x03 \x01(\v2\x1d.openlet.letfs.v1.NodeLocatorB\x06\xbaH\x03\xc8\x01\x01R\x06target\"\x8a\x02\n" +
+	"\x16RetryProcessingRequest\x12+\n" +
+	"\fworkspace_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\vworkspaceId\x12'\n" +
+	"\n" +
+	"storage_id\x18\x02 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\tstorageId\x12=\n" +
+	"\x06target\x18\x03 \x01(\v2\x1d.openlet.letfs.v1.NodeLocatorB\x06\xbaH\x03\xc8\x01\x01R\x06target\x122\n" +
+	"\x10expected_version\x18\x04 \x01(\x03B\a\xbaH\x04\"\x02 \x00R\x0fexpectedVersion\x12'\n" +
+	"\n" +
+	"request_id\x18\x05 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\trequestId\"\xad\x01\n" +
 	"\x10BatchStatRequest\x12+\n" +
 	"\fworkspace_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\vworkspaceId\x12'\n" +
 	"\n" +
@@ -5647,7 +5843,13 @@ const file_openlet_api_letfs_v1_letfs_proto_rawDesc = "" +
 	"\x04blob\x18\x01 \x01(\v2 .openlet.letfs.v1.SignedDownloadH\x00R\x04blob\x124\n" +
 	"\x04text\x18\x02 \x01(\v2\x1e.openlet.letfs.v1.TextDownloadH\x00R\x04textB\n" +
 	"\n" +
-	"\bdownload\"\xb3\x01\n" +
+	"\bdownload\"j\n" +
+	"\x15ArchiveDownloadTicket\x12\x16\n" +
+	"\x06ticket\x18\x01 \x01(\tR\x06ticket\x129\n" +
+	"\n" +
+	"expires_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\"M\n" +
+	"\x1cArchiveDownloadTicketRequest\x12-\n" +
+	"\x06ticket\x18\x01 \x01(\tB\x15\xbaH\x12r\x102\x0e^[a-f0-9]{64}$R\x06ticket\"\xb3\x01\n" +
 	"\x16DownloadArchiveRequest\x12+\n" +
 	"\fworkspace_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\vworkspaceId\x12'\n" +
 	"\n" +
@@ -5784,13 +5986,15 @@ const file_openlet_api_letfs_v1_letfs_proto_rawDesc = "" +
 	"\x0fpart_size_bytes\x18\x04 \x01(\x03R\rpartSizeBytes\x1a:\n" +
 	"\fHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xcb\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb7\x02\n" +
 	"\x06Upload\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x129\n" +
 	"\n" +
 	"expires_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\x12@\n" +
 	"\btransfer\x18\x03 \x01(\v2$.openlet.letfs.v1.TransferDescriptorR\btransfer\x124\n" +
-	"\tcompleted\x18\x04 \x01(\v2\x16.openlet.letfs.v1.NodeR\tcompleted\"\x8c\x01\n" +
+	"\tcompleted\x18\x04 \x01(\v2\x16.openlet.letfs.v1.NodeR\tcompleted\x12H\n" +
+	"\x0fcompleted_parts\x18\x05 \x03(\v2\x1f.openlet.letfs.v1.CompletedPartR\x0ecompletedParts\x12 \n" +
+	"\vtransferred\x18\x06 \x01(\bR\vtransferred\"\x8c\x01\n" +
 	"\rUploadRequest\x12+\n" +
 	"\fworkspace_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\vworkspaceId\x12'\n" +
 	"\n" +
@@ -5832,7 +6036,7 @@ const file_openlet_api_letfs_v1_letfs_proto_rawDesc = "" +
 	"\bFileType\x12\x19\n" +
 	"\x15FILE_TYPE_UNSPECIFIED\x10\x00\x12\x12\n" +
 	"\x0eFILE_TYPE_TEXT\x10\x01\x12\x12\n" +
-	"\x0eFILE_TYPE_BLOB\x10\x022\x91*\n" +
+	"\x0eFILE_TYPE_BLOB\x10\x022\x9b.\n" +
 	"\fLetFSService\x12\x99\x01\n" +
 	"\x13GetWorkspaceStorage\x12).openlet.letfs.v1.WorkspaceStorageRequest\x1a\".openlet.letfs.v1.WorkspaceStorage\"3\x82\xd3\xe4\x93\x02-\x12+/v1/workspaces/{workspace_id}/storage-quota\x12\x9d\x01\n" +
 	"\x12UpdateStorageQuota\x12+.openlet.letfs.v1.UpdateStorageQuotaRequest\x1a\".openlet.letfs.v1.WorkspaceStorage\"6\x82\xd3\xe4\x93\x020:\x01*2+/v1/workspaces/{workspace_id}/storage-quota\x12\x8d\x01\n" +
@@ -5843,7 +6047,8 @@ const file_openlet_api_letfs_v1_letfs_proto_rawDesc = "" +
 	"\x11ListStorageAccess\x12 .openlet.letfs.v1.StorageRequest\x1a\x1f.openlet.letfs.v1.StorageAccess\"B\x82\xd3\xe4\x93\x02<\x12:/v1/workspaces/{workspace_id}/storages/{storage_id}/access\x12\xa6\x01\n" +
 	"\x10SetStorageAccess\x12).openlet.letfs.v1.SetStorageAccessRequest\x1a\x1d.openlet.letfs.v1.AccessGrant\"H\x82\xd3\xe4\x93\x02B:\x01*\"=/v1/workspaces/{workspace_id}/storages/{storage_id}:setAccess\x12\xa8\x01\n" +
 	"\x13RevokeStorageAccess\x12,.openlet.letfs.v1.RevokeStorageAccessRequest\x1a\x16.google.protobuf.Empty\"K\x82\xd3\xe4\x93\x02E:\x01*\"@/v1/workspaces/{workspace_id}/storages/{storage_id}:revokeAccess\x12\x91\x01\n" +
-	"\x04Stat\x12\x1d.openlet.letfs.v1.NodeRequest\x1a\x16.openlet.letfs.v1.Node\"R\x82\xd3\xe4\x93\x02L\x12J/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes/{target.node_id}\x12\xa4\x01\n" +
+	"\x04Stat\x12\x1d.openlet.letfs.v1.NodeRequest\x1a\x16.openlet.letfs.v1.Node\"R\x82\xd3\xe4\x93\x02L\x12J/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes/{target.node_id}\x12\xba\x01\n" +
+	"\x0fRetryProcessing\x12(.openlet.letfs.v1.RetryProcessingRequest\x1a\x16.openlet.letfs.v1.Node\"e\x82\xd3\xe4\x93\x02_:\x01*\"Z/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes/{target.node_id}:retryProcessing\x12\xa4\x01\n" +
 	"\tBatchStat\x12\".openlet.letfs.v1.BatchStatRequest\x1a#.openlet.letfs.v1.BatchStatResponse\"N\x82\xd3\xe4\x93\x02H:\x01*\"C/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes:batchStat\x12\xb1\x01\n" +
 	"\tListNodes\x12\".openlet.letfs.v1.ListNodesRequest\x1a#.openlet.letfs.v1.ListNodesResponse\"[\x82\xd3\xe4\x93\x02U\x12S/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes/{parent.node_id}/children\x12\xa0\x01\n" +
 	"\bReadTree\x12!.openlet.letfs.v1.ReadTreeRequest\x1a\".openlet.letfs.v1.ReadTreeResponse\"M\x82\xd3\xe4\x93\x02G:\x01*\"B/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes:readTree\x12\x8f\x01\n" +
@@ -5856,7 +6061,9 @@ const file_openlet_api_letfs_v1_letfs_proto_rawDesc = "" +
 	"\n" +
 	"MutateText\x12#.openlet.letfs.v1.MutateTextRequest\x1a\x16.openlet.letfs.v1.Node\"Z\x82\xd3\xe4\x93\x02T:\x01*2O/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes/{target.node_id}/text\x12\x9f\x01\n" +
 	"\tReadImage\x12\".openlet.letfs.v1.ReadImageRequest\x1a\x14.google.api.HttpBody\"X\x82\xd3\xe4\x93\x02R\x12P/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes/{target.node_id}/image\x12\xb0\x01\n" +
-	"\vGetDownload\x12\x1d.openlet.letfs.v1.NodeRequest\x1a%.openlet.letfs.v1.GetDownloadResponse\"[\x82\xd3\xe4\x93\x02U\x12S/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes/{target.node_id}:download\x12\xa9\x01\n" +
+	"\vGetDownload\x12\x1d.openlet.letfs.v1.NodeRequest\x1a%.openlet.letfs.v1.GetDownloadResponse\"[\x82\xd3\xe4\x93\x02U\x12S/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes/{target.node_id}:download\x12\xc0\x01\n" +
+	"\x15CreateArchiveDownload\x12(.openlet.letfs.v1.DownloadArchiveRequest\x1a'.openlet.letfs.v1.ArchiveDownloadTicket\"T\x82\xd3\xe4\x93\x02N:\x01*\"I/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes:archiveDownload\x12\x87\x01\n" +
+	"\x15DownloadArchiveTicket\x12..openlet.letfs.v1.ArchiveDownloadTicketRequest\x1a\x14.google.api.HttpBody\"&\x82\xd3\xe4\x93\x02 \x12\x1e/v1/archive-downloads/{ticket}0\x01\x12\xa9\x01\n" +
 	"\x0fDownloadArchive\x12(.openlet.letfs.v1.DownloadArchiveRequest\x1a\x14.google.api.HttpBody\"T\x82\xd3\xe4\x93\x02N:\x01*\"I/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes:downloadArchive0\x01\x12\xa7\x01\n" +
 	"\vSearchFiles\x12$.openlet.letfs.v1.SearchFilesRequest\x1a%.openlet.letfs.v1.SearchFilesResponse\"K\x82\xd3\xe4\x93\x02E:\x01*\"@/v1/workspaces/{workspace_id}/storages/{storage_id}/files:search\x12\xa8\x01\n" +
 	"\n" +
@@ -5886,92 +6093,95 @@ func file_openlet_api_letfs_v1_letfs_proto_rawDescGZIP() []byte {
 }
 
 var file_openlet_api_letfs_v1_letfs_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
-var file_openlet_api_letfs_v1_letfs_proto_msgTypes = make([]protoimpl.MessageInfo, 76)
+var file_openlet_api_letfs_v1_letfs_proto_msgTypes = make([]protoimpl.MessageInfo, 79)
 var file_openlet_api_letfs_v1_letfs_proto_goTypes = []any{
-	(StorageVisibility)(0),             // 0: openlet.letfs.v1.StorageVisibility
-	(StorageRole)(0),                   // 1: openlet.letfs.v1.StorageRole
-	(NodeKind)(0),                      // 2: openlet.letfs.v1.NodeKind
-	(FileType)(0),                      // 3: openlet.letfs.v1.FileType
-	(*ActorRef)(nil),                   // 4: openlet.letfs.v1.ActorRef
-	(*StorageOwnership)(nil),           // 5: openlet.letfs.v1.StorageOwnership
-	(*StorageCapabilities)(nil),        // 6: openlet.letfs.v1.StorageCapabilities
-	(*Storage)(nil),                    // 7: openlet.letfs.v1.Storage
-	(*WorkspaceStorage)(nil),           // 8: openlet.letfs.v1.WorkspaceStorage
-	(*AccessGrant)(nil),                // 9: openlet.letfs.v1.AccessGrant
-	(*StorageAccess)(nil),              // 10: openlet.letfs.v1.StorageAccess
-	(*NodeLocator)(nil),                // 11: openlet.letfs.v1.NodeLocator
-	(*FileMetadata)(nil),               // 12: openlet.letfs.v1.FileMetadata
-	(*ProcessingSummary)(nil),          // 13: openlet.letfs.v1.ProcessingSummary
-	(*FileHeader)(nil),                 // 14: openlet.letfs.v1.FileHeader
-	(*Node)(nil),                       // 15: openlet.letfs.v1.Node
-	(*WorkspaceStorageRequest)(nil),    // 16: openlet.letfs.v1.WorkspaceStorageRequest
-	(*UpdateStorageQuotaRequest)(nil),  // 17: openlet.letfs.v1.UpdateStorageQuotaRequest
-	(*StorageRequest)(nil),             // 18: openlet.letfs.v1.StorageRequest
-	(*ListStoragesRequest)(nil),        // 19: openlet.letfs.v1.ListStoragesRequest
-	(*ListStoragesResponse)(nil),       // 20: openlet.letfs.v1.ListStoragesResponse
-	(*UpdateStorageRequest)(nil),       // 21: openlet.letfs.v1.UpdateStorageRequest
-	(*SetStorageAccessRequest)(nil),    // 22: openlet.letfs.v1.SetStorageAccessRequest
-	(*RevokeStorageAccessRequest)(nil), // 23: openlet.letfs.v1.RevokeStorageAccessRequest
-	(*NodeRequest)(nil),                // 24: openlet.letfs.v1.NodeRequest
-	(*BatchStatRequest)(nil),           // 25: openlet.letfs.v1.BatchStatRequest
-	(*StatResult)(nil),                 // 26: openlet.letfs.v1.StatResult
-	(*BatchStatResponse)(nil),          // 27: openlet.letfs.v1.BatchStatResponse
-	(*ListNodesRequest)(nil),           // 28: openlet.letfs.v1.ListNodesRequest
-	(*ListNodesResponse)(nil),          // 29: openlet.letfs.v1.ListNodesResponse
-	(*ReadTreeRequest)(nil),            // 30: openlet.letfs.v1.ReadTreeRequest
-	(*TreeEntry)(nil),                  // 31: openlet.letfs.v1.TreeEntry
-	(*ReadTreeResponse)(nil),           // 32: openlet.letfs.v1.ReadTreeResponse
-	(*TextContent)(nil),                // 33: openlet.letfs.v1.TextContent
-	(*CreateNodeRequest)(nil),          // 34: openlet.letfs.v1.CreateNodeRequest
-	(*CreateDirectoriesRequest)(nil),   // 35: openlet.letfs.v1.CreateDirectoriesRequest
-	(*TransferNodeRequest)(nil),        // 36: openlet.letfs.v1.TransferNodeRequest
-	(*ByteRange)(nil),                  // 37: openlet.letfs.v1.ByteRange
-	(*LineRange)(nil),                  // 38: openlet.letfs.v1.LineRange
-	(*ReadTextRequest)(nil),            // 39: openlet.letfs.v1.ReadTextRequest
-	(*TextMetrics)(nil),                // 40: openlet.letfs.v1.TextMetrics
-	(*ReadTextResponse)(nil),           // 41: openlet.letfs.v1.ReadTextResponse
-	(*TextEdit)(nil),                   // 42: openlet.letfs.v1.TextEdit
-	(*TextPatch)(nil),                  // 43: openlet.letfs.v1.TextPatch
-	(*TextOverwrite)(nil),              // 44: openlet.letfs.v1.TextOverwrite
-	(*TextReplace)(nil),                // 45: openlet.letfs.v1.TextReplace
-	(*MutateTextRequest)(nil),          // 46: openlet.letfs.v1.MutateTextRequest
-	(*ReadImageRequest)(nil),           // 47: openlet.letfs.v1.ReadImageRequest
-	(*SignedDownload)(nil),             // 48: openlet.letfs.v1.SignedDownload
-	(*TextDownload)(nil),               // 49: openlet.letfs.v1.TextDownload
-	(*GetDownloadResponse)(nil),        // 50: openlet.letfs.v1.GetDownloadResponse
-	(*DownloadArchiveRequest)(nil),     // 51: openlet.letfs.v1.DownloadArchiveRequest
-	(*SearchFilesRequest)(nil),         // 52: openlet.letfs.v1.SearchFilesRequest
-	(*SearchFilesResponse)(nil),        // 53: openlet.letfs.v1.SearchFilesResponse
-	(*TextSearchRequest)(nil),          // 54: openlet.letfs.v1.TextSearchRequest
-	(*TextHit)(nil),                    // 55: openlet.letfs.v1.TextHit
-	(*TextSearchResponse)(nil),         // 56: openlet.letfs.v1.TextSearchResponse
-	(*SemanticSearchRequest)(nil),      // 57: openlet.letfs.v1.SemanticSearchRequest
-	(*SemanticHit)(nil),                // 58: openlet.letfs.v1.SemanticHit
-	(*SemanticSearchResponse)(nil),     // 59: openlet.letfs.v1.SemanticSearchResponse
-	(*TrashNodeRequest)(nil),           // 60: openlet.letfs.v1.TrashNodeRequest
-	(*TrashEntry)(nil),                 // 61: openlet.letfs.v1.TrashEntry
-	(*ListTrashRequest)(nil),           // 62: openlet.letfs.v1.ListTrashRequest
-	(*ListTrashResponse)(nil),          // 63: openlet.letfs.v1.ListTrashResponse
-	(*RestoreTrashRequest)(nil),        // 64: openlet.letfs.v1.RestoreTrashRequest
-	(*PurgeTrashRequest)(nil),          // 65: openlet.letfs.v1.PurgeTrashRequest
-	(*UploadCreate)(nil),               // 66: openlet.letfs.v1.UploadCreate
-	(*UploadReplace)(nil),              // 67: openlet.letfs.v1.UploadReplace
-	(*CreateUploadRequest)(nil),        // 68: openlet.letfs.v1.CreateUploadRequest
-	(*SignedPart)(nil),                 // 69: openlet.letfs.v1.SignedPart
-	(*UploadPart)(nil),                 // 70: openlet.letfs.v1.UploadPart
-	(*TransferDescriptor)(nil),         // 71: openlet.letfs.v1.TransferDescriptor
-	(*Upload)(nil),                     // 72: openlet.letfs.v1.Upload
-	(*UploadRequest)(nil),              // 73: openlet.letfs.v1.UploadRequest
-	(*SignPartsRequest)(nil),           // 74: openlet.letfs.v1.SignPartsRequest
-	(*SignPartsResponse)(nil),          // 75: openlet.letfs.v1.SignPartsResponse
-	(*CompletedPart)(nil),              // 76: openlet.letfs.v1.CompletedPart
-	(*CompleteUploadRequest)(nil),      // 77: openlet.letfs.v1.CompleteUploadRequest
-	nil,                                // 78: openlet.letfs.v1.SignedPart.HeadersEntry
-	nil,                                // 79: openlet.letfs.v1.TransferDescriptor.HeadersEntry
-	(*timestamppb.Timestamp)(nil),      // 80: google.protobuf.Timestamp
-	(*status.Status)(nil),              // 81: google.rpc.Status
-	(*emptypb.Empty)(nil),              // 82: google.protobuf.Empty
-	(*httpbody.HttpBody)(nil),          // 83: google.api.HttpBody
+	(StorageVisibility)(0),               // 0: openlet.letfs.v1.StorageVisibility
+	(StorageRole)(0),                     // 1: openlet.letfs.v1.StorageRole
+	(NodeKind)(0),                        // 2: openlet.letfs.v1.NodeKind
+	(FileType)(0),                        // 3: openlet.letfs.v1.FileType
+	(*ActorRef)(nil),                     // 4: openlet.letfs.v1.ActorRef
+	(*StorageOwnership)(nil),             // 5: openlet.letfs.v1.StorageOwnership
+	(*StorageCapabilities)(nil),          // 6: openlet.letfs.v1.StorageCapabilities
+	(*Storage)(nil),                      // 7: openlet.letfs.v1.Storage
+	(*WorkspaceStorage)(nil),             // 8: openlet.letfs.v1.WorkspaceStorage
+	(*AccessGrant)(nil),                  // 9: openlet.letfs.v1.AccessGrant
+	(*StorageAccess)(nil),                // 10: openlet.letfs.v1.StorageAccess
+	(*NodeLocator)(nil),                  // 11: openlet.letfs.v1.NodeLocator
+	(*FileMetadata)(nil),                 // 12: openlet.letfs.v1.FileMetadata
+	(*ProcessingSummary)(nil),            // 13: openlet.letfs.v1.ProcessingSummary
+	(*FileHeader)(nil),                   // 14: openlet.letfs.v1.FileHeader
+	(*Node)(nil),                         // 15: openlet.letfs.v1.Node
+	(*WorkspaceStorageRequest)(nil),      // 16: openlet.letfs.v1.WorkspaceStorageRequest
+	(*UpdateStorageQuotaRequest)(nil),    // 17: openlet.letfs.v1.UpdateStorageQuotaRequest
+	(*StorageRequest)(nil),               // 18: openlet.letfs.v1.StorageRequest
+	(*ListStoragesRequest)(nil),          // 19: openlet.letfs.v1.ListStoragesRequest
+	(*ListStoragesResponse)(nil),         // 20: openlet.letfs.v1.ListStoragesResponse
+	(*UpdateStorageRequest)(nil),         // 21: openlet.letfs.v1.UpdateStorageRequest
+	(*SetStorageAccessRequest)(nil),      // 22: openlet.letfs.v1.SetStorageAccessRequest
+	(*RevokeStorageAccessRequest)(nil),   // 23: openlet.letfs.v1.RevokeStorageAccessRequest
+	(*NodeRequest)(nil),                  // 24: openlet.letfs.v1.NodeRequest
+	(*RetryProcessingRequest)(nil),       // 25: openlet.letfs.v1.RetryProcessingRequest
+	(*BatchStatRequest)(nil),             // 26: openlet.letfs.v1.BatchStatRequest
+	(*StatResult)(nil),                   // 27: openlet.letfs.v1.StatResult
+	(*BatchStatResponse)(nil),            // 28: openlet.letfs.v1.BatchStatResponse
+	(*ListNodesRequest)(nil),             // 29: openlet.letfs.v1.ListNodesRequest
+	(*ListNodesResponse)(nil),            // 30: openlet.letfs.v1.ListNodesResponse
+	(*ReadTreeRequest)(nil),              // 31: openlet.letfs.v1.ReadTreeRequest
+	(*TreeEntry)(nil),                    // 32: openlet.letfs.v1.TreeEntry
+	(*ReadTreeResponse)(nil),             // 33: openlet.letfs.v1.ReadTreeResponse
+	(*TextContent)(nil),                  // 34: openlet.letfs.v1.TextContent
+	(*CreateNodeRequest)(nil),            // 35: openlet.letfs.v1.CreateNodeRequest
+	(*CreateDirectoriesRequest)(nil),     // 36: openlet.letfs.v1.CreateDirectoriesRequest
+	(*TransferNodeRequest)(nil),          // 37: openlet.letfs.v1.TransferNodeRequest
+	(*ByteRange)(nil),                    // 38: openlet.letfs.v1.ByteRange
+	(*LineRange)(nil),                    // 39: openlet.letfs.v1.LineRange
+	(*ReadTextRequest)(nil),              // 40: openlet.letfs.v1.ReadTextRequest
+	(*TextMetrics)(nil),                  // 41: openlet.letfs.v1.TextMetrics
+	(*ReadTextResponse)(nil),             // 42: openlet.letfs.v1.ReadTextResponse
+	(*TextEdit)(nil),                     // 43: openlet.letfs.v1.TextEdit
+	(*TextPatch)(nil),                    // 44: openlet.letfs.v1.TextPatch
+	(*TextOverwrite)(nil),                // 45: openlet.letfs.v1.TextOverwrite
+	(*TextReplace)(nil),                  // 46: openlet.letfs.v1.TextReplace
+	(*MutateTextRequest)(nil),            // 47: openlet.letfs.v1.MutateTextRequest
+	(*ReadImageRequest)(nil),             // 48: openlet.letfs.v1.ReadImageRequest
+	(*SignedDownload)(nil),               // 49: openlet.letfs.v1.SignedDownload
+	(*TextDownload)(nil),                 // 50: openlet.letfs.v1.TextDownload
+	(*GetDownloadResponse)(nil),          // 51: openlet.letfs.v1.GetDownloadResponse
+	(*ArchiveDownloadTicket)(nil),        // 52: openlet.letfs.v1.ArchiveDownloadTicket
+	(*ArchiveDownloadTicketRequest)(nil), // 53: openlet.letfs.v1.ArchiveDownloadTicketRequest
+	(*DownloadArchiveRequest)(nil),       // 54: openlet.letfs.v1.DownloadArchiveRequest
+	(*SearchFilesRequest)(nil),           // 55: openlet.letfs.v1.SearchFilesRequest
+	(*SearchFilesResponse)(nil),          // 56: openlet.letfs.v1.SearchFilesResponse
+	(*TextSearchRequest)(nil),            // 57: openlet.letfs.v1.TextSearchRequest
+	(*TextHit)(nil),                      // 58: openlet.letfs.v1.TextHit
+	(*TextSearchResponse)(nil),           // 59: openlet.letfs.v1.TextSearchResponse
+	(*SemanticSearchRequest)(nil),        // 60: openlet.letfs.v1.SemanticSearchRequest
+	(*SemanticHit)(nil),                  // 61: openlet.letfs.v1.SemanticHit
+	(*SemanticSearchResponse)(nil),       // 62: openlet.letfs.v1.SemanticSearchResponse
+	(*TrashNodeRequest)(nil),             // 63: openlet.letfs.v1.TrashNodeRequest
+	(*TrashEntry)(nil),                   // 64: openlet.letfs.v1.TrashEntry
+	(*ListTrashRequest)(nil),             // 65: openlet.letfs.v1.ListTrashRequest
+	(*ListTrashResponse)(nil),            // 66: openlet.letfs.v1.ListTrashResponse
+	(*RestoreTrashRequest)(nil),          // 67: openlet.letfs.v1.RestoreTrashRequest
+	(*PurgeTrashRequest)(nil),            // 68: openlet.letfs.v1.PurgeTrashRequest
+	(*UploadCreate)(nil),                 // 69: openlet.letfs.v1.UploadCreate
+	(*UploadReplace)(nil),                // 70: openlet.letfs.v1.UploadReplace
+	(*CreateUploadRequest)(nil),          // 71: openlet.letfs.v1.CreateUploadRequest
+	(*SignedPart)(nil),                   // 72: openlet.letfs.v1.SignedPart
+	(*UploadPart)(nil),                   // 73: openlet.letfs.v1.UploadPart
+	(*TransferDescriptor)(nil),           // 74: openlet.letfs.v1.TransferDescriptor
+	(*Upload)(nil),                       // 75: openlet.letfs.v1.Upload
+	(*UploadRequest)(nil),                // 76: openlet.letfs.v1.UploadRequest
+	(*SignPartsRequest)(nil),             // 77: openlet.letfs.v1.SignPartsRequest
+	(*SignPartsResponse)(nil),            // 78: openlet.letfs.v1.SignPartsResponse
+	(*CompletedPart)(nil),                // 79: openlet.letfs.v1.CompletedPart
+	(*CompleteUploadRequest)(nil),        // 80: openlet.letfs.v1.CompleteUploadRequest
+	nil,                                  // 81: openlet.letfs.v1.SignedPart.HeadersEntry
+	nil,                                  // 82: openlet.letfs.v1.TransferDescriptor.HeadersEntry
+	(*timestamppb.Timestamp)(nil),        // 83: google.protobuf.Timestamp
+	(*status.Status)(nil),                // 84: google.rpc.Status
+	(*emptypb.Empty)(nil),                // 85: google.protobuf.Empty
+	(*httpbody.HttpBody)(nil),            // 86: google.api.HttpBody
 }
 var file_openlet_api_letfs_v1_letfs_proto_depIdxs = []int32{
 	0,   // 0: openlet.letfs.v1.Storage.visibility:type_name -> openlet.letfs.v1.StorageVisibility
@@ -5985,8 +6195,8 @@ var file_openlet_api_letfs_v1_letfs_proto_depIdxs = []int32{
 	12,  // 8: openlet.letfs.v1.FileHeader.metadata:type_name -> openlet.letfs.v1.FileMetadata
 	13,  // 9: openlet.letfs.v1.FileHeader.processing:type_name -> openlet.letfs.v1.ProcessingSummary
 	2,   // 10: openlet.letfs.v1.Node.kind:type_name -> openlet.letfs.v1.NodeKind
-	80,  // 11: openlet.letfs.v1.Node.created_at:type_name -> google.protobuf.Timestamp
-	80,  // 12: openlet.letfs.v1.Node.updated_at:type_name -> google.protobuf.Timestamp
+	83,  // 11: openlet.letfs.v1.Node.created_at:type_name -> google.protobuf.Timestamp
+	83,  // 12: openlet.letfs.v1.Node.updated_at:type_name -> google.protobuf.Timestamp
 	14,  // 13: openlet.letfs.v1.Node.file:type_name -> openlet.letfs.v1.FileHeader
 	0,   // 14: openlet.letfs.v1.ListStoragesRequest.visibility:type_name -> openlet.letfs.v1.StorageVisibility
 	7,   // 15: openlet.letfs.v1.ListStoragesResponse.storages:type_name -> openlet.letfs.v1.Storage
@@ -5994,132 +6204,141 @@ var file_openlet_api_letfs_v1_letfs_proto_depIdxs = []int32{
 	1,   // 17: openlet.letfs.v1.SetStorageAccessRequest.role:type_name -> openlet.letfs.v1.StorageRole
 	4,   // 18: openlet.letfs.v1.RevokeStorageAccessRequest.actor:type_name -> openlet.letfs.v1.ActorRef
 	11,  // 19: openlet.letfs.v1.NodeRequest.target:type_name -> openlet.letfs.v1.NodeLocator
-	11,  // 20: openlet.letfs.v1.BatchStatRequest.targets:type_name -> openlet.letfs.v1.NodeLocator
-	15,  // 21: openlet.letfs.v1.StatResult.node:type_name -> openlet.letfs.v1.Node
-	81,  // 22: openlet.letfs.v1.StatResult.error:type_name -> google.rpc.Status
-	26,  // 23: openlet.letfs.v1.BatchStatResponse.results:type_name -> openlet.letfs.v1.StatResult
-	11,  // 24: openlet.letfs.v1.ListNodesRequest.parent:type_name -> openlet.letfs.v1.NodeLocator
-	15,  // 25: openlet.letfs.v1.ListNodesResponse.nodes:type_name -> openlet.letfs.v1.Node
-	11,  // 26: openlet.letfs.v1.ReadTreeRequest.root:type_name -> openlet.letfs.v1.NodeLocator
-	15,  // 27: openlet.letfs.v1.TreeEntry.node:type_name -> openlet.letfs.v1.Node
-	31,  // 28: openlet.letfs.v1.ReadTreeResponse.entries:type_name -> openlet.letfs.v1.TreeEntry
-	11,  // 29: openlet.letfs.v1.CreateNodeRequest.parent:type_name -> openlet.letfs.v1.NodeLocator
-	82,  // 30: openlet.letfs.v1.CreateNodeRequest.directory:type_name -> google.protobuf.Empty
-	33,  // 31: openlet.letfs.v1.CreateNodeRequest.text:type_name -> openlet.letfs.v1.TextContent
-	11,  // 32: openlet.letfs.v1.CreateDirectoriesRequest.base:type_name -> openlet.letfs.v1.NodeLocator
-	11,  // 33: openlet.letfs.v1.TransferNodeRequest.source:type_name -> openlet.letfs.v1.NodeLocator
-	11,  // 34: openlet.letfs.v1.TransferNodeRequest.parent:type_name -> openlet.letfs.v1.NodeLocator
-	11,  // 35: openlet.letfs.v1.ReadTextRequest.target:type_name -> openlet.letfs.v1.NodeLocator
-	37,  // 36: openlet.letfs.v1.ReadTextRequest.bytes:type_name -> openlet.letfs.v1.ByteRange
-	38,  // 37: openlet.letfs.v1.ReadTextRequest.lines:type_name -> openlet.letfs.v1.LineRange
-	40,  // 38: openlet.letfs.v1.ReadTextResponse.metrics:type_name -> openlet.letfs.v1.TextMetrics
-	42,  // 39: openlet.letfs.v1.TextPatch.edits:type_name -> openlet.letfs.v1.TextEdit
-	11,  // 40: openlet.letfs.v1.MutateTextRequest.target:type_name -> openlet.letfs.v1.NodeLocator
-	43,  // 41: openlet.letfs.v1.MutateTextRequest.patch:type_name -> openlet.letfs.v1.TextPatch
-	44,  // 42: openlet.letfs.v1.MutateTextRequest.overwrite:type_name -> openlet.letfs.v1.TextOverwrite
-	45,  // 43: openlet.letfs.v1.MutateTextRequest.literal_replace:type_name -> openlet.letfs.v1.TextReplace
-	11,  // 44: openlet.letfs.v1.ReadImageRequest.target:type_name -> openlet.letfs.v1.NodeLocator
-	80,  // 45: openlet.letfs.v1.SignedDownload.expires_at:type_name -> google.protobuf.Timestamp
-	48,  // 46: openlet.letfs.v1.GetDownloadResponse.blob:type_name -> openlet.letfs.v1.SignedDownload
-	49,  // 47: openlet.letfs.v1.GetDownloadResponse.text:type_name -> openlet.letfs.v1.TextDownload
-	11,  // 48: openlet.letfs.v1.DownloadArchiveRequest.targets:type_name -> openlet.letfs.v1.NodeLocator
-	11,  // 49: openlet.letfs.v1.SearchFilesRequest.root:type_name -> openlet.letfs.v1.NodeLocator
-	15,  // 50: openlet.letfs.v1.SearchFilesResponse.hits:type_name -> openlet.letfs.v1.Node
-	11,  // 51: openlet.letfs.v1.TextSearchRequest.root:type_name -> openlet.letfs.v1.NodeLocator
-	15,  // 52: openlet.letfs.v1.TextHit.node:type_name -> openlet.letfs.v1.Node
-	55,  // 53: openlet.letfs.v1.TextSearchResponse.hits:type_name -> openlet.letfs.v1.TextHit
-	11,  // 54: openlet.letfs.v1.SemanticSearchRequest.root:type_name -> openlet.letfs.v1.NodeLocator
-	15,  // 55: openlet.letfs.v1.SemanticHit.node:type_name -> openlet.letfs.v1.Node
-	58,  // 56: openlet.letfs.v1.SemanticSearchResponse.hits:type_name -> openlet.letfs.v1.SemanticHit
-	11,  // 57: openlet.letfs.v1.TrashNodeRequest.target:type_name -> openlet.letfs.v1.NodeLocator
-	15,  // 58: openlet.letfs.v1.TrashEntry.node:type_name -> openlet.letfs.v1.Node
-	4,   // 59: openlet.letfs.v1.TrashEntry.trashed_by:type_name -> openlet.letfs.v1.ActorRef
-	80,  // 60: openlet.letfs.v1.TrashEntry.trashed_at:type_name -> google.protobuf.Timestamp
-	61,  // 61: openlet.letfs.v1.ListTrashResponse.entries:type_name -> openlet.letfs.v1.TrashEntry
-	11,  // 62: openlet.letfs.v1.RestoreTrashRequest.parent:type_name -> openlet.letfs.v1.NodeLocator
-	11,  // 63: openlet.letfs.v1.UploadCreate.parent:type_name -> openlet.letfs.v1.NodeLocator
-	11,  // 64: openlet.letfs.v1.UploadReplace.target:type_name -> openlet.letfs.v1.NodeLocator
-	66,  // 65: openlet.letfs.v1.CreateUploadRequest.create:type_name -> openlet.letfs.v1.UploadCreate
-	67,  // 66: openlet.letfs.v1.CreateUploadRequest.replace:type_name -> openlet.letfs.v1.UploadReplace
-	78,  // 67: openlet.letfs.v1.SignedPart.headers:type_name -> openlet.letfs.v1.SignedPart.HeadersEntry
-	79,  // 68: openlet.letfs.v1.TransferDescriptor.headers:type_name -> openlet.letfs.v1.TransferDescriptor.HeadersEntry
-	80,  // 69: openlet.letfs.v1.Upload.expires_at:type_name -> google.protobuf.Timestamp
-	71,  // 70: openlet.letfs.v1.Upload.transfer:type_name -> openlet.letfs.v1.TransferDescriptor
-	15,  // 71: openlet.letfs.v1.Upload.completed:type_name -> openlet.letfs.v1.Node
-	70,  // 72: openlet.letfs.v1.SignPartsRequest.parts:type_name -> openlet.letfs.v1.UploadPart
-	69,  // 73: openlet.letfs.v1.SignPartsResponse.parts:type_name -> openlet.letfs.v1.SignedPart
-	76,  // 74: openlet.letfs.v1.CompleteUploadRequest.parts:type_name -> openlet.letfs.v1.CompletedPart
-	16,  // 75: openlet.letfs.v1.LetFSService.GetWorkspaceStorage:input_type -> openlet.letfs.v1.WorkspaceStorageRequest
-	17,  // 76: openlet.letfs.v1.LetFSService.UpdateStorageQuota:input_type -> openlet.letfs.v1.UpdateStorageQuotaRequest
-	19,  // 77: openlet.letfs.v1.LetFSService.ListStorages:input_type -> openlet.letfs.v1.ListStoragesRequest
-	18,  // 78: openlet.letfs.v1.LetFSService.GetStorage:input_type -> openlet.letfs.v1.StorageRequest
-	21,  // 79: openlet.letfs.v1.LetFSService.UpdateStorage:input_type -> openlet.letfs.v1.UpdateStorageRequest
-	18,  // 80: openlet.letfs.v1.LetFSService.ListStorageAccess:input_type -> openlet.letfs.v1.StorageRequest
-	22,  // 81: openlet.letfs.v1.LetFSService.SetStorageAccess:input_type -> openlet.letfs.v1.SetStorageAccessRequest
-	23,  // 82: openlet.letfs.v1.LetFSService.RevokeStorageAccess:input_type -> openlet.letfs.v1.RevokeStorageAccessRequest
-	24,  // 83: openlet.letfs.v1.LetFSService.Stat:input_type -> openlet.letfs.v1.NodeRequest
-	25,  // 84: openlet.letfs.v1.LetFSService.BatchStat:input_type -> openlet.letfs.v1.BatchStatRequest
-	28,  // 85: openlet.letfs.v1.LetFSService.ListNodes:input_type -> openlet.letfs.v1.ListNodesRequest
-	30,  // 86: openlet.letfs.v1.LetFSService.ReadTree:input_type -> openlet.letfs.v1.ReadTreeRequest
-	34,  // 87: openlet.letfs.v1.LetFSService.CreateNode:input_type -> openlet.letfs.v1.CreateNodeRequest
-	35,  // 88: openlet.letfs.v1.LetFSService.CreateDirectories:input_type -> openlet.letfs.v1.CreateDirectoriesRequest
-	36,  // 89: openlet.letfs.v1.LetFSService.MoveNode:input_type -> openlet.letfs.v1.TransferNodeRequest
-	36,  // 90: openlet.letfs.v1.LetFSService.CopyNode:input_type -> openlet.letfs.v1.TransferNodeRequest
-	39,  // 91: openlet.letfs.v1.LetFSService.ReadText:input_type -> openlet.letfs.v1.ReadTextRequest
-	46,  // 92: openlet.letfs.v1.LetFSService.MutateText:input_type -> openlet.letfs.v1.MutateTextRequest
-	47,  // 93: openlet.letfs.v1.LetFSService.ReadImage:input_type -> openlet.letfs.v1.ReadImageRequest
-	24,  // 94: openlet.letfs.v1.LetFSService.GetDownload:input_type -> openlet.letfs.v1.NodeRequest
-	51,  // 95: openlet.letfs.v1.LetFSService.DownloadArchive:input_type -> openlet.letfs.v1.DownloadArchiveRequest
-	52,  // 96: openlet.letfs.v1.LetFSService.SearchFiles:input_type -> openlet.letfs.v1.SearchFilesRequest
-	54,  // 97: openlet.letfs.v1.LetFSService.TextSearch:input_type -> openlet.letfs.v1.TextSearchRequest
-	57,  // 98: openlet.letfs.v1.LetFSService.SemanticSearch:input_type -> openlet.letfs.v1.SemanticSearchRequest
-	60,  // 99: openlet.letfs.v1.LetFSService.TrashNode:input_type -> openlet.letfs.v1.TrashNodeRequest
-	62,  // 100: openlet.letfs.v1.LetFSService.ListTrash:input_type -> openlet.letfs.v1.ListTrashRequest
-	64,  // 101: openlet.letfs.v1.LetFSService.RestoreTrash:input_type -> openlet.letfs.v1.RestoreTrashRequest
-	65,  // 102: openlet.letfs.v1.LetFSService.PurgeTrash:input_type -> openlet.letfs.v1.PurgeTrashRequest
-	68,  // 103: openlet.letfs.v1.LetFSService.CreateUpload:input_type -> openlet.letfs.v1.CreateUploadRequest
-	73,  // 104: openlet.letfs.v1.LetFSService.GetUpload:input_type -> openlet.letfs.v1.UploadRequest
-	74,  // 105: openlet.letfs.v1.LetFSService.SignParts:input_type -> openlet.letfs.v1.SignPartsRequest
-	77,  // 106: openlet.letfs.v1.LetFSService.CompleteUpload:input_type -> openlet.letfs.v1.CompleteUploadRequest
-	73,  // 107: openlet.letfs.v1.LetFSService.AbortUpload:input_type -> openlet.letfs.v1.UploadRequest
-	8,   // 108: openlet.letfs.v1.LetFSService.GetWorkspaceStorage:output_type -> openlet.letfs.v1.WorkspaceStorage
-	8,   // 109: openlet.letfs.v1.LetFSService.UpdateStorageQuota:output_type -> openlet.letfs.v1.WorkspaceStorage
-	20,  // 110: openlet.letfs.v1.LetFSService.ListStorages:output_type -> openlet.letfs.v1.ListStoragesResponse
-	7,   // 111: openlet.letfs.v1.LetFSService.GetStorage:output_type -> openlet.letfs.v1.Storage
-	7,   // 112: openlet.letfs.v1.LetFSService.UpdateStorage:output_type -> openlet.letfs.v1.Storage
-	10,  // 113: openlet.letfs.v1.LetFSService.ListStorageAccess:output_type -> openlet.letfs.v1.StorageAccess
-	9,   // 114: openlet.letfs.v1.LetFSService.SetStorageAccess:output_type -> openlet.letfs.v1.AccessGrant
-	82,  // 115: openlet.letfs.v1.LetFSService.RevokeStorageAccess:output_type -> google.protobuf.Empty
-	15,  // 116: openlet.letfs.v1.LetFSService.Stat:output_type -> openlet.letfs.v1.Node
-	27,  // 117: openlet.letfs.v1.LetFSService.BatchStat:output_type -> openlet.letfs.v1.BatchStatResponse
-	29,  // 118: openlet.letfs.v1.LetFSService.ListNodes:output_type -> openlet.letfs.v1.ListNodesResponse
-	32,  // 119: openlet.letfs.v1.LetFSService.ReadTree:output_type -> openlet.letfs.v1.ReadTreeResponse
-	15,  // 120: openlet.letfs.v1.LetFSService.CreateNode:output_type -> openlet.letfs.v1.Node
-	15,  // 121: openlet.letfs.v1.LetFSService.CreateDirectories:output_type -> openlet.letfs.v1.Node
-	15,  // 122: openlet.letfs.v1.LetFSService.MoveNode:output_type -> openlet.letfs.v1.Node
-	15,  // 123: openlet.letfs.v1.LetFSService.CopyNode:output_type -> openlet.letfs.v1.Node
-	41,  // 124: openlet.letfs.v1.LetFSService.ReadText:output_type -> openlet.letfs.v1.ReadTextResponse
-	15,  // 125: openlet.letfs.v1.LetFSService.MutateText:output_type -> openlet.letfs.v1.Node
-	83,  // 126: openlet.letfs.v1.LetFSService.ReadImage:output_type -> google.api.HttpBody
-	50,  // 127: openlet.letfs.v1.LetFSService.GetDownload:output_type -> openlet.letfs.v1.GetDownloadResponse
-	83,  // 128: openlet.letfs.v1.LetFSService.DownloadArchive:output_type -> google.api.HttpBody
-	53,  // 129: openlet.letfs.v1.LetFSService.SearchFiles:output_type -> openlet.letfs.v1.SearchFilesResponse
-	56,  // 130: openlet.letfs.v1.LetFSService.TextSearch:output_type -> openlet.letfs.v1.TextSearchResponse
-	59,  // 131: openlet.letfs.v1.LetFSService.SemanticSearch:output_type -> openlet.letfs.v1.SemanticSearchResponse
-	61,  // 132: openlet.letfs.v1.LetFSService.TrashNode:output_type -> openlet.letfs.v1.TrashEntry
-	63,  // 133: openlet.letfs.v1.LetFSService.ListTrash:output_type -> openlet.letfs.v1.ListTrashResponse
-	15,  // 134: openlet.letfs.v1.LetFSService.RestoreTrash:output_type -> openlet.letfs.v1.Node
-	82,  // 135: openlet.letfs.v1.LetFSService.PurgeTrash:output_type -> google.protobuf.Empty
-	72,  // 136: openlet.letfs.v1.LetFSService.CreateUpload:output_type -> openlet.letfs.v1.Upload
-	72,  // 137: openlet.letfs.v1.LetFSService.GetUpload:output_type -> openlet.letfs.v1.Upload
-	75,  // 138: openlet.letfs.v1.LetFSService.SignParts:output_type -> openlet.letfs.v1.SignPartsResponse
-	15,  // 139: openlet.letfs.v1.LetFSService.CompleteUpload:output_type -> openlet.letfs.v1.Node
-	82,  // 140: openlet.letfs.v1.LetFSService.AbortUpload:output_type -> google.protobuf.Empty
-	108, // [108:141] is the sub-list for method output_type
-	75,  // [75:108] is the sub-list for method input_type
-	75,  // [75:75] is the sub-list for extension type_name
-	75,  // [75:75] is the sub-list for extension extendee
-	0,   // [0:75] is the sub-list for field type_name
+	11,  // 20: openlet.letfs.v1.RetryProcessingRequest.target:type_name -> openlet.letfs.v1.NodeLocator
+	11,  // 21: openlet.letfs.v1.BatchStatRequest.targets:type_name -> openlet.letfs.v1.NodeLocator
+	15,  // 22: openlet.letfs.v1.StatResult.node:type_name -> openlet.letfs.v1.Node
+	84,  // 23: openlet.letfs.v1.StatResult.error:type_name -> google.rpc.Status
+	27,  // 24: openlet.letfs.v1.BatchStatResponse.results:type_name -> openlet.letfs.v1.StatResult
+	11,  // 25: openlet.letfs.v1.ListNodesRequest.parent:type_name -> openlet.letfs.v1.NodeLocator
+	15,  // 26: openlet.letfs.v1.ListNodesResponse.nodes:type_name -> openlet.letfs.v1.Node
+	11,  // 27: openlet.letfs.v1.ReadTreeRequest.root:type_name -> openlet.letfs.v1.NodeLocator
+	15,  // 28: openlet.letfs.v1.TreeEntry.node:type_name -> openlet.letfs.v1.Node
+	32,  // 29: openlet.letfs.v1.ReadTreeResponse.entries:type_name -> openlet.letfs.v1.TreeEntry
+	11,  // 30: openlet.letfs.v1.CreateNodeRequest.parent:type_name -> openlet.letfs.v1.NodeLocator
+	85,  // 31: openlet.letfs.v1.CreateNodeRequest.directory:type_name -> google.protobuf.Empty
+	34,  // 32: openlet.letfs.v1.CreateNodeRequest.text:type_name -> openlet.letfs.v1.TextContent
+	11,  // 33: openlet.letfs.v1.CreateDirectoriesRequest.base:type_name -> openlet.letfs.v1.NodeLocator
+	11,  // 34: openlet.letfs.v1.TransferNodeRequest.source:type_name -> openlet.letfs.v1.NodeLocator
+	11,  // 35: openlet.letfs.v1.TransferNodeRequest.parent:type_name -> openlet.letfs.v1.NodeLocator
+	11,  // 36: openlet.letfs.v1.ReadTextRequest.target:type_name -> openlet.letfs.v1.NodeLocator
+	38,  // 37: openlet.letfs.v1.ReadTextRequest.bytes:type_name -> openlet.letfs.v1.ByteRange
+	39,  // 38: openlet.letfs.v1.ReadTextRequest.lines:type_name -> openlet.letfs.v1.LineRange
+	41,  // 39: openlet.letfs.v1.ReadTextResponse.metrics:type_name -> openlet.letfs.v1.TextMetrics
+	43,  // 40: openlet.letfs.v1.TextPatch.edits:type_name -> openlet.letfs.v1.TextEdit
+	11,  // 41: openlet.letfs.v1.MutateTextRequest.target:type_name -> openlet.letfs.v1.NodeLocator
+	44,  // 42: openlet.letfs.v1.MutateTextRequest.patch:type_name -> openlet.letfs.v1.TextPatch
+	45,  // 43: openlet.letfs.v1.MutateTextRequest.overwrite:type_name -> openlet.letfs.v1.TextOverwrite
+	46,  // 44: openlet.letfs.v1.MutateTextRequest.literal_replace:type_name -> openlet.letfs.v1.TextReplace
+	11,  // 45: openlet.letfs.v1.ReadImageRequest.target:type_name -> openlet.letfs.v1.NodeLocator
+	83,  // 46: openlet.letfs.v1.SignedDownload.expires_at:type_name -> google.protobuf.Timestamp
+	49,  // 47: openlet.letfs.v1.GetDownloadResponse.blob:type_name -> openlet.letfs.v1.SignedDownload
+	50,  // 48: openlet.letfs.v1.GetDownloadResponse.text:type_name -> openlet.letfs.v1.TextDownload
+	83,  // 49: openlet.letfs.v1.ArchiveDownloadTicket.expires_at:type_name -> google.protobuf.Timestamp
+	11,  // 50: openlet.letfs.v1.DownloadArchiveRequest.targets:type_name -> openlet.letfs.v1.NodeLocator
+	11,  // 51: openlet.letfs.v1.SearchFilesRequest.root:type_name -> openlet.letfs.v1.NodeLocator
+	15,  // 52: openlet.letfs.v1.SearchFilesResponse.hits:type_name -> openlet.letfs.v1.Node
+	11,  // 53: openlet.letfs.v1.TextSearchRequest.root:type_name -> openlet.letfs.v1.NodeLocator
+	15,  // 54: openlet.letfs.v1.TextHit.node:type_name -> openlet.letfs.v1.Node
+	58,  // 55: openlet.letfs.v1.TextSearchResponse.hits:type_name -> openlet.letfs.v1.TextHit
+	11,  // 56: openlet.letfs.v1.SemanticSearchRequest.root:type_name -> openlet.letfs.v1.NodeLocator
+	15,  // 57: openlet.letfs.v1.SemanticHit.node:type_name -> openlet.letfs.v1.Node
+	61,  // 58: openlet.letfs.v1.SemanticSearchResponse.hits:type_name -> openlet.letfs.v1.SemanticHit
+	11,  // 59: openlet.letfs.v1.TrashNodeRequest.target:type_name -> openlet.letfs.v1.NodeLocator
+	15,  // 60: openlet.letfs.v1.TrashEntry.node:type_name -> openlet.letfs.v1.Node
+	4,   // 61: openlet.letfs.v1.TrashEntry.trashed_by:type_name -> openlet.letfs.v1.ActorRef
+	83,  // 62: openlet.letfs.v1.TrashEntry.trashed_at:type_name -> google.protobuf.Timestamp
+	64,  // 63: openlet.letfs.v1.ListTrashResponse.entries:type_name -> openlet.letfs.v1.TrashEntry
+	11,  // 64: openlet.letfs.v1.RestoreTrashRequest.parent:type_name -> openlet.letfs.v1.NodeLocator
+	11,  // 65: openlet.letfs.v1.UploadCreate.parent:type_name -> openlet.letfs.v1.NodeLocator
+	11,  // 66: openlet.letfs.v1.UploadReplace.target:type_name -> openlet.letfs.v1.NodeLocator
+	69,  // 67: openlet.letfs.v1.CreateUploadRequest.create:type_name -> openlet.letfs.v1.UploadCreate
+	70,  // 68: openlet.letfs.v1.CreateUploadRequest.replace:type_name -> openlet.letfs.v1.UploadReplace
+	81,  // 69: openlet.letfs.v1.SignedPart.headers:type_name -> openlet.letfs.v1.SignedPart.HeadersEntry
+	82,  // 70: openlet.letfs.v1.TransferDescriptor.headers:type_name -> openlet.letfs.v1.TransferDescriptor.HeadersEntry
+	83,  // 71: openlet.letfs.v1.Upload.expires_at:type_name -> google.protobuf.Timestamp
+	74,  // 72: openlet.letfs.v1.Upload.transfer:type_name -> openlet.letfs.v1.TransferDescriptor
+	15,  // 73: openlet.letfs.v1.Upload.completed:type_name -> openlet.letfs.v1.Node
+	79,  // 74: openlet.letfs.v1.Upload.completed_parts:type_name -> openlet.letfs.v1.CompletedPart
+	73,  // 75: openlet.letfs.v1.SignPartsRequest.parts:type_name -> openlet.letfs.v1.UploadPart
+	72,  // 76: openlet.letfs.v1.SignPartsResponse.parts:type_name -> openlet.letfs.v1.SignedPart
+	79,  // 77: openlet.letfs.v1.CompleteUploadRequest.parts:type_name -> openlet.letfs.v1.CompletedPart
+	16,  // 78: openlet.letfs.v1.LetFSService.GetWorkspaceStorage:input_type -> openlet.letfs.v1.WorkspaceStorageRequest
+	17,  // 79: openlet.letfs.v1.LetFSService.UpdateStorageQuota:input_type -> openlet.letfs.v1.UpdateStorageQuotaRequest
+	19,  // 80: openlet.letfs.v1.LetFSService.ListStorages:input_type -> openlet.letfs.v1.ListStoragesRequest
+	18,  // 81: openlet.letfs.v1.LetFSService.GetStorage:input_type -> openlet.letfs.v1.StorageRequest
+	21,  // 82: openlet.letfs.v1.LetFSService.UpdateStorage:input_type -> openlet.letfs.v1.UpdateStorageRequest
+	18,  // 83: openlet.letfs.v1.LetFSService.ListStorageAccess:input_type -> openlet.letfs.v1.StorageRequest
+	22,  // 84: openlet.letfs.v1.LetFSService.SetStorageAccess:input_type -> openlet.letfs.v1.SetStorageAccessRequest
+	23,  // 85: openlet.letfs.v1.LetFSService.RevokeStorageAccess:input_type -> openlet.letfs.v1.RevokeStorageAccessRequest
+	24,  // 86: openlet.letfs.v1.LetFSService.Stat:input_type -> openlet.letfs.v1.NodeRequest
+	25,  // 87: openlet.letfs.v1.LetFSService.RetryProcessing:input_type -> openlet.letfs.v1.RetryProcessingRequest
+	26,  // 88: openlet.letfs.v1.LetFSService.BatchStat:input_type -> openlet.letfs.v1.BatchStatRequest
+	29,  // 89: openlet.letfs.v1.LetFSService.ListNodes:input_type -> openlet.letfs.v1.ListNodesRequest
+	31,  // 90: openlet.letfs.v1.LetFSService.ReadTree:input_type -> openlet.letfs.v1.ReadTreeRequest
+	35,  // 91: openlet.letfs.v1.LetFSService.CreateNode:input_type -> openlet.letfs.v1.CreateNodeRequest
+	36,  // 92: openlet.letfs.v1.LetFSService.CreateDirectories:input_type -> openlet.letfs.v1.CreateDirectoriesRequest
+	37,  // 93: openlet.letfs.v1.LetFSService.MoveNode:input_type -> openlet.letfs.v1.TransferNodeRequest
+	37,  // 94: openlet.letfs.v1.LetFSService.CopyNode:input_type -> openlet.letfs.v1.TransferNodeRequest
+	40,  // 95: openlet.letfs.v1.LetFSService.ReadText:input_type -> openlet.letfs.v1.ReadTextRequest
+	47,  // 96: openlet.letfs.v1.LetFSService.MutateText:input_type -> openlet.letfs.v1.MutateTextRequest
+	48,  // 97: openlet.letfs.v1.LetFSService.ReadImage:input_type -> openlet.letfs.v1.ReadImageRequest
+	24,  // 98: openlet.letfs.v1.LetFSService.GetDownload:input_type -> openlet.letfs.v1.NodeRequest
+	54,  // 99: openlet.letfs.v1.LetFSService.CreateArchiveDownload:input_type -> openlet.letfs.v1.DownloadArchiveRequest
+	53,  // 100: openlet.letfs.v1.LetFSService.DownloadArchiveTicket:input_type -> openlet.letfs.v1.ArchiveDownloadTicketRequest
+	54,  // 101: openlet.letfs.v1.LetFSService.DownloadArchive:input_type -> openlet.letfs.v1.DownloadArchiveRequest
+	55,  // 102: openlet.letfs.v1.LetFSService.SearchFiles:input_type -> openlet.letfs.v1.SearchFilesRequest
+	57,  // 103: openlet.letfs.v1.LetFSService.TextSearch:input_type -> openlet.letfs.v1.TextSearchRequest
+	60,  // 104: openlet.letfs.v1.LetFSService.SemanticSearch:input_type -> openlet.letfs.v1.SemanticSearchRequest
+	63,  // 105: openlet.letfs.v1.LetFSService.TrashNode:input_type -> openlet.letfs.v1.TrashNodeRequest
+	65,  // 106: openlet.letfs.v1.LetFSService.ListTrash:input_type -> openlet.letfs.v1.ListTrashRequest
+	67,  // 107: openlet.letfs.v1.LetFSService.RestoreTrash:input_type -> openlet.letfs.v1.RestoreTrashRequest
+	68,  // 108: openlet.letfs.v1.LetFSService.PurgeTrash:input_type -> openlet.letfs.v1.PurgeTrashRequest
+	71,  // 109: openlet.letfs.v1.LetFSService.CreateUpload:input_type -> openlet.letfs.v1.CreateUploadRequest
+	76,  // 110: openlet.letfs.v1.LetFSService.GetUpload:input_type -> openlet.letfs.v1.UploadRequest
+	77,  // 111: openlet.letfs.v1.LetFSService.SignParts:input_type -> openlet.letfs.v1.SignPartsRequest
+	80,  // 112: openlet.letfs.v1.LetFSService.CompleteUpload:input_type -> openlet.letfs.v1.CompleteUploadRequest
+	76,  // 113: openlet.letfs.v1.LetFSService.AbortUpload:input_type -> openlet.letfs.v1.UploadRequest
+	8,   // 114: openlet.letfs.v1.LetFSService.GetWorkspaceStorage:output_type -> openlet.letfs.v1.WorkspaceStorage
+	8,   // 115: openlet.letfs.v1.LetFSService.UpdateStorageQuota:output_type -> openlet.letfs.v1.WorkspaceStorage
+	20,  // 116: openlet.letfs.v1.LetFSService.ListStorages:output_type -> openlet.letfs.v1.ListStoragesResponse
+	7,   // 117: openlet.letfs.v1.LetFSService.GetStorage:output_type -> openlet.letfs.v1.Storage
+	7,   // 118: openlet.letfs.v1.LetFSService.UpdateStorage:output_type -> openlet.letfs.v1.Storage
+	10,  // 119: openlet.letfs.v1.LetFSService.ListStorageAccess:output_type -> openlet.letfs.v1.StorageAccess
+	9,   // 120: openlet.letfs.v1.LetFSService.SetStorageAccess:output_type -> openlet.letfs.v1.AccessGrant
+	85,  // 121: openlet.letfs.v1.LetFSService.RevokeStorageAccess:output_type -> google.protobuf.Empty
+	15,  // 122: openlet.letfs.v1.LetFSService.Stat:output_type -> openlet.letfs.v1.Node
+	15,  // 123: openlet.letfs.v1.LetFSService.RetryProcessing:output_type -> openlet.letfs.v1.Node
+	28,  // 124: openlet.letfs.v1.LetFSService.BatchStat:output_type -> openlet.letfs.v1.BatchStatResponse
+	30,  // 125: openlet.letfs.v1.LetFSService.ListNodes:output_type -> openlet.letfs.v1.ListNodesResponse
+	33,  // 126: openlet.letfs.v1.LetFSService.ReadTree:output_type -> openlet.letfs.v1.ReadTreeResponse
+	15,  // 127: openlet.letfs.v1.LetFSService.CreateNode:output_type -> openlet.letfs.v1.Node
+	15,  // 128: openlet.letfs.v1.LetFSService.CreateDirectories:output_type -> openlet.letfs.v1.Node
+	15,  // 129: openlet.letfs.v1.LetFSService.MoveNode:output_type -> openlet.letfs.v1.Node
+	15,  // 130: openlet.letfs.v1.LetFSService.CopyNode:output_type -> openlet.letfs.v1.Node
+	42,  // 131: openlet.letfs.v1.LetFSService.ReadText:output_type -> openlet.letfs.v1.ReadTextResponse
+	15,  // 132: openlet.letfs.v1.LetFSService.MutateText:output_type -> openlet.letfs.v1.Node
+	86,  // 133: openlet.letfs.v1.LetFSService.ReadImage:output_type -> google.api.HttpBody
+	51,  // 134: openlet.letfs.v1.LetFSService.GetDownload:output_type -> openlet.letfs.v1.GetDownloadResponse
+	52,  // 135: openlet.letfs.v1.LetFSService.CreateArchiveDownload:output_type -> openlet.letfs.v1.ArchiveDownloadTicket
+	86,  // 136: openlet.letfs.v1.LetFSService.DownloadArchiveTicket:output_type -> google.api.HttpBody
+	86,  // 137: openlet.letfs.v1.LetFSService.DownloadArchive:output_type -> google.api.HttpBody
+	56,  // 138: openlet.letfs.v1.LetFSService.SearchFiles:output_type -> openlet.letfs.v1.SearchFilesResponse
+	59,  // 139: openlet.letfs.v1.LetFSService.TextSearch:output_type -> openlet.letfs.v1.TextSearchResponse
+	62,  // 140: openlet.letfs.v1.LetFSService.SemanticSearch:output_type -> openlet.letfs.v1.SemanticSearchResponse
+	64,  // 141: openlet.letfs.v1.LetFSService.TrashNode:output_type -> openlet.letfs.v1.TrashEntry
+	66,  // 142: openlet.letfs.v1.LetFSService.ListTrash:output_type -> openlet.letfs.v1.ListTrashResponse
+	15,  // 143: openlet.letfs.v1.LetFSService.RestoreTrash:output_type -> openlet.letfs.v1.Node
+	85,  // 144: openlet.letfs.v1.LetFSService.PurgeTrash:output_type -> google.protobuf.Empty
+	75,  // 145: openlet.letfs.v1.LetFSService.CreateUpload:output_type -> openlet.letfs.v1.Upload
+	75,  // 146: openlet.letfs.v1.LetFSService.GetUpload:output_type -> openlet.letfs.v1.Upload
+	78,  // 147: openlet.letfs.v1.LetFSService.SignParts:output_type -> openlet.letfs.v1.SignPartsResponse
+	15,  // 148: openlet.letfs.v1.LetFSService.CompleteUpload:output_type -> openlet.letfs.v1.Node
+	85,  // 149: openlet.letfs.v1.LetFSService.AbortUpload:output_type -> google.protobuf.Empty
+	114, // [114:150] is the sub-list for method output_type
+	78,  // [78:114] is the sub-list for method input_type
+	78,  // [78:78] is the sub-list for extension type_name
+	78,  // [78:78] is the sub-list for extension extendee
+	0,   // [0:78] is the sub-list for field type_name
 }
 
 func init() { file_openlet_api_letfs_v1_letfs_proto_init() }
@@ -6145,22 +6364,22 @@ func file_openlet_api_letfs_v1_letfs_proto_init() {
 	file_openlet_api_letfs_v1_letfs_proto_msgTypes[9].OneofWrappers = []any{}
 	file_openlet_api_letfs_v1_letfs_proto_msgTypes[11].OneofWrappers = []any{}
 	file_openlet_api_letfs_v1_letfs_proto_msgTypes[15].OneofWrappers = []any{}
-	file_openlet_api_letfs_v1_letfs_proto_msgTypes[22].OneofWrappers = []any{
+	file_openlet_api_letfs_v1_letfs_proto_msgTypes[23].OneofWrappers = []any{
 		(*StatResult_Node)(nil),
 		(*StatResult_Error)(nil),
 	}
-	file_openlet_api_letfs_v1_letfs_proto_msgTypes[30].OneofWrappers = []any{
+	file_openlet_api_letfs_v1_letfs_proto_msgTypes[31].OneofWrappers = []any{
 		(*CreateNodeRequest_Directory)(nil),
 		(*CreateNodeRequest_Text)(nil),
 	}
-	file_openlet_api_letfs_v1_letfs_proto_msgTypes[33].OneofWrappers = []any{}
-	file_openlet_api_letfs_v1_letfs_proto_msgTypes[35].OneofWrappers = []any{
+	file_openlet_api_letfs_v1_letfs_proto_msgTypes[34].OneofWrappers = []any{}
+	file_openlet_api_letfs_v1_letfs_proto_msgTypes[36].OneofWrappers = []any{
 		(*ReadTextRequest_Bytes)(nil),
 		(*ReadTextRequest_Lines)(nil),
 		(*ReadTextRequest_HeadLines)(nil),
 		(*ReadTextRequest_TailLines)(nil),
 	}
-	file_openlet_api_letfs_v1_letfs_proto_msgTypes[42].OneofWrappers = []any{
+	file_openlet_api_letfs_v1_letfs_proto_msgTypes[43].OneofWrappers = []any{
 		(*MutateTextRequest_Replace)(nil),
 		(*MutateTextRequest_Append)(nil),
 		(*MutateTextRequest_Patch)(nil),
@@ -6168,13 +6387,13 @@ func file_openlet_api_letfs_v1_letfs_proto_init() {
 		(*MutateTextRequest_Overwrite)(nil),
 		(*MutateTextRequest_LiteralReplace)(nil),
 	}
-	file_openlet_api_letfs_v1_letfs_proto_msgTypes[46].OneofWrappers = []any{
+	file_openlet_api_letfs_v1_letfs_proto_msgTypes[47].OneofWrappers = []any{
 		(*GetDownloadResponse_Blob)(nil),
 		(*GetDownloadResponse_Text)(nil),
 	}
-	file_openlet_api_letfs_v1_letfs_proto_msgTypes[57].OneofWrappers = []any{}
 	file_openlet_api_letfs_v1_letfs_proto_msgTypes[60].OneofWrappers = []any{}
-	file_openlet_api_letfs_v1_letfs_proto_msgTypes[64].OneofWrappers = []any{
+	file_openlet_api_letfs_v1_letfs_proto_msgTypes[63].OneofWrappers = []any{}
+	file_openlet_api_letfs_v1_letfs_proto_msgTypes[67].OneofWrappers = []any{
 		(*CreateUploadRequest_Create)(nil),
 		(*CreateUploadRequest_Replace)(nil),
 	}
@@ -6184,7 +6403,7 @@ func file_openlet_api_letfs_v1_letfs_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_openlet_api_letfs_v1_letfs_proto_rawDesc), len(file_openlet_api_letfs_v1_letfs_proto_rawDesc)),
 			NumEnums:      4,
-			NumMessages:   76,
+			NumMessages:   79,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

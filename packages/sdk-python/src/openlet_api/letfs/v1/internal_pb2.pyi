@@ -183,11 +183,13 @@ class CommitEnrichmentRequest(_message.Message):
     def __init__(self, file_id: _Optional[str] = ..., version: _Optional[int] = ..., artifacts: _Optional[_Iterable[_Union[EnrichedArtifact, _Mapping]]] = ..., source_metadata: _Optional[_Union[_letfs_pb2.FileMetadata, _Mapping]] = ...) -> None: ...
 
 class FailProcessingRequest(_message.Message):
-    __slots__ = ("file_id", "version", "error_code")
+    __slots__ = ("file_id", "version", "error_code", "attempt")
     FILE_ID_FIELD_NUMBER: _ClassVar[int]
     VERSION_FIELD_NUMBER: _ClassVar[int]
     ERROR_CODE_FIELD_NUMBER: _ClassVar[int]
+    ATTEMPT_FIELD_NUMBER: _ClassVar[int]
     file_id: str
     version: int
     error_code: str
-    def __init__(self, file_id: _Optional[str] = ..., version: _Optional[int] = ..., error_code: _Optional[str] = ...) -> None: ...
+    attempt: int
+    def __init__(self, file_id: _Optional[str] = ..., version: _Optional[int] = ..., error_code: _Optional[str] = ..., attempt: _Optional[int] = ...) -> None: ...

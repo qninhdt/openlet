@@ -42,6 +42,12 @@ export function useAgentLive(
     refetchInterval: enabled ? (resourceState === 'provisioning' ? 1000 : 30000) : false,
   });
   const manage = !!profile.data?.capabilities.can_view_activity;
+  const processing = useQuery({
+    queryKey: [...scope, 'processing'],
+    enabled: enabled && !activityOnly,
+    queryFn: () => api!<{ working: boolean; run_id: string | null }>(path + '/processing'),
+    refetchInterval: enabled ? 3000 : false,
+  });
   const chat = useInfiniteQuery({
     queryKey: [...scope, 'chat'],
     enabled: enabled && !activityOnly,
@@ -202,6 +208,7 @@ export function useAgentLive(
     requests,
     activity,
     settings,
+    processing,
     connection,
     manage,
     streaming: streaming.scope === streamScope ? streaming.items : [],

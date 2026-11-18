@@ -21,11 +21,13 @@ import {
 } from '@/components/ui/select';
 import type { Cursor, InboxItem, Page, HumanRequest } from '@/lib/agent-api';
 import { queryString } from '@/lib/agent-api';
-import { PreviewInbox } from './agent-overview';
 import { RequestInspector, ScheduleInspector, type ScheduleRecord } from './inbox-sources';
 import { useAgentPreview } from './agent-preview';
 import { InputMessage } from './agent-inputs';
 import { MessageReactions, ReactionPicker } from './message-reactions';
+import { MessagePreview } from './message-preview';
+import { MessageFiles } from './message-files';
+import { AgentMarkdown } from './agent-rich-content';
 
 const sourceIcon = {
   user: UserRound,
@@ -36,7 +38,7 @@ const sourceIcon = {
 };
 export function ActivityInbox() {
   const p = useAgentPreview();
-  return p.live.enabled ? <LiveInbox key={p.activityAgent.id} /> : <PreviewInbox key={p.activityAgent.id} />;
+  return <LiveInbox key={p.activityAgent.id} />;
 }
 function LiveInbox() {
   const p = useAgentPreview();
@@ -221,9 +223,8 @@ function LiveInbox() {
                     <InputMessage item={{ ...item, source_name: item.source_name ?? undefined }} />
                   ) : (
                     <>
-                      <p className="whitespace-pre-wrap text-sm leading-relaxed wrap-anywhere">
-                        {item.content}
-                      </p>
+                      <AgentMarkdown text={item.content} />
+                      <MessageFiles references={item.file_refs} />
                       <MessageReactions reactions={item.reactions} actorId={p.actorId} inline />
                     </>
                   )}
@@ -313,7 +314,7 @@ function LiveInbox() {
                           )}
                         </span>
                         <span className="mt-1 block line-clamp-2 text-caption text-muted-foreground">
-                          {item.content}
+                          <MessagePreview text={item.content} />
                         </span>
                         <span className="mt-2 block text-xs text-muted-foreground">
                           {item.direction === 'out' ? 'Sent · ' : ''}

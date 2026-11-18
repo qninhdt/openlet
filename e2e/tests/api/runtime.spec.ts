@@ -255,12 +255,10 @@ test('native runtime, box containment, asynchronous HITL and owner-independent s
       )
       .toBe(true);
   } catch (error) {
-    await test
-      .info()
-      .attach('scheduled-model-requests', {
-        body: JSON.stringify(observed, null, 2),
-        contentType: 'application/json',
-      });
+    await test.info().attach('scheduled-model-requests', {
+      body: JSON.stringify(observed, null, 2),
+      contentType: 'application/json',
+    });
     throw error;
   } finally {
     await audit.dispose();

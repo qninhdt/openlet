@@ -3,9 +3,7 @@ import {
   ArrowRight,
   CalendarClock,
   Check,
-  ChevronRight,
   Clock3,
-  Download,
   FileCheck2,
   FilePenLine,
   FileSearch,
@@ -30,55 +28,20 @@ import {
 import type { ReactNode } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
-import {
-  Attachment,
-  AttachmentMedia,
-  AttachmentContent,
-  AttachmentTitle,
-  AttachmentDescription,
-  AttachmentTrigger,
-  AttachmentActions,
-  AttachmentAction,
-} from '@/components/ui/attachment';
 import { AgentAvatar } from '@/components/agent-avatar';
 import { FileIcon } from '@/components/storage/file-icon';
 import { cn } from '@/lib/utils';
 import { AccessRequestCard, AskCard } from './agent-hitl';
+import { MessagePreview } from './message-preview';
+import { MessageFiles } from './message-files';
 import { AgentMarkdown, HighlightedCode } from './agent-rich-content';
-import { previewFiles, useAgentPreview, type PreviewFile } from './agent-preview';
+import { useAgentPreview } from './agent-preview';
 import { InputItems } from './agent-inputs';
-import type { DemoToolResult } from './agent-demo';
+import type { ToolResult } from '@/lib/agent-presentation';
+import type { FileRef } from '@/lib/file-refs';
 
-function resultOf(props: ToolCallMessagePartProps): DemoToolResult {
-  return (props.result ?? {}) as DemoToolResult;
-}
-
-export function AgentFileCard({ file }: { file: PreviewFile }) {
-  const p = useAgentPreview();
-  return (
-    <Attachment state="done" size="sm" className="w-64 max-w-full">
-      <AttachmentMedia>
-        <FileIcon node={p.fileNodes[file.id]} />
-      </AttachmentMedia>
-      <AttachmentContent>
-        <AttachmentTitle>{file.name}</AttachmentTitle>
-        <AttachmentDescription>{p.fileNodes[file.id].size} B</AttachmentDescription>
-      </AttachmentContent>
-      <AttachmentTrigger aria-label={`Open ${file.name}`} onClick={() => p.openFile(file)} />
-      <AttachmentActions>
-        <AttachmentAction
-          aria-label={`Download ${file.name}`}
-          onClick={() => void p.downloadFile(file.id)}
-        >
-          <Download />
-        </AttachmentAction>
-        <AttachmentAction aria-label={`Preview ${file.name}`} onClick={() => p.openFile(file)}>
-          <ChevronRight />
-        </AttachmentAction>
-      </AttachmentActions>
-    </Attachment>
-  );
+function resultOf(props: ToolCallMessagePartProps): ToolResult {
+  return (props.result ?? {}) as ToolResult;
 }
 
 function ToolStep({
@@ -96,15 +59,14 @@ function ToolStep({
 }) {
   const error = props.isError || props.status.type === 'incomplete';
   return (
-    <Collapsible
-      defaultOpen
+    <div
       className="grid w-full min-w-0 justify-items-start"
       data-tool={props.toolName}
       data-tool-call={props.toolCallId}
     >
-      <CollapsibleTrigger
+      <div
         className={cn(
-          'group/tool flex w-fit max-w-full min-w-0 items-center gap-2 rounded-md py-1.5 text-left text-caption text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring [&>svg]:size-3.5 [&>svg]:shrink-0',
+          'flex w-fit max-w-full min-w-0 items-center gap-2 py-1.5 text-caption text-muted-foreground [&>svg]:size-3.5 [&>svg]:shrink-0',
           error && 'text-destructive',
         )}
       >
@@ -115,17 +77,16 @@ function ToolStep({
         ) : (
           !error && <Check />
         )}
-        <ChevronRight className="transition-transform group-data-[state=open]/tool:rotate-90 motion-reduce:transition-none" />
-      </CollapsibleTrigger>
-      <CollapsibleContent
+      </div>
+      <div
         className={cn(
           'max-w-full min-w-0 pt-3 pb-3 pl-5.5',
           wide ? 'w-(--message-wide-bubble-width)' : 'w-fit',
         )}
       >
         {children}
-      </CollapsibleContent>
-    </Collapsible>
+      </div>
+    </div>
   );
 }
 
@@ -147,20 +108,18 @@ function Status({ children }: { children?: string }) {
   if (!children) return null;
   return <Badge variant={children === 'Failed' ? 'destructive' : 'secondary'}>{children}</Badge>;
 }
-function FileLink({ id, children }: { id: string; children?: ReactNode }) {
+function FileLink({ file, children }: { file: FileRef; children?: ReactNode }) {
   const p = useAgentPreview();
-  const file = previewFiles.find((item) => item.id === id);
-  if (!file) return <span>{children ?? id}</span>;
   return (
     <Button
       variant="ghost"
       size="xs"
       className="h-auto min-w-0 max-w-full justify-start px-0 text-left whitespace-normal"
-      onClick={() => p.openFile(file)}
-      aria-label={`Inspect ${file.name}`}
+      onClick={() => void p.openFileReference(file)}
+      aria-label={`Inspect ${file.label}`}
     >
-      <FileIcon node={p.fileNodes[id]} />
-      <span className="min-w-0 wrap-anywhere">{children ?? file.name}</span>
+      <FileText />
+      <span className="min-w-0 wrap-anywhere">{children ?? file.label}</span>
     </Button>
   );
 }
@@ -174,7 +133,6 @@ function EmptyResult({ icon, children }: { icon: ReactNode; children: ReactNode 
 }
 
 const FileListTool: ToolCallMessagePartComponent = (props) => {
-  const p = useAgentPreview();
   const result = resultOf(props);
   return (
     <ToolStep props={props} label={`Listed ${String(props.args.path ?? '~')}`} icon={<Folder />}>
@@ -186,8 +144,8 @@ const FileListTool: ToolCallMessagePartComponent = (props) => {
         <ul className="divide-y">
           {result.items?.map((item) => (
             <li key={item.title} className="flex min-w-0 items-center gap-3 px-3 py-2">
-              {item.fileId ? (
-                <FileLink id={item.fileId} />
+              {item.file ? (
+                <FileLink file={item.file} />
               ) : (
                 <span className="flex min-w-0 items-center gap-2 text-caption font-medium">
                   <FileIcon node={{ kind: item.kind ?? 'folder', mime: '', name: item.title }} />
@@ -195,7 +153,7 @@ const FileListTool: ToolCallMessagePartComponent = (props) => {
                 </span>
               )}
               <span className="ml-auto shrink-0 text-xs text-muted-foreground tabular-nums">
-                {item.fileId ? `${p.fileNodes[item.fileId].size} B` : item.meta}
+                {item.meta}
               </span>
             </li>
           ))}
@@ -211,7 +169,6 @@ const FileListTool: ToolCallMessagePartComponent = (props) => {
 };
 const FileReadTool: ToolCallMessagePartComponent = (props) => {
   const result = resultOf(props);
-  const file = previewFiles.find((item) => item.id === result.fileId);
   return (
     <ToolStep
       props={props}
@@ -220,24 +177,22 @@ const FileReadTool: ToolCallMessagePartComponent = (props) => {
       wide
     >
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-        {file && <FileLink id={file.id} />}
+        {result.file && <FileLink file={result.file} />}
         <span>Read snapshot · {result.lineRange}</span>
       </div>
-      <HighlightedCode
-        language={file?.language ?? 'text'}
-        code={result.content ?? file?.content ?? result.output ?? ''}
-      />
+      <HighlightedCode language={'text'} code={result.content ?? result.output ?? ''} />
     </ToolStep>
   );
 };
 const FileWriteTool: ToolCallMessagePartComponent = (props) => {
   const result = resultOf(props);
-  const file = previewFiles.find((item) => item.id === result.fileId);
   return (
     <ToolStep props={props} label={`Wrote ${String(props.args.path ?? '')}`} icon={<FileCheck2 />}>
       <div className="flex max-w-full flex-col items-start gap-2">
-        {file ? (
-          <AgentFileCard file={file} />
+        {result.file ? (
+          <div className="rounded-lg border px-3 py-2">
+            <FileLink file={result.file} />
+          </div>
         ) : (
           <p className="rounded-lg border px-3 py-2 font-mono text-caption">
             {String(props.args.path ?? '')}
@@ -263,7 +218,7 @@ const FileEditTool: ToolCallMessagePartComponent = (props) => {
       wide
     >
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-        {result.fileId && <FileLink id={result.fileId} />}
+        {result.file && <FileLink file={result.file} />}
         <span className="flex gap-2 font-mono">
           <span>−{before.split('\n').length}</span>
           <span>+{after.split('\n').length}</span>
@@ -297,8 +252,8 @@ const SearchTool: ToolCallMessagePartComponent = (props) => {
                 <div className="min-w-0 flex-1">
                   <div className="overflow-hidden rounded-xl border">
                     <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/30 px-3 py-2">
-                      {item.fileId ? (
-                        <FileLink id={item.fileId} />
+                      {item.file ? (
+                        <FileLink file={item.file} />
                       ) : (
                         <span className="min-w-0 text-caption font-medium wrap-anywhere">
                           {item.title}
@@ -400,9 +355,10 @@ const InboxTool: ToolCallMessagePartComponent = (props) => {
             </span>
             <span className="font-medium">{target}</span>
           </div>
-          <p className="px-3 py-3 text-sm leading-relaxed whitespace-pre-wrap">
-            {String(props.args.content ?? '')}
-          </p>
+          <div className="px-3 py-3 text-sm leading-relaxed">
+            <AgentMarkdown text={result.content ?? String(props.args.content ?? '')} />
+            <MessageFiles references={result.fileRefs} />
+          </div>
         </ActionCard>
       ) : result.inputItems ? (
         <InputItems items={result.inputItems} />
@@ -417,7 +373,9 @@ const InboxTool: ToolCallMessagePartComponent = (props) => {
                     <span className="font-medium">{item.title}</span>
                     <Status>{item.status}</Status>
                   </div>
-                  <p className="mt-1 text-caption text-muted-foreground">{item.detail}</p>
+                  <p className="mt-1 text-caption text-muted-foreground">
+                    <MessagePreview text={item.detail} />
+                  </p>
                   <p className="mt-1 text-xs text-muted-foreground">{item.meta}</p>
                 </div>
               </li>
@@ -441,7 +399,7 @@ const InboxTool: ToolCallMessagePartComponent = (props) => {
                 </div>
                 <div className="rounded-2xl rounded-tl-sm bg-muted px-3 py-2">
                   <p className="mb-1 text-caption font-medium">{item.title}</p>
-                  <p className="text-sm leading-relaxed wrap-anywhere">{item.detail}</p>
+                  <AgentMarkdown text={item.detail ?? ''} />
                 </div>
               </div>
             </div>

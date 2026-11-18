@@ -37,6 +37,7 @@ message UpdateStorageRequest {
 message SetStorageAccessRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; ActorRef actor = 3 [(buf.validate.field).required = true]; StorageRole role = 4 [(buf.validate.field).enum = {in: [2,3]}]; }
 message RevokeStorageAccessRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; ActorRef actor = 3 [(buf.validate.field).required = true]; }
 message NodeRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; NodeLocator target = 3 [(buf.validate.field).required = true]; }
+message RetryProcessingRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; NodeLocator target = 3 [(buf.validate.field).required = true]; int64 expected_version = 4 [(buf.validate.field).int64.gt = 0]; string request_id = 5 [(buf.validate.field).string.uuid = true]; }
 message BatchStatRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; repeated NodeLocator targets = 3 [(buf.validate.field).repeated = {min_items: 1, max_items: 100}]; }
 message StatResult { oneof result { Node node = 1; google.rpc.Status error = 2; } }
 message BatchStatResponse { repeated StatResult results = 1; }
@@ -63,6 +64,8 @@ message ReadImageRequest { string workspace_id = 1 [(buf.validate.field).string.
 message SignedDownload { string url = 1; google.protobuf.Timestamp expires_at = 2; }
 message TextDownload { string filename = 1; string media_type = 2; string content = 3; }
 message GetDownloadResponse { oneof download { SignedDownload blob = 1; TextDownload text = 2; } }
+message ArchiveDownloadTicket { string ticket = 1; google.protobuf.Timestamp expires_at = 2; }
+message ArchiveDownloadTicketRequest { string ticket = 1 [(buf.validate.field).string = {pattern: "^[a-f0-9]{64}$"}]; }
 message DownloadArchiveRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; repeated NodeLocator targets = 3 [(buf.validate.field).repeated = {min_items: 1, max_items: 100}]; }
 message SearchFilesRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; NodeLocator root = 3 [(buf.validate.field).required = true]; string query = 4 [(buf.validate.field).string.min_len = 1]; int32 page_size = 5 [(buf.validate.field).int32 = {gte: 0, lte: 100}]; string page_token = 6; bool case_sensitive = 7; }
 message SearchFilesResponse { repeated Node hits = 1; string next_page_token = 2; }
@@ -84,7 +87,7 @@ message CreateUploadRequest { string workspace_id = 1 [(buf.validate.field).stri
 message SignedPart { uint32 part_number = 1; string url = 2; map<string,string> headers = 3; }
 message UploadPart { uint32 part_number = 1 [(buf.validate.field).uint32 = {gte: 1, lte: 10000}]; string checksum = 2 [(buf.validate.field).string.min_len = 1]; }
 message TransferDescriptor { string put_url = 1; map<string,string> headers = 2; bool multipart = 3; int64 part_size_bytes = 4; }
-message Upload { string id = 1; google.protobuf.Timestamp expires_at = 2; TransferDescriptor transfer = 3; Node completed = 4; }
+message Upload { string id = 1; google.protobuf.Timestamp expires_at = 2; TransferDescriptor transfer = 3; Node completed = 4; repeated CompletedPart completed_parts = 5; bool transferred = 6; }
 message UploadRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; string upload_id = 3 [(buf.validate.field).string.uuid = true]; }
 message SignPartsRequest {
   option (buf.validate.message).cel = {id: "parts.unique", message: "part numbers must be unique", expression: "this.parts.map(p, p.part_number).unique()"};
@@ -107,6 +110,7 @@ service LetFSService {
   rpc SetStorageAccess(SetStorageAccessRequest) returns (AccessGrant) { option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/storages/{storage_id}:setAccess" body: "*" }; }
   rpc RevokeStorageAccess(RevokeStorageAccessRequest) returns (google.protobuf.Empty) { option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/storages/{storage_id}:revokeAccess" body: "*" }; }
   rpc Stat(NodeRequest) returns (Node) { option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes/{target.node_id}" }; }
+  rpc RetryProcessing(RetryProcessingRequest) returns (Node) { option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes/{target.node_id}:retryProcessing" body: "*" }; }
   rpc BatchStat(BatchStatRequest) returns (BatchStatResponse) { option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes:batchStat" body: "*" }; }
   rpc ListNodes(ListNodesRequest) returns (ListNodesResponse) { option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes/{parent.node_id}/children" }; }
   rpc ReadTree(ReadTreeRequest) returns (ReadTreeResponse) { option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes:readTree" body: "*" }; }
@@ -118,6 +122,8 @@ service LetFSService {
   rpc MutateText(MutateTextRequest) returns (Node) { option (google.api.http) = { patch: "/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes/{target.node_id}/text" body: "*" }; }
   rpc ReadImage(ReadImageRequest) returns (google.api.HttpBody) { option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes/{target.node_id}/image" }; }
   rpc GetDownload(NodeRequest) returns (GetDownloadResponse) { option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes/{target.node_id}:download" }; }
+  rpc CreateArchiveDownload(DownloadArchiveRequest) returns (ArchiveDownloadTicket) { option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes:archiveDownload" body: "*" }; }
+  rpc DownloadArchiveTicket(ArchiveDownloadTicketRequest) returns (stream google.api.HttpBody) { option (google.api.http) = { get: "/v1/archive-downloads/{ticket}" }; }
   rpc DownloadArchive(DownloadArchiveRequest) returns (stream google.api.HttpBody) { option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes:downloadArchive" body: "*" }; }
   rpc SearchFiles(SearchFilesRequest) returns (SearchFilesResponse) { option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/storages/{storage_id}/files:search" body: "*" }; }
   rpc TextSearch(TextSearchRequest) returns (TextSearchResponse) { option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/storages/{storage_id}/files:textSearch" body: "*" }; }

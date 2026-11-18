@@ -13,6 +13,10 @@ import (
 )
 
 func (s *Server) maintenance(ctx context.Context) error {
+	if _, err := s.DB.Exec(ctx, `DELETE FROM archive_downloads WHERE ticket_hash IN(SELECT ticket_hash FROM archive_downloads WHERE expires_at<now() LIMIT 500)`); err != nil {
+		return err
+	}
+
 	if _, err := s.DB.Exec(ctx, `DELETE FROM idempotency_keys WHERE (caller,method,key) IN(SELECT caller,method,key FROM idempotency_keys WHERE expires_at<now() LIMIT 500)`); err != nil {
 		return err
 	}

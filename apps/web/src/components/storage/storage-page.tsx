@@ -1,3 +1,4 @@
+import { StorageImage } from './storage-image';
 import {
   Fragment,
   lazy,
@@ -80,6 +81,8 @@ import {
 } from './storage-context';
 import { useStorageDrop, useStoragePointerDrag } from './storage-drag';
 import { StorageDialogs } from './storage-dialogs';
+import { StorageSearch } from './storage-search';
+import { StorageAccess } from './storage-access';
 const StorageViewer = lazy(() =>
   import('./storage-viewer').then((module) => ({ default: module.StorageViewer })),
 );
@@ -131,11 +134,7 @@ function PathSeparator() {
 }
 export function StorageIdentity() {
   const b = useStorageBrowser();
-  const segments = b.trash
-    ? [{ id: 'trash', name: 'Trash', storage: b.storage.id }]
-    : b.file
-      ? ancestors(b.snapshot.nodes, b.file.id)
-      : b.path;
+  const segments = b.trash ? [{ id: 'trash', name: 'Trash', storage: b.storage.id }] : b.path;
   const root = (
     <Crumb
       name="Storage root"
@@ -235,6 +234,11 @@ export function StorageTabs() {
           ...b.openFiles.map((node) => ({
             id: node.id,
             label: node.name,
+            tooltip:
+              '/' +
+              [b.storage.name, ...ancestors(b.snapshot.nodes, node.id).map((at) => at.name)].join(
+                '/',
+              ),
             icon: <FileIcon node={node} />,
             onClose: () => b.closeFile(node.id),
           })),
@@ -267,6 +271,7 @@ export function StorageHeaderTools() {
   const b = useStorageBrowser();
   return (
     <>
+      <StorageAccess />
       <ToggleGroup
         type="single"
         size="sm"
@@ -308,6 +313,13 @@ function nodeActions(b: ReturnType<typeof useStorageBrowser>, node: StorageNode)
   if (b.trash)
     return [
       { label: 'Restore', icon: RotateCcw, action: () => void b.restore(ids), disabled: !write },
+      {
+        label: 'Delete permanently',
+        icon: Trash2,
+        action: () => b.setPurgeIds(ids),
+        disabled: !write || b.pending,
+        destructive: true,
+      },
     ];
   return [
     { label: 'Open', icon: node.kind === 'folder' ? Folder : File, action: () => b.open(node) },
@@ -343,13 +355,6 @@ function nodeActions(b: ReturnType<typeof useStorageBrowser>, node: StorageNode)
 function NodeCard({ node }: { node: StorageNode }) {
   const b = useStorageBrowser();
   const drop = useStorageDrop(node.storage, node.kind === 'folder' ? node.id : b.parent);
-  const [url, setUrl] = useState(node.url);
-  useEffect(() => {
-    if (!node.blob || !node.mime.startsWith('image/')) return;
-    const url = URL.createObjectURL(node.blob);
-    setUrl(url);
-    return () => URL.revokeObjectURL(url);
-  }, [node.blob, node.mime]);
   const [excerpt, setExcerpt] = useState('');
   useEffect(() => {
     let active = true;
@@ -429,14 +434,8 @@ function NodeCard({ node }: { node: StorageNode }) {
                   b.view === 'mosaic' && 'has-[img]:aspect-auto',
                 )}
               >
-                {node.mime.startsWith('image/') && url ? (
-                  <img
-                    src={url}
-                    alt=""
-                    loading="lazy"
-                    draggable={false}
-                    className={cn('size-full object-cover', b.view === 'mosaic' && 'h-auto')}
-                  />
+                {node.mime.startsWith('image/') ? (
+                  <StorageImage node={node} className="block size-full" />
                 ) : excerpt ? (
                   <span className="storage-text-preview line-clamp-6 w-full self-start p-3.5 text-[0.6875rem] leading-relaxed whitespace-pre-wrap wrap-anywhere text-muted-foreground">
                     {excerpt}
@@ -649,6 +648,8 @@ export function StoragePage({ embedded = false }: { embedded?: boolean } = {}) {
   }, [b]);
   const create = () =>
     b.setNameRequest({ kind: 'create', storage: b.storage.id, parent: b.parent });
+  const createFile = () =>
+    b.setNameRequest({ kind: 'create-file', storage: b.storage.id, parent: b.parent });
   const upload = (files: File[]) => {
     void b.upload(files.map((file) => ({ file, path: file.webkitRelativePath || file.name })));
   };
@@ -656,6 +657,10 @@ export function StoragePage({ embedded = false }: { embedded?: boolean } = {}) {
   const files = b.visible.filter((node) => node.kind === 'file');
   const emptyActions = (
     <>
+      <ContextMenuItem disabled={!b.storage.write || b.trash} onSelect={createFile}>
+        <File />
+        New file
+      </ContextMenuItem>
       <ContextMenuItem disabled={!b.storage.write || b.trash} onSelect={create}>
         <Folder />
         New folder
@@ -685,14 +690,14 @@ export function StoragePage({ embedded = false }: { embedded?: boolean } = {}) {
       data-embedded-storage={embedded || undefined}
       onPointerDownCapture={dragStart}
     >
-      <div className="flex min-h-11 items-center gap-2 border-b px-3">
-        <StorageIdentity />
-        {!b.file && (
+      {!b.file && (
+        <div className="flex min-h-11 items-center gap-2 border-b px-3">
+          <StorageIdentity />
           <div className="ml-auto flex shrink-0 items-center gap-1">
             <StorageHeaderTools />
           </div>
-        )}
-      </div>
+        </div>
+      )}
       <div
         className="storage-browser flex min-h-0 flex-1 min-w-0 flex-col"
         ref={content}
@@ -709,6 +714,10 @@ export function StoragePage({ embedded = false }: { embedded?: boolean } = {}) {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start">
+                  <DropdownMenuItem onSelect={createFile}>
+                    <File />
+                    New file
+                  </DropdownMenuItem>
                   <DropdownMenuItem onSelect={create}>
                     <Folder />
                     New folder
@@ -735,6 +744,28 @@ export function StoragePage({ embedded = false }: { embedded?: boolean } = {}) {
               </Button>
             </>
           )}
+          {b.trash && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={
+                !b.storage.write ||
+                b.pending ||
+                b.query.isPending ||
+                !b.snapshot.nodes.some((node) => node.storage === b.storage.id && node.trashed)
+              }
+              onClick={() =>
+                b.setPurgeIds(
+                  b.snapshot.nodes
+                    .filter((node) => node.storage === b.storage.id && node.trashed)
+                    .map((node) => node.id),
+                )
+              }
+            >
+              <Trash2 />
+              Empty Trash
+            </Button>
+          )}
           <InputGroup className="storage-search ml-auto h-7.5 min-w-25 max-w-64 @max-[560px]/storage:max-w-none @max-[560px]/storage:flex-1">
             <InputGroupAddon>
               <Search />
@@ -746,6 +777,7 @@ export function StoragePage({ embedded = false }: { embedded?: boolean } = {}) {
               onChange={(event) => b.setFilter(event.target.value)}
             />
           </InputGroup>
+          {!b.trash && <StorageSearch />}
           <Select value={b.type} onValueChange={b.setType}>
             <SelectTrigger
               size="sm"
@@ -809,7 +841,13 @@ export function StoragePage({ embedded = false }: { embedded?: boolean } = {}) {
         />
         {b.progress && (
           <div role="status" className="px-5 pt-2 text-xs text-muted-foreground">
-            {b.progress.label} · {b.progress.done} / {b.progress.total}
+            {b.progress.label}
+            {b.progress.total > 0 && ` · ${b.progress.done} / ${b.progress.total}`}
+            {b.progress.cancel && (
+              <Button size="sm" variant="ghost" onClick={b.progress.cancel}>
+                Cancel download
+              </Button>
+            )}
             <Progress
               className="mt-1 h-1"
               value={b.progress.total ? (b.progress.done / b.progress.total) * 100 : 0}
@@ -932,15 +970,26 @@ export function StoragePage({ embedded = false }: { embedded?: boolean } = {}) {
             </Button>
             <span className="whitespace-nowrap text-sm">{b.selected.size} selected</span>
             {b.trash ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={!b.storage.write || !!b.pending}
-                onClick={() => void b.restore([...b.selected])}
-              >
-                <RotateCcw />
-                Restore
-              </Button>
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={!b.storage.write || !!b.pending}
+                  onClick={() => void b.restore([...b.selected])}
+                >
+                  <RotateCcw />
+                  Restore
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Delete selected permanently"
+                  disabled={!b.storage.write || b.pending}
+                  onClick={() => b.setPurgeIds([...b.selected])}
+                >
+                  <Trash2 />
+                </Button>
+              </>
             ) : (
               <>
                 <Button

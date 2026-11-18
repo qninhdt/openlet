@@ -1,3 +1,4 @@
+import { usePreferences } from '@/lib/backend';
 // React port of OpenBot ComposerEditor at 5c1cae0; DOM/selection helpers are in ./openbot.
 // PolyForm Noncommercial 1.0.0: https://polyformproject.org/licenses/noncommercial/1.0.0/
 // Required Notice: Copyright 2026 Synthetify Labs spółka z ograniczoną odpowiedzialnością.
@@ -83,6 +84,7 @@ function renderEditorValue(editor: HTMLDivElement, value: string) {
 
 export function ComposerEditor({ onEmptyChange }: { onEmptyChange: (empty: boolean) => void }) {
   const p = useAgentPreview();
+  const preferences = usePreferences();
   const editor = useRef<HTMLDivElement>(null);
   const placeholder = useRef<HTMLSpanElement>(null);
   const composing = useRef(false);
@@ -109,7 +111,7 @@ export function ComposerEditor({ onEmptyChange }: { onEmptyChange: (empty: boole
     const surface = editor.current;
     if (!surface) return;
     const value = serializeEditor(surface);
-    p.drafts.set(p.fixture.id, value);
+    p.setDraft(p.resource.id, value);
     if (placeholder.current) placeholder.current.hidden = !!value;
     const nextEmpty = !value.trim();
     if (empty.current !== nextEmpty) {
@@ -192,7 +194,7 @@ export function ComposerEditor({ onEmptyChange }: { onEmptyChange: (empty: boole
 
   useLayoutEffect(() => {
     const surface = editor.current!;
-    const value = p.drafts.get(p.fixture.id) ?? '';
+    const value = p.drafts.get(p.resource.id) ?? '';
     composing.current = false;
     renderEditorValue(surface, value);
     empty.current = !value.trim();
@@ -208,16 +210,16 @@ export function ComposerEditor({ onEmptyChange }: { onEmptyChange: (empty: boole
       },
       submit: () => submit(),
     };
-    p.composers.set(p.fixture.id, handle);
+    p.composers.set(p.resource.id, handle);
     const pending = pendingFiles.current;
     return () => {
-      p.composers.delete(p.fixture.id);
+      p.composers.delete(p.resource.id);
       for (const item of pending.splice(0)) {
-        const draft = p.drafts.get(p.fixture.id) ?? '';
-        p.drafts.set(p.fixture.id, draft + ' ' + fileToken(item.ref) + ' ');
+        const draft = p.drafts.get(p.resource.id) ?? '';
+        p.setDraft(p.resource.id, draft + ' ' + fileToken(item.ref) + ' ');
       }
     };
-  }, [p.fixture.id, p.drafts, p.composers, onEmptyChange, emitValue, insertFile, submit]);
+  }, [p.resource.id, p.drafts, p.composers, onEmptyChange, emitValue, insertFile, submit]);
 
   // Native beforeinput carries inputType/data consistently; React's synthetic beforeinput does not.
   const beforeInput = useCallback(
@@ -387,7 +389,10 @@ export function ComposerEditor({ onEmptyChange }: { onEmptyChange: (empty: boole
           }
           if (event.key === 'Enter') {
             event.preventDefault();
-            if (event.shiftKey) {
+            if (
+              event.shiftKey ||
+              (preferences.sendShortcut === 'modifier-enter' && !event.ctrlKey && !event.metaKey)
+            ) {
               insertLineBreak(surface);
               emitValue();
               updateMention();

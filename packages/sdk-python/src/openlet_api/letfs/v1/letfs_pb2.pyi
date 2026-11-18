@@ -287,6 +287,20 @@ class NodeRequest(_message.Message):
     target: NodeLocator
     def __init__(self, workspace_id: _Optional[str] = ..., storage_id: _Optional[str] = ..., target: _Optional[_Union[NodeLocator, _Mapping]] = ...) -> None: ...
 
+class RetryProcessingRequest(_message.Message):
+    __slots__ = ("workspace_id", "storage_id", "target", "expected_version", "request_id")
+    WORKSPACE_ID_FIELD_NUMBER: _ClassVar[int]
+    STORAGE_ID_FIELD_NUMBER: _ClassVar[int]
+    TARGET_FIELD_NUMBER: _ClassVar[int]
+    EXPECTED_VERSION_FIELD_NUMBER: _ClassVar[int]
+    REQUEST_ID_FIELD_NUMBER: _ClassVar[int]
+    workspace_id: str
+    storage_id: str
+    target: NodeLocator
+    expected_version: int
+    request_id: str
+    def __init__(self, workspace_id: _Optional[str] = ..., storage_id: _Optional[str] = ..., target: _Optional[_Union[NodeLocator, _Mapping]] = ..., expected_version: _Optional[int] = ..., request_id: _Optional[str] = ...) -> None: ...
+
 class BatchStatRequest(_message.Message):
     __slots__ = ("workspace_id", "storage_id", "targets")
     WORKSPACE_ID_FIELD_NUMBER: _ClassVar[int]
@@ -575,6 +589,20 @@ class GetDownloadResponse(_message.Message):
     text: TextDownload
     def __init__(self, blob: _Optional[_Union[SignedDownload, _Mapping]] = ..., text: _Optional[_Union[TextDownload, _Mapping]] = ...) -> None: ...
 
+class ArchiveDownloadTicket(_message.Message):
+    __slots__ = ("ticket", "expires_at")
+    TICKET_FIELD_NUMBER: _ClassVar[int]
+    EXPIRES_AT_FIELD_NUMBER: _ClassVar[int]
+    ticket: str
+    expires_at: _timestamp_pb2.Timestamp
+    def __init__(self, ticket: _Optional[str] = ..., expires_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
+
+class ArchiveDownloadTicketRequest(_message.Message):
+    __slots__ = ("ticket",)
+    TICKET_FIELD_NUMBER: _ClassVar[int]
+    ticket: str
+    def __init__(self, ticket: _Optional[str] = ...) -> None: ...
+
 class DownloadArchiveRequest(_message.Message):
     __slots__ = ("workspace_id", "storage_id", "targets")
     WORKSPACE_ID_FIELD_NUMBER: _ClassVar[int]
@@ -834,16 +862,20 @@ class TransferDescriptor(_message.Message):
     def __init__(self, put_url: _Optional[str] = ..., headers: _Optional[_Mapping[str, str]] = ..., multipart: _Optional[bool] = ..., part_size_bytes: _Optional[int] = ...) -> None: ...
 
 class Upload(_message.Message):
-    __slots__ = ("id", "expires_at", "transfer", "completed")
+    __slots__ = ("id", "expires_at", "transfer", "completed", "completed_parts", "transferred")
     ID_FIELD_NUMBER: _ClassVar[int]
     EXPIRES_AT_FIELD_NUMBER: _ClassVar[int]
     TRANSFER_FIELD_NUMBER: _ClassVar[int]
     COMPLETED_FIELD_NUMBER: _ClassVar[int]
+    COMPLETED_PARTS_FIELD_NUMBER: _ClassVar[int]
+    TRANSFERRED_FIELD_NUMBER: _ClassVar[int]
     id: str
     expires_at: _timestamp_pb2.Timestamp
     transfer: TransferDescriptor
     completed: Node
-    def __init__(self, id: _Optional[str] = ..., expires_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., transfer: _Optional[_Union[TransferDescriptor, _Mapping]] = ..., completed: _Optional[_Union[Node, _Mapping]] = ...) -> None: ...
+    completed_parts: _containers.RepeatedCompositeFieldContainer[CompletedPart]
+    transferred: bool
+    def __init__(self, id: _Optional[str] = ..., expires_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., transfer: _Optional[_Union[TransferDescriptor, _Mapping]] = ..., completed: _Optional[_Union[Node, _Mapping]] = ..., completed_parts: _Optional[_Iterable[_Union[CompletedPart, _Mapping]]] = ..., transferred: _Optional[bool] = ...) -> None: ...
 
 class UploadRequest(_message.Message):
     __slots__ = ("workspace_id", "storage_id", "upload_id")

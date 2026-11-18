@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"go.temporal.io/api/serviceerror"
 
 	pb "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/letfs/v1"
@@ -20,6 +21,7 @@ import (
 type ProcessInput struct {
 	FileID               string `json:"file_id"`
 	Version              int64  `json:"version"`
+	Attempt              int64  `json:"attempt"`
 	ParseRequired        bool   `json:"parse_required"`
 	CPUQueue             string `json:"cpu_queue"`
 	IOQueue              string `json:"io_queue"`
@@ -56,8 +58,20 @@ func ProcessBlob(ctx workflow.Context, in ProcessInput) error {
 	return err
 }
 func (s *Server) dispatch(ctx context.Context, id string, version int64, parseRequired bool) error {
-	in := ProcessInput{FileID: id, Version: version, ParseRequired: parseRequired, CPUQueue: s.Queues.IngestCPU, IOQueue: s.Queues.IngestIO, ParseTimeoutSeconds: s.Settings.Processing.ParseTimeoutSeconds, EnrichTimeoutSeconds: s.Settings.Processing.EnrichIndexTimeoutSeconds}
-	_, err := s.Temporal.ExecuteWorkflow(ctx, client.StartWorkflowOptions{ID: fmt.Sprintf("process/%s/%d", id, version), TaskQueue: s.Queues.LetFS, WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE, WorkflowIDConflictPolicy: enums.WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING}, ProcessBlob, in)
+	var attempt int64
+	err := s.DB.QueryRow(ctx, `SELECT p.attempt FROM processing p JOIN files f ON f.node_id=p.file_id WHERE p.file_id=$1 AND f.version=$2 AND p.error_code IS NULL AND p.stage<>'ready'`, id, version).Scan(&attempt)
+	if err == pgx.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	in := ProcessInput{FileID: id, Version: version, Attempt: attempt, ParseRequired: parseRequired, CPUQueue: s.Queues.IngestCPU, IOQueue: s.Queues.IngestIO, ParseTimeoutSeconds: s.Settings.Processing.ParseTimeoutSeconds, EnrichTimeoutSeconds: s.Settings.Processing.EnrichIndexTimeoutSeconds}
+	workflowID := fmt.Sprintf("process/%s/%d", id, version)
+	if attempt > 0 {
+		workflowID += fmt.Sprintf("/retry/%d", attempt)
+	}
+	_, err = s.Temporal.ExecuteWorkflow(ctx, client.StartWorkflowOptions{ID: workflowID, TaskQueue: s.Queues.LetFS, WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE, WorkflowIDConflictPolicy: enums.WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING}, ProcessBlob, in)
 	var already *serviceerror.WorkflowExecutionAlreadyStarted
 	if errors.As(err, &already) {
 		return nil
@@ -65,7 +79,7 @@ func (s *Server) dispatch(ctx context.Context, id string, version int64, parseRe
 	return err
 }
 func (s *Server) reportProcessingFailure(ctx context.Context, in ProcessInput) error {
-	_, err := s.FailProcessing(ctx, &pb.FailProcessingRequest{FileId: in.FileID, Version: in.Version, ErrorCode: "PROCESSING_FAILED"})
+	_, err := s.FailProcessing(ctx, &pb.FailProcessingRequest{FileId: in.FileID, Version: in.Version, ErrorCode: "PROCESSING_FAILED", Attempt: in.Attempt})
 	return err
 }
 func Maintenance(ctx workflow.Context) error {

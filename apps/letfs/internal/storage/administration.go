@@ -114,7 +114,7 @@ func (s *Server) DeleteStorage(ctx context.Context, r *pb.StorageRequest) (*empt
 	}
 	defer tx.Rollback(ctx)
 	var bytes int64
-	err = tx.QueryRow(ctx, `WITH doomed AS (DELETE FROM nodes n USING files f WHERE n.storage_id=$1 AND f.node_id=n.id RETURNING f.size_bytes), cleared AS (DELETE FROM nodes WHERE storage_id=$1 AND kind='directory') SELECT coalesce(sum(size_bytes),0) FROM doomed`, id).Scan(&bytes)
+	err = tx.QueryRow(ctx, `WITH sizes AS MATERIALIZED(SELECT f.node_id,f.size_bytes FROM files f JOIN nodes n ON n.id=f.node_id WHERE n.storage_id=$1),doomed AS (DELETE FROM nodes n USING sizes f WHERE f.node_id=n.id RETURNING f.size_bytes), cleared AS (DELETE FROM nodes WHERE storage_id=$1 AND kind='directory') SELECT coalesce(sum(size_bytes),0) FROM doomed`, id).Scan(&bytes)
 	if err != nil {
 		return nil, err
 	}

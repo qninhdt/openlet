@@ -37,66 +37,16 @@ export function folderDestination(folders: AgentFolder[], id: string, parent: st
     1 + Math.max(0, ...folders.filter((f) => f.parent_id === node).map((f) => height(f.id)));
   return depth + height(id) - 1 <= 3;
 }
-export function useAgentOrganization(workspace: string, initialPins: string[]) {
+export function useAgentOrganization(workspace: string) {
   const backend = useBackend();
   const client = useQueryClient();
   const key = ['agent-sidebar', backend.actorId, workspace];
-  const storageKey = `openlet-agent-sidebar:${backend.actorId}:${workspace}`;
   const path = `/v1/workspaces/${workspace}/letas/sidebar`;
   const saving = useRef(false);
   const query = useQuery<Snapshot>({
     queryKey: key,
-    queryFn: async () => {
-      if (backend.enabled) return backend.api!<Snapshot>(path);
-      try {
-        const saved = JSON.parse(localStorage.getItem(storageKey) ?? 'null') as Snapshot | null;
-        if (
-          saved &&
-          Number.isInteger(saved.revision) &&
-          Array.isArray(saved.layout?.folders) &&
-          saved.layout.folders.length <= 100 &&
-          saved.layout.folders.every(
-            (f) =>
-              f &&
-              typeof f.id === 'string' &&
-              typeof f.name === 'string' &&
-              (f.parent_id === null || typeof f.parent_id === 'string'),
-          ) &&
-          saved.layout.folders.every((f) =>
-            folderDestination(saved.layout.folders, f.id, f.parent_id),
-          ) &&
-          saved.layout.assignments &&
-          typeof saved.layout.assignments === 'object' &&
-          !Array.isArray(saved.layout.assignments) &&
-          Object.values(saved.layout.assignments).every((id) => typeof id === 'string') &&
-          [saved.layout.pins, saved.layout.order, saved.layout.collapsed].every(
-            (ids) => Array.isArray(ids) && ids.every((id) => typeof id === 'string'),
-          )
-        )
-          return saved;
-      } catch {
-        /* Invalid preview preferences fall back to the workspace defaults. */
-      }
-      return {
-        revision: 0,
-        can_create_agent: true,
-        layout: {
-          folders:
-            workspace === 'personal'
-              ? [
-                  { id: 'launch', name: 'Launch', parent_id: null },
-                  { id: 'research', name: 'Research', parent_id: null },
-                ]
-              : [],
-          assignments:
-            workspace === 'personal' ? { atlas: 'launch', forge: 'launch', scout: 'research' } : {},
-          pins: initialPins,
-          order: [],
-          collapsed: [],
-        },
-      };
-    },
-    refetchInterval: backend.enabled ? 30000 : false,
+    queryFn: () => backend.api!<Snapshot>(path),
+    refetchInterval: 30000,
   });
   useEffect(() => {
     if (!backend.enabled || !backend.request) return;
@@ -140,14 +90,10 @@ export function useAgentOrganization(workspace: string, initialPins: string[]) {
   const mutation = useMutation({
     mutationFn: async (layout: AgentLayout) => {
       const previous = client.getQueryData<Snapshot>(key)!;
-      if (backend.enabled)
-        return backend.api!<Snapshot>(path, {
-          method: 'PUT',
-          body: JSON.stringify({ revision: previous.revision, layout }),
-        });
-      const next = { ...previous, revision: previous.revision + 1, layout };
-      localStorage.setItem(storageKey, JSON.stringify(next));
-      return next;
+      return backend.api!<Snapshot>(path, {
+        method: 'PUT',
+        body: JSON.stringify({ revision: previous.revision, layout }),
+      });
     },
     onMutate: async (layout) => {
       saving.current = true;
@@ -171,7 +117,7 @@ export function useAgentOrganization(workspace: string, initialPins: string[]) {
     layout: query.data?.layout ?? {
       folders: [],
       assignments: {},
-      pins: initialPins,
+      pins: [],
       order: [],
       collapsed: [],
     },

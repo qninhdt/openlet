@@ -15,6 +15,7 @@ from .hitl import render as render_hitl
 inbox_count = metrics.get_meter("openlet.leta").create_counter(
     "openlet.leta.inbox.messages"
 )
+PREVIEW_CHARS = 120
 
 
 class Message(Input):
@@ -27,11 +28,17 @@ class Message(Input):
     in_reply_to_role: Literal["user", "assistant"] | None = None
     scheduled_at: datetime | None = None
     schedule_title: str | None = None
-    content: str = Field(min_length=1, max_length=32000)
+    content: str = Field(max_length=32000)
     file_refs: list[JSON] = Field(default_factory=list[JSON], max_length=20)
     silent: bool = False
     input_type: Literal["message", "reaction"] = "message"
     input_payload: dict[str, JSON] | None = None
+
+    @model_validator(mode="after")
+    def nonempty(self) -> Message:
+        if not self.content.strip() and not self.file_refs:
+            raise ValueError("A message requires content or attachments")
+        return self
 
 
 class SendMessage(Input):
@@ -220,7 +227,7 @@ async def has_pending(db: Pool, agent_id: UUID, after: int) -> bool:
 async def pending(
     db: Pool, agent_id: UUID, after: int, *, root: bool = False, silent_after: int = 0
 ) -> list[Row]:
-    # Keep a character beyond a trailing space so rendering still detects truncation.
+    # One extra original character distinguishes a preview from a complete message.
     async with db.connection() as conn:
         rows = await (
             await conn.execute(
@@ -232,9 +239,10 @@ async def pending(
                 ) SELECT m.id,m.seq,m.source_kind,m.source_id,m.conversation_id,m.scheduled_at,m.created_at,m.read_at,
                 m.silent,m.input_type,m.input_payload,
                 CASE WHEN %s AND m.input_type='message' AND m.source_kind NOT IN ('hitl','schedule')
-                    THEN left(trim(regexp_replace(m.content,'[[:space:]]+',' ','g')),122)
+                    THEN left(m.content,%s)
                     ELSE m.content END AS content,
                 coalesce(a.name,b.name) AS source_name,
+                CASE WHEN a.id=a.leta_id THEN 'root' ELSE coalesce(a.name,b.name,m.source_id::text) END AS reply_to,
                 h.title AS request_title,h.type AS request_type,h.payload AS request_payload,
                 m.schedule_title,m.file_refs
                 FROM agent_messages m
@@ -243,7 +251,15 @@ async def pending(
                 LEFT JOIN hitl_requests h ON m.source_kind='hitl' AND h.id=m.source_id
                 LEFT JOIN schedules sc ON m.source_kind='schedule' AND sc.id=m.source_id
                 WHERE m.recipient_agent_id=%s AND m.seq IN (SELECT seq FROM normal UNION ALL SELECT seq FROM quiet) ORDER BY m.seq""",
-                (agent_id, after, agent_id, silent_after, root, agent_id),
+                (
+                    agent_id,
+                    after,
+                    agent_id,
+                    silent_after,
+                    root,
+                    PREVIEW_CHARS + 1,
+                    agent_id,
+                ),
             )
         ).fetchall()
     # Each cursor advances only through a contiguous prefix of its own delivery class.
@@ -257,7 +273,34 @@ async def pending(
                 break
             size += cost
             result.append(row)
-    return sorted(result, key=lambda r: int(str(r["seq"])))
+    result.sort(key=lambda r: int(str(r["seq"])))
+    await mark_presented(db, agent_id, result, root=root)
+    return result
+
+
+def is_preview(row: Row, *, root: bool) -> bool:
+    return (
+        root
+        and row.get("input_type", "message") == "message"
+        and row["source_kind"] not in ("hitl", "schedule")
+        and len(str(row["content"])) > PREVIEW_CHARS
+    )
+
+
+async def mark_presented(db: Pool, agent: UUID, rows: list[Row], *, root: bool) -> None:
+    ids = [
+        row["id"]
+        for row in rows
+        if not row.get("silent")
+        and row.get("read_at") is None
+        and not is_preview(row, root=root)
+    ]
+    if ids:
+        async with db.connection() as conn:
+            await conn.execute(
+                "UPDATE agent_messages SET read_at=now() WHERE recipient_agent_id=%s AND id=ANY(%s) AND read_at IS NULL",
+                (agent, ids),
+            )
 
 
 def reaction_key(row: Row) -> tuple[str, str, str, str]:
@@ -272,11 +315,6 @@ def reaction_key(row: Row) -> tuple[str, str, str, str]:
 
 
 def input_batch(rows: list[Row], *, root: bool) -> str:
-    latest = {
-        row["conversation_id"]: row["seq"]
-        for row in rows
-        if row.get("input_type", "message") == "message"
-    }
     latest_reaction = {
         reaction_key(row): row["seq"]
         for row in rows
@@ -314,21 +352,32 @@ def input_batch(rows: list[Row], *, root: bool) -> str:
                 f"\nScheduled for: {row['scheduled_at']}\n{row['content']}"
             )
         else:
-            if root and latest[row["conversation_id"]] != row["seq"]:
-                continue
             sender = str(row.get("source_name") or ("User" if kind == "user" else kind))
             if kind == "box":
                 sender = "box " + sender
             body = str(row["content"])
-            if root:
-                body = " ".join(body.split())
-                if len(body) > 120:
-                    body = body[:119] + "…"
+            attached = [
+                ref
+                for ref in cast(list[JSON], row.get("file_refs") or [])
+                if isinstance(ref, dict)
+            ]
+            if attached:
+                from .file_refs import token
+
+                body += "\nAttached files:\n" + "\n".join(
+                    token(
+                        str(ref["label"]), str(ref["storage_id"]), str(ref["node_id"])
+                    )
+                    for ref in attached
+                )
+            header = f"{sender} | message={row['seq']} | to={row['reply_to']}"
+            if is_preview(row, root=root):
+                body = " ".join(body.split())[: PREVIEW_CHARS - 1] + "…"
                 items.append(
-                    f"New inbox message from {sender} | message={row['seq']}\nPreview: {body}"
+                    f"New inbox message from {header}\nPreview: {body}\n[truncated; use inbox_read before acting]"
                 )
             else:
-                items.append(f"From {sender} | message={row['seq']}\n{body}")
+                items.append(f"From {header}\nFull message:\n{body}")
     return "\n\n---\n\n".join(items)
 
 
@@ -354,6 +403,7 @@ async def read(
         rows = await (
             await conn.execute(
                 """SELECT m.*,coalesce(a.name,b.name) AS source_name,
+                CASE WHEN a.id=a.leta_id THEN 'root' ELSE coalesce(a.name,b.name,m.source_id::text) END AS reply_to,
                 h.title AS request_title,h.type AS request_type,h.payload AS request_payload,m.schedule_title,m.file_refs
                 FROM (SELECT recipient_agent_id,conversation_id FROM agent_messages
                     WHERE recipient_agent_id=%s AND seq=%s) original
@@ -390,11 +440,6 @@ async def read(
 
 
 def input_data(rows: list[Row], *, root: bool) -> dict[str, JSON]:
-    latest = {
-        row["conversation_id"]: row["seq"]
-        for row in rows
-        if row.get("input_type", "message") == "message"
-    }
     latest_reaction = {
         reaction_key(row): row["seq"]
         for row in rows
@@ -403,11 +448,7 @@ def input_data(rows: list[Row], *, root: bool) -> dict[str, JSON]:
     items: list[JSON] = []
     for row in rows:
         kind = str(row["source_kind"])
-        preview = (
-            root
-            and row.get("input_type", "message") == "message"
-            and kind not in ("hitl", "schedule")
-        )
+        preview = is_preview(row, root=root)
         item = json_row(
             {
                 key: row[key]
@@ -434,12 +475,12 @@ def input_data(rows: list[Row], *, root: bool) -> dict[str, JSON]:
         )
         item.update(
             {
-                "content": " ".join(str(row["content"]).split())[:120]
+                "content": " ".join(str(row["content"]).split())[: PREVIEW_CHARS - 1]
+                + "…"
                 if preview
                 else str(row["content"]),
                 "preview": preview,
-                "presented": not preview
-                or latest.get(row["conversation_id"]) == row["seq"],
+                "presented": True,
             }
         )
         if row.get("input_type") == "reaction":
@@ -461,6 +502,7 @@ async def list_inbox(
         rows = await (
             await conn.execute(
                 """SELECT n.*,coalesce(a.name,b.name) AS source_name,
+                CASE WHEN a.id=a.leta_id THEN 'root' ELSE coalesce(a.name,b.name,n.source_id::text) END AS reply_to,
                 h.title AS request_title,h.type AS request_type,h.payload AS request_payload,n.schedule_title
                 FROM (
                 SELECT DISTINCT ON (conversation_id) * FROM agent_messages
@@ -476,6 +518,7 @@ async def list_inbox(
             )
         ).fetchall()
     body = input_batch(rows, root=True) or "No messages matching this inbox filter."
+    await mark_presented(db, agent, rows, root=True)
     if len(rows) == 20:
         body += f"\nNext cursor: {rows[-1]['seq']}"
     return body, rows

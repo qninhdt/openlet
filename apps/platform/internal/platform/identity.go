@@ -2,8 +2,6 @@ package platform
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"strings"
 
@@ -11,10 +9,9 @@ import (
 	"github.com/google/uuid"
 	sdk "github.com/qninhdt/openlet/packages/sdk-go"
 	pb "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/platform/v1"
-	enums "go.temporal.io/api/enums/v1"
-	"go.temporal.io/sdk/client"
-	"google.golang.org/grpc"
-	grpcmetadata "google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -34,27 +31,31 @@ func (s *Server) Onboard(ctx context.Context, _ *emptypb.Empty) (*pb.User, error
 	if name == "" {
 		name = "User"
 	}
-	input := ProvisionInput{LetFSQueue: s.Queues.LetFS, Subject: subject, UserID: uuid.NewString(), WorkspaceID: uuid.NewString(), SharedStorageID: uuid.NewString(), SharedRootID: uuid.NewString(), PrivateStorageID: uuid.NewString(), PrivateRootID: uuid.NewString(), Name: name + "'s workspace", DisplayName: name, AvatarURL: profile.ImageURL, Quota: s.Settings.DefaultQuotaBytes}
-	h := sha256.Sum256([]byte(subject))
-	run, err := s.Temporal.ExecuteWorkflow(ctx, client.StartWorkflowOptions{ID: "onboard/" + hex.EncodeToString(h[:]), TaskQueue: s.Queue, WorkflowIDReusePolicy: enums.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE, WorkflowIDConflictPolicy: enums.WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING}, ProvisionWorkspace, input)
+	u, err := scanUser(s.DB.QueryRow(ctx, `
+		WITH inserted AS (
+			INSERT INTO users(id, clerk_subject, display_name, avatar_url)
+			VALUES($1, $2, $3, $4)
+			ON CONFLICT(clerk_subject) DO NOTHING
+			RETURNING id, display_name, avatar_url, appearance
+		)
+		SELECT id, display_name, avatar_url, appearance FROM inserted
+		UNION ALL
+		SELECT id, display_name, avatar_url, appearance FROM users
+		WHERE clerk_subject=$2 AND NOT EXISTS(SELECT 1 FROM inserted)
+	`, uuid.NewString(), subject, name, profile.ImageURL))
 	if err != nil {
 		return nil, err
 	}
-	var result ProvisionResult
-	if err = run.Get(ctx, &result); err != nil {
-		return nil, err
+	key := s.UserIDMetadataKey
+	if key == "" {
+		key = "openlet_user_id"
 	}
-	if result.ZedToken != "" {
-		if err = grpc.SetHeader(ctx, grpcmetadata.Pairs("x-openlet-zed-token", result.ZedToken)); err != nil {
-			return nil, err
-		}
-	}
-	metadata, err := json.Marshal(map[string]string{"openlet_user_id": result.User.Id})
+	metadata, err := json.Marshal(map[string]string{key: u.Id})
 	if err != nil {
 		return nil, err
 	}
 	_, err = s.Clerk.UpdateMetadata(ctx, subject, &user.UpdateMetadataParams{PublicMetadata: (*json.RawMessage)(&metadata)})
-	return result.User, err
+	return u, err
 }
 func value(v *string) string {
 	if v == nil {
@@ -67,17 +68,56 @@ func (s *Server) GetMe(ctx context.Context, _ *emptypb.Empty) (*pb.User, error) 
 	if err != nil {
 		return nil, err
 	}
-	return scanUser(s.DB.QueryRow(ctx, `SELECT id,display_name,avatar_url FROM users WHERE clerk_subject=$1`, subject))
+	u, err := scanUser(s.DB.QueryRow(ctx, `SELECT id,display_name,avatar_url,appearance FROM users WHERE clerk_subject=$1`, subject))
+	if err != nil {
+		return nil, err
+	}
+	var preferences []byte
+	if err = s.DB.QueryRow(ctx, `SELECT preferences FROM users WHERE id=$1`, u.Id).Scan(&preferences); err != nil {
+		return nil, err
+	}
+	if len(preferences) > 0 {
+		u.Preferences = new(pb.AccountPreferences)
+		err = protojson.Unmarshal(preferences, u.Preferences)
+	}
+	return u, err
 }
 func (s *Server) UpdateMe(ctx context.Context, r *pb.UpdateMeRequest) (*pb.User, error) {
 	subject, err := sdk.ClerkSubject(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return scanUser(s.DB.QueryRow(ctx, `UPDATE users SET display_name=coalesce($2,display_name),avatar_url=CASE WHEN $3::text IS NULL THEN avatar_url ELSE nullif($3,'') END WHERE clerk_subject=$1 RETURNING id,display_name,avatar_url`, subject, r.DisplayName, r.AvatarUrl))
+	if r.DisplayName != nil {
+		name := strings.TrimSpace(*r.DisplayName)
+		if name == "" {
+			return nil, status.Error(codes.InvalidArgument, "display name cannot be blank")
+		}
+		r.DisplayName = &name
+	}
+	var appearance, preferences []byte
+	if r.Appearance != nil {
+		appearance, err = protojson.Marshal(r.Appearance)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if r.Preferences != nil {
+		preferences, err = protojson.Marshal(r.Preferences)
+		if err != nil {
+			return nil, err
+		}
+	}
+	result, err := s.DB.Exec(ctx, `UPDATE users SET display_name=coalesce($2,display_name),avatar_url=CASE WHEN $3::text IS NULL THEN avatar_url ELSE nullif($3,'') END,appearance=coalesce($4::jsonb,appearance),preferences=coalesce(preferences,'{}'::jsonb)||coalesce($5::jsonb,'{}'::jsonb) WHERE clerk_subject=$1`, subject, r.DisplayName, r.AvatarUrl, appearance, preferences)
+	if err != nil {
+		return nil, err
+	}
+	if result.RowsAffected() == 0 {
+		return nil, notFound("user")
+	}
+	return s.GetMe(ctx, &emptypb.Empty{})
 }
 func (s *Server) BatchGetUsers(ctx context.Context, r *pb.BatchGetUsersRequest) (*pb.BatchGetUsersResponse, error) {
-	rows, err := s.DB.Query(ctx, `SELECT id,display_name,avatar_url FROM users WHERE id=ANY($1::uuid[])`, r.UserIds)
+	rows, err := s.DB.Query(ctx, `SELECT id,display_name,avatar_url,appearance FROM users WHERE id=ANY($1::uuid[])`, r.UserIds)
 	if err != nil {
 		return nil, err
 	}

@@ -12,16 +12,15 @@ import {
 } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useFileSessions } from './file-sessions';
-import { useBackend } from '@/lib/backend';
+import { apiUrl, useBackend } from '@/lib/backend';
+import { downloadArchive } from '@/lib/archive-download';
 import { storageApi } from '@/lib/storage-api';
+import { fileMediaType, isTextFile } from '@/lib/file-types';
 import { toast } from 'sonner';
 import {
   ancestors,
   branch,
-  loadStorage,
-  updateStorage,
   rootId,
-  storageRoots,
   topNodes,
   type StorageNode,
   type StorageSnapshot,
@@ -29,12 +28,10 @@ import {
   type Collision,
   NameConflict,
   uniqueName,
-  transferNodes,
-  trashNodes,
-  restoreNode,
   validateName,
   fileBlob,
   downloadNodes,
+  formatBytes,
 } from '@/lib/storage-preview';
 
 export type StorageView = 'mosaic' | 'grid' | 'list';
@@ -59,14 +56,19 @@ export interface UploadFile {
   path: string;
 }
 type NameRequest =
-  { kind: 'create'; parent: string; storage: string } | { kind: 'rename'; node: StorageNode };
+  | { kind: 'create' | 'create-file'; parent: string; storage: string }
+  | { kind: 'rename'; node: StorageNode };
 type BrowserOptions = {
   root?: StorageRoot & { root?: string };
-  onOpenFile?: (node: StorageNode) => void;
+  onOpenFile?: (node: StorageNode, line?: number) => void;
   onAttachFiles?: (nodes: StorageNode[]) => void;
 };
 function useBrowser(
-  workspace: { id: string; agents: readonly { name: string; role?: string }[] },
+  workspace: {
+    id: string;
+    name?: string;
+    agents: readonly { id?: string; name: string; role?: string }[];
+  },
   options: BrowserOptions = {},
 ) {
   const routeSearch = useShellLocation();
@@ -81,9 +83,15 @@ function useBrowser(
   const backend = useBackend();
   const uploads = useUploads();
   const live = useMemo(
-    () => (backend.api ? storageApi(backend.api, workspace.id) : null),
-    [backend.api, workspace.id],
+    () => storageApi(backend.api!, workspace.id, backend.request, backend.actorId),
+    [backend.api, backend.request, backend.actorId, workspace.id],
   );
+  const quotaQuery = useQuery({
+    queryKey: ['storage-quota', backend.actorId, workspace.id],
+    queryFn: () => live.quota(),
+    enabled: backend.ready && search.view === 'storage',
+    refetchInterval: 30_000,
+  });
   const rootsQuery = useQuery({
     queryKey: ['storage-roots', backend.actorId, workspace.id],
     queryFn: () => live!.listRoots(),
@@ -91,29 +99,35 @@ function useBrowser(
     refetchInterval: 30_000,
   });
   if (options.root?.root) live?.bind(options.root.id, options.root.root);
-  const previewRoots = useMemo(() => storageRoots(workspace), [workspace]);
-  const rawRoots: StorageRoot[] = options.root
-    ? [options.root]
-    : live
-      ? (rootsQuery.data ?? [{ id: 'loading', name: 'Storage', write: false }])
-      : previewRoots;
+  const rawRoots: StorageRoot[] = options.root ? [options.root] : (rootsQuery.data ?? []);
   const roots = rawRoots.map((root) => {
     if ('root' in root && typeof root.root === 'string') live?.bind(root.id, root.root);
     const agent = workspace.agents.find((a) => a.name === root.name);
-    return agent ? { ...root, agent: agent.name, title: agent.role } : root;
+    if (agent) {
+      return { ...root, agent: agent.name, agentId: agent.id, title: agent.role };
+    }
+    const convAgent = workspace.agents.find((a) =>
+      root.name.startsWith(`Conversation · ${a.name} · `),
+    );
+    if (convAgent) {
+      return {
+        ...root,
+        name: `${convAgent.name} · Conversation`,
+        agent: convAgent.name,
+        agentId: convAgent.id,
+        isConversation: true,
+      };
+    }
+    return root;
   });
-  const key = [live ? 'storage-live' : 'storage-preview', backend.actorId, workspace.id];
+  const key = ['storage-live', backend.actorId, workspace.id];
   const query = useQuery({
     queryKey: key,
-    queryFn: () =>
-      live
-        ? Promise.resolve({ nodes: [] } as StorageSnapshot)
-        : loadStorage(workspace.id, previewRoots),
+    queryFn: () => Promise.resolve({ nodes: [] } as StorageSnapshot),
     enabled: search.view === 'storage',
     staleTime: Infinity,
   });
   const snapshot = query.data ?? { nodes: [] };
-  const queue = useRef(Promise.resolve());
   const textSessions = useFileSessions();
   const getTextSession = useCallback(
     (id: string) => {
@@ -134,7 +148,6 @@ function useBrowser(
   const [tabs, setTabs] = useState<Record<string, string[]>>({});
   const locations = useRef<Record<string, { folder: string; file: string }>>({});
   const [closeRequest, setCloseRequest] = useState<string | null>(null);
-  const [pending, setPending] = useState(0);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [selecting, setSelecting] = useState(false);
   const anchor = useRef<string | null>(null);
@@ -144,14 +157,23 @@ function useBrowser(
   const [transfer, setTransfer] = useState<TransferRequest | null>(null);
   const [nameRequest, setNameRequest] = useState<NameRequest | null>(null);
   const [deleteIds, setDeleteIds] = useState<string[]>([]);
+  const [purgeIds, setPurgeIds] = useState<string[]>([]);
+  const [pending, setPending] = useState(false);
+  const [lineTarget, setLineTarget] = useState<{ id: string; line: number; request: string }>();
   const [details, setDetails] = useState<StorageNode | null>(null);
   const [conflict, setConflict] = useState<{
     names: string[];
+    upload?: boolean;
     retry: (mode: Collision) => Promise<void>;
   } | null>(null);
-  const [progress, setProgress] = useState<{ label: string; done: number; total: number } | null>(
-    null,
-  );
+  const downloadController = useRef<AbortController | null>(null);
+  useEffect(() => () => downloadController.current?.abort(), [workspace.id]);
+  const [progress, setProgress] = useState<{
+    label: string;
+    done: number;
+    total: number;
+    cancel?: () => void;
+  } | null>(null);
   const [clipboard, setClipboard] = useState<{ ids: string[]; copy: boolean } | null>(null);
   const [dropTarget, setDropTarget] = useState('');
   const last = useMemo(() => {
@@ -219,7 +241,6 @@ function useBrowser(
     }));
   }, [folderQuery.data]);
   useEffect(() => {
-    if (!live) return;
     const target = search.file || requestedFolder;
     if (!target || target === 'trash') return;
     let cancelled = false;
@@ -254,7 +275,6 @@ function useBrowser(
     };
   }, [live, search.file, requestedFolder, storage.id]);
   async function loadFolder(storage: string, parent: string) {
-    if (!live) return;
     const nodes = await live.list(storage, parent);
     client.setQueryData<StorageSnapshot>(key, (previous) => ({
       nodes: [
@@ -266,7 +286,10 @@ function useBrowser(
     }));
   }
   async function refreshLive() {
-    await client.invalidateQueries({ queryKey: ['storage-folder', backend.actorId, workspace.id] });
+    await Promise.all([
+      client.invalidateQueries({ queryKey: ['storage-folder', backend.actorId, workspace.id] }),
+      client.invalidateQueries({ queryKey: ['storage-quota', backend.actorId, workspace.id] }),
+    ]);
   }
   const [view, setViewState] = useState<StorageView>('grid');
   useEffect(() => {
@@ -306,22 +329,6 @@ function useBrowser(
       if (sort === 'size') return b.size - a.size;
       return a.name.localeCompare(b.name, undefined, { numeric: true });
     });
-  async function change(update: (current: StorageSnapshot) => StorageSnapshot) {
-    setPending((n) => n + 1);
-    const run = queue.current.then(async () => {
-      const current = client.getQueryData<StorageSnapshot>(key);
-      if (!current) throw new Error('Wait for storage to finish loading.');
-      if (live) throw new Error('This operation must use the storage API.');
-      const next = await updateStorage(workspace.id, previewRoots, update);
-      client.setQueryData(key, next);
-    });
-    queue.current = run.catch(() => undefined);
-    try {
-      await run;
-    } finally {
-      setPending((n) => n - 1);
-    }
-  }
   function report(error: unknown) {
     toast.error(error instanceof Error ? error.message : 'The operation could not be completed.');
   }
@@ -362,10 +369,13 @@ function useBrowser(
     }
     void navigate({ view: 'storage', storage, folder: destination, file: targetFile });
   }
-  function open(node: StorageNode) {
+  function open(node: StorageNode, line?: number) {
+    setLineTarget(
+      line && line > 0 ? { id: node.id, line, request: crypto.randomUUID() } : undefined,
+    );
     if (trash) return;
     if (node.kind === 'folder') go(node.storage, node.id);
-    else if (options.onOpenFile) options.onOpenFile(node);
+    else if (options.onOpenFile) options.onOpenFile(node, line);
     else if (options.root) setLocalLocation((previous) => ({ ...previous, file: node.id }));
     else void navigate({ view: 'storage', storage: node.storage, file: node.id });
   }
@@ -423,7 +433,7 @@ function useBrowser(
       writable(request.storage);
       if (!request.copy)
         for (const node of topNodes(snapshot.nodes, request.ids)) writable(node.storage);
-      if (live) {
+      {
         const sources = topNodes(snapshot.nodes, request.ids);
         let destination = await live.list(request.storage, request.parent);
         const conflicts = sources.filter(
@@ -456,10 +466,7 @@ function useBrowser(
           ];
         }
         await refreshLive();
-      } else
-        await change((current) =>
-          transferNodes(current, request.ids, request.storage, request.parent, request.copy, mode),
-        );
+      }
       setTransfer(null);
       setConflict(null);
       clearSelection();
@@ -480,57 +487,68 @@ function useBrowser(
     else void move(request);
   }
   async function saveName(name: string) {
-    if (!nameRequest) return;
+    if (!nameRequest || pending) return;
     const request = nameRequest;
     const nextName = validateName(name);
-    const storage = request.kind === 'create' ? request.storage : request.node.storage;
+    const storage = request.kind === 'rename' ? request.node.storage : request.storage;
     writable(storage);
-    if (live) {
-      if (request.kind === 'create') await live.create(storage, request.parent, nextName);
-      else await live.transfer(request.node, storage, request.node.parent, false, nextName);
+    if (request.kind === 'create-file' && !isTextFile(nextName))
+      throw new Error('Use a text or code extension, such as .txt, .md or .py.');
+    setPending(true);
+    try {
+      const node =
+        request.kind === 'rename'
+          ? await live.transfer(request.node, storage, request.node.parent, false, nextName)
+          : await live.create(
+              storage,
+              request.parent,
+              nextName,
+              request.kind === 'create-file'
+                ? { content: '', mediaType: fileMediaType(nextName) }
+                : undefined,
+            );
+      client.setQueryData<StorageSnapshot>(key, (current) => ({
+        nodes: [...(current?.nodes ?? []).filter((n) => n.id !== node.id), node],
+      }));
       await refreshLive();
       setNameRequest(null);
-      return;
+      if (request.kind === 'create-file') open(node);
+    } finally {
+      setPending(false);
     }
-    await change((current) => {
-      const parent =
-        request.kind === 'create'
-          ? request.parent
-          : current.nodes.find((node) => node.id === request.node.id)?.parent;
-      if (!parent) throw new Error('This item is no longer available.');
-      if (
-        current.nodes.some(
-          (node) =>
-            node.parent === parent &&
-            !node.trashed &&
-            node.name === nextName &&
-            (request.kind === 'create' || node.id !== request.node.id),
-        )
-      )
-        throw new Error('An item with that name already exists.');
-      if (request.kind === 'rename')
-        return {
-          nodes: current.nodes.map((node) =>
-            node.id === request.node.id ? { ...node, name: nextName, updated: Date.now() } : node,
-          ),
-        };
-      return {
-        nodes: [
-          ...current.nodes,
-          {
-            id: crypto.randomUUID(),
-            storage,
-            parent,
-            name: nextName,
-            kind: 'folder',
-            mime: '',
-            size: 0,
-            updated: Date.now(),
-          },
-        ],
-      };
-    });
-    setNameRequest(null);
+  }
+  async function purge() {
+    if (pending) return;
+    setPending(true);
+    const failed: string[] = [];
+    const errors: string[] = [];
+    try {
+      for (const [index, id] of purgeIds.entries()) {
+        const node = snapshot.nodes.find((n) => n.id === id);
+        setProgress({ label: 'Deleting permanently', done: index, total: purgeIds.length });
+        try {
+          if (!node?.trashed) throw new Error('Reload Trash before deleting this item.');
+          writable(node.storage);
+          await live.purge(node);
+        } catch (error) {
+          failed.push(id);
+          errors.push(
+            `${node?.name ?? id}: ${error instanceof Error ? error.message : 'Could not delete.'}`,
+          );
+        }
+      }
+      await refreshLive();
+      setPurgeIds(failed);
+      clearSelection();
+      if (failed.length)
+        toast.error(`${failed.length} item(s) could not be deleted`, {
+          description: errors.join('\n'),
+        });
+      else toast.success('Permanently deleted');
+    } finally {
+      setPending(false);
+      setProgress(null);
+    }
   }
   async function remove(ids = deleteIds) {
     try {
@@ -538,7 +556,7 @@ function useBrowser(
       if (live) {
         for (const node of topNodes(snapshot.nodes, ids)) await live.trash(node);
         await refreshLive();
-      } else await change((current) => trashNodes(current, ids));
+      }
       setDeleteIds([]);
       clearSelection();
       toast.success('Moved to Trash', {
@@ -562,7 +580,7 @@ function useBrowser(
           if (node) await live.restore(node);
         }
         await refreshLive();
-      } else await change((current) => ids.reduce((next, id) => restoreNode(next, id), current));
+      }
       clearSelection();
       toast.success('Restored');
     } catch (error) {
@@ -570,17 +588,43 @@ function useBrowser(
     }
   }
   async function download(ids: string[]) {
+    if (progress || downloadController.current) return;
+    const controller = new AbortController();
+    downloadController.current = controller;
+    const cancel = () => controller.abort();
     try {
-      setProgress({ label: 'Preparing download', done: 0, total: ids.length });
-      const downloadSnapshot = live
-        ? { nodes: (await Promise.all(topNodes(snapshot.nodes, ids).map(live.descendants))).flat() }
-        : snapshot;
-      await downloadNodes(downloadSnapshot, ids, (done, total) =>
-        setProgress({ label: 'Preparing download', done, total }),
-      );
+      const selected = topNodes(snapshot.nodes, ids);
+      if (selected.length > 1 || selected[0]?.kind === 'folder') {
+        setProgress({ label: 'Preparing archive…', done: 0, total: 0, cancel });
+        const result = await downloadArchive({
+          api: backend.api!,
+          request: backend.request!,
+          url: apiUrl,
+          workspace: workspace.id,
+          nodes: selected,
+          signal: controller.signal,
+          onBytes: (bytes) =>
+            setProgress({
+              label: `Downloading archive · ${formatBytes(bytes)}`,
+              done: 0,
+              total: 0,
+              cancel,
+            }),
+        });
+        if (result === 'browser')
+          toast.success(
+            'Download started. Progress and Cancel are available in your browser downloads.',
+          );
+      } else {
+        setProgress({ label: 'Preparing download', done: 0, total: ids.length });
+        await downloadNodes({ nodes: selected }, ids, (done, total) =>
+          setProgress({ label: 'Preparing download', done, total }),
+        );
+      }
     } catch (error) {
-      report(error);
+      if (!(error instanceof DOMException && error.name === 'AbortError')) report(error);
     } finally {
+      downloadController.current = null;
       setProgress(null);
     }
   }
@@ -592,11 +636,15 @@ function useBrowser(
   ) {
     if (!files.length) return;
     const id = crypto.randomUUID();
+    const pendingFiles = [...files];
     await uploads.enqueue({
       id,
       name: files.length === 1 ? files[0].file.name : `${files.length} files`,
       destination: roots.find((root) => root.id === destination)?.name ?? 'Storage',
-      run: (report) => performUpload(files, destination, parentId, mode, report, id),
+      run: (report, signal) =>
+        performUpload([...pendingFiles], destination, parentId, mode, report, id, signal, () =>
+          pendingFiles.shift(),
+        ),
     });
   }
   async function performUpload(
@@ -606,6 +654,8 @@ function useBrowser(
     mode: Collision,
     reportProgress: (fraction: number) => void,
     uploadId: string,
+    signal: AbortSignal,
+    onUploaded: () => void,
   ) {
     if (!files.length) return;
     let remaining = files;
@@ -615,6 +665,7 @@ function useBrowser(
       if (live) {
         const destinations = new Map<string, string>([['', parentId]]);
         for (const [index, { file, path }] of files.entries()) {
+          signal.throwIfAborted();
           const parts = path.split('/').filter(Boolean).map(validateName);
           const name = parts.pop()!;
           let parent = parentId,
@@ -636,69 +687,35 @@ function useBrowser(
           const conflict = siblings.find((node) => node.name === name);
           if (conflict && mode === 'ask') throw new NameConflict([name]);
           const filename = conflict && mode === 'keep' ? uniqueName(name, siblings, parent) : name;
-          if (conflict && mode === 'replace') await live.trash(conflict);
-          await live.upload(destination, parent, file, filename, (loaded, total) =>
-            reportProgress((index + (total ? loaded / total : 1)) / files.length),
+          const replace = conflict && mode === 'replace' ? conflict : undefined;
+          if (replace?.kind === 'folder')
+            throw new Error('A folder cannot be replaced by a file. Choose Keep both instead.');
+          const quota = await live.quota();
+          if (file.size > quota.total - quota.used)
+            throw new Error(
+              'There is not enough workspace storage for this file. Free space in Trash and try again.',
+            );
+          await live.upload(
+            destination,
+            parent,
+            file,
+            filename,
+            (loaded, total) =>
+              reportProgress((index + (total ? loaded / total : 1)) / files.length),
+            replace,
+            { signal },
           );
+          onUploaded();
           reportProgress((index + 1) / files.length);
         }
         await refreshLive();
-      } else
-        await change((current) => {
-          let next = { nodes: [...current.nodes] };
-          const destinations = new Map<string, string>([['', parentId]]);
-          for (const [index, { file, path }] of files.entries()) {
-            const parts = path.split('/').filter(Boolean).map(validateName);
-            const filename = parts.pop() ?? validateName(file.name);
-            let parent = parentId;
-            let directoryPath = '';
-            for (const part of parts) {
-              directoryPath += '/' + part;
-              let id = destinations.get(directoryPath);
-              if (!id) {
-                const existing = next.nodes.find(
-                  (node) => node.parent === parent && node.name === part && !node.trashed,
-                );
-                if (existing && existing.kind !== 'folder')
-                  throw new Error(`A file named ${part} blocks this folder.`);
-                id = existing?.id ?? crypto.randomUUID();
-                if (!existing)
-                  next.nodes.push({
-                    id,
-                    storage: destination,
-                    parent,
-                    name: part,
-                    kind: 'folder',
-                    mime: '',
-                    size: 0,
-                    updated: Date.now(),
-                  });
-                destinations.set(directoryPath, id);
-              }
-              parent = id;
-            }
-            const incoming: StorageNode = {
-              id: crypto.randomUUID(),
-              storage: destination,
-              parent: 'incoming',
-              name: filename,
-              kind: 'file',
-              mime: file.type || mimeForName(filename),
-              size: file.size,
-              updated: file.lastModified,
-              blob: file,
-            };
-            next.nodes.push(incoming);
-            next = transferNodes(next, [incoming.id], destination, parent, false, mode);
-            reportProgress((index + 1) / files.length);
-          }
-          return next;
-        });
+      }
       setConflict(null);
     } catch (error) {
       if (error instanceof NameConflict)
         setConflict({
           names: error.names,
+          upload: true,
           retry: async (next) => {
             uploads.remove(uploadId);
             await upload(remaining, destination, parentId, next);
@@ -708,71 +725,61 @@ function useBrowser(
     }
   }
   async function saveText(node: StorageNode, text: string) {
-    if (live) {
-      const updated = await live.save(node, text);
-      client.setQueryData<StorageSnapshot>(key, (current) => ({
-        nodes: (current?.nodes ?? []).map((n) => (n.id === node.id ? updated : n)),
-      }));
-      await refreshLive();
-      return updated;
-    }
-    const blob = new Blob([text], { type: node.mime || 'text/plain' });
-    if (blob.size > 1_000_000) throw new Error('Text editing is limited to 1 MB.');
-    const updated = {
-      ...node,
-      blob,
-      url: undefined,
-      size: blob.size,
-      updated: Date.now(),
-      version: (node.version ?? 0) + 1,
-    };
-    await change((current) => {
-      const existing = current.nodes.find((item) => item.id === node.id);
-      if (!existing || ancestors(current.nodes, node.id).some((item) => item.trashed))
-        throw new Error('This file is no longer available.');
-      writable(existing.storage);
-      if (
-        (existing.version ?? 0) !== (node.version ?? 0) ||
-        existing.url !== node.url ||
-        existing.updated !== node.updated
-      )
-        throw new Error('This file changed since you opened it. Reopen it before saving.');
-      return { nodes: current.nodes.map((item) => (item.id === node.id ? updated : item)) };
-    });
+    const updated = await live.save(node, text);
+    client.setQueryData<StorageSnapshot>(key, (current) => ({
+      nodes: (current?.nodes ?? []).map((n) => (n.id === node.id ? updated : n)),
+    }));
+    await refreshLive();
     return updated;
   }
+  const ensureConversationStorage = useCallback(
+    async (agentId: string) => {
+      const res = await backend.api!<{ storage_id: string; root_node_id: string }>(
+        `/v1/workspaces/${workspace.id}/letas/${agentId}/conversation-storage`,
+        { method: 'POST', body: '{}' },
+      );
+      live?.bind(res.storage_id, res.root_node_id);
+      await client.invalidateQueries({
+        queryKey: ['storage-roots', backend.actorId, workspace.id],
+      });
+      return {
+        id: res.storage_id,
+        name: 'Conversation',
+        root: res.root_node_id,
+        write: true,
+      };
+    },
+    [backend.api, backend.actorId, workspace.id, live, client],
+  );
   function paste() {
     if (clipboard) void move({ ...clipboard, storage: storage.id, parent });
   }
   return {
+    workspace,
+    ensureConversationStorage,
     resumeLocation: locations.current[storage.id] ?? { folder: folder?.id ?? '', file: '' },
     unavailable:
-      (!live || !!rootsQuery.data || !!options.root) &&
-      (!roots.some((root) => root.id === storage.id) ||
-        (!live &&
-          !!query.data &&
-          ((!!search.file && !file) ||
-            (!!requestedFolder && requestedFolder !== 'trash' && !folder)))),
+      (!!rootsQuery.data || !!options.root) && !roots.some((root) => root.id === storage.id),
     attachFiles: options.onAttachFiles,
     roots,
-    query: live
-      ? {
-          ...query,
-          isPending: (!options.root && rootsQuery.isPending) || folderQuery.isPending,
-          error:
-            rootsQuery.error ??
-            folderQuery.error ??
-            (pathError && pathError.target === (search.file || requestedFolder)
-              ? new Error(pathError.message)
-              : null),
-        }
-      : query,
+    quota: quotaQuery,
+    query: {
+      ...query,
+      isPending: (!options.root && rootsQuery.isPending) || folderQuery.isPending,
+      error:
+        rootsQuery.error ??
+        folderQuery.error ??
+        (pathError && pathError.target === (search.file || requestedFolder)
+          ? new Error(pathError.message)
+          : null),
+    },
     snapshot,
     storage,
     parent,
     folderId: folder?.id ?? '',
     path,
     file,
+    lineTarget,
     trash,
     visible,
     selected,
@@ -799,6 +806,9 @@ function useBrowser(
     setDeleteIds,
     remove,
     restore,
+    purgeIds,
+    setPurgeIds,
+    purge,
     details,
     setDetails,
     conflict,
@@ -817,6 +827,7 @@ function useBrowser(
     loadFolder,
     download,
     upload,
+    searchContent: live.searchContent,
     clipboard,
     setClipboard,
     paste,
@@ -859,7 +870,11 @@ export function StorageProvider({
   onOpenFile,
   onAttachFiles,
 }: BrowserOptions & {
-  workspace: { id: string; agents: readonly { name: string; role?: string }[] };
+  workspace: {
+    id: string;
+    name?: string;
+    agents: readonly { id?: string; name: string; role?: string }[];
+  };
   children: ReactNode;
 }) {
   const browser = useBrowser(workspace, { root, onOpenFile, onAttachFiles });

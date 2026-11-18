@@ -1,18 +1,19 @@
 import type { ActivityEntry, HumanRequest, InputItem, Json } from './agent-api.js';
 import { scheduleTiming } from './schedule-presentation.js';
+import type { FileRef } from './file-refs.js';
 
-// Shared tool presentation contract; fixtures and versioned runtime snapshots supply it.
-export type DemoItem = {
+// Tool presentation contract for versioned runtime snapshots.
+export type ToolItem = {
   title: string;
   detail: string;
-  fileId?: string;
+  file?: FileRef;
   kind?: 'folder' | 'file';
   meta?: string;
   status?: string;
   sender?: string;
   time?: string;
 };
-export type DemoToolResult = {
+export type ToolResult = {
   reaction?: { emoji: string | null; content: string };
   inputItems?: InputItem[];
   request?: Pick<HumanRequest, 'title' | 'status' | 'payload'> &
@@ -20,8 +21,9 @@ export type DemoToolResult = {
   summary?: string;
   output?: string;
   exitCode?: number;
-  fileId?: string;
-  items?: DemoItem[];
+  file?: FileRef;
+  items?: ToolItem[];
+  fileRefs?: FileRef[];
   title?: string;
   content?: string;
   timing?: string;
@@ -47,9 +49,23 @@ function rows(value: Json | undefined): Record<string, Json>[] {
 function string(value: Json | undefined) {
   return value == null ? '' : typeof value === 'string' ? value : String(value);
 }
+function file(value: Record<string, Json>): FileRef | undefined {
+  if (
+    typeof value.storage_id !== 'string' ||
+    !value.storage_id ||
+    typeof value.node_id !== 'string' ||
+    !value.node_id
+  )
+    return;
+  return {
+    storage_id: value.storage_id,
+    node_id: value.node_id,
+    label: string(value.path ?? value.name),
+  };
+}
 
 // Adapts versioned snapshots, never clipped model-facing English/JSON previews.
-export function activityToolResult(entry: ActivityEntry): DemoToolResult | string {
+export function activityToolResult(entry: ActivityEntry): ToolResult | string {
   const { payload } = entry;
   const ui = payload.ui;
   if (!ui && payload.name !== 'execute') return payload.text ?? '';
@@ -58,7 +74,7 @@ export function activityToolResult(entry: ActivityEntry): DemoToolResult | strin
     data.items ?? data.members ?? data.recipients ?? data.boxes ?? data.letis ?? data.entries,
   );
   const name = payload.name ?? '';
-  const result: DemoToolResult = {
+  const result: ToolResult = {
     output: payload.text ?? '',
     content: payload.text ?? '',
     title: string(data.title ?? data.name),
@@ -66,6 +82,7 @@ export function activityToolResult(entry: ActivityEntry): DemoToolResult | strin
     home: string(data.home ?? data.workdir),
     target: string(data.target_name),
     summary: '',
+    file: file(data),
   };
   if (ui?.kind === 'messages' || ui?.kind === 'inbox_batch') {
     result.inputItems = ui.items;
@@ -82,6 +99,7 @@ export function activityToolResult(entry: ActivityEntry): DemoToolResult | strin
       meta: string(item.role ?? item.target_name ?? item.source_kind),
       status: string(item.status ?? item.state ?? (item.paused ? 'Paused' : undefined)),
       kind: item.kind === 'directory' ? 'folder' : 'file',
+      file: item.kind === 'directory' && !item.artifacts ? undefined : file(item),
     }));
   if (name === 'file_semantic_search')
     result.items = rows(data.groups).flatMap((group) =>
@@ -89,6 +107,7 @@ export function activityToolResult(entry: ActivityEntry): DemoToolResult | strin
         title: string(hit.path),
         detail: string(hit.text),
         meta: string(group.path),
+        file: file(hit),
       })),
     );
   if (name === 'history_search')
@@ -116,6 +135,15 @@ export function activityToolResult(entry: ActivityEntry): DemoToolResult | strin
       : [];
   }
   if (name === 'execute') result.exitCode = payload.status === 'error' ? 1 : 0;
+  if (name === 'inbox_send') {
+    result.content = typeof data.content === 'string' ? data.content : undefined;
+    result.fileRefs = rows(data.file_refs).flatMap((ref) => {
+      const reference = file(ref);
+      return reference
+        ? [{ ...reference, label: string(ref.label ?? ref.name), mime: string(ref.mime) }]
+        : [];
+    });
+  }
   if (name === 'inbox_react')
     result.reaction = {
       emoji: typeof data.emoji === 'string' ? data.emoji : null,

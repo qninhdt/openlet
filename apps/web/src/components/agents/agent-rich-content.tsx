@@ -1,10 +1,21 @@
-import { useEffect, useState, type ReactNode } from 'react';
-import Markdown, { defaultUrlTransform } from 'react-markdown';
+import {
+  Children,
+  isValidElement,
+  useEffect,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from 'react';
+import Markdown, { defaultUrlTransform, type ExtraProps } from 'react-markdown';
 import { fileReferenceStyles } from '@/components/ui/styles';
-import { fileMarkdown } from '@/lib/file-refs';
+import { fileMarkdown, fileTokenPattern } from '@/lib/file-refs';
 import { FileIcon } from '@/components/storage/file-icon';
 import { useAgentPreview } from './agent-preview';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
+import { mathMarkdown } from '@/lib/markdown';
 import { highlightCode } from '@/lib/highlighter';
 import {
   CodeBlock,
@@ -40,7 +51,7 @@ export function HighlightedCode({
       .then((lines) => {
         if (active) setHighlighted({ code, language, lines });
       })
-      .catch(() => {});
+      .catch((error) => console.warn(`Could not highlight ${language}`, error));
     return () => {
       active = false;
     };
@@ -53,7 +64,7 @@ export function HighlightedCode({
           <CodeBlockCopyButton value={code} />
         </CodeBlockActions>
       </CodeBlockHeader>
-      <CodeBlockContent lineNumbers={!lines} aria-label={`${title ?? language} code`}>
+      <CodeBlockContent lineNumbers aria-label={`${title ?? language} code`}>
         {lines
           ? lines.map((line, index) => (
               <CodeBlockLine
@@ -96,13 +107,25 @@ function FileReference({ target, label }: { target: string; label: ReactNode }) 
     </button>
   );
 }
+function MathSpan({ node: _node, className, ...props }: ComponentProps<'span'> & ExtraProps) {
+  return (
+    <span
+      {...props}
+      className={className}
+      tabIndex={className === 'katex-display' ? 0 : undefined}
+    />
+  );
+}
+
 export function AgentMarkdown({ text }: { text: string }) {
   return (
-    <article className="flex min-w-0 max-w-full flex-col gap-3 text-sm leading-relaxed wrap-anywhere">
+    <article className="agent-markdown flex min-w-0 max-w-full flex-col gap-3 text-sm leading-relaxed wrap-anywhere">
       <Markdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[[rehypeKatex, { trust: false }]]}
         urlTransform={(url) => (url.startsWith('openlet-file:') ? url : defaultUrlTransform(url))}
         components={{
+          span: MathSpan,
           h1: ({ children }) => <h1 className="text-xl font-medium">{children}</h1>,
           h2: ({ children }) => <h2 className="text-base font-medium">{children}</h2>,
           h3: ({ children }) => <h3 className="text-sm font-medium">{children}</h3>,
@@ -113,15 +136,30 @@ export function AgentMarkdown({ text }: { text: string }) {
           blockquote: ({ children }) => (
             <blockquote className="border-l border-current/25 pl-3">{children}</blockquote>
           ),
-          pre: ({ children }) => <>{children}</>,
-          code: ({ children, className }) => {
-            const code = String(children).replace(/\n$/, '');
-            const language = /language-(\w+)/.exec(className ?? '')?.[1];
-            return language || code.includes('\n') ? (
-              <HighlightedCode code={code} language={language ?? 'text'} />
-            ) : (
-              <code className="rounded-sm bg-muted px-1 py-0.5 text-xs">{children}</code>
+          pre: ({ children }) => {
+            const child = Children.toArray(children)[0];
+            if (!isValidElement<{ children?: ReactNode; className?: string }>(child))
+              return <pre>{children}</pre>;
+            return (
+              <HighlightedCode
+                code={String(child.props.children ?? '').replace(/\n$/, '')}
+                language={/language-([^\s]+)/.exec(child.props.className ?? '')?.[1] ?? 'text'}
+              />
             );
+          },
+          code: ({ children }) => {
+            const text = String(children ?? '');
+            const mention = [...text.matchAll(fileTokenPattern())];
+            if (mention.length === 1 && mention[0][0] === text.trim()) {
+              const [, label, storage, id] = mention[0];
+              return (
+                <FileReference
+                  target={`openlet-file:${storage}/${id}`}
+                  label={label.replace(/\\(.)/g, '$1')}
+                />
+              );
+            }
+            return <code className="rounded-sm bg-muted px-1 py-0.5 text-xs">{children}</code>;
           },
           table: ({ children }) => (
             <div
@@ -158,7 +196,7 @@ export function AgentMarkdown({ text }: { text: string }) {
             ),
         }}
       >
-        {fileMarkdown(text)}
+        {mathMarkdown(fileMarkdown(text))}
       </Markdown>
     </article>
   );

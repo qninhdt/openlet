@@ -6,6 +6,7 @@ export type Capabilities = {
   can_chat: boolean;
   can_view_activity: boolean;
   can_edit_settings: boolean;
+  can_delete?: boolean;
 };
 export type AgentResource = {
   id: string;
@@ -22,6 +23,8 @@ export type AgentResource = {
   preview?: string | null;
   updated_at?: string | null;
   unread_count?: number;
+  latest_reply_id?: string | null;
+  latest_reply_at?: string | null;
 };
 export type MessageReaction = { actor_kind: 'user' | 'agent'; actor_id: string; emoji: string };
 export type ReactionInput = {
@@ -40,7 +43,6 @@ export type ChatMessage = {
   read_at?: string | null;
   reply?: ReplyRef | null;
   status?: 'sending' | 'failed';
-  file_ids?: string[];
   file_refs?: import('./file-refs.js').FileRef[];
   reactions?: MessageReaction[];
 };
@@ -72,6 +74,7 @@ export type HumanRequest = {
   resolved_at?: string | null;
 };
 export type InputItem = {
+  file_refs?: import('./file-refs.js').FileRef[];
   input_type?: 'message' | 'reaction';
   silent?: boolean;
   input_payload?: ReactionInput;
@@ -111,6 +114,7 @@ export type ActivityEntry = {
   };
 };
 export type InboxItem = {
+  file_refs?: import('./file-refs.js').FileRef[];
   input_type?: 'message' | 'reaction';
   silent?: boolean;
   input_payload?: ReactionInput;

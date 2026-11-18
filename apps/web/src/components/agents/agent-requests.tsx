@@ -28,16 +28,30 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import type { HumanRequest } from '@/lib/agent-api';
 import { useAgentPreview } from './agent-preview';
 
-function RequestForm({ request, close }: { request: HumanRequest; close: () => void }) {
-  const p = useAgentPreview();
+export function RequestForm({
+  request,
+  close,
+  draft,
+  onDraft,
+  onAnswer,
+  onRefresh,
+}: {
+  request: HumanRequest;
+  close: () => void;
+  draft: Record<string, string[]>;
+  onDraft: (draft: Record<string, string[]>) => void;
+  onAnswer: (
+    request: HumanRequest,
+    status: 'answered' | 'accepted' | 'denied',
+    response?: HumanRequest['response'],
+  ) => Promise<void>;
+  onRefresh: () => Promise<unknown>;
+}) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const draft = p.session.requestDrafts[request.id] ?? {};
   const questions = request.payload.questions ?? [];
   function update(id: string, values: string[]) {
-    p.updateSession({
-      requestDrafts: { ...p.session.requestDrafts, [request.id]: { ...draft, [id]: values } },
-    });
+    onDraft({ ...draft, [id]: values });
   }
   async function submit(status: 'answered' | 'accepted' | 'denied') {
     setBusy(true);
@@ -58,11 +72,11 @@ function RequestForm({ request, close }: { request: HumanRequest; close: () => v
               ),
             }
           : undefined;
-      await p.answerRequest(request, status, response);
+      await onAnswer(request, status, response);
       close();
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Could not submit. Try again.');
-      await p.live.refresh();
+      await onRefresh();
     } finally {
       setBusy(false);
     }
@@ -266,7 +280,19 @@ export function PendingRequests() {
         {selected ? (
           <>
             <h3 className="mb-4 text-sm font-medium">{selected.title}</h3>
-            <RequestForm key={selected.id} request={selected} close={close} />
+            <RequestForm
+              key={selected.id}
+              request={selected}
+              close={close}
+              draft={p.session.requestDrafts[selected.id] ?? {}}
+              onDraft={(draft) =>
+                p.updateSession({
+                  requestDrafts: { ...p.session.requestDrafts, [selected.id]: draft },
+                })
+              }
+              onAnswer={p.answerRequest}
+              onRefresh={p.live.refresh}
+            />
           </>
         ) : (
           <p className="text-sm text-muted-foreground">Loading requests…</p>

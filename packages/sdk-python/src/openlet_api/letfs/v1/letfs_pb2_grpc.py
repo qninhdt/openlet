@@ -81,6 +81,11 @@ class LetFSServiceStub:
                 request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.NodeRequest.SerializeToString,
                 response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.Node.FromString,
                 _registered_method=True)
+        self.RetryProcessing = channel.unary_unary(
+                '/openlet.letfs.v1.LetFSService/RetryProcessing',
+                request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.RetryProcessingRequest.SerializeToString,
+                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.Node.FromString,
+                _registered_method=True)
         self.BatchStat = channel.unary_unary(
                 '/openlet.letfs.v1.LetFSService/BatchStat',
                 request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.BatchStatRequest.SerializeToString,
@@ -135,6 +140,16 @@ class LetFSServiceStub:
                 '/openlet.letfs.v1.LetFSService/GetDownload',
                 request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.NodeRequest.SerializeToString,
                 response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.GetDownloadResponse.FromString,
+                _registered_method=True)
+        self.CreateArchiveDownload = channel.unary_unary(
+                '/openlet.letfs.v1.LetFSService/CreateArchiveDownload',
+                request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.DownloadArchiveRequest.SerializeToString,
+                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ArchiveDownloadTicket.FromString,
+                _registered_method=True)
+        self.DownloadArchiveTicket = channel.unary_stream(
+                '/openlet.letfs.v1.LetFSService/DownloadArchiveTicket',
+                request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ArchiveDownloadTicketRequest.SerializeToString,
+                response_deserializer=google_dot_api_dot_httpbody__pb2.HttpBody.FromString,
                 _registered_method=True)
         self.DownloadArchive = channel.unary_stream(
                 '/openlet.letfs.v1.LetFSService/DownloadArchive',
@@ -260,6 +275,12 @@ class LetFSServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def RetryProcessing(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def BatchStat(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -321,6 +342,18 @@ class LetFSServiceServicer:
         raise NotImplementedError('Method not implemented!')
 
     def GetDownload(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def CreateArchiveDownload(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DownloadArchiveTicket(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -452,6 +485,11 @@ def add_LetFSServiceServicer_to_server(servicer, server):
                     request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.NodeRequest.FromString,
                     response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.Node.SerializeToString,
             ),
+            'RetryProcessing': grpc.unary_unary_rpc_method_handler(
+                    servicer.RetryProcessing,
+                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.RetryProcessingRequest.FromString,
+                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.Node.SerializeToString,
+            ),
             'BatchStat': grpc.unary_unary_rpc_method_handler(
                     servicer.BatchStat,
                     request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.BatchStatRequest.FromString,
@@ -506,6 +544,16 @@ def add_LetFSServiceServicer_to_server(servicer, server):
                     servicer.GetDownload,
                     request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.NodeRequest.FromString,
                     response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.GetDownloadResponse.SerializeToString,
+            ),
+            'CreateArchiveDownload': grpc.unary_unary_rpc_method_handler(
+                    servicer.CreateArchiveDownload,
+                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.DownloadArchiveRequest.FromString,
+                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ArchiveDownloadTicket.SerializeToString,
+            ),
+            'DownloadArchiveTicket': grpc.unary_stream_rpc_method_handler(
+                    servicer.DownloadArchiveTicket,
+                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ArchiveDownloadTicketRequest.FromString,
+                    response_serializer=google_dot_api_dot_httpbody__pb2.HttpBody.SerializeToString,
             ),
             'DownloadArchive': grpc.unary_stream_rpc_method_handler(
                     servicer.DownloadArchive,
@@ -827,6 +875,33 @@ class LetFSService:
             _registered_method=True)
 
     @staticmethod
+    def RetryProcessing(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/openlet.letfs.v1.LetFSService/RetryProcessing',
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.RetryProcessingRequest.SerializeToString,
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.Node.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
     def BatchStat(request,
             target,
             options=(),
@@ -1113,6 +1188,60 @@ class LetFSService:
             '/openlet.letfs.v1.LetFSService/GetDownload',
             openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.NodeRequest.SerializeToString,
             openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.GetDownloadResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CreateArchiveDownload(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/openlet.letfs.v1.LetFSService/CreateArchiveDownload',
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.DownloadArchiveRequest.SerializeToString,
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ArchiveDownloadTicket.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DownloadArchiveTicket(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/openlet.letfs.v1.LetFSService/DownloadArchiveTicket',
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.ArchiveDownloadTicketRequest.SerializeToString,
+            google_dot_api_dot_httpbody__pb2.HttpBody.FromString,
             options,
             channel_credentials,
             insecure,

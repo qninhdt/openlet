@@ -1,0 +1,10 @@
+{
+  "name": "openlet-web",
+  "compatibilityDate": "2026-11-17",
+  "domains": ["openlet.qninhdt.com"],
+  "assets": {
+    "notFoundHandling": "single-page-application",
+    "runWorkerFirst": true
+  },
+  "env": { "ASSETS": { "type": "assets" } }
+}

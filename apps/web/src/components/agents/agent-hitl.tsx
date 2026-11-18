@@ -1,6 +1,5 @@
 import { MessageCircleQuestion, ShieldCheck } from 'lucide-react';
-import type { DemoToolResult } from './agent-demo';
-import { useAgentPreview } from './agent-preview';
+import type { ToolResult } from '@/lib/agent-presentation';
 
 function RequestSummary({
   type,
@@ -11,10 +10,7 @@ function RequestSummary({
   inline: boolean;
   result?: unknown;
 }) {
-  const p = useAgentPreview();
-  const request =
-    (result as DemoToolResult | undefined)?.request ??
-    (!p.live.enabled ? p.requests.find((r) => r.type === type) : undefined);
+  const request = (result as ToolResult | undefined)?.request;
   const Icon = type === 'ask' ? MessageCircleQuestion : ShieldCheck;
   return (
     <section

@@ -61,31 +61,24 @@ test('XLSX blob runs both workers, publishes readonly artifacts and becomes sear
   });
   expect(tree.ok(), await tree.text()).toBeTruthy();
   const { entries } = await tree.json();
-  const table = entries.find(
-    (entry: { node: { name: string } }) => entry.node.name === 'revenue-report.csv',
-  ).node;
-  expect(table.readonly).toBe(true);
+  const readme = entries.find((entry: { path: string }) => entry.path === 'README.md');
   expect(
-    entries.some((entry: { path: string }) => entry.path === 'revenue-report/revenue-report.csv'),
-  ).toBe(true);
-  const sheetReadme = entries.find(
-    (entry: { path: string }) => entry.path === 'revenue-report/README.md',
-  ).node;
-  const sheetContent = (await (await api.get(`${base}/nodes/${sheetReadme.id}/text`)).json())
+    readme,
+    JSON.stringify(entries.map((entry: { path: string }) => entry.path)),
+  ).toBeDefined();
+  expect(readme.node.readonly).toBe(true);
+  const sheetContent = (await (await api.get(`${base}/nodes/${readme.node.id}/text`)).json())
     .content;
-  expect(sheetContent).toContain('(revenue-report.csv)');
-  expect(sheetContent).not.toContain('table-1.csv');
-  expect((await (await api.get(`${base}/nodes/${table.id}/text`)).json()).content).toContain(
-    'Europe,120',
-  );
+  expect(sheetContent).toContain('# Sales');
+  expect(sheetContent).toContain('```csv');
+  expect(sheetContent).toContain('Europe,120');
   expect(
     (
-      await api.patch(`${base}/nodes/${table.id}/text`, {
+      await api.patch(`${base}/nodes/${readme.node.id}/text`, {
         data: { append: 'denied', requestId: randomUUID() },
       })
     ).status(),
   ).toBeGreaterThanOrEqual(400);
-  // Embedding fixtures rank CSV evidence below the root README; BM25 must recover it.
   const search = await api.post(`${base}/files:semanticSearch`, {
     data: { root: { nodeId: rootId }, query: 'csv', topK: 1 },
   });
@@ -106,10 +99,7 @@ test('XLSX blob runs both workers, publishes readonly artifacts and becomes sear
   });
   expect(textSearch.ok(), await textSearch.text()).toBeTruthy();
   const textHits = (await textSearch.json()).hits;
-  expect(
-    textHits.some((hit: { path: string }) => hit.path === 'revenue-report/revenue-report.csv'),
-  ).toBe(true);
-  expect(hits[0].snippet).toContain('revenue-report.csv');
+  expect(textHits.some((hit: { path: string }) => hit.path === 'README.md')).toBe(true);
   const download = await api.get(`${base}/nodes/${node.id}:download`);
   const original = await request.get((await download.json()).blob.url);
   expect(await original.body()).toEqual(bytes);

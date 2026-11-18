@@ -1,12 +1,11 @@
-import { createContext, useContext, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useParams, useSearch } from '@tanstack/react-router';
-import { workspaces as previewWorkspaces } from './shell-model';
-import { useBackend } from './backend';
+import { Navigate, useParams, useSearch } from '@tanstack/react-router';
+import { useMessageSound } from './message-sound';
+import { useBackend, usePreferences } from './backend';
 import type { AgentResource } from './agent-api';
 import type { AgentAppearance } from '@/components/agent-appearance';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { AppLoading, PageFailure } from '@/components/public/page-state';
 
 export type Workspace = {
   id: string;
@@ -22,6 +21,9 @@ export type Workspace = {
     updated_at?: string | null;
     unread_count?: number;
     can_view_activity?: boolean;
+    can_edit_settings?: boolean;
+    can_delete?: boolean;
+    paused?: boolean;
   }[];
 };
 export type CreateAgent = {
@@ -40,87 +42,12 @@ const CreateContext = createContext<
 export function useCreateAgent() {
   return useContext(CreateContext)!;
 }
-const DirectoryContext = createContext<Workspace[]>(previewWorkspaces);
+const DirectoryContext = createContext<Workspace[]>([]);
 export const useWorkspaces = () => useContext(DirectoryContext);
 
 export function WorkspaceDirectory({ children }: { children: ReactNode }) {
-  const backend = useBackend();
-  return backend.enabled ? (
-    <LiveDirectory>{children}</LiveDirectory>
-  ) : (
-    <PreviewDirectory>{children}</PreviewDirectory>
-  );
-}
-function PreviewDirectory({ children }: { children: ReactNode }) {
-  const [workspaces, setWorkspaces] = useState<Workspace[]>(() => {
-    try {
-      const saved: unknown = JSON.parse(localStorage.getItem('openlet-preview-agents') ?? 'null');
-      if (Array.isArray(saved))
-        return previewWorkspaces.map((w) => ({
-          ...w,
-          agents: [
-            ...w.agents,
-            ...saved
-              .filter(
-                (a) =>
-                  a &&
-                  a.workspace === w.id &&
-                  typeof a.id === 'string' &&
-                  typeof a.name === 'string',
-              )
-              .map((a) => ({
-                id: a.id,
-                name: a.name,
-                role: typeof a.role === 'string' ? a.role : 'Assistant',
-                appearance: a.appearance,
-                pinned: false,
-                state: a.state,
-              })),
-          ],
-        }));
-    } catch {
-      /* Preview starts with the default directory when storage is unavailable. */
-    }
-    return previewWorkspaces;
-  });
-  return (
-    <CreateContext.Provider
-      value={async (workspace, input) => {
-        const agent = {
-          id: input.request_id,
-          name: input.name,
-          role: input.title ?? 'Assistant',
-          appearance: input.appearance,
-          pinned: false,
-        };
-        const next = workspaces.map((w) =>
-          w.id === workspace ? { ...w, agents: [...w.agents, agent] } : w,
-        );
-        localStorage.setItem(
-          'openlet-preview-agents',
-          JSON.stringify(
-            next.flatMap((w) =>
-              w.agents
-                .filter(
-                  (a) =>
-                    !previewWorkspaces
-                      .find((p) => p.id === w.id)
-                      ?.agents.some((p) => p.id === a.id),
-                )
-                .map((a) => ({ ...a, workspace: w.id })),
-            ),
-          ),
-        );
-        setWorkspaces(next);
-        return agent.id;
-      }}
-    >
-      <DirectoryContext.Provider value={workspaces}>{children}</DirectoryContext.Provider>
-    </CreateContext.Provider>
-  );
-}
-function LiveDirectory({ children }: { children: ReactNode }) {
-  const { api, actorId } = useBackend();
+  const { api, actorId, preview } = useBackend();
+  const preferences = usePreferences();
   const client = useQueryClient();
   const search = useSearch({ strict: false });
   const params = useParams({ strict: false });
@@ -160,6 +87,22 @@ function LiveDirectory({ children }: { children: ReactNode }) {
       return items;
     },
   });
+  useMessageSound(
+    `${actorId}:${selected?.id ?? ''}`,
+    agents.data?.flatMap((agent) =>
+      agent.latest_reply_id && agent.latest_reply_at
+        ? [
+            {
+              id: agent.latest_reply_id,
+              role: 'assistant' as const,
+              created_at: agent.latest_reply_at,
+            },
+          ]
+        : [],
+    ),
+    // The embedded landing demo stays silent; the standalone playground supports interaction sounds.
+    (!preview || window.parent === window) && preferences.messageSound,
+  );
   const selectedAgent =
     agents.data?.find((a) => a.id === (params.agentId ?? search.agent)) ??
     (params.agentId ? undefined : agents.data?.[0]);
@@ -183,29 +126,25 @@ function LiveDirectory({ children }: { children: ReactNode }) {
   }
   if (directory.error || agents.error)
     return (
-      <p role="alert" className="p-8">
-        {(directory.error ?? agents.error)?.message}
-      </p>
+      <PageFailure
+        title="Workspace unavailable"
+        message={(directory.error ?? agents.error)!.message}
+        retry={() => {
+          void directory.refetch();
+          void agents.refetch();
+        }}
+      />
     );
   if (directory.isPending || (selected && agents.isPending))
-    return (
-      <p role="status" className="p-8 text-muted-foreground">
-        Loading agents…
-      </p>
-    );
+    return <AppLoading label="Loading agents…" />;
   if ((params.workspaceId && !selected) || (params.agentId && !selectedAgent))
     return (
-      <p role="alert" className="p-8">
-        This workspace or agent is unavailable.
-      </p>
+      <PageFailure
+        title="Workspace unavailable"
+        message="This workspace or agent does not exist, or you no longer have access."
+      />
     );
-  if (!selected)
-    return (
-      <div className="grid min-h-dvh place-items-center">
-        <p className="text-sm text-muted-foreground">There are no workspaces available.</p>
-      </div>
-    );
-  if (!selectedAgent) return <EmptyWorkspace workspace={selected} create={create} />;
+  if (!selected) return <Navigate to="/workspaces" replace />;
   const workspaces = directory.data!.workspaces.map((w) => ({
     ...w,
     agents:
@@ -221,6 +160,9 @@ function LiveDirectory({ children }: { children: ReactNode }) {
             updated_at: a.updated_at,
             unread_count: a.unread_count,
             can_view_activity: a.capabilities.can_view_activity,
+            can_edit_settings: a.capabilities.can_edit_settings,
+            can_delete: a.capabilities.can_delete,
+            paused: a.paused,
           }))
         : [],
   }));
@@ -228,77 +170,5 @@ function LiveDirectory({ children }: { children: ReactNode }) {
     <CreateContext.Provider value={create}>
       <DirectoryContext.Provider value={workspaces}>{children}</DirectoryContext.Provider>
     </CreateContext.Provider>
-  );
-}
-
-function EmptyWorkspace({
-  workspace,
-  create,
-}: {
-  workspace: { id: string; name: string };
-  create: (workspace: string, input: CreateAgent) => Promise<string>;
-}) {
-  const { api, actorId } = useBackend();
-  const [name, setName] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  const creation = useRef<{ name: string; id: string } | null>(null);
-  const permission = useQuery({
-    queryKey: ['agent-sidebar', actorId, workspace.id],
-    queryFn: () =>
-      api!<{ can_create_agent: boolean }>(`/v1/workspaces/${workspace.id}/letas/sidebar`),
-  });
-  return (
-    <div className="grid min-h-dvh place-items-center p-6">
-      <form
-        className="w-full max-w-sm space-y-4"
-        onSubmit={async (event) => {
-          event.preventDefault();
-          if (!name.trim()) return;
-          setSaving(true);
-          setError('');
-          if (creation.current?.name !== name.trim())
-            creation.current = { name: name.trim(), id: crypto.randomUUID() };
-          try {
-            await create(workspace.id, {
-              request_id: creation.current.id,
-              name: name.trim(),
-              description: '',
-              system_prompt: '',
-              model_id: null,
-              reasoning_effort: null,
-            });
-          } catch (error) {
-            setError(error instanceof Error ? error.message : 'Could not create agent.');
-          } finally {
-            setSaving(false);
-          }
-        }}
-      >
-        <h1 className="text-lg font-medium">{workspace.name}</h1>
-        <p className="text-sm text-muted-foreground">There are no agents in this workspace yet.</p>
-        {permission.data?.can_create_agent && (
-          <>
-            <Input
-              aria-label="Agent name"
-              placeholder="Agent name"
-              maxLength={255}
-              value={name}
-              disabled={saving}
-              onChange={(e) => setName(e.target.value)}
-              required
-            />
-            <Button type="submit" disabled={saving || !name.trim()}>
-              {saving ? 'Preparing agent…' : 'Create agent'}
-            </Button>
-          </>
-        )}
-        {(error || permission.error) && (
-          <p role="alert" className="text-sm text-destructive">
-            {error || permission.error?.message}
-          </p>
-        )}
-      </form>
-    </div>
   );
 }

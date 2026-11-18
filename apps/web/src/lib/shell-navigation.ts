@@ -61,7 +61,7 @@ export function shellTarget(location: ShellLocation) {
       return {
         to: '/app/$workspaceId/storage' as const,
         params: { workspaceId },
-        search: { folder: location.folder, file: location.file },
+        search: { folder: location.folder || undefined, file: location.file || undefined },
       };
     if (location.file)
       return {

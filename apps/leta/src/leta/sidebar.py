@@ -19,7 +19,9 @@ class Folder(Input):
 
 class Layout(Input):
     folders: list[Folder] = Field(default_factory=list[Folder], max_length=100)
-    assignments: dict[UUID, UUID] = Field(default_factory=dict[UUID, UUID], max_length=1000)
+    assignments: dict[UUID, UUID] = Field(
+        default_factory=dict[UUID, UUID], max_length=1000
+    )
     pins: list[UUID] = Field(default_factory=list[UUID], max_length=1000)
     order: list[UUID] = Field(default_factory=list[UUID], max_length=1000)
     collapsed: list[UUID] = Field(default_factory=list[UUID], max_length=100)

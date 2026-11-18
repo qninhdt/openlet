@@ -76,24 +76,23 @@ export const test = base.extend<{ account: Account }, { identity: Identity }>({
         const response = await bootstrap.post('/v1/me:onboard', { data: {} });
         expect(response.ok(), await response.text()).toBeTruthy();
         const user = await response.json();
-        const zedToken = response.headers()['x-openlet-zed-token'];
+        const Authorization = `Bearer ${await sign(subject, user.id)}`;
+        const created = await bootstrap.post('/v1/workspaces', {
+          headers: { Authorization },
+          data: { name: 'Test workspace', requestId: randomUUID() },
+        });
+        expect(created.ok(), await created.text()).toBeTruthy();
+        const { id: workspaceId } = await created.json();
+        const zedToken = created.headers()['x-openlet-zed-token'];
         expect(zedToken).toBeTruthy();
         const api = await playwright.request.newContext({
           baseURL: gateway,
           extraHTTPHeaders: {
-            Authorization: `Bearer ${await sign(subject, user.id)}`,
+            Authorization,
             'x-openlet-zed-token': zedToken,
           },
         });
         contexts.push(api);
-        await expect
-          .poll(async () => {
-            const response = await api.get('/v1/workspaces');
-            expect(response.ok(), await response.text()).toBeTruthy();
-            return (await response.json()).workspaces?.length ?? 0;
-          })
-          .toBe(1);
-        const workspaceId = (await (await api.get('/v1/workspaces')).json()).workspaces[0].id;
         await expect
           .poll(async () =>
             (await api.get(`/v1/workspaces/${workspaceId}/storages?owned_only=true`)).status(),

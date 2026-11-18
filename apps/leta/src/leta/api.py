@@ -3,6 +3,7 @@ import json
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Annotated, Literal, cast
 from uuid import UUID
@@ -17,7 +18,7 @@ from authzed.api.v1 import (
     RelationshipFilter,
     SubjectFilter,
 )
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 from openlet_sdk.config import JSON, load
 from openlet_sdk.telemetry import initialize
@@ -355,7 +356,7 @@ async def list_letas(
         rows = await (
             await conn.execute(
                 """SELECT l.*,a.name,a.title,a.appearance,a.description FROM letas l JOIN agents a ON a.id=l.id
-            WHERE l.workspace_id=%s AND (%s::uuid IS NULL OR l.id>%s) ORDER BY l.id LIMIT 20""",
+            WHERE l.workspace_id=%s AND l.state NOT IN ('deleting','archived') AND (%s::uuid IS NULL OR l.id>%s) ORDER BY l.id LIMIT 20""",
                 (workspace_id, cursor, cursor),
             )
         ).fetchall()
@@ -365,10 +366,13 @@ async def list_letas(
     managed = await s.auth.allowed_many(
         actor, "agent", [cast(UUID, row["id"]) for row in rows], "manage"
     )
+    deletable = await s.auth.allowed_many(
+        actor, "agent", [cast(UUID, row["id"]) for row in rows], "delete"
+    )
     summaries = await views.chat_summaries(s.db, list(allowed), actor.id)
     items: list[JSON] = [
         {
-            **views.profile(row, row["id"] in managed),
+            **views.profile(row, row["id"] in managed, row["id"] in deletable),
             **json_row(summaries[cast(UUID, row["id"])]),
         }
         for row in rows
@@ -383,7 +387,9 @@ async def list_letas(
 @app.get(root_path, dependencies=[Depends(usable)])
 async def get_leta(leta_id: UUID, resource: Root, s: Service, actor: User) -> JSON:
     return views.profile(
-        resource, await s.auth.allowed(actor, "agent", leta_id, "manage")
+        resource,
+        await s.auth.allowed(actor, "agent", leta_id, "manage"),
+        await s.auth.allowed(actor, "agent", leta_id, "delete"),
     )
 
 
@@ -518,7 +524,7 @@ class FileReference(Input):
 
 @app.post(root_path + "/file-reference", dependencies=[Depends(usable)])
 async def attach_file(
-    leta_id: UUID, body: FileReference, s: Service, actor: User
+    leta_id: UUID, body: FileReference, s: Service, actor: User, response: Response
 ) -> JSON:
     from openlet_api.letfs.v1 import letfs_pb2 as fs
 
@@ -527,6 +533,9 @@ async def attach_file(
     storage_id, node_id = body.storage_id, body.node_id
     if body.copy_file:
         target = await conversations.storage(s, leta_id, actor.id)
+        if token := target.get("zed_token"):
+            actor = replace(actor, zed_token=str(token))
+            response.headers["x-openlet-zed-token"] = actor.zed_token
         source: fs.Node = await s.files.Stat(
             fs.NodeRequest(
                 workspace_id=workspace,
@@ -566,8 +575,13 @@ async def attach_file(
 
 
 @app.post(root_path + "/conversation-storage", dependencies=[Depends(usable)])
-async def conversation_storage(leta_id: UUID, s: Service, actor: User) -> JSON:
-    return cast(JSON, await conversations.storage(s, leta_id, actor.id))
+async def conversation_storage(
+    leta_id: UUID, s: Service, actor: User, response: Response
+) -> JSON:
+    result = await conversations.storage(s, leta_id, actor.id)
+    if token := result.pop("zed_token", ""):
+        response.headers["x-openlet-zed-token"] = str(token)
+    return cast(JSON, result)
 
 
 @app.put(
@@ -608,6 +622,38 @@ async def chat(
 
 class ChatRead(Input):
     through: UUID
+
+
+@app.get(
+    root_path + "/messages/{role}/{message_id}/context", dependencies=[Depends(usable)]
+)
+async def chat_context(
+    leta_id: UUID,
+    role: Literal["user", "assistant"],
+    message_id: UUID,
+    s: Service,
+    actor: User,
+) -> JSON:
+    return await views.chat_context(s.db, leta_id, actor.id, message_id, role)
+
+
+@app.get(root_path + "/processing", dependencies=[Depends(usable)])
+async def chat_processing(leta_id: UUID, s: Service, actor: User) -> JSON:
+    manage = await s.auth.allowed(actor, "agent", leta_id, "manage")
+    async with s.db.connection() as conn:
+        row = await (
+            await conn.execute(
+                """SELECT r.id FROM runs r WHERE r.agent_id=%s AND r.status='running'
+            AND r.heartbeat_at > now()-interval '30 seconds'
+            AND (%s OR EXISTS (SELECT 1 FROM agent_messages m WHERE m.processing_run_id=r.id
+                AND m.source_kind='user' AND m.source_id=%s)) LIMIT 1""",
+                (leta_id, manage, actor.id),
+            )
+        ).fetchone()
+    return {
+        "working": row is not None,
+        "run_id": str(row["id"]) if row and manage else None,
+    }
 
 
 @app.put(root_path + "/messages/read", dependencies=[Depends(usable)])
@@ -952,18 +998,31 @@ async def incoming_requests(
         return await views.requests(
             s.db, workspace_id, actor.id, leta_id, status, before, cursor
         )
+    if (before is None) != (cursor is None):
+        raise ValueError("before and cursor must be supplied together")
     async with s.db.connection() as conn:
         rows = await (
             await conn.execute(
-                """SELECT h.*,l.workspace_id FROM hitl_requests h JOIN agents a ON a.id=h.requester_agent_id
-            JOIN letas l ON l.id=a.leta_id WHERE h.recipient_user_id=%s AND (%s::uuid IS NULL OR h.id>%s) ORDER BY h.id LIMIT 20""",
-                (actor.id, cursor, cursor),
+                """SELECT h.*,l.workspace_id,a.leta_id,a.name AS requester_name FROM hitl_requests h JOIN agents a ON a.id=h.requester_agent_id
+            JOIN letas l ON l.id=a.leta_id WHERE h.recipient_user_id=%s
+            AND (%s::uuid IS NULL OR a.leta_id=%s) AND (%s::text IS NULL OR h.status=%s)
+            AND (%s::timestamptz IS NULL OR (h.created_at,h.id)<(%s,%s))
+            ORDER BY h.created_at DESC,h.id DESC LIMIT 20""",
+                (actor.id, leta_id, leta_id, status, status, before, before, cursor),
+            )
+        ).fetchall()
+        counts = await (
+            await conn.execute(
+                """SELECT l.workspace_id,count(*) AS count FROM hitl_requests h JOIN agents a ON a.id=h.requester_agent_id
+            JOIN letas l ON l.id=a.leta_id WHERE h.recipient_user_id=%s AND h.status='pending'
+            AND (%s::uuid IS NULL OR a.leta_id=%s) GROUP BY l.workspace_id""",
+                (actor.id, leta_id, leta_id),
             )
         ).fetchall()
     allowed = await s.auth.allowed_many(
         actor,
         "workspace",
-        [cast(UUID, row["workspace_id"]) for row in rows],
+        list({cast(UUID, row["workspace_id"]) for row in [*rows, *counts]}),
         "participate",
     )
     items: list[JSON] = [
@@ -971,7 +1030,15 @@ async def incoming_requests(
     ]
     return {
         "items": items,
-        "next_cursor": str(rows[-1]["id"]) if len(rows) == 20 else None,
+        "pending_count": sum(
+            cast(int, row["count"]) for row in counts if row["workspace_id"] in allowed
+        ),
+        "next_cursor": {
+            "before": cast(datetime, rows[-1]["created_at"]).isoformat(),
+            "cursor": str(rows[-1]["id"]),
+        }
+        if len(rows) == 20
+        else None,
     }
 
 

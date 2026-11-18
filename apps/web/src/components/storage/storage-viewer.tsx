@@ -1,14 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  ChevronLeft,
-  ChevronRight,
-  Download,
-  FileQuestion,
-  Maximize,
-  Minus,
-  Plus,
-  X,
-} from 'lucide-react';
+import { isTextFile } from '@/lib/file-types';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useParams } from '@tanstack/react-router';
+import { useBackend } from '@/lib/backend';
+import { storageApi } from '@/lib/storage-api';
+import { formatBytes, uniqueName } from '@/lib/storage-preview';
+import { FileProcessing } from './file-processing';
+import { Download, FileQuestion, Maximize, Minus, Plus, X } from 'lucide-react';
 import { TextFile, type TextFileAccess } from './storage-text-file';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -83,8 +81,7 @@ export function StorageViewer({ node }: { node: StorageNode }) {
       embedded
       active={b.file?.id === node.id}
       node={node}
-      images={b.visible.filter((file) => file.mime.startsWith('image/'))}
-      onOpen={b.open}
+      focusLine={b.lineTarget?.id === node.id ? b.lineTarget : undefined}
       onClose={() => b.closeFile(node.id)}
       onDownload={() => void b.download([node.id])}
       textAccess={{
@@ -98,9 +95,8 @@ export function StorageViewer({ node }: { node: StorageNode }) {
 }
 
 export function FileViewer({
-  node,
-  images = [],
-  onOpen,
+  node: initialNode,
+  focusLine,
   onClose,
   onDownload,
   textAccess,
@@ -108,14 +104,36 @@ export function FileViewer({
   active = true,
 }: {
   node: StorageNode;
-  images?: StorageNode[];
-  onOpen?: (node: StorageNode) => void;
+  focusLine?: { line: number; request: string };
   onClose: () => void;
   onDownload: () => void;
   textAccess: TextFileAccess;
   embedded?: boolean;
   active?: boolean;
 }) {
+  const backend = useBackend();
+  const { workspaceId = '' } = useParams({ strict: false });
+  const client = useQueryClient();
+  const files = useMemo(
+    () => storageApi(backend.api!, workspaceId, backend.request, backend.actorId),
+    [backend.api, backend.request, backend.actorId, workspaceId],
+  );
+  const statKey = [
+    'storage-node',
+    backend.actorId,
+    workspaceId,
+    initialNode.storage,
+    initialNode.id,
+  ];
+  const stat = useQuery({
+    queryKey: statKey,
+    queryFn: () => files.stat(initialNode.storage, initialNode.id),
+    enabled: active && backend.ready && !!backend.api,
+    placeholderData: initialNode,
+    refetchInterval: active ? 5_000 : false,
+    retry: 1,
+  });
+  const node = stat.data ?? initialNode;
   const [resource, setResource] = useState<{
     id: string;
     url: string;
@@ -127,18 +145,7 @@ export function FileViewer({
   const close = useRef<HTMLButtonElement>(null);
   const image = node.mime.startsWith('image/');
   const spreadsheet = /\.xlsx$/i.test(node.name);
-  const text =
-    !spreadsheet &&
-    (/^text\//.test(node.mime) ||
-      /^application\/(json|javascript|xml)$/.test(node.mime) ||
-      /\.(md|mdx|markdown|txt|py|js|jsx|ts|tsx|go|rs|css|scss|yaml|yml|toml|log|json|csv|tsv|html|xml|sh|sql|ini|conf)$/i.test(
-        node.name,
-      ));
-  const index = images.findIndex((file) => file.id === node.id);
-  function adjacent(delta: number) {
-    const next = images[index + delta];
-    if (next) onOpen?.(next);
-  }
+  const text = !spreadsheet && !image && isTextFile(node.name, node.mime);
   useEffect(() => {
     if (embedded) return;
     const origin = document.activeElement as HTMLElement;
@@ -179,7 +186,7 @@ export function FileViewer({
       alive = false;
       if (url) URL.revokeObjectURL(url);
     };
-  }, [node.id, node.blob, node.url, spreadsheet, text]);
+  }, [node.id, node.version, node.updated, node.blob, node.url, spreadsheet, text]);
   useEffect(() => {
     if (!active) return;
     function key(event: KeyboardEvent) {
@@ -193,8 +200,6 @@ export function FileViewer({
         onClose();
       }
       if ((event.target as HTMLElement).closest('input,textarea,[contenteditable]')) return;
-      if (image && event.key === 'ArrowLeft') adjacent(-1);
-      if (image && event.key === 'ArrowRight') adjacent(1);
       if (!embedded && event.key === 'Tab') {
         const elements = Array.from(
           document.querySelectorAll<HTMLElement>(
@@ -213,8 +218,17 @@ export function FileViewer({
     }
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
-  }, [onClose, onOpen, images, embedded, active, image, index]);
+  }, [onClose, embedded, active]);
   const current = resource?.id === node.id ? resource : undefined;
+  const processing = node.processing ? (
+    <FileProcessing
+      key={`${node.id}:${node.version}`}
+      node={node}
+      files={files}
+      writable={textAccess.writable && !node.readonly && !stat.isError}
+      onUpdated={(value) => client.setQueryData(statKey, value)}
+    />
+  ) : null;
   return (
     <section
       role={embedded ? 'region' : 'dialog'}
@@ -222,10 +236,18 @@ export function FileViewer({
       aria-label={`Preview ${node.name}`}
       className={
         embedded
-          ? 'storage-viewer relative flex h-full min-h-0 min-w-0 flex-col bg-sidebar'
-          : 'storage-viewer absolute inset-0 z-10 flex flex-col bg-sidebar'
+          ? 'storage-viewer @container/file-viewer relative flex h-full min-h-0 min-w-0 flex-col bg-sidebar'
+          : 'storage-viewer @container/file-viewer absolute inset-0 z-10 flex flex-col bg-sidebar'
       }
     >
+      {stat.error && (
+        <p role="alert" className="border-b p-3 text-sm text-destructive">
+          {stat.error.message} Your unsaved draft is retained.{' '}
+          <Button size="sm" variant="outline" onClick={() => void stat.refetch()}>
+            Retry
+          </Button>
+        </p>
+      )}
       {!text && (
         <div className="storage-viewer-head flex min-h-11 items-center gap-2 border-b px-3 py-1">
           {!embedded && (
@@ -239,7 +261,46 @@ export function FileViewer({
               <X />
             </Button>
           )}
-          <h2 className="min-w-0 flex-1 truncate text-sm font-medium">{node.name}</h2>
+          <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+            {embedded ? formatBytes(node.size) : node.name}
+          </span>
+          {image && (
+            <div className="flex shrink-0 items-center gap-1">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Zoom out"
+                disabled={zoom <= 0.25}
+                onClick={() => setZoom((value) => Math.max(0.25, value - 0.25))}
+              >
+                <Minus />
+              </Button>
+              <span className="w-12 text-center text-xs tabular-nums">
+                {Math.round(zoom * 100)}%
+              </span>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Zoom in"
+                disabled={zoom >= 5}
+                onClick={() => setZoom((value) => Math.min(5, value + 0.25))}
+              >
+                <Plus />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Fit image"
+                onClick={() => {
+                  setZoom(1);
+                  setPan({ x: 0, y: 0 });
+                }}
+              >
+                <Maximize />
+              </Button>
+            </div>
+          )}
+          {processing}
           <div className="flex shrink-0 gap-1">
             <Button variant="ghost" size="icon-sm" aria-label="Download file" onClick={onDownload}>
               <Download />
@@ -252,9 +313,34 @@ export function FileViewer({
           <TextFile
             key={node.id}
             node={node}
+            focusLine={focusLine}
             onDownload={onDownload}
+            toolbarEnd={processing}
             active={active}
             {...textAccess}
+            writable={textAccess.writable && !node.readonly && !stat.isError}
+            refreshNode={async () => {
+              const latest = await files.stat(node.storage, node.id);
+              client.setQueryData(statKey, latest);
+              return latest;
+            }}
+            saveText={async (current, content) => {
+              const saved = await textAccess.saveText(current, content);
+              client.setQueryData(statKey, saved);
+              return saved;
+            }}
+            saveCopy={async (current, content) => {
+              const latest = await files.stat(current.storage, current.id);
+              const siblings = await files.list(latest.storage, latest.parent);
+              const name = uniqueName(current.name, siblings, latest.parent);
+              const copy = await files.create(latest.storage, latest.parent, name, {
+                content,
+                mediaType: current.mime,
+              });
+              await client.invalidateQueries({ queryKey: ['storage-folder'] });
+              await client.invalidateQueries({ queryKey: ['storage-quota'] });
+              return copy;
+            }}
           />
         ) : error ? (
           <div className="storage-empty flex h-full min-h-60 flex-1 flex-col items-center justify-center p-8 text-center text-muted-foreground">
@@ -303,8 +389,13 @@ export function FileViewer({
             >
               <img
                 src={current.url}
-                className="max-h-[calc(100%-32px)] max-w-[calc(100%-72px)] object-contain select-none"
+                className="max-h-[calc(100%-32px)] max-w-[calc(100%-32px)] object-contain select-none"
                 alt={node.name}
+                onError={() =>
+                  setError(
+                    'This image could not be displayed. Download it to open the original file.',
+                  )
+                }
                 draggable={false}
                 style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
                 onDoubleClick={() => {
@@ -312,68 +403,6 @@ export function FileViewer({
                   setPan({ x: 0, y: 0 });
                 }}
               />
-              <Button
-                className="storage-image-prev absolute top-1/2 left-3 -translate-y-1/2"
-                variant="secondary"
-                size="icon"
-                aria-label="Previous image"
-                disabled={index <= 0}
-                onClick={() => adjacent(-1)}
-              >
-                <ChevronLeft />
-              </Button>
-              <Button
-                className="storage-image-next absolute top-1/2 right-3 -translate-y-1/2"
-                variant="secondary"
-                size="icon"
-                aria-label="Next image"
-                disabled={index < 0 || index >= images.length - 1}
-                onClick={() => adjacent(1)}
-              >
-                <ChevronRight />
-              </Button>
-            </div>
-            <div className="storage-zoom flex items-center gap-1 self-center p-1">
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Zoom out"
-                onClick={() => setZoom((value) => Math.max(0.25, value - 0.25))}
-              >
-                <Minus />
-              </Button>
-              <span className="w-12 text-center text-xs tabular-nums">
-                {Math.round(zoom * 100)}%
-              </span>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Zoom in"
-                onClick={() => setZoom((value) => Math.min(5, value + 0.25))}
-              >
-                <Plus />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Fit image"
-                onClick={() => {
-                  setZoom(1);
-                  setPan({ x: 0, y: 0 });
-                }}
-              >
-                <Maximize />
-              </Button>
-            </div>
-            <div className="storage-image-strip flex shrink-0 justify-center gap-1.5 overflow-auto px-3 pt-2 pb-4">
-              {images.map((item) => (
-                <ImageThumb
-                  key={item.id}
-                  node={item}
-                  active={item.id === node.id}
-                  onClick={() => onOpen?.(item)}
-                />
-              ))}
             </div>
           </div>
         ) : spreadsheet && current.bytes ? (
@@ -401,32 +430,5 @@ export function FileViewer({
         )}
       </div>
     </section>
-  );
-}
-function ImageThumb({
-  node,
-  active,
-  onClick,
-}: {
-  node: StorageNode;
-  active: boolean;
-  onClick: () => void;
-}) {
-  const [url, setUrl] = useState(node.url);
-  useEffect(() => {
-    if (!node.blob) return;
-    const url = URL.createObjectURL(node.blob);
-    setUrl(url);
-    return () => URL.revokeObjectURL(url);
-  }, [node.blob]);
-  return (
-    <button
-      className="h-11 w-14 shrink-0 overflow-hidden rounded-sm border-2 border-transparent opacity-60 aria-pressed:border-ring aria-pressed:opacity-100"
-      aria-label={`View ${node.name}`}
-      aria-pressed={active}
-      onClick={onClick}
-    >
-      <img src={url} alt="" className="size-full object-cover" />
-    </button>
   );
 }

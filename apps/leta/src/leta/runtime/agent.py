@@ -15,6 +15,7 @@ from langchain.agents.middleware import (
     ModelResponse,
     SummarizationMiddleware,
     ToolCallRequest,
+    hook_config,
 )
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import (
@@ -84,6 +85,30 @@ class InferenceCost(BaseCallbackHandler):
 
 
 class ToolEffects(AgentMiddleware[State, Context]):
+    @hook_config(can_jump_to=["end"])
+    async def abefore_model(
+        self, state: State, runtime: Runtime[Context]
+    ) -> dict[str, object] | None:
+        results: dict[str, ToolMessage] = {}
+        for message in reversed(state["messages"]):
+            if isinstance(message, ToolMessage):
+                results[message.tool_call_id] = message
+                continue
+            if (
+                isinstance(message, AIMessage)
+                and message.tool_calls
+                and not message.invalid_tool_calls
+                and all(
+                    call["name"] in {"inbox_send", "inbox_react"}
+                    and call["id"] in results
+                    and results[call["id"]].status == "success"
+                    for call in message.tool_calls
+                )
+            ):
+                return {"jump_to": "end"}
+            break
+        return None
+
     async def awrap_tool_call(
         self,
         request: ToolCallRequest,
@@ -745,8 +770,8 @@ async def run(s: Services, lf: Langfuse, input: RunInput) -> RunResult:
                 checkpointer=saver,
                 middleware=[
                     Inbox(s.db, ctx.id, agent["box_id"] is None),
-                    execution_model,
                     ToolEffects(),
+                    execution_model,
                 ],
                 interrupt_after=["model", "tools"],
             ),

@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 
 
 from collections.abc import AsyncIterator, Awaitable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal, cast
 from uuid import UUID
 
@@ -44,10 +44,13 @@ from openlet_sdk.rpc import channel
 class Actor:
     kind: Literal["user", "agent"]
     id: UUID
+    zed_token: str = field(default="", compare=False)
 
     @property
     def metadata(self) -> tuple[tuple[str, str], ...]:
-        return ((f"x-openlet-{self.kind}-id", str(self.id)),)
+        return ((f"x-openlet-{self.kind}-id", str(self.id)),) + (
+            (("x-openlet-zed-token", self.zed_token),) if self.zed_token else ()
+        )
 
     def __str__(self) -> str:
         return f"{self.kind}:{self.id}"
@@ -58,7 +61,9 @@ def human(request: Request) -> Actor:
     if len(users) != 1 or request.headers.get("x-openlet-agent-id"):
         raise HTTPException(401, "verified user identity required")
     try:
-        return Actor("user", UUID(users[0]))
+        return Actor(
+            "user", UUID(users[0]), request.headers.get("x-openlet-zed-token", "")
+        )
     except ValueError:
         raise HTTPException(401, "invalid user identity") from None
 
