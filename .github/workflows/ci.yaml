@@ -59,7 +59,9 @@ jobs:
             runtime:
               - 'apps/{platform,letfs,letfs-ingest,leta}/**'
               - 'packages/**'
-              - 'e2e/**'
+              - 'e2e/{Dockerfile,openlet.test.yaml,package.json,playwright.config.ts}'
+              - 'e2e/fixtures/**'
+              - 'e2e/tests/api/**'
               - 'infra/**'
               - 'scripts/**'
               - '.github/workflows/**'

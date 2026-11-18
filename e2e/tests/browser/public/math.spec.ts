@@ -36,7 +36,6 @@ test('chat renders inline and display math, keeps code literal and contains wide
   await expect(article.locator('a[href^="javascript:"]')).toHaveCount(0);
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 1000 });
-    await article.scrollIntoViewIfNeeded();
     await page.evaluate(() => document.fonts.ready);
     const shortMath = article.locator('p').filter({ hasText: 'Đặt' }).locator('.katex');
     expect(
@@ -62,6 +61,5 @@ test('chat renders inline and display math, keeps code literal and contains wide
         element.scrollLeft = 0;
       });
     }
-    await page.screenshot({ path: `/tmp/chat-math-${width}.png` });
   }
 });
