@@ -109,8 +109,11 @@ jobs:
           for service in platform letfs ingest-cpu ingest-io leta; do
             ref="$repository-$service:$RELEASE_SHA"
             docker tag "openlet/$service:local" "$ref"
-            docker push "$ref"
-            digest=$(docker image inspect "$ref" --format '{{index .RepoDigests 0}}')
+            push_log=$(docker push "$ref")
+            printf '%s\n' "$push_log"
+            digest=$(awk -v tag="$RELEASE_SHA:" '$1 == tag && $2 == "digest:" {print $3}' <<< "$push_log")
+            [[ $digest =~ ^sha256:[0-9a-f]{64}$ ]]
+            digest="${ref%:*}@$digest"
             if [[ $service != leta ]]; then printf '  %s: {image: "%s"}\n' "$service" "$digest" >> image-lock.yaml; fi
             case "$service" in
               leta) printf '  leta-api: {image: "%s"}\n  leta-worker: {image: "%s"}\n  leta-migrate: {image: "%s"}\n' "$digest" "$digest" "$digest" >> image-lock.yaml ;;
