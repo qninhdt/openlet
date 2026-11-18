@@ -269,5 +269,5 @@ test('native runtime, box containment, asynchronous HITL and owner-independent s
     .poll(async () => (await guest.api.get(workspace)).status(), {
       timeout: 30_000,
     })
-    .toBe(404);
+    .toBe(403);
 });

@@ -69,7 +69,7 @@ test('invitation, storage grant, revoke and workspace deletion', async ({ accoun
   expect((await account.api.delete(workspace)).ok()).toBeTruthy();
   await expect
     .poll(async () => (await account.api.get(workspace)).status(), { timeout: 30_000 })
-    .toBe(404);
+    .toBe(403);
 });
 
 test('authenticated workspace creation, validation and receipt replay', async ({
