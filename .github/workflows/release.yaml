@@ -28,14 +28,17 @@ jobs:
           version: '0.13.7'
           python-version: '3.14'
           enable-cache: true
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - run: df -h . /var/lib/docker
+      - name: Inspect the runner Docker builder and disk
+        run: |
+          docker buildx inspect default
+          df -h . /var/lib/docker
       - uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7.5.0
         env:
           OPENLET_CONFIG: ${{ github.workspace }}/e2e/openlet.test.yaml
           OPENLET_GENERATED: ${{ github.workspace }}/.local/e2e/generated
           OPENLET_BACKUPS: ${{ github.workspace }}/.local/e2e/backups
         with:
+          builder: default
           source: infra
           files: compose.yaml
           allow: fs.read=${{ github.workspace }}
@@ -45,7 +48,6 @@ jobs:
             ingest-cpu
             ingest-io
             leta-api
-          load: true
           set: |
             platform.cache-from=type=gha,scope=platform
             platform.cache-to=type=gha,scope=platform,mode=min,timeout=90s,ignore-error=true
@@ -57,6 +59,8 @@ jobs:
             leta-api.cache-to=type=gha,scope=leta,mode=min,timeout=90s,ignore-error=true
             ingest-io.cache-from=type=gha,scope=ingest-io
             ingest-io.cache-to=type=gha,scope=ingest-io,mode=min,timeout=90s,ignore-error=true
+      - name: Reclaim unused build cache before E2E
+        run: docker buildx prune --builder default --force --reserved-space 1gb
       - name: Report disk usage after Bake
         if: always()
         run: df -h . /var/lib/docker
