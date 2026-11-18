@@ -8,21 +8,22 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: release-openlet
+  group: ${{ (github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || (github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success'))) && 'release-openlet' || github.run_id }}
   cancel-in-progress: false
 jobs:
-  build-and-verify:
+  plan:
     if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || (github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success'))
     outputs:
       sha: ${{ steps.commit.outputs.sha }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
+      vps: ${{ steps.targets.outputs.vps }}
+      web: ${{ steps.targets.outputs.web }}
     permissions:
       contents: read
       actions: read
-      packages: write
+      deployments: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     env:
-      COMPOSE_PROJECT_NAME: openlet-release-${{ github.run_id }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Select the tested commit
@@ -30,15 +31,34 @@ jobs:
         env:
           TESTED_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
+          test "$TESTED_SHA" = "$GITHUB_SHA"
           test "$TESTED_SHA" = "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
           echo "sha=$TESTED_SHA" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ steps.commit.outputs.sha }}
+          fetch-depth: 0
       - name: Require successful default-branch CI for this commit
         if: github.event_name == 'workflow_dispatch'
         run: |
           test "$(gh run list --workflow ci.yaml --commit "$GITHUB_SHA" --branch main --event push --status success --json headSha --jq length)" -gt 0
+      - name: Check for changes since each target's last successful deployment
+        id: targets
+        run: bash .github/scripts/plan-release.sh "$GITHUB_SHA"
+  build-and-verify:
+    needs: plan
+    if: needs.plan.outputs.vps == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: write
+    env:
+      COMPOSE_PROJECT_NAME: openlet-release-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: '0.13.7'
@@ -102,7 +122,7 @@ jobs:
           password: ${{ github.token }}
       - name: Push tested images and package immutable deployment inputs
         env:
-          RELEASE_SHA: ${{ steps.commit.outputs.sha }}
+          RELEASE_SHA: ${{ needs.plan.outputs.sha }}
         run: |
           repository="ghcr.io/${GITHUB_REPOSITORY,,}"
           printf 'services:\n' > image-lock.yaml
@@ -135,7 +155,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
   deploy:
-    needs: build-and-verify
+    needs: [plan, build-and-verify]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: openlet
@@ -149,7 +169,7 @@ jobs:
           path: .local
       - name: Transfer and activate release on the VPS
         env:
-          RELEASE_SHA: ${{ needs.build-and-verify.outputs.sha }}
+          RELEASE_SHA: ${{ needs.plan.outputs.sha }}
           GH_TOKEN: ${{ github.token }}
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
@@ -178,14 +198,15 @@ jobs:
           done
           exit 1
   deploy-web:
-    needs: [build-and-verify, deploy]
+    needs: plan
+    if: needs.plan.outputs.web == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: openlet
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.build-and-verify.outputs.sha }}
+          ref: ${{ needs.plan.outputs.sha }}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '26.13.0'
@@ -196,15 +217,17 @@ jobs:
           test -n "$VITE_CLERK_PUBLISHABLE_KEY"
           npm install --global pnpm@12.18.0
           pnpm install --frozen-lockfile
+          node --test apps/web/worker.test.mjs
           pnpm build
       - name: Deploy the Cloudflare Worker
         working-directory: apps/web
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-          RELEASE_SHA: ${{ needs.build-and-verify.outputs.sha }}
-        run: npx --yes wrangler@4.164.0 deploy --message "$RELEASE_SHA"
-      - name: Verify the frontend and its API proxy
+          RELEASE_SHA: ${{ needs.plan.outputs.sha }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          curl --retry 6 --retry-all-errors --max-time 15 -fsS https://openlet.qninhdt.com/ -o /dev/null
-          test "$(curl --max-time 15 -sS -o /dev/null -w '%{http_code}' https://openlet.qninhdt.com/v1/workspaces)" = 401
+          test "$RELEASE_SHA" = "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
+          npx --yes wrangler@4.164.0 deploy --message "$RELEASE_SHA"
+      - name: Verify the public frontend
+        run: curl --retry 6 --retry-all-errors --max-time 15 -fsS https://openlet.qninhdt.com/ -o /dev/null

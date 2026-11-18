@@ -1,10 +1,12 @@
 # Openlet deployment
 
-A successful push CI run on `main` starts the Release workflow. It tests the
-backend images, publishes them to GHCR, and deploys by digest to the VPS. Once
-the public API responds through the tunnel, the workflow builds and deploys
-the frontend Worker and checks the public site and API proxy. Use **Run
-workflow** on `main` to retry a release after CI succeeds.
+A successful push CI run on `main` starts the Release workflow. It checks the
+VPS and Worker independently against each target's last successful deployment.
+Backend changes trigger an image build, API E2E tests and a VPS deployment by digest.
+Frontend changes trigger a Worker build and deployment. Shared API definitions
+trigger both. Documentation-only changes skip both. If a deploy fails, that
+target keeps its previous baseline so the next release can pick up the changes.
+Use **Run workflow** on `main` to redeploy both targets after CI succeeds.
 
 GitHub environment `openlet` allows deployments from `main` and holds the VPS SSH
 secrets. Repository configuration supplies the Cloudflare account ID, Workers
