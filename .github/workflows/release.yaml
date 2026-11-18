@@ -48,15 +48,15 @@ jobs:
           load: true
           set: |
             platform.cache-from=type=gha,scope=platform
-            platform.cache-to=type=gha,scope=platform,mode=min
+            platform.cache-to=type=gha,scope=platform,mode=min,timeout=90s,ignore-error=true
             letfs.cache-from=type=gha,scope=letfs
-            letfs.cache-to=type=gha,scope=letfs,mode=min
+            letfs.cache-to=type=gha,scope=letfs,mode=min,timeout=90s,ignore-error=true
             ingest-cpu.cache-from=type=gha,scope=ingest-cpu
-            ingest-cpu.cache-to=type=gha,scope=ingest-cpu,mode=min
+            ingest-cpu.cache-to=type=gha,scope=ingest-cpu,mode=min,timeout=90s,ignore-error=true
             leta-api.cache-from=type=gha,scope=leta
-            leta-api.cache-to=type=gha,scope=leta,mode=min
+            leta-api.cache-to=type=gha,scope=leta,mode=min,timeout=90s,ignore-error=true
             ingest-io.cache-from=type=gha,scope=ingest-io
-            ingest-io.cache-to=type=gha,scope=ingest-io,mode=min
+            ingest-io.cache-to=type=gha,scope=ingest-io,mode=min,timeout=90s,ignore-error=true
       - name: Report disk usage after Bake
         if: always()
         run: df -h . /var/lib/docker
