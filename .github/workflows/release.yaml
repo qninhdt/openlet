@@ -28,8 +28,12 @@ jobs:
           version: '0.13.7'
           python-version: '3.14'
           enable-cache: true
-      - name: Inspect the runner Docker builder and disk
+      - name: Reserve disk for the Compose stack
         run: |
+          if [[ "${ANDROID_HOME:-}" == /usr/local/lib/android/sdk && -d "$ANDROID_HOME" ]]; then
+            sudo du -sh "$ANDROID_HOME"
+            sudo rm -rf -- "$ANDROID_HOME"
+          fi
           docker buildx inspect default
           df -h . /var/lib/docker
       - uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7.5.0

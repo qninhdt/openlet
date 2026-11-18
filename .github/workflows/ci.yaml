@@ -25,6 +25,7 @@ jobs:
       - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: paths
         with:
+          base: ${{ github.ref_name }}
           filters: |
             go:
               - 'apps/{platform,letfs}/**'
@@ -166,8 +167,12 @@ jobs:
         options: --health-cmd "pg_isready -U postgres -d letfs" --health-interval 2s --health-timeout 3s --health-retries 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Inspect the runner Docker builder and disk
+      - name: Reserve disk for the Compose stack
         run: |
+          if [[ "${ANDROID_HOME:-}" == /usr/local/lib/android/sdk && -d "$ANDROID_HOME" ]]; then
+            sudo du -sh "$ANDROID_HOME"
+            sudo rm -rf -- "$ANDROID_HOME"
+          fi
           docker buildx inspect default
           df -h . /var/lib/docker
       - uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7.5.0
