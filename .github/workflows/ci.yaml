@@ -180,10 +180,13 @@ jobs:
           OPENLET_CONFIG: ${{ github.workspace }}/e2e/openlet.test.yaml
           OPENLET_GENERATED: ${{ github.workspace }}/.local/e2e/generated
           OPENLET_BACKUPS: ${{ github.workspace }}/.local/e2e/backups
+          OPENLET_ARTIFACTS: ${{ github.workspace }}/.local/e2e/results
         with:
           builder: default
           source: infra
-          files: compose.yaml
+          files: |
+            compose.yaml
+            compose.test.yaml
           allow: fs.read=${{ github.workspace }}
           targets: |
             platform
@@ -191,6 +194,7 @@ jobs:
             ingest-cpu
             ingest-io
             leta-api
+            e2e
           set: |
             platform.cache-from=type=gha,scope=platform
             platform.cache-to=type=gha,scope=platform,mode=min,timeout=90s,ignore-error=true
@@ -202,6 +206,8 @@ jobs:
             leta-api.cache-to=type=gha,scope=leta,mode=min,timeout=90s,ignore-error=true
             ingest-io.cache-from=type=gha,scope=ingest-io
             ingest-io.cache-to=type=gha,scope=ingest-io,mode=min,timeout=90s,ignore-error=true
+            e2e.cache-from=type=gha,scope=api-e2e
+            e2e.cache-to=type=gha,scope=api-e2e,mode=min,timeout=90s,ignore-error=true
       - name: Reclaim unused build cache before E2E
         run: docker buildx prune --builder default --force --reserved-space 1gb
       - name: Report disk usage after Bake
@@ -219,19 +225,25 @@ jobs:
           version: '0.13.7'
           python-version: '3.14'
           enable-cache: true
-      - name: Verify SQL invariants on an isolated database
+      - name: Run SQL invariants and API E2E
         env:
           OPENLET_TEST_DATABASE_URL: postgres://postgres:isolated-test-only@127.0.0.1:15432/letfs?sslmode=disable
           POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
         run: |
           mkdir -p .local
-          docker exec "$POSTGRES_CONTAINER" pg_dump -U postgres -d letfs > .local/pre-invariants.sql
-          docker run --rm --network host -e GOOSE_DRIVER=postgres -e GOOSE_DBSTRING="$OPENLET_TEST_DATABASE_URL" -e GOOSE_MIGRATION_DIR=/migrations --entrypoint /usr/local/bin/goose openlet/letfs:local up
-          make integration
-      - run: |
-          mkdir -p .local
-          printf 'services:\n  platform: {image: "openlet/platform:local"}\n  letfs: {image: "openlet/letfs:local"}\n  ingest-cpu: {image: "openlet/ingest-cpu:local"}\n  ingest-io: {image: "openlet/ingest-io:local"}\n  leta-api: {image: "openlet/leta:local"}\n  leta-worker: {image: "openlet/leta:local"}\n  leta-migrate: {image: "openlet/leta:local"}\n' > .local/test-images.yaml
-          OPENLET_IMAGE_LOCK="$PWD/.local/test-images.yaml" scripts/e2e.sh api
+          (
+            docker exec "$POSTGRES_CONTAINER" pg_dump -U postgres -d letfs > .local/pre-invariants.sql
+            docker run --rm --network host -e GOOSE_DRIVER=postgres -e GOOSE_DBSTRING="$OPENLET_TEST_DATABASE_URL" -e GOOSE_MIGRATION_DIR=/migrations --entrypoint /usr/local/bin/goose openlet/letfs:local up
+            make integration
+          ) > .local/sql-invariants.log 2>&1 &
+          sql_pid=$!
+          printf 'services:\n  platform: {image: "openlet/platform:local"}\n  letfs: {image: "openlet/letfs:local"}\n  ingest-cpu: {image: "openlet/ingest-cpu:local"}\n  ingest-io: {image: "openlet/ingest-io:local"}\n  leta-api: {image: "openlet/leta:local"}\n  leta-worker: {image: "openlet/leta:local"}\n  leta-migrate: {image: "openlet/leta:local"}\n  e2e: {image: "openlet/e2e:local", pull_policy: never}\n' > .local/test-images.yaml
+          api_status=0
+          OPENLET_IMAGE_LOCK="$PWD/.local/test-images.yaml" scripts/e2e.sh api || api_status=$?
+          sql_status=0
+          wait "$sql_pid" || sql_status=$?
+          cat .local/sql-invariants.log
+          ((api_status == 0 && sql_status == 0))
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:

@@ -41,10 +41,13 @@ jobs:
           OPENLET_CONFIG: ${{ github.workspace }}/e2e/openlet.test.yaml
           OPENLET_GENERATED: ${{ github.workspace }}/.local/e2e/generated
           OPENLET_BACKUPS: ${{ github.workspace }}/.local/e2e/backups
+          OPENLET_ARTIFACTS: ${{ github.workspace }}/.local/e2e/results
         with:
           builder: default
           source: infra
-          files: compose.yaml
+          files: |
+            compose.yaml
+            compose.test.yaml
           allow: fs.read=${{ github.workspace }}
           targets: |
             platform
@@ -52,6 +55,7 @@ jobs:
             ingest-cpu
             ingest-io
             leta-api
+            e2e
           set: |
             platform.cache-from=type=gha,scope=platform
             platform.cache-to=type=gha,scope=platform,mode=min,timeout=90s,ignore-error=true
@@ -63,6 +67,8 @@ jobs:
             leta-api.cache-to=type=gha,scope=leta,mode=min,timeout=90s,ignore-error=true
             ingest-io.cache-from=type=gha,scope=ingest-io
             ingest-io.cache-to=type=gha,scope=ingest-io,mode=min,timeout=90s,ignore-error=true
+            e2e.cache-from=type=gha,scope=api-e2e
+            e2e.cache-to=type=gha,scope=api-e2e,mode=min,timeout=90s,ignore-error=true
       - name: Reclaim unused build cache before E2E
         run: docker buildx prune --builder default --force --reserved-space 1gb
       - name: Report disk usage after Bake
@@ -71,7 +77,7 @@ jobs:
       - name: Verify the built image set
         run: |
           mkdir -p .local
-          printf 'services:\n  platform: {image: "openlet/platform:local"}\n  letfs: {image: "openlet/letfs:local"}\n  ingest-cpu: {image: "openlet/ingest-cpu:local"}\n  ingest-io: {image: "openlet/ingest-io:local"}\n  leta-api: {image: "openlet/leta:local"}\n  leta-worker: {image: "openlet/leta:local"}\n  leta-migrate: {image: "openlet/leta:local"}\n' > .local/test-images.yaml
+          printf 'services:\n  platform: {image: "openlet/platform:local"}\n  letfs: {image: "openlet/letfs:local"}\n  ingest-cpu: {image: "openlet/ingest-cpu:local"}\n  ingest-io: {image: "openlet/ingest-io:local"}\n  leta-api: {image: "openlet/leta:local"}\n  leta-worker: {image: "openlet/leta:local"}\n  leta-migrate: {image: "openlet/leta:local"}\n  e2e: {image: "openlet/e2e:local", pull_policy: never}\n' > .local/test-images.yaml
           OPENLET_IMAGE_LOCK="$PWD/.local/test-images.yaml" scripts/e2e.sh api
       - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:

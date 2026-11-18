@@ -50,11 +50,10 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 "${compose[@]}" config --quiet
 if [[ -z ${OPENLET_IMAGE_LOCK:-} ]]; then
-  if ! "${compose[@]}" build platform letfs ingest-cpu ingest-io leta-api > "$OPENLET_ARTIFACTS/build.log" 2>&1; then
+  if ! "${compose[@]}" build platform letfs ingest-cpu ingest-io leta-api e2e > "$OPENLET_ARTIFACTS/build.log" 2>&1; then
     tail -n 50 "$OPENLET_ARTIFACTS/build.log" >&2
     exit 1
   fi
 fi
-"${compose[@]}" build e2e
 "${compose[@]}" up --detach --wait --wait-timeout 180
 "${compose[@]}" run --rm --no-deps e2e test --project="$suite" "$@"
