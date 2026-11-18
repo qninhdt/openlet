@@ -16,6 +16,8 @@ The VPS uses `infra/compose.vps.yaml` for the tunnel, restart policies and
 memory limits. Routine deploys reuse Openlet's Docker volumes and take a
 database backup before updating an existing stack. Frontend deployment uses
 `apps/web/wrangler.jsonc`.
+Keep `/opt/openlet/tunnel.token` owned by UID and GID 65532 with mode 0600
+so the unprivileged tunnel container can read it.
 
 ## Initial manual deployment
 

@@ -170,7 +170,13 @@ jobs:
           printf '%s' "$GH_TOKEN" | ssh "$DEPLOY_USER@$DEPLOY_HOST" "cd '$release' && tar -xzf release.tgz && sudo -n env UV=\"\$HOME/.local/bin/uv\" COMPOSE_PROJECT_NAME=openlet COMPOSE_PROFILES=leta,observability OPENLET_BACKUPS=/opt/openlet/backups scripts/deploy.sh /opt/openlet/openlet.yaml /opt/openlet/.env '$release/image-lock.yaml' '$GITHUB_ACTOR' && ln -sfn '$release' /opt/openlet/current"
       - name: Verify the public API through Cloudflare Tunnel
         run: |
-          test "$(curl --retry 6 --retry-all-errors --retry-delay 5 --max-time 15 -sS -o /dev/null -w '%{http_code}' https://openlet-api.qninhdt.com/v1/workspaces)" = 401
+          for attempt in {1..12}; do
+            status=$(curl --max-time 10 -sS -o /dev/null -w '%{http_code}' https://openlet-api.qninhdt.com/v1/workspaces) || status=000
+            if [[ $status == 401 ]]; then exit 0; fi
+            echo "API check $attempt returned HTTP $status"
+            sleep 5
+          done
+          exit 1
   deploy-web:
     needs: [build-and-verify, deploy]
     runs-on: ubuntu-latest
