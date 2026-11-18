@@ -113,6 +113,9 @@ jobs:
           printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
           release="/opt/openlet/releases/$GITHUB_SHA"
+          # Resolve the runner's commit SHA before passing the path to the VPS.
+          # shellcheck disable=SC2029
           ssh "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$release'"
           scp .local/release.tgz "$DEPLOY_USER@$DEPLOY_HOST:$release/release.tgz"
+          # shellcheck disable=SC2029
           ssh "$DEPLOY_USER@$DEPLOY_HOST" "cd '$release' && tar -xzf release.tgz && COMPOSE_PROJECT_NAME=openlet OPENLET_BACKUPS=/opt/openlet/backups scripts/deploy.sh /opt/openlet/openlet.yaml /opt/openlet/.env '$release/image-lock.yaml'"
