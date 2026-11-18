@@ -21,7 +21,7 @@ The backend changes reuse the existing schema, permissions and service operation
 
 The local `openlet-integration` Compose stack runs PostgreSQL, Temporal, SpiceDB, Redis, Qdrant, LiteLLM, Platform, LetFS, ingest workers and Leta with the configured real Clerk, LLM and development R2 resources. The gateway is at port 8080. Browser checks have used Vite at ports 3000, 5174 and 5175; the web test config starts or reuses its selected local origin.
 
-**Latest full run:** `pnpm test:web` passed all **37 tests** in 3.9 minutes at `http://127.0.0.1:3000`: 13 public/adapter checks and 24 authenticated checks. Web/E2E type checks, lint (with existing warnings), production build, formatting and `git diff --check` also passed.
+**Historical live-service run:** `pnpm test:web` passed all **37 tests** in 3.9 minutes at `http://127.0.0.1:3000`: 13 public/adapter checks and 24 authenticated checks. Web/E2E type checks, lint (with existing warnings), production build, formatting and `git diff --check` also passed.
 
 Passed browser checks with real services:
 
@@ -50,37 +50,10 @@ Other checks: 17 tool/filesystem/auth Python tests passed; the SQL chat suite pr
 
 Validation: **65 Python tests passed**, with one Redis-dependent SQL test skipped; changed Python files passed Ruff and type checking. Real model checks confirmed that a short input sent once without `inbox_read` or quoting, while a long input called `inbox_read` before sending once without quoting. Actual shell copy across storages, move within one storage and move across storages preserved the JPEG bytes, checked by SHA-256 after downloading from R2. The affected original JPEG was recovered from Trash and moved into Personal as requested; the erroneous empty folder and temporary test copy remain recoverable in Trash. The existing 37-test browser baseline above predates these runtime fixes and was not rerun for them.
 
-## Browser test migration
+## Running frontend tests
 
-The former authenticated demo suites were replaced with real-service browser tests in `e2e/tests/live-web`. `pnpm test:web` now runs both the public/adapter project and the authenticated project, and requires the Clerk state and real development resource IDs below. Missing credentials fail with an explicit setup error; the authenticated project is not silently skipped.
+Run `pnpm --filter @openlet/web test` for the unit and adapter tests in `apps/web/tests` and the Worker tests. These run without Vite or a browser.
 
-| Former test area                   | Current real-service coverage                                                                                                        |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Chat, conversation files, activity | Real model/tool reply, history, reactions, Reply/Cancel, Activity references, uploads, retry, copy, labels and drags                 |
-| Sidebar, organization, overview    | API-backed creation/settings, model/default effort, nested folders, assignments, pins, resizing                                      |
-| Shell and routing                  | Mobile/tablet/desktop routes, Vietnamese drafts/history, IME, unknown resources, legacy URLs, empty-workspace settings               |
-| Storage and editor                 | Upload/download, save/reload, folders, move/rename/copy, Trash/Restore, encoding, CSV, drafts, version conflicts, read-only previews |
-| Box and HITL                       | Real graph/edges, questions, schedule edit/pause, access approval and revocation                                                     |
+Run `pnpm test:web` for the browser tests in `e2e/tests/browser`. The suite starts its own Vite server at `http://127.0.0.1:5174`. Set `OPENLET_WEB_URL` to another HTTP loopback URL with a port if needed. The workspace tests exercise the app with an in-memory backend and Playwright response fixtures. The public tests use the public pages and the isolated playground.
 
-Assertions tied to static demo transcripts, simulated work states and IndexedDB write failures were removed with that implementation. The version-conflict check now uses an actual second LetFS write. Pure adapter/stream/file transaction tests and the isolated public playground tests remain in `e2e/tests/ui`. This migration does not preserve every former visual assertion: detailed avatar animation, scroll anchoring, marquee/OS folder drops, XLSX sheet switching and every dirty-workspace navigation permutation still need dedicated live coverage.
-
-## Running live browser checks
-
-`pnpm test:web` starts/reuses Vite and runs all web projects. It requires an existing signed-in Clerk browser state and real development workspace/agent IDs:
-
-```sh
-OPENLET_WEB_AUTH_STATE=/absolute/path/to/private-browser-state.json \
-OPENLET_WEB_WORKSPACE=<workspace-uuid> \
-OPENLET_WEB_AGENT=<agent-uuid> \
-pnpm test:web
-```
-
-The gateway and backend stack must already be running. Default Vite origin is `http://127.0.0.1:5174`; `OPENLET_WEB_URL` can select another local origin/port. The public/adapter subset runs without signed-in state via `pnpm --dir e2e test:web:public`; the authenticated subset is `pnpm --dir e2e test:web:live`. The standalone `playwright.live-web.config.ts` remains available when Vite is managed separately.
-
-The authenticated project creates development workspaces, agents, files, questions, schedules and Box graphs, and uses paid model calls. It retains these resources for inspection. Keep the browser-state file private and outside version control. One upload-retry test injects an HTTP 503; the subsequent retry and all file data use real LetFS.
-
-## Coverage still outstanding
-
-This is not a claim of 100% end-to-end coverage. The remaining visual and interaction coverage is listed in the migration section above; production application fixtures have not been restored to satisfy tests.
-
-Membership/invitation journeys, revocation of user membership and active SSE access, multipart uploads, all media formats, production hosting and physical-device behavior have not been verified end to end. Optional Alloy is absent from the local stack, so telemetry export errors remain. No production deployment, account deletion or destructive cleanup was performed.
+Run either browser project with `pnpm --dir e2e test:web:public` or `pnpm --dir e2e test:web:workspace`. The isolated backend API suite runs via `scripts/e2e.sh api`.

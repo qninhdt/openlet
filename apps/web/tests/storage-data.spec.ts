@@ -9,7 +9,7 @@ import {
   trashNodes,
   validateName,
   type StorageSnapshot,
-} from '../../../apps/web/src/lib/storage-preview.js';
+} from '../src/lib/storage-preview.js';
 
 test('filesystem transactions preserve subtrees, reject cycles and retain replaced files in Trash', () => {
   const personal = 'personal';

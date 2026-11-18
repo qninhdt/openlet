@@ -7,7 +7,7 @@
     "test:web": "playwright test --config playwright.web.config.ts",
     "typecheck": "tsc --noEmit",
     "test:web:public": "playwright test --config playwright.web.config.ts --project public",
-    "test:web:live": "playwright test --config playwright.web.config.ts --project authenticated"
+    "test:web:workspace": "playwright test --config playwright.web.config.ts --project workspace"
   },
   "devDependencies": {
     "@playwright/test": "1.65.0",

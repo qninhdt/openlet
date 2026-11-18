@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b",
     "lint": "oxlint",
+    "test": "node --test worker.test.mjs && playwright test --config playwright.unit.config.ts",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -54,6 +55,7 @@
     "vaul": "^1.1.2"
   },
   "devDependencies": {
+    "@playwright/test": "1.65.0",
     "@tailwindcss/vite": "4.3.5",
     "@types/node": "24.19.2",
     "@types/papaparse": "^5.5.2",

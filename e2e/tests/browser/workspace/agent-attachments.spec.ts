@@ -1,7 +1,5 @@
-import { expect, test } from '@playwright/test';
+import { agent, expect, test, workspace } from '../../../fixtures/browser.js';
 
-const workspace = process.env.OPENLET_WEB_TEST_WORKSPACE;
-const agent = process.env.OPENLET_WEB_TEST_AGENT;
 const storage = '00000000-0000-4000-8000-000000000001';
 const ids = {
   report: '00000000-0000-4000-8000-000000000002',
@@ -19,7 +17,6 @@ const ref = (node_id: string, label: string, mime = 'text/plain') => ({
 test('mentions stay inline; explicit attachments support albums, file-only messages, preview and download', async ({
   page,
 }) => {
-  test.skip(!workspace || !agent, 'Set OPENLET_WEB_TEST_WORKSPACE and OPENLET_WEB_TEST_AGENT');
   let sentMessages = 0;
   await page.route('**/messages/read', (route) => route.fulfill({ json: {} }));
   await page.route('**/processing', (route) =>

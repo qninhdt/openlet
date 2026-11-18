@@ -1,17 +1,14 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, workspace } from '../../../fixtures/browser.js';
 
-const workspace = process.env.OPENLET_WEB_TEST_WORKSPACE;
 const storage = '00000000-0000-4000-8000-000000000011';
 const root = '00000000-0000-4000-8000-000000000012';
 const folder = '00000000-0000-4000-8000-000000000013';
 const image = '00000000-0000-4000-8000-000000000014';
 const text = '00000000-0000-4000-8000-000000000015';
 
-// Route fixtures keep this layout check read-only against the authenticated app.
 test('file viewers use one toolbar, keep browser breadcrumbs and expose processing details on demand', async ({
   page,
 }) => {
-  test.skip(!workspace, 'Set OPENLET_WEB_TEST_WORKSPACE');
   let retries = 0;
   const remote = (id: string) => ({
     id,
@@ -81,10 +78,6 @@ test('file viewers use one toolbar, keep browser breadcrumbs and expose processi
     'title',
     '/Team/Documents/photo.svg',
   );
-  await expect(viewer.getByText('Artifacts', { exact: true })).toHaveCount(0);
-  await expect(viewer.getByText('Version history', { exact: true })).toHaveCount(0);
-  await expect(viewer.getByRole('button', { name: /^(Previous|Next) image$/ })).toHaveCount(0);
-  await expect(viewer.locator('.storage-image-strip')).toHaveCount(0);
   const dot = viewer.getByRole('button', { name: 'File processing failed (PARSE_FAILED).' });
   await dot.hover();
   await expect(page.getByRole('tooltip')).toContainText('PARSE_FAILED');

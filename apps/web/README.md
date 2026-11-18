@@ -29,9 +29,9 @@ pnpm preview
 
 The web config reads only `CLERK_PUBLISHABLE_KEY` from the repository root `.env`; `VITE_CLERK_PUBLISHABLE_KEY` in `apps/web/.env.local` or the process environment can override it. Backend secrets remain server-side. Vite proxies `/v1` to `http://127.0.0.1:8080` in development. For production, route `/v1` to the gateway at the web origin, or set `VITE_API_BASE_URL` and configure the gateway's CORS policy.
 
-`pnpm dev` serves the app at `http://localhost:5173`. `make check-js` runs formatting, type checks, lint and the production build, including this workspace.
+`pnpm dev` serves the app at `http://localhost:5173`. `make check-js` runs formatting, type checks, lint, unit tests and the production build, including this workspace.
 
-The full `pnpm test:web` suite includes real Clerk/gateway/LLM/R2 browser checks and requires signed-in Clerk state plus development workspace/agent IDs; see [integration status, coverage and run instructions](../../docs/frontend-backend-integration.md). It starts/reuses Vite at port 5174. Use `pnpm --dir e2e test:web:public` for public pages and pure adapters without the backend. Development R2 CORS supports localhost and 127.0.0.1 at ports 3000 and 5173–5175.
+Run `pnpm --filter @openlet/web test` for frontend unit and adapter tests and the Worker tests. `pnpm test:web` starts a dedicated local Vite server and runs the browser suite in `e2e/tests/browser` with fixture data. The browser suite needs Chromium from `pnpm --dir e2e exec playwright install chromium`.
 
 Add shadcn components from this directory:
 
@@ -53,11 +53,7 @@ The page header ports OpenBot's page-owned identity/path and trailing controls i
 
 Storage has a permanent browser tab and closable file tabs; selected files and folders have distinct routes. The shared viewer also renders conversation files in the Agent right panel. It supports images, PDF, audio/video, Markdown, text/code, sandboxed HTML and XLSX sheets. Text previews stop at 1 MB; XLSX previews use OpenBot's bounded parser (500 rows / 50 columns). Unsupported formats can be downloaded. Source and license notices are in `src/vendor/openbot`.
 
-The live suite exercises real file transfers and Grid/Mosaic/List conversation drags. Screenshots and failure context are written beneath `.local/e2e`.
-
 All 63 official shadcn component modules are installed as source in `src/components/ui`. The shell composes these primitives and uses only semantic theme colors from `globals.css`. OpenBot's SolidJS shell structure was rewritten in React; its UI package is not bundled. The temporary blue logo adapts its original mark, with notices in `public/third-party/openbot`.
-
-`pnpm test:web` runs browser checks independently of the backend API test runner, against the running local services. The empty-workspace test captures Settings at mobile and desktop sizes.
 
 The public playground is isolated from authenticated application data. Authentication/API configuration is described in [Agent UI](AGENT-UI.md).
 

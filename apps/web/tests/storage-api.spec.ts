@@ -1,14 +1,9 @@
 import { expect, test } from '@playwright/test';
-import { storageApi } from '../../../apps/web/src/lib/storage-api.js';
-import type { Api } from '../../../apps/web/src/lib/agent-api.js';
-import {
-  fileMarkdown,
-  fileReferences,
-  fileToken,
-  fileText,
-} from '../../../apps/web/src/lib/file-refs.js';
-import { readTextFile, serializeTextFile } from '../../../apps/web/src/lib/text-file.js';
-import { newAssistantMessages } from '../../../apps/web/src/lib/message-sound.js';
+import { storageApi } from '../src/lib/storage-api.js';
+import type { Api } from '../src/lib/agent-api.js';
+import { fileMarkdown, fileReferences, fileToken, fileText } from '../src/lib/file-refs.js';
+import { readTextFile, serializeTextFile } from '../src/lib/text-file.js';
+import { newAssistantMessages } from '../src/lib/message-sound.js';
 
 const directory = (id: string, parentId = 'remote-root') => ({
   id,
@@ -77,7 +72,7 @@ test('live adapter binds root IDs, paginates, searches nested files and loads fu
 
 test('live edits pass the opened version and surface conflicts without silently replacing bytes', async () => {
   let body: Record<string, unknown> | undefined;
-  const api: Api = async <T>(path: string, init?: RequestInit): Promise<T> => {
+  const api: Api = async <T>(_path: string, init?: RequestInit): Promise<T> => {
     if (init?.method === 'PATCH') {
       body = JSON.parse(String(init.body));
       throw new Error('File changed. Reload before saving.');
@@ -252,7 +247,7 @@ test('content search keeps snippets, paths and text cursor; semantic searches ar
 
 test('interrupted multipart uploads resume server-confirmed parts after recreating the adapter; cancel aborts the transfer', async () => {
   const { crc32c } = await import('@aws-crypto/crc32c');
-  const { readUploads } = await import('../../../apps/web/src/lib/upload-resume.js');
+  const { readUploads } = await import('../src/lib/upload-resume.js');
   const memory = new Map<string, string>();
   const previousStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
   const previousXHR = Object.getOwnPropertyDescriptor(globalThis, 'XMLHttpRequest');
@@ -377,7 +372,7 @@ test('interrupted multipart uploads resume server-confirmed parts after recreati
 });
 
 test('archive downloads stream to disk, abort partial writes and delegate native downloads without buffering', async () => {
-  const { downloadArchive } = await import('../../../apps/web/src/lib/archive-download.js');
+  const { downloadArchive } = await import('../src/lib/archive-download.js');
   const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
   const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
   const chunks: number[] = [];
@@ -466,8 +461,7 @@ test('archive downloads stream to disk, abort partial writes and delegate native
 });
 
 test('cancelling a resumed upload during hashing removes the session; navigation preserves it', async () => {
-  const { readUploads, rememberUpload } =
-    await import('../../../apps/web/src/lib/upload-resume.js');
+  const { readUploads, rememberUpload } = await import('../src/lib/upload-resume.js');
   const memory = new Map<string, string>();
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
   Object.defineProperty(globalThis, 'localStorage', {
@@ -527,7 +521,7 @@ test('cancelling a resumed upload during hashing removes the session; navigation
 
 test('durable drafts isolate accounts and logout clears only the current account', async () => {
   const { draftKey, readDraft, writeDraft, accountDraftKeys, clearAccountDrafts } =
-    await import('../../../apps/web/src/lib/chat-drafts.js');
+    await import('../src/lib/chat-drafts.js');
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
   const memory: Record<string, string> = {};
   Object.defineProperties(memory, {

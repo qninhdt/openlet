@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { cn } from '../../../apps/web/src/lib/utils.js';
+import { cn } from '../src/lib/utils.js';
 
 test('custom typography tokens preserve semantic colors when component classes merge', () => {
   for (const size of ['caption', 'agent']) {

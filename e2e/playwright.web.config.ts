@@ -1,33 +1,28 @@
 import { defineConfig } from '@playwright/test';
 import { fileURLToPath } from 'node:url';
 
-const url = process.env.OPENLET_WEB_URL ?? 'http://127.0.0.1:5174';
-const port = new URL(url).port || '5174';
+const url = new URL(process.env.OPENLET_WEB_URL ?? 'http://127.0.0.1:5174');
+if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(url.hostname) || !url.port)
+  throw new Error('OPENLET_WEB_URL must be an HTTP loopback URL with a port');
 
 export default defineConfig({
   workers: 1,
   timeout: 30_000,
   outputDir: '../.local/e2e/ui',
   reporter: 'list',
-  use: { baseURL: url, screenshot: 'only-on-failure' },
+  use: { baseURL: url.origin, screenshot: 'only-on-failure' },
   projects: [
-    { name: 'public', testDir: './tests/ui' },
+    { name: 'public', testDir: './tests/browser/public' },
     {
-      name: 'authenticated',
-      testDir: './tests/live-web',
-      timeout: 180_000,
-      expect: { timeout: 30_000 },
-      use: {
-        storageState: process.env.OPENLET_WEB_AUTH_STATE,
-        viewport: { width: 1440, height: 1000 },
-        actionTimeout: 30_000,
-      },
+      name: 'workspace',
+      testDir: './tests/browser/workspace',
+      use: { viewport: { width: 1440, height: 1000 } },
     },
   ],
   webServer: {
-    command: `pnpm --filter @openlet/web dev --host 127.0.0.1 --port ${port} --strictPort`,
+    command: `pnpm --filter @openlet/web dev --host 127.0.0.1 --port ${url.port} --strictPort`,
     cwd: fileURLToPath(new URL('..', import.meta.url)),
-    url,
-    reuseExistingServer: !process.env.CI,
+    url: url.origin,
+    env: { VITE_CLERK_PUBLISHABLE_KEY: '', VITE_API_BASE_URL: '' },
   },
 });

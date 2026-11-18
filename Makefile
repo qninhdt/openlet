@@ -47,6 +47,7 @@ check-js:
 	pnpm format:check
 	pnpm typecheck
 	pnpm lint
+	pnpm --filter @openlet/web test
 	pnpm build
 
 test: test-go test-python

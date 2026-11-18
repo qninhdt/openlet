@@ -1,11 +1,8 @@
 import { expect, test } from '@playwright/test';
-import { activityToolResult } from '../../../apps/web/src/lib/agent-presentation.js';
-import {
-  reduceActivityStream,
-  type StreamingItem,
-} from '../../../apps/web/src/lib/agent-stream.js';
-import { scheduleTiming } from '../../../apps/web/src/lib/schedule-presentation.js';
-import type { ActivityEntry, LiveEvent } from '../../../apps/web/src/lib/agent-api.js';
+import { activityToolResult } from '../src/lib/agent-presentation.js';
+import { reduceActivityStream, type StreamingItem } from '../src/lib/agent-stream.js';
+import { scheduleTiming } from '../src/lib/schedule-presentation.js';
+import type { ActivityEntry, LiveEvent } from '../src/lib/agent-api.js';
 
 test('activity adapters preserve actual snapshots and legacy tool text', () => {
   const entry: ActivityEntry = {
@@ -167,7 +164,7 @@ test('reasoning and answer streams with the same message ID stay separate', () =
 });
 
 test('live activity keeps interleaved model parts in one turn with results and detail IDs', async () => {
-  const { activityMessages } = await import('../../../apps/web/src/lib/agent-activity-messages.js');
+  const { activityMessages } = await import('../src/lib/agent-activity-messages.js');
   const entry = (
     id: string,
     kind: ActivityEntry['kind'],
