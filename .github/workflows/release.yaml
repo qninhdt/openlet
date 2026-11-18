@@ -104,7 +104,7 @@ jobs:
         env:
           RELEASE_SHA: ${{ steps.commit.outputs.sha }}
         run: |
-          repository="ghcr.io/${GITHUB_REPOSITORY,,}"
+          repository="ghcr.io/${GITHUB_REPOSITORY,,}-demo"
           printf 'services:\n' > image-lock.yaml
           for service in platform letfs ingest-cpu ingest-io leta; do
             ref="$repository/$service:$RELEASE_SHA"
