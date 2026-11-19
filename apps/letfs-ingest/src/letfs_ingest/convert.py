@@ -30,6 +30,10 @@ class InvalidDocument(ValueError):
     pass
 
 
+def page_limit(config: Config) -> int:
+    return min(50, config["services"]["letfs_ingest"]["cpu"]["limits"]["max_pages"])
+
+
 def preflight(source: Path, media: str, config: Config) -> None:
     limits = config["services"]["letfs_ingest"]["cpu"]["limits"]
     if source.stat().st_size > config["services"]["letfs"]["max_blob_bytes"]:
@@ -42,8 +46,8 @@ def preflight(source: Path, media: str, config: Config) -> None:
         except pypdfium2.PdfiumError as error:
             raise InvalidDocument("invalid PDF") from error
         with pdf:
-            if len(pdf) > limits["max_pages"]:
-                raise InvalidDocument("PDF exceeds page limit")
+            if len(pdf) > (limit := page_limit(config)):
+                raise InvalidDocument(f"PDF exceeds the {limit}-page limit")
             for page in pdf:
                 try:
                     width, height = page.get_size()
@@ -156,7 +160,7 @@ def convert(
     result = converter().convert(
         source,
         raises_on_error=False,
-        max_num_pages=limits["max_pages"],
+        max_num_pages=page_limit(config),
         max_file_size=config["services"]["letfs"]["max_blob_bytes"],
     )
     if result.status != ConversionStatus.SUCCESS:

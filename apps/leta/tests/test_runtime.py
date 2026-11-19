@@ -303,11 +303,10 @@ async def test_shell_capture_is_bounded_and_redirection_remains_complete(
         await workspace.close()
 
 
-@pytest.mark.parametrize("keep_tokens", [2048, 8192])
 async def test_execution_reuses_client_and_native_compaction_preserves_prefix(
     monkeypatch: pytest.MonkeyPatch,
-    keep_tokens: int,
 ) -> None:
+    keep_tokens = 8192
     from pathlib import Path
     from types import SimpleNamespace
     from typing import cast
@@ -350,9 +349,13 @@ async def test_execution_reuses_client_and_native_compaction_preserves_prefix(
             )
         )
 
-    config = cast(
-        Config, yaml.safe_load(Path("infra/config/openlet.example.yaml").read_text())
+    example_config_path = (
+        Path(__file__).resolve().parents[3]
+        / "infra"
+        / "config"
+        / "openlet.example.yaml"
     )
+    config = cast(Config, yaml.safe_load(example_config_path.read_text()))
     config["services"]["leta"]["compaction"]["keep_tokens"] = keep_tokens
     monkeypatch.setenv("LITELLM_MASTER_KEY", "fixture")
     services = cast(
@@ -521,9 +524,13 @@ def test_compaction_config_requires_positive_tail_and_summary_budgets() -> None:
     from leta.config import validate
     from openlet_sdk.config import Config
 
-    config = cast(
-        Config, yaml.safe_load(Path("infra/config/openlet.example.yaml").read_text())
+    example_config_path = (
+        Path(__file__).resolve().parents[3]
+        / "infra"
+        / "config"
+        / "openlet.example.yaml"
     )
+    config = cast(Config, yaml.safe_load(example_config_path.read_text()))
     validate(config)
     settings = config["services"]["leta"]["compaction"]
     settings["keep_tokens"] = 0

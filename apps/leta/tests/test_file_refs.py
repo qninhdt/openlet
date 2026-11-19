@@ -217,7 +217,9 @@ async def test_private_files_copy_to_conversation_without_granting_source_access
         CopyNode=AsyncMock(return_value=result),
         CreateDirectories=AsyncMock(return_value=fs.Node(id=str(parent))),
     )
-    auth = SimpleNamespace(require=AsyncMock(), allowed=AsyncMock(return_value=False))
+    auth = SimpleNamespace(
+        require=AsyncMock(), allowed=AsyncMock(return_value=False), write=AsyncMock()
+    )
     services = cast(Services, SimpleNamespace(auth=auth, files=files))
     provision = AsyncMock(
         return_value={
@@ -255,7 +257,7 @@ async def test_private_files_copy_to_conversation_without_granting_source_access
         f"/{storage}/{node}"
     )
     provision.assert_awaited_with(services, sender.id, recipient.id)
-    assert not hasattr(auth, "write")
+    auth.write.assert_not_called()
     auth.require.reset_mock(side_effect=True)
     auth.require.side_effect = PermissionError("source denied")
     files.CopyNode.reset_mock()

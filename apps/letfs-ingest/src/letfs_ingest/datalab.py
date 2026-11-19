@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, cast
 
 from PIL import Image
 
-from .convert import InvalidDocument, validate_output
+from .convert import InvalidDocument, page_limit, validate_output
 from .layout import write_markdown
 from .naming import rewrite_artifact_links
 from .tables import externalize_tables
@@ -35,17 +35,18 @@ def export(source: Path, success: bool, output: Path, config: Config) -> None:
     limits = parser["limits"]
     storage = config["services"]["letfs"]
     count, body = result.get("page_count"), result.get("markdown")
+    limit = page_limit(config)
+    if type(count) is int and count > limit:
+        raise InvalidDocument(f"Document exceeds the {limit}-page limit")
     if (
         result.get("success") is not True
         or type(count) is not int
-        or not 0 < count <= limits["max_pages"]
+        or count <= 0
         or not isinstance(body, str)
         or not body.strip()
         or response_object(result.get("metadata") or {}).get("failed_pages")
     ):
-        raise InvalidDocument(
-            "Datalab returned incomplete content or exceeded the page limit"
-        )
+        raise InvalidDocument("Datalab returned incomplete content")
 
     paths = {"README.md": "README.md"}
     names: dict[bytes, str] = {}

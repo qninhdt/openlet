@@ -19,17 +19,19 @@ model_list:
       max_input_tokens: 65536
       base_model: gpt-6.1-sol
       access_groups: [leta]
-      supported_reasoning_efforts: [low]
+      supported_reasoning_efforts: [low, medium, high]
       supports_response_schema: false
   - model_name: deepseek/deepseek-v4.1-flash
     litellm_params:
-      model: openai/deepseek-v4.1-flash
+      model: deepseek-v4.1-flash
+      custom_llm_provider: custom_openai
       litellm_credential_name: vilao
+      allowed_openai_params: [reasoning_effort]
     model_info:
       # Conservative deployment working bounds; not a provider capacity claim.
       max_input_tokens: 65536
       max_output_tokens: 8192
-      supported_reasoning_efforts: [none, low, medium, high]
+      supported_reasoning_efforts: [low, medium, high]
       access_groups: [leta]
       supports_response_schema: false
   - model_name: openai/text-embedding-3-large

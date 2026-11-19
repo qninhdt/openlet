@@ -150,16 +150,6 @@ test('native runtime, box containment, asynchronous HITL and owner-independent s
   expect(privateSnapshot).toContain(privateText);
   expect(privateSnapshot).not.toContain('system_prompt');
   expect(privateSnapshot).not.toContain('"history"');
-  const scheduledInstruction = `Read the workspace report and run a shell calculation. Audit ${root.id}`;
-  const scheduled = await account.api.post(`${path}/schedules`, {
-    data: {
-      request_id: randomUUID(),
-      target_box_id: box.id,
-      after_seconds: 30,
-      content: scheduledInstruction,
-    },
-  });
-  expect(scheduled.ok(), await scheduled.text()).toBeTruthy();
   const startsAt = new Date(Date.now() + 3_600_000).toISOString();
   const endsAt = new Date(Date.now() + 86_400_000).toISOString();
   const recurring = await account.api.post(`${path}/schedules`, {
@@ -201,6 +191,16 @@ test('native runtime, box containment, asynchronous HITL and owner-independent s
       )?.role;
     })
     .toBe('WORKSPACE_ROLE_OWNER');
+  const scheduledInstruction = `Read the workspace report and run a shell calculation. Audit ${root.id}`;
+  const scheduled = await account.api.post(`${path}/schedules`, {
+    data: {
+      request_id: randomUUID(),
+      target_box_id: box.id,
+      after_seconds: 3,
+      content: scheduledInstruction,
+    },
+  });
+  expect(scheduled.ok(), await scheduled.text()).toBeTruthy();
   const leftAt = Date.now();
   const leave = await account.api.delete(`${workspace}/members/${account.id}`);
   expect(leave.ok(), await leave.text()).toBeTruthy();

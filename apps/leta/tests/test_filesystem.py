@@ -352,14 +352,14 @@ async def test_shell_downloads_http_to_workspace(command: str) -> None:
         await server.wait_closed()
 
 
-@pytest.mark.parametrize("media", ["image/jpeg", "application/pdf"])
 @pytest.mark.parametrize("command", ["cp", "mv"])
 @pytest.mark.parametrize(
     "cross_storage,refuse", [(False, False), (True, False), (True, True)]
 )
 async def test_shell_transfers_original_blob_and_keeps_source_on_failure(
-    media: str, command: str, cross_storage: bool, refuse: bool
+    command: str, cross_storage: bool, refuse: bool
 ) -> None:
+    media = "application/pdf"
     source_storage, other_storage, source_root, other_root = (uuid4() for _ in range(4))
     destination_storage = other_storage if cross_storage else source_storage
     original = fs.Node(

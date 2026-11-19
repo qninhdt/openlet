@@ -21,7 +21,13 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from .artifacts import download, heartbeats, publish
-from .convert import MEDIA_SUFFIXES, REMOTE_MEDIA, InvalidDocument, preflight
+from .convert import (
+    MEDIA_SUFFIXES,
+    REMOTE_MEDIA,
+    InvalidDocument,
+    page_limit,
+    preflight,
+)
 from .datalab import export
 from .telemetry import ProcessingIdentity, stage
 
@@ -149,7 +155,7 @@ class Parser:
                 self.settings["max_blob_bytes"],
             )
             await asyncio.to_thread(preflight, name, source.media_type, self.config)
-        limit = self.config["services"]["letfs_ingest"]["cpu"]["limits"]["max_pages"]
+        limit = page_limit(self.config)
         try:
             result = await self.datalab.convert(
                 file_path=None if direct else name,
