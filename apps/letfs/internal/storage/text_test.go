@@ -1,6 +1,7 @@
 package storage
 
 import (
+	sdk "github.com/qninhdt/openlet/packages/sdk-go"
 	pb "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/letfs/v1"
 	"testing"
 )
@@ -48,15 +49,26 @@ func TestTextReadAndEditModes(t *testing.T) {
 	}
 }
 
-func TestBlobTransfersRejectDeclaredText(t *testing.T) {
-	for _, media := range []string{"text/plain; charset=utf-8", "application/json", "application/ld+json", "application/xml", "application/xhtml+xml", "application/yaml"} {
-		if _, err := blobMediaType(media); err == nil {
-			t.Errorf("accepted text on S3: %s", media)
+func testFileTypes(t *testing.T) sdk.FileTypes {
+	t.Helper()
+	types, err := sdk.LoadFileTypes("../../../../packages/contracts/file-types.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return types
+}
+
+func TestFileMediaRequiresSupportedExtensionAndStorageType(t *testing.T) {
+	s := Server{FileTypes: testFileTypes(t)}
+	for _, name := range []string{"report.txt", "report.json", "report", "report.unsupported", ".pdf"} {
+		if _, err := s.fileMedia(name, sdk.FileBlob); err == nil {
+			t.Errorf("accepted %q as a blob", name)
 		}
 	}
-	for _, media := range []string{"application/octet-stream", "application/pdf", "image/svg+xml", documentMedia[3]} {
-		if got, err := blobMediaType(media); err != nil || got != media {
-			t.Errorf("rejected blob %s: %s %v", media, got, err)
-		}
+	if got, err := s.fileMedia("REPORT.PDF", sdk.FileBlob); err != nil || got != "application/pdf" {
+		t.Errorf("PDF: %q %v", got, err)
+	}
+	if _, err := s.fileMedia("report.pdf", sdk.FileText); err == nil {
+		t.Error("accepted PDF as text")
 	}
 }

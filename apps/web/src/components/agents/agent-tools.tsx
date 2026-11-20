@@ -815,6 +815,49 @@ const HitlStatusTool: ToolCallMessagePartComponent = (props) => {
     </ToolStep>
   );
 };
+const WebTool: ToolCallMessagePartComponent = (props) => {
+  const result = resultOf(props);
+  const search = props.toolName === 'websearch';
+  const label = search
+    ? `Web search${props.args.query ? `: ${String(props.args.query)}` : ''}`
+    : `Web fetch (${result.webFormat || String(props.args.format ?? 'markdown')})`;
+  return (
+    <ToolStep props={props} label={label} icon={<Search />}>
+      {props.isError ? (
+        <p className="text-caption text-destructive">{result.output}</p>
+      ) : result.webSources?.length ? (
+        <ActionCard>
+          <ul className="divide-y">
+            {result.webSources.map((source) => (
+              <li key={source.url} className="space-y-1 px-3 py-2 text-caption">
+                <a
+                  href={source.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-medium underline underline-offset-3"
+                >
+                  {source.title}
+                </a>
+                {source.publishedAt && (
+                  <p className="text-muted-foreground">{source.publishedAt}</p>
+                )}
+                {source.snippet && <p className="text-muted-foreground">{source.snippet}</p>}
+              </li>
+            ))}
+          </ul>
+          {result.truncated && (
+            <p className="border-t px-3 py-2 text-caption text-muted-foreground">
+              Page content was shortened.
+            </p>
+          )}
+        </ActionCard>
+      ) : (
+        result.webSources && <EmptyResult icon={<Search />}>No sources found.</EmptyResult>
+      )}
+    </ToolStep>
+  );
+};
+
 const UnknownTool: ToolCallMessagePartComponent = (props) => (
   <ToolStep props={props} label={props.toolName.replaceAll('_', ' ')} icon={<Search />}>
     <p className="text-caption whitespace-pre-wrap text-muted-foreground">
@@ -830,6 +873,8 @@ const renderers = {
     file_write: FileWriteTool,
     file_edit: FileEditTool,
     file_semantic_search: SearchTool,
+    websearch: WebTool,
+    webfetch: WebTool,
     execute: ExecuteTool,
     inbox_send: InboxTool,
     inbox_list: InboxTool,

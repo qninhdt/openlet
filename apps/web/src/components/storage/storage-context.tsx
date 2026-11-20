@@ -15,7 +15,7 @@ import { useFileSessions } from './file-sessions';
 import { apiUrl, useBackend } from '@/lib/backend';
 import { downloadArchive } from '@/lib/archive-download';
 import { storageApi } from '@/lib/storage-api';
-import { fileMediaType, isTextFile } from '@/lib/file-types';
+import { classifyFile } from '@/lib/file-types';
 import { toast } from 'sonner';
 import {
   ancestors,
@@ -492,7 +492,8 @@ function useBrowser(
     const nextName = validateName(name);
     const storage = request.kind === 'rename' ? request.node.storage : request.storage;
     writable(storage);
-    if (request.kind === 'create-file' && !isTextFile(nextName))
+    const type = classifyFile(nextName);
+    if (request.kind === 'create-file' && type.kind !== 'text')
       throw new Error('Use a text or code extension, such as .txt, .md or .py.');
     setPending(true);
     try {
@@ -504,7 +505,7 @@ function useBrowser(
               request.parent,
               nextName,
               request.kind === 'create-file'
-                ? { content: '', mediaType: fileMediaType(nextName) }
+                ? { content: '', mediaType: type.mediaType }
                 : undefined,
             );
       client.setQueryData<StorageSnapshot>(key, (current) => ({
@@ -843,23 +844,6 @@ export function fileCategory(node: StorageNode) {
   if (/audio|video/.test(node.mime)) return 'media';
   if (/pdf|markdown|word|presentation/.test(node.mime)) return 'documents';
   return 'other';
-}
-export function mimeForName(name: string) {
-  const extension = name.split('.').pop()?.toLowerCase();
-  return (
-    (
-      {
-        md: 'text/markdown',
-        txt: 'text/plain',
-        json: 'application/json',
-        csv: 'text/csv',
-        html: 'text/html',
-        js: 'text/javascript',
-        ts: 'text/plain',
-        xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      } as Record<string, string>
-    )[extension ?? ''] ?? 'application/octet-stream'
-  );
 }
 export type StorageBrowser = ReturnType<typeof useBrowser>;
 const Context = createContext<StorageBrowser | null>(null);

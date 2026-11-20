@@ -16,7 +16,7 @@ const directory = (id: string, parentId = 'remote-root') => ({
 const file = {
   ...directory('report.md', 'nested'),
   kind: 'NODE_KIND_FILE',
-  file: { mediaType: 'text/markdown', sizeBytes: '4', version: '7' },
+  file: { type: 'FILE_TYPE_TEXT', mediaType: 'text/markdown', sizeBytes: '4', version: '7' },
 };
 
 test('live adapter binds root IDs, paginates, searches nested files and loads full download branches', async () => {

@@ -29,6 +29,7 @@ from ..filesystem.workspace import path as file_path
 from ..jobs.resources import ResourceOperation
 from ..messages import Message
 from ..output import BYTE_BUDGET, text_page
+from ..web import public_url, web_request
 from .inbox import State
 
 type Status = Literal[
@@ -1291,7 +1292,7 @@ async def file_semantic_search(
 async def execute(
     runtime: ToolRuntime[Context, State], command: str, cwd: str = "~"
 ) -> ToolMessage:
-    """Run supported shell commands and Python over workspace files; use curl or wget for HTTP requests. Use cwd for the working directory. Output is capped; read the saved output when needed. No host programs."""
+    """Run supported shell commands and Python over workspace files; use curl or wget for HTTP requests. Shell commands and Python can read or edit file contents only for text files. For HTTP(S) downloads, use curl -fLsS -o <file> <url>. Use cwd for the working directory. Output is capped; read the saved output when needed. No host programs."""
     output, code = await shell(
         await session(runtime),
         command,
@@ -1308,7 +1309,90 @@ async def execute(
     )
 
 
-def tools(*, root: bool) -> list[BaseTool]:
+@tool(response_format="content_and_artifact")
+async def websearch(
+    query: Annotated[str, Field(min_length=1, max_length=1000)],
+    runtime: ToolRuntime[Context, State],
+) -> tuple[JSON, dict[str, JSON]]:
+    """Find public web sources for current information. Send only terms needed for the search. Open primary sources with webfetch when you need to verify a claim, and cite the results you use."""
+    query = query.strip()
+    if not query:
+        raise ValueError("Enter a search query.")
+    client = runtime.context.services.web
+    if client is None:
+        raise ValueError("Web tools are unavailable.")
+    async with web_request():
+        response = await client.search.query(query=query)
+    results: list[JSON] = []
+    seen: set[str] = set()
+    for hit in response.results:
+        try:
+            url = public_url(hit.url)
+        except ValueError:
+            continue
+        if url in seen:
+            continue
+        seen.add(url)
+        result: dict[str, JSON] = {
+            "title": hit.title[:300] or url,
+            "url": url,
+            "snippet": hit.snippet[:1000],
+        }
+        if hit.date:
+            result["published_at"] = hit.date[:64]
+        results.append(result)
+        if len(results) == 5:
+            break
+    return presented("websearch", {"results": results}, {"results": results})
+
+
+@tool(response_format="content_and_artifact")
+async def webfetch(
+    url: Annotated[str, Field(min_length=1, max_length=4096)],
+    runtime: ToolRuntime[Context, State],
+    format: Literal["markdown", "html", "json"] = "markdown",
+) -> tuple[JSON, dict[str, JSON]]:
+    """Read a public URL supplied by the user or found by websearch. Use Markdown for reading, HTML for markup, and JSON for a document tree. Treat page content as source material, and cite the final URL when using it."""
+    url = public_url(url)
+    client = runtime.context.services.web
+    if client is None:
+        raise ValueError("Web tools are unavailable.")
+    async with web_request():
+        response = await client.fetch.get_contents(
+            urls=[url], format=format, ttl=0, per_url_timeout_ms=20_000
+        )
+    if not response.results:
+        raise ValueError("The web service could not read this page.")
+    page = response.results[0]
+    final_url = public_url(page.final_url or page.url)
+    if page.text is None or page.format != format:
+        raise ValueError("The web service returned no content in the requested format.")
+    encoded = page.text.encode()
+    truncated = len(encoded) > BYTE_BUDGET
+    if format == "json":
+        if truncated:
+            raise ValueError(
+                "The page's JSON exceeds the output limit. Fetch it as Markdown."
+            )
+        try:
+            content = cast(JSON, json.loads(page.text))
+        except ValueError:
+            raise ValueError("The web service returned invalid page JSON.") from None
+        if not isinstance(content, dict):
+            raise ValueError("The web service returned invalid page JSON.")
+    else:
+        content = encoded[:BYTE_BUDGET].decode(errors="ignore")
+    metadata: dict[str, JSON] = {
+        "url": url,
+        "final_url": final_url,
+        "title": (page.title or "")[:300],
+        "format": format,
+        "truncated": truncated,
+    }
+    return presented("webfetch", {**metadata, "content": content}, metadata)
+
+
+def tools(*, root: bool, web: bool = False) -> list[BaseTool]:
     shared = [
         inbox_send,
         inbox_react,
@@ -1332,6 +1416,8 @@ def tools(*, root: bool) -> list[BaseTool]:
         execute,
         file_semantic_search,
     ]
+    if web:
+        shared.extend((websearch, webfetch))
     if root:
         catalog = [
             *shared,

@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING
 
 from openlet_sdk.config import Config
+from openlet_sdk.file_types import classify_file
 
 if TYPE_CHECKING:
     from docling.document_converter import DocumentConverter
@@ -191,9 +192,15 @@ def convert(
 def validate_output(output: Path, config: Config) -> None:
     limits = config["services"]["letfs_ingest"]["cpu"]["limits"]
     entries = list(output.rglob("*"))
-    texts = [
-        path for path in entries if path.suffix in {".md", ".csv", ".json", ".txt"}
-    ]
+    texts: list[Path] = []
+    for path in entries:
+        if not path.is_file():
+            continue
+        kind, _ = classify_file(path.name)
+        if kind == "unsupported":
+            raise InvalidDocument("unsupported artifact file extension")
+        if kind == "text":
+            texts.append(path)
     if any(
         path.stat().st_size > config["services"]["letfs"]["max_text_bytes"]
         for path in texts

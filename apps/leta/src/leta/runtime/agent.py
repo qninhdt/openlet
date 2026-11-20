@@ -749,7 +749,7 @@ async def run(s: Services, lf: Langfuse, input: RunInput) -> RunResult:
                 runId=str(ctx.run_id),
             ),
         )
-        catalog = tools(root=agent["box_id"] is None)
+        catalog = tools(root=agent["box_id"] is None, web=s.web is not None)
         execution_model = ExecutionModel(
             s,
             InferenceSettings.model_validate(prompt.config),

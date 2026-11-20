@@ -8,7 +8,6 @@ if TYPE_CHECKING:
 
 import asyncio
 import base64
-import mimetypes
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
@@ -19,6 +18,7 @@ from google.protobuf.empty_pb2 import Empty
 from openlet_api.letfs.v1 import internal_pb2 as internal
 from openlet_api.letfs.v1 import letfs_pb2 as pb
 from openlet_sdk.config import LetFSSettings
+from openlet_sdk.file_types import classify_file
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
@@ -84,9 +84,18 @@ async def publish(
             raise ApplicationError(
                 "parser output contains a symlink", non_retryable=True
             )
+        if len(artifacts) + len(specs) >= settings["processing"]["max_artifacts"]:
+            raise ApplicationError("artifact count exceeds limit", non_retryable=True)
         if path.is_dir():
             artifacts.append(internal.Artifact(path=relative, directory=Empty()))
-        elif path.suffix in {".md", ".csv", ".json", ".txt"}:
+            continue
+
+        kind, media = classify_file(path.name)
+        if kind == "unsupported":
+            raise ApplicationError(
+                "unsupported artifact file extension", non_retryable=True
+            )
+        if kind == "text":
             data = path.read_bytes()
             if len(data) > settings["max_text_bytes"]:
                 raise ApplicationError(
@@ -96,7 +105,6 @@ async def publish(
             if "\0" in content:
                 raise ApplicationError("artifact text contains NUL", non_retryable=True)
             total += len(data)
-            media = mimetypes.guess_type(path.name)[0] or "text/plain"
             artifacts.append(
                 internal.Artifact(
                     path=relative,
@@ -113,14 +121,11 @@ async def publish(
                 internal.ArtifactUploadSpec(
                     path=relative,
                     size_bytes=len(data),
-                    media_type=mimetypes.guess_type(path.name)[0]
-                    or "application/octet-stream",
+                    media_type=media,
                     checksum=checksum(data),
                 )
             )
             blobs[relative] = path
-        if len(artifacts) + len(specs) > settings["processing"]["max_artifacts"]:
-            raise ApplicationError("artifact count exceeds limit", non_retryable=True)
     if total > settings["processing"]["max_manifest_text_bytes"]:
         raise ApplicationError("artifact manifest exceeds limit", non_retryable=True)
     if specs:

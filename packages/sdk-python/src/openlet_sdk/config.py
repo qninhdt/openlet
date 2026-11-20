@@ -196,11 +196,16 @@ class CompactionSettings(TypedDict):
     summary_max_tokens: int
 
 
+class WebSearchSettings(TypedDict):
+    api_key: str
+
+
 class LetaSettings(TypedDict):
     http_listen: str
     http_target: str
     database: DatabaseSettings
     compaction: CompactionSettings
+    web_search: NotRequired[WebSearchSettings]
 
 
 class Services(TypedDict):

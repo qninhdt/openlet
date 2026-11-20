@@ -45,5 +45,6 @@ plan_target vps "$vps_base" \
 
 plan_target web "$web_base" \
   apps/web package.json pnpm-lock.yaml pnpm-workspace.yaml packages/contracts/proto \
+  packages/contracts/file-types.json \
   ':(exclude)apps/web/tests' ':(exclude)apps/web/worker.test.mjs' \
   ':(exclude)apps/web/playwright.unit.config.ts'

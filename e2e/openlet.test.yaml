@@ -98,7 +98,7 @@ services:
       name: letfs
       user: letfs
       password: ${LETFS_DB_PASSWORD}
-    max_text_bytes: 262144
+    max_text_bytes: 1048576
     max_blob_bytes: 104857600
     multipart_threshold_bytes: 10485760
     multipart_part_bytes: 8388608

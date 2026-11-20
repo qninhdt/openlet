@@ -100,7 +100,7 @@ func TestStorageSQLInvariants(t *testing.T) {
 		t.Fatalf("detached descendant visible: %v", err)
 	}
 	_ = tx.Rollback(ctx)
-	s := &Server{DB: pool, Settings: Settings{IdempotencyRetentionSeconds: 3600, MaxTextBytes: 1024}}
+	s := &Server{DB: pool, FileTypes: testFileTypes(t), Settings: Settings{IdempotencyRetentionSeconds: 3600, MaxTextBytes: 1024}}
 	s.Settings.Processing.MaxArtifacts = 10
 	s.Settings.Processing.MaxManifestTextBytes = 100
 	request := &pb.CommitParseRequest{FileId: source, Version: 1, Artifacts: []*pb.Artifact{

@@ -229,9 +229,13 @@ async def activity(
         rows = await (
             await conn.execute(
                 """SELECT id,agent_id,run_id,seq,kind,created_at,
-            octet_length(payload::text)>8192 AS has_details,
-            CASE WHEN octet_length(payload::text)<=8192 THEN payload ELSE
-                jsonb_build_object('text',left(payload->>'text',400),'reasoning',left(payload->>'reasoning',400),'name',payload->'name','tool_call_id',payload->'tool_call_id') END AS payload
+            CASE WHEN kind='tool_result' AND payload->>'name' IN ('websearch','webfetch') AND payload->>'status'='success'
+                    THEN false
+                ELSE octet_length(payload::text)>8192 END AS has_details,
+            CASE WHEN kind='tool_result' AND payload->>'name' IN ('websearch','webfetch') AND payload->>'status'='success'
+                    THEN payload - 'text'
+                WHEN octet_length(payload::text)<=8192 THEN payload
+                ELSE jsonb_build_object('text',left(payload->>'text',400),'reasoning',left(payload->>'reasoning',400),'name',payload->'name','tool_call_id',payload->'tool_call_id') END AS payload
             FROM history WHERE agent_id=%s AND (%s::bigint IS NULL OR seq<%s)
             AND (%s::bigint IS NULL OR seq>%s) ORDER BY """
                 + ("seq ASC" if after is not None else "seq DESC")

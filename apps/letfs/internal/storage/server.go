@@ -52,6 +52,7 @@ type Server struct {
 	Temporal            client.Client
 	Queues              sdk.Queues
 	Settings            Settings
+	FileTypes           sdk.FileTypes
 	Qdrant              *qdrant.Client
 	Collection          string
 	Models              openai.Client

@@ -6,22 +6,28 @@ if TYPE_CHECKING:
     from openlet_api.letfs.v1.letfs_pb2_grpc import LetFSServiceAsyncStub
 
 
+import asyncio
 import base64
 import errno
 import posixpath
 from collections.abc import Awaitable
+from contextlib import suppress
 from contextvars import ContextVar
 from uuid import UUID, uuid4
 
+import google_crc32c
 import grpc
+import httpx
 from mirage import BaseVFS, ContentType, FileStat, FileType, PathSpec
+from mirage.io.stream import ensure_stream
 from mirage.io.types import ByteSource, materialize
 from mirage.types import DirListing
 from mirage.utils.key_prefix import mounted_path
 from mirage.vfs.call import vfs_call
 from mirage.vfs.types import Effect, Target
 from openlet_api.letfs.v1 import letfs_pb2 as fs
-from openlet_sdk.config import JSON
+from openlet_sdk.config import JSON, LetFSSettings
+from openlet_sdk.file_types import classify_file
 from opentelemetry.baggage.propagation import W3CBaggagePropagator
 
 from ..agents import stable
@@ -31,6 +37,13 @@ current_operation: ContextVar[UUID | None] = ContextVar("file_operation", defaul
 
 
 def stat(node: fs.Node) -> FileStat:
+    content = None
+    if node.HasField("file"):
+        if node.file.type == fs.FILE_TYPE_TEXT:
+            content = ContentType.TEXT
+        elif node.file.type == fs.FILE_TYPE_BLOB:
+            with suppress(ValueError):
+                content = ContentType(node.file.media_type)
     return FileStat(
         name=node.name,
         type=(
@@ -41,11 +54,7 @@ def stat(node: fs.Node) -> FileStat:
             node.updated_at.ToJsonString() if node.HasField("updated_at") else None
         ),
         revision=str(node.file.version) if node.HasField("file") else None,
-        content=(
-            ContentType.TEXT
-            if node.HasField("file") and node.file.type == fs.FILE_TYPE_TEXT
-            else None
-        ),
+        content=content,
         extra={
             "node_id": node.id,
             "storage_id": node.storage_id,
@@ -67,10 +76,15 @@ class LetFS(BaseVFS):
         workspace: UUID,
         storage: UUID,
         root: UUID,
+        settings: LetFSSettings,
     ) -> None:
         super().__init__()
         self.stub, self.actor = stub, actor
         self.workspace, self.storage, self.root = workspace, storage, root
+        self.text_limit = settings["max_text_bytes"]
+        self.blob_limit = min(
+            settings["max_blob_bytes"], settings["multipart_threshold_bytes"] - 1
+        )
 
     def locator(self, path: PathSpec) -> fs.NodeLocator:
         return fs.NodeLocator(path=path.vfs_path or ".", root_node_id=str(self.root))
@@ -454,6 +468,94 @@ class LetFS(BaseVFS):
         )
         return stat(node)
 
+    async def upload_blob(self, path: PathSpec, data: bytes, media: str) -> FileStat:
+        request = fs.CreateUploadRequest(
+            workspace_id=str(self.workspace),
+            storage_id=str(self.storage),
+            size_bytes=len(data),
+            media_type=media,
+            checksum=base64.b64encode(google_crc32c.Checksum(data).digest()).decode(
+                "ascii"
+            ),
+            request_id=self.request_id("upload", path),
+        )
+        try:
+            existing = await self.stat(path)
+        except FileNotFoundError:
+            parent, name = posixpath.split(path.vfs_path)
+            request.create.CopyFrom(
+                fs.UploadCreate(
+                    parent=fs.NodeLocator(
+                        path=parent or ".", root_node_id=str(self.root)
+                    ),
+                    name=name,
+                )
+            )
+        else:
+            if (
+                existing.type != FileType.FILE
+                or existing.content == ContentType.TEXT
+                or existing.revision is None
+            ):
+                raise OSError("blob write requires a new path or an existing blob")
+            request.replace.CopyFrom(
+                fs.UploadReplace(
+                    target=self.locator(path), expected_version=int(existing.revision)
+                )
+            )
+
+        metadata = self.actor.metadata
+        try:
+            upload = await self.call(
+                self.stub.CreateUpload(request, metadata=metadata, timeout=10)
+            )
+        except grpc.RpcError as error:
+            raise OSError("LetFS could not create the blob upload") from error
+        if upload.HasField("completed"):
+            return stat(upload.completed)
+        identity = fs.UploadRequest(
+            workspace_id=request.workspace_id,
+            storage_id=request.storage_id,
+            upload_id=upload.id,
+        )
+        try:
+            if upload.transfer.multipart or not upload.transfer.put_url:
+                raise OSError("LetFS did not return a single-part upload URL")
+            async with httpx.AsyncClient() as http:
+                response = await http.put(
+                    upload.transfer.put_url,
+                    headers=dict(upload.transfer.headers),
+                    content=data,
+                )
+                if response.status_code != 412:
+                    response.raise_for_status()
+            # A retried signed PUT may find the object already uploaded.
+            node = await self.call(
+                self.stub.CompleteUpload(
+                    fs.CompleteUploadRequest(
+                        workspace_id=identity.workspace_id,
+                        storage_id=identity.storage_id,
+                        upload_id=identity.upload_id,
+                    ),
+                    metadata=metadata,
+                    timeout=10,
+                )
+            )
+        except (
+            OSError,
+            grpc.RpcError,
+            httpx.HTTPError,
+            asyncio.CancelledError,
+        ) as error:
+            with suppress(grpc.RpcError):
+                await self.stub.AbortUpload(identity, metadata=metadata, timeout=2)
+            if isinstance(error, grpc.RpcError):
+                raise OSError("LetFS could not complete the blob upload") from error
+            if isinstance(error, httpx.HTTPError):
+                raise OSError("S3 blob upload failed") from error
+            raise
+        return stat(node)
+
     @vfs_call(effect=Effect.WRITE, target=Target.FILE)
     async def edit_text(
         self, path: PathSpec, old_text: str, new_text: str, replace_all: bool = False
@@ -476,9 +578,25 @@ class LetFS(BaseVFS):
         return stat(node)
 
     async def write(self, path: PathSpec, data: ByteSource) -> FileStat:
-        return await self.write_text(
-            path, (await materialize(data)).decode("utf-8"), overwrite=True
-        )
+        kind, media = classify_file(path.vfs_path)
+        if kind == "unsupported":
+            raise OSError("unsupported file extension")
+
+        limit = self.text_limit if kind == "text" else self.blob_limit
+        payload = bytearray()
+        async for chunk in ensure_stream(data):
+            if len(payload) + len(chunk) > limit:
+                raise OSError(f"{kind} file exceeds {limit} bytes")
+            payload.extend(chunk)
+        if kind == "blob":
+            return await self.upload_blob(path, bytes(payload), media)
+        try:
+            content = payload.decode("utf-8")
+        except UnicodeDecodeError:
+            raise OSError("text must be UTF-8 without NUL") from None
+        if "\x00" in content:
+            raise OSError("text must be UTF-8 without NUL")
+        return await self.write_text(path, content, overwrite=True)
 
     async def create(self, path: PathSpec) -> FileStat:
         try:

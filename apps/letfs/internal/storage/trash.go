@@ -139,6 +139,9 @@ func (s *Server) RestoreTrash(ctx context.Context, r *pb.RestoreTrashRequest) (*
 	name := out.Name
 	if r.Name != nil {
 		name = *r.Name
+		if err = s.checkFileName(out, name); err != nil {
+			return nil, err
+		}
 	}
 	var updated time.Time
 	err = tx.QueryRow(ctx, `UPDATE nodes SET parent_id=$2,name=$3,updated_at=now() WHERE id=$1 RETURNING updated_at`, out.Id, parent.Node.Id, name).Scan(&updated)

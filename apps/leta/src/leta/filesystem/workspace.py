@@ -28,57 +28,6 @@ from ..db import Row
 from ..output import BYTE_BUDGET, preview
 from .letfs import LetFS
 
-COMMANDS = (
-    "ls",
-    "cat",
-    "head",
-    "tail",
-    "wc",
-    "grep",
-    "rg",
-    "find",
-    "tree",
-    "du",
-    "stat",
-    "file",
-    "test",
-    "[",
-    "echo",
-    "printf",
-    "pwd",
-    "cd",
-    "export",
-    "unset",
-    "true",
-    "false",
-    ":",
-    "set",
-    "sort",
-    "uniq",
-    "cut",
-    "paste",
-    "tr",
-    "sed",
-    "awk",
-    "jq",
-    "mkdir",
-    "rmdir",
-    "rm",
-    "cp",
-    "mv",
-    "touch",
-    "tee",
-    "diff",
-    "python",
-    "python3",
-    "date",
-    "seq",
-    "basename",
-    "dirname",
-    "curl",
-    "wget",
-)
-
 
 @dataclass(frozen=True)
 class StorageMount:
@@ -133,6 +82,7 @@ class Filesystem:
         actor = Actor("agent", cast(UUID, self.agent["leta_id"]))
         workspace = cast(UUID, self.agent["workspace_id"])
         storage = cast(UUID, self.agent["storage_id"])
+        settings = self.s.config["services"]["letfs"]
         if self.workspace is None:
             home_storage: fs.Storage = await self.s.files.GetStorage(
                 fs.StorageRequest(workspace_id=str(workspace), storage_id=str(storage)),
@@ -140,7 +90,7 @@ class Filesystem:
                 timeout=15,
             )
             home = UUID(home_storage.root_node_id)
-            driver = LetFS(self.s.files, actor, workspace, storage, home)
+            driver = LetFS(self.s.files, actor, workspace, storage, home, settings)
             # Old indexes classified blobs as directories.
             cache_id = f"leta:vfs:2:{self.agent['leta_id']}:{storage}:{home}"
             self.workspace = Workspace(
@@ -155,8 +105,6 @@ class Filesystem:
                 ),
                 runtimes=[MontyRuntime(config=MontyConfig(max_memory="16MB"))],
                 env={"HOME": "/home", "PWD": "/home"},
-                profiles={"agent": {"commands": {"allow": list(COMMANDS)}}},
-                profile="agent",
             )
         ws = self.workspace
         if previous != self.bindings:
@@ -169,7 +117,14 @@ class Filesystem:
                 if old is None or old.root != binding.root:
                     ws.add_mount(
                         f"/mnt/{id}",
-                        LetFS(self.s.files, actor, workspace, UUID(id), binding.root),
+                        LetFS(
+                            self.s.files,
+                            actor,
+                            workspace,
+                            UUID(id),
+                            binding.root,
+                            settings,
+                        ),
                         mode=mode,
                         read=ReadSpec(),
                     )
