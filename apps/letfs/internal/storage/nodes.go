@@ -93,7 +93,12 @@ func (s *Server) CreateNode(ctx context.Context, r *pb.CreateNodeRequest) (*pb.N
 	if err != nil {
 		return nil, err
 	}
+	media := ""
 	if t := r.GetText(); t != nil {
+		media, err = s.fileMedia(r.Name, sdk.FileText)
+		if err != nil {
+			return nil, err
+		}
 		if err = s.validateText(t.Content); err != nil {
 			return nil, err
 		}
@@ -121,14 +126,9 @@ func (s *Server) CreateNode(ctx context.Context, r *pb.CreateNodeRequest) (*pb.N
 	id := uuid.NewString()
 	kind := "directory"
 	var text *string
-	media := ""
 	if t := r.GetText(); t != nil {
 		kind = "file"
 		text = &t.Content
-		media = t.MediaType
-		if media == "" {
-			media = "text/plain; charset=utf-8"
-		}
 	}
 	out.Id = id
 	out.StorageId = r.StorageId

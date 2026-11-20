@@ -376,6 +376,8 @@ def configure(output: Path, test: bool = False) -> None:
             lf["public_key"],
             lf["secret_key"],
         ]
+        if web_search := svc["leta"].get("web_search"):
+            refs["leta-api"].append(web_search["api_key"])
         refs["leta-worker"] = refs["leta-api"]
         refs["leta-migrate"] = [svc["leta"]["database"]["password"]]
         runtime["services"]["redis"] = {

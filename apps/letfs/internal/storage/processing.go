@@ -134,7 +134,7 @@ func (s *Server) PrepareArtifactUploads(ctx context.Context, r *pb.PrepareArtifa
 		if !validArtifactPath(spec.Path) || spec.SizeBytes > s.Settings.Processing.MaxArtifactBlobBytes {
 			return nil, invalid("invalid artifact path or blob size")
 		}
-		media, err := blobMediaType(spec.MediaType)
+		media, err := s.fileMedia(spec.Path, sdk.FileBlob)
 		if err != nil {
 			return nil, err
 		}
@@ -183,17 +183,21 @@ func (s *Server) artifactRecords(source string, artifacts []*pb.Artifact) ([]byt
 		switch c := a.Content.(type) {
 		case *pb.Artifact_Directory:
 		case *pb.Artifact_Text:
+			media, err := s.fileMedia(a.Path, sdk.FileText)
+			if err != nil {
+				return nil, 0, err
+			}
 			if !utf8.ValidString(c.Text.Content) || strings.ContainsRune(c.Text.Content, 0) {
 				return nil, 0, invalid("artifact text must be UTF-8 without NUL")
 			}
 			total += int64(len(c.Text.Content))
 			v["kind"] = "file"
 			v["text"] = c.Text.Content
-			v["media"] = c.Text.MediaType
-			if c.Text.MediaType == "" {
-				v["media"] = "text/markdown; charset=utf-8"
-			}
+			v["media"] = media
 		case *pb.Artifact_UploadId:
+			if _, err := s.fileMedia(a.Path, sdk.FileBlob); err != nil {
+				return nil, 0, err
+			}
 			v["kind"] = "file"
 			v["upload"] = c.UploadId
 			handles++

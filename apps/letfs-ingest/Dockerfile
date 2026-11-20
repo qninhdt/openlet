@@ -14,6 +14,7 @@ RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked --no-dev --packag
 
 FROM io-deps AS io
 COPY packages/sdk-python packages/sdk-python
+COPY packages/contracts/file-types.json packages/contracts/file-types.json
 COPY apps/letfs-ingest/src apps/letfs-ingest/src
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked --no-dev --package letfs-ingest && useradd --uid 10001 --create-home ingest
 USER ingest
@@ -22,6 +23,7 @@ CMD ["io"]
 
 FROM cpu-deps AS cpu
 COPY packages/sdk-python packages/sdk-python
+COPY packages/contracts/file-types.json packages/contracts/file-types.json
 COPY apps/letfs-ingest/src apps/letfs-ingest/src
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked --no-dev --package letfs-ingest --extra cpu && \
     useradd --uid 10001 --create-home ingest

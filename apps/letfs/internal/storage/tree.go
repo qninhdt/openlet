@@ -145,6 +145,18 @@ func transferEndpoints(ctx context.Context, tx pgx.Tx, r *pb.TransferNodeRequest
 	parent, err := oneResolved(ctx, tx, r.WorkspaceId, r.DestinationStorageId, r.Parent, false, false)
 	return source, parent, err
 }
+func (s *Server) checkFileName(node *pb.Node, name string) error {
+	if node.File == nil {
+		return nil
+	}
+	kind := sdk.FileBlob
+	if node.File.Type == pb.FileType_FILE_TYPE_TEXT {
+		kind = sdk.FileText
+	}
+	_, err := s.fileMedia(name, kind)
+	return err
+}
+
 func (s *Server) MoveNode(ctx context.Context, r *pb.TransferNodeRequest) (*pb.Node, error) {
 	a, err := s.transferChecks(ctx, r, true)
 	if err != nil {
@@ -175,6 +187,11 @@ func (s *Server) MoveNode(ctx context.Context, r *pb.TransferNodeRequest) (*pb.N
 	}
 	if source.Node.ParentId == nil {
 		return nil, invalid("storage root cannot be moved")
+	}
+	if source.Node.Name != r.Name {
+		if err = s.checkFileName(source.Node, r.Name); err != nil {
+			return nil, err
+		}
 	}
 	for _, id := range parent.Chain {
 		if id == source.Node.Id {
@@ -236,6 +253,9 @@ func (s *Server) CopyNode(ctx context.Context, r *pb.TransferNodeRequest) (*pb.N
 		return nil, err
 	}
 	if err = directory(parent); err != nil {
+		return nil, err
+	}
+	if err = s.checkFileName(source.Node, r.Name); err != nil {
 		return nil, err
 	}
 	var raw []byte

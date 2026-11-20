@@ -13,7 +13,7 @@ from langgraph.graph import END, START, StateGraph  # pyright: ignore[reportMiss
 from langgraph.prebuilt import ToolNode
 from leta.config import Services
 from leta.db import Pool, Row
-from leta.filesystem.workspace import COMMANDS, Filesystem, StorageMount
+from leta.filesystem.workspace import Filesystem, StorageMount
 from leta.runtime.agent import ToolEffects
 from leta.runtime.inbox import State
 from leta.runtime.tools import Context, tools
@@ -70,8 +70,6 @@ async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None
         mode=MountMode.EXEC,
         network=False,
         runtimes=[MontyRuntime()],
-        profiles={"agent": {"commands": {"allow": list(COMMANDS)}}},
-        profile="agent",
     )
     try:
 
@@ -174,7 +172,7 @@ async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None
                             {
                                 "id": "unsupported-command",
                                 "name": "execute",
-                                "args": {"command": "md5sum report.txt"},
+                                "args": {"command": "openlet-unknown-command"},
                             },
                         ],
                     )
@@ -207,7 +205,7 @@ async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None
         assert replies["wrong-recipient"].status == "error"
         assert "recipient not found" in replies["wrong-recipient"].text
         assert replies["unsupported-command"].status == "error"
-        assert "unsupported command" in replies["unsupported-command"].text
+        assert "command not found" in replies["unsupported-command"].text
         context.agent = {
             "id": uuid4(),
             "leta_id": identity,

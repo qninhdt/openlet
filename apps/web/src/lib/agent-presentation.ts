@@ -38,6 +38,9 @@ export type ToolResult = {
   representative?: string;
   edges?: [string, string][];
   lineRange?: string;
+  webSources?: { url: string; title: string; snippet: string; publishedAt: string }[];
+  webFormat?: string;
+  truncated?: boolean;
 };
 
 function object(value: Json | undefined): Record<string, Json> {
@@ -68,12 +71,39 @@ function file(value: Record<string, Json>): FileRef | undefined {
 export function activityToolResult(entry: ActivityEntry): ToolResult | string {
   const { payload } = entry;
   const ui = payload.ui;
+  const name = payload.name ?? '';
+  if (name === 'websearch' || name === 'webfetch') {
+    if (payload.status === 'error') return { output: payload.text ?? '' };
+    const data = object(ui?.data);
+    return {
+      webSources: (name === 'websearch' ? rows(data.results) : [data]).flatMap((source) => {
+        const href = source.final_url ?? source.url;
+        if (typeof href !== 'string') return [];
+        let url: URL;
+        try {
+          url = new URL(href);
+        } catch {
+          return [];
+        }
+        if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return [];
+        return [
+          {
+            url: url.href,
+            title: string(source.title) || url.href,
+            snippet: string(source.snippet),
+            publishedAt: string(source.published_at),
+          },
+        ];
+      }),
+      webFormat: string(data.format),
+      truncated: data.truncated === true,
+    };
+  }
   if (!ui && payload.name !== 'execute') return payload.text ?? '';
   const data = object(ui?.data);
   const items = rows(
     data.items ?? data.members ?? data.recipients ?? data.boxes ?? data.letis ?? data.entries,
   );
-  const name = payload.name ?? '';
   const result: ToolResult = {
     output: payload.text ?? '',
     content: payload.text ?? '',

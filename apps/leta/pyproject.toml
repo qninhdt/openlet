@@ -4,7 +4,7 @@ version = "0.1.0"
 requires-python = ">=3.14,<3.15"
 dependencies = [
   "openlet-sdk", "fastapi", "uvicorn", "sse-starlette", "pydantic",
-  "psycopg[binary,pool]", "redis", "authzed", "httpx", "temporalio",
+  "psycopg[binary,pool]", "redis", "authzed", "httpx", "google-crc32c", "temporalio", "tinyfish==0.11.0",
   "langchain==1.5.0", "langchain-litellm==0.11.2", "langgraph-checkpoint-postgres==3.2.0",
   "langfuse==5.2.0", "ag-ui-protocol", "mirage-ai==0.0.8", "pydantic-monty",
   "opentelemetry-instrumentation-fastapi", "opentelemetry-instrumentation-psycopg",

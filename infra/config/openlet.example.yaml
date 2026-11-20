@@ -125,7 +125,7 @@ services:
       name: letfs
       user: letfs
       password: ${LETFS_DB_PASSWORD}
-    max_text_bytes: 262144
+    max_text_bytes: 1048576
     max_blob_bytes: 104857600
     multipart_threshold_bytes: 16777216
     multipart_part_bytes: 8388608
@@ -144,6 +144,8 @@ services:
   leta:
     # Optional integration. Core services do not load this section or wait for Leta.
     http_listen: 0.0.0.0:8000
+    # web_search:
+    #   api_key: ${TINYFISH_API_KEY}
     compaction:
       trigger_fraction: 0.8
       keep_tokens: 8192

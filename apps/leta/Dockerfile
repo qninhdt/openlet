@@ -11,6 +11,7 @@ COPY apps/letfs-ingest/pyproject.toml apps/letfs-ingest/pyproject.toml
 COPY apps/leta/pyproject.toml apps/leta/pyproject.toml
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked --no-dev --package leta --no-install-workspace
 COPY packages/sdk-python packages/sdk-python
+COPY packages/contracts/file-types.json packages/contracts/file-types.json
 COPY apps/leta/src apps/leta/src
 COPY apps/leta/migrations /migrations
 COPY --from=migrations /out/goose /usr/local/bin/goose

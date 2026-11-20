@@ -26,7 +26,12 @@ type DemoFile = {
   name: string;
   kind: 'NODE_KIND_DIRECTORY' | 'NODE_KIND_FILE';
   updatedAt: string;
-  file?: { mediaType: string; sizeBytes: string; version: string; type?: 'FILE_TYPE_BLOB' };
+  file?: {
+    mediaType: string;
+    sizeBytes: string;
+    version: string;
+    type: 'FILE_TYPE_TEXT' | 'FILE_TYPE_BLOB';
+  };
   downloadUrl?: string;
   content: string;
 };
@@ -115,7 +120,12 @@ export function createLandingDemo() {
       name,
       kind: 'NODE_KIND_FILE',
       updatedAt: date(),
-      file: { mediaType, sizeBytes: String(new Blob([content]).size), version: '1' },
+      file: {
+        mediaType,
+        sizeBytes: String(new Blob([content]).size),
+        version: '1',
+        type: 'FILE_TYPE_TEXT',
+      },
       content,
     };
     files.push(node);

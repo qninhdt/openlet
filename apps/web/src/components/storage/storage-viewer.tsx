@@ -1,4 +1,3 @@
-import { isTextFile } from '@/lib/file-types';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from '@tanstack/react-router';
@@ -145,7 +144,7 @@ export function FileViewer({
   const close = useRef<HTMLButtonElement>(null);
   const image = node.mime.startsWith('image/');
   const spreadsheet = /\.xlsx$/i.test(node.name);
-  const text = !spreadsheet && !image && isTextFile(node.name, node.mime);
+  const text = node.fileType === 'FILE_TYPE_TEXT';
   useEffect(() => {
     if (embedded) return;
     const origin = document.activeElement as HTMLElement;

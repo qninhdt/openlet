@@ -1,7 +1,7 @@
 import { Crc32c, crc32c } from '@aws-crypto/crc32c';
 import { ApiError, type Api } from './agent-api.js';
 import { readUploads, rememberUpload, forgetUpload, type UploadResume } from './upload-resume.js';
-import { fileMediaType, isTextFile } from './file-types.js';
+import { classifyFile } from './file-types.js';
 import { rootId, type StorageNode, type StorageRoot } from './storage-preview.js';
 
 type RemoteNode = {
@@ -230,17 +230,12 @@ export function storageApi(
     options: { signal?: AbortSignal; resume?: UploadResume } = {},
   ) {
     options.signal?.throwIfAborted();
-    const mediaType = fileMediaType(name, file.type);
-    const textFile = isTextFile(name, mediaType);
+    const { kind, mediaType } = classifyFile(name);
+    if (kind === 'unsupported') throw new Error('Unsupported file extension.');
+    const textFile = kind === 'text';
     if (replace && (replace.kind !== 'file' || replace.readonly))
       throw new Error('Only writable files can be replaced. Choose Keep both instead.');
-    if (
-      replace &&
-      textFile !==
-        (replace.fileType
-          ? replace.fileType === 'FILE_TYPE_TEXT'
-          : isTextFile(replace.name, replace.mime))
-    )
+    if (replace && replace.fileType !== (textFile ? 'FILE_TYPE_TEXT' : 'FILE_TYPE_BLOB'))
       throw new Error(
         'Replacing a file with a different storage type is not supported. Choose Keep both instead.',
       );

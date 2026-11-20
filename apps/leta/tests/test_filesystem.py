@@ -10,7 +10,7 @@ from langfuse import propagate_attributes
 from leta.auth import Actor
 from leta.config import LetFSServiceAsyncStub, Services
 from leta.filesystem.letfs import LetFS
-from leta.filesystem.workspace import COMMANDS, Filesystem
+from leta.filesystem.workspace import Filesystem
 from mirage import FileType, Mount, MountMode, PathSpec, Session, Workspace
 from openlet_api.letfs.v1 import letfs_pb2 as fs
 from openlet_api.letfs.v1.letfs_pb2_grpc import (
@@ -18,7 +18,16 @@ from openlet_api.letfs.v1.letfs_pb2_grpc import (
     LetFSServiceStub,
     add_LetFSServiceServicer_to_server,
 )
-from openlet_sdk.config import Config
+from openlet_sdk.config import Config, LetFSSettings
+
+LETFS_SETTINGS = cast(
+    LetFSSettings,
+    {
+        "max_text_bytes": 1048576,
+        "max_blob_bytes": 104857600,
+        "multipart_threshold_bytes": 16777216,
+    },
+)
 
 
 @pytest.fixture
@@ -146,6 +155,7 @@ async def driver() -> AsyncIterator[LetFS]:
                 uuid4(),
                 uuid4(),
                 UUID(root),
+                LETFS_SETTINGS,
             )
     finally:
         await server.stop(0)
@@ -290,7 +300,13 @@ async def test_parallel_file_tools_share_session_and_only_apply_mount_changes(
         Services,
         SimpleNamespace(
             files=Files(),
-            config=cast(Config, {"dependencies": {"redis": {"address": "redis:6379"}}}),
+            config=cast(
+                Config,
+                {
+                    "dependencies": {"redis": {"address": "redis:6379"}},
+                    "services": {"letfs": LETFS_SETTINGS},
+                },
+            ),
         ),
     )
     filesystem = Filesystem(
@@ -335,8 +351,6 @@ async def test_shell_downloads_http_to_workspace(command: str) -> None:
     ws = Workspace(
         {"/data": Mount(vfs=RAMVFS(), mode=MountMode.EXEC)},
         network=True,
-        profiles={"agent": {"commands": {"allow": list(COMMANDS)}}},
-        profile="agent",
     )
     try:
         session = await ws.session("tools")
@@ -427,8 +441,10 @@ async def test_shell_transfers_original_blob_and_keeps_source_on_failure(
 
     stub = cast(LetFSServiceAsyncStub, Files())
     actor, workspace = Actor("agent", uuid4()), uuid4()
-    driver = LetFS(stub, actor, workspace, source_storage, source_root)
-    destination = LetFS(stub, actor, workspace, other_storage, other_root)
+    driver = LetFS(stub, actor, workspace, source_storage, source_root, LETFS_SETTINGS)
+    destination = LetFS(
+        stub, actor, workspace, other_storage, other_root, LETFS_SETTINGS
+    )
     ws = Workspace(
         {
             "/source": Mount(vfs=driver, mode=MountMode.WRITE),

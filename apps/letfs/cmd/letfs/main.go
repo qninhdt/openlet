@@ -68,6 +68,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	fileTypes, err := sdk.LoadFileTypes("packages/contracts/file-types.json")
+	if err != nil {
+		return err
+	}
 	var settings storage.Settings
 	var runtime sdk.Runtime
 	var telemetry sdk.Telemetry
@@ -186,7 +190,7 @@ func run() error {
 		return err
 	}
 	defer tc.Close()
-	app := &storage.Server{DB: db, Graph: az, S3: s3client, Presign: s3.NewPresignClient(s3client), ProcessingPresign: processingPresign, Bucket: object.Bucket, Temporal: tc, Queues: temporal.Queues, Settings: settings, Qdrant: qc, Collection: vector.Collection, Models: models, EmbeddingModel: embedding, EmbeddingDimensions: dimensions, RerankingModel: reranking}
+	app := &storage.Server{DB: db, Graph: az, S3: s3client, Presign: s3.NewPresignClient(s3client), ProcessingPresign: processingPresign, Bucket: object.Bucket, Temporal: tc, Queues: temporal.Queues, Settings: settings, FileTypes: fileTypes, Qdrant: qc, Collection: vector.Collection, Models: models, EmbeddingModel: embedding, EmbeddingDimensions: dimensions, RerankingModel: reranking}
 	w := worker.New(tc, temporal.Queues.LetFS, worker.Options{WorkerStopTimeout: time.Duration(runtime.ShutdownTimeoutSeconds) * time.Second})
 	storage.RegisterWorker(w, app)
 	if err = w.Start(); err != nil {

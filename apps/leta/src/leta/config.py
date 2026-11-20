@@ -42,6 +42,7 @@ from temporalio.runtime import Runtime
 from .auth import Authorization
 from .db import Pool, pool
 from .models import Models
+from .web import WebClient
 
 
 def validate(config: Config) -> None:
@@ -65,6 +66,7 @@ class Services:
     temporal: Client
     redis: Redis
     models: Models
+    web: WebClient | None = None
 
 
 def redis_url(config: Config) -> str:
@@ -77,6 +79,12 @@ async def connect(
     config: Config, *, native: Runtime | None = None
 ) -> AsyncGenerator[Services]:
     async with AsyncExitStack() as stack:
+        web = None
+        if web_settings := config["services"]["leta"].get("web_search"):
+            web = WebClient(
+                api_key=secret(web_settings["api_key"]), timeout=25, max_retries=0
+            )
+            stack.push_async_callback(web.close)
         db = await stack.enter_async_context(pool(config))
         auth = Authorization(config)
         stack.push_async_callback(auth.channel.close)
@@ -123,4 +131,5 @@ async def connect(
             temporal,
             redis,
             Models(http),
+            web,
         )

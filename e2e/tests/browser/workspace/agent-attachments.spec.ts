@@ -85,7 +85,12 @@ test('mentions stay inline; explicit attachments support albums, file-only messa
         parentId: 'fixture-root',
         name: image ? (id === ids.first ? 'one.png' : 'two.png') : 'report.txt',
         kind: 'NODE_KIND_FILE',
-        file: { mediaType: image ? 'image/png' : 'text/plain', sizeBytes: '18', version: '1' },
+        file: {
+          mediaType: image ? 'image/png' : 'text/plain',
+          sizeBytes: '18',
+          version: '1',
+          type: image ? 'FILE_TYPE_BLOB' : 'FILE_TYPE_TEXT',
+        },
         updatedAt: '2026-11-18T00:00:00Z',
       },
     });

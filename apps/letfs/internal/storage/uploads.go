@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
-	"mime"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -35,13 +33,13 @@ type upload struct {
 
 const uploadColumns = `u.id,u.storage_id,u.actor,u.root_id,u.parent_id,u.name,u.target_node_id,u.expected_version,u.object_key,u.size_bytes,u.media_type,u.checksum,u.multipart_id,u.result,u.expires_at`
 
-func blobMediaType(value string) (string, error) {
-	media, _, err := mime.ParseMediaType(value)
-	if err != nil {
-		return "", invalid("invalid media type")
+func (s *Server) fileMedia(name string, expected sdk.FileKind) (string, error) {
+	kind, media := s.FileTypes.ClassifyFile(name)
+	if kind == sdk.FileUnsupported {
+		return "", invalid("unsupported file extension")
 	}
-	if strings.HasPrefix(media, "text/") || media == "application/json" || media == "application/xml" || media == "application/javascript" || media == "application/yaml" || media == "application/toml" || strings.HasSuffix(media, "+json") || strings.HasPrefix(media, "application/") && strings.HasSuffix(media, "+xml") {
-		return "", invalid("text must use CreateNode or MutateText and is stored in PostgreSQL")
+	if kind != expected {
+		return "", invalid("file extension does not match storage type")
 	}
 	return media, nil
 }
@@ -94,10 +92,6 @@ func (s *Server) CreateUpload(ctx context.Context, r *pb.CreateUploadRequest) (*
 	if r.SizeBytes > s.Settings.MaxBlobBytes {
 		return nil, status.Error(codes.ResourceExhausted, "blob exceeds configured limit")
 	}
-	media, err := blobMediaType(r.MediaType)
-	if err != nil {
-		return nil, err
-	}
 	checksum, err := base64.StdEncoding.DecodeString(r.Checksum)
 	if err != nil || len(checksum) != 4 {
 		return nil, invalid("checksum must be base64 CRC32C of the complete object")
@@ -128,19 +122,26 @@ func (s *Server) CreateUpload(ctx context.Context, r *pb.CreateUploadRequest) (*
 		return nil, err
 	}
 	var parent, node *string
+	var filename string
 	if name != nil {
 		if err = directory(target); err != nil {
 			return nil, err
 		}
 		parent = &target.Node.Id
+		filename = *name
 	} else {
-		if target.Node.File == nil {
-			return nil, invalid("upload replacement requires a file")
+		if target.Node.GetFile().GetType() != pb.FileType_FILE_TYPE_BLOB {
+			return nil, invalid("upload replacement requires a blob")
 		}
+		filename = target.Node.Name
 		if target.Node.File.Version != *expected {
 			return nil, conflict("content version changed")
 		}
 		node = &target.Node.Id
+	}
+	media, err := s.fileMedia(filename, sdk.FileBlob)
+	if err != nil {
+		return nil, err
 	}
 	id := uuid.NewString()
 	key := "objects/" + id
@@ -332,8 +333,11 @@ func (s *Server) CompleteUpload(ctx context.Context, r *pb.CompleteUploadRequest
 		out = &pb.Node{Id: id, StorageId: r.StorageId, ParentId: &current.Node.Id, Name: *u.Name, Kind: pb.NodeKind_NODE_KIND_FILE, CreatedAt: timestamppb.New(at), UpdatedAt: timestamppb.New(at), File: &pb.FileHeader{Version: 1, SizeBytes: u.Size, MediaType: u.Media, Type: pb.FileType_FILE_TYPE_BLOB}}
 		delta = u.Size
 	} else {
-		if current.Node.File == nil || current.Node.File.Version != *u.Expected {
+		if current.Node.GetFile().GetType() != pb.FileType_FILE_TYPE_BLOB || current.Node.File.Version != *u.Expected {
 			return nil, conflict("content version changed")
+		}
+		if media, err := s.fileMedia(current.Node.Name, sdk.FileBlob); err != nil || media != u.Media {
+			return nil, conflict("upload destination format changed")
 		}
 		out = current.Node
 		oldSize := out.File.SizeBytes
