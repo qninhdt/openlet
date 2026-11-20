@@ -19,7 +19,7 @@ func (s *Server) ListMembers(ctx context.Context, r *pb.ListMembersRequest) (*pb
 	if _, err := s.check(ctx, r.WorkspaceId, "view"); err != nil {
 		return nil, err
 	}
-	rels, next, err := s.relationships(ctx, &az.RelationshipFilter{ResourceType: "workspace", OptionalResourceId: r.WorkspaceId, OptionalSubjectFilter: &az.SubjectFilter{SubjectType: "user"}}, pageSize(r.PageSize), r.PageToken)
+	rels, next, err := s.relationships(ctx, &az.RelationshipFilter{ResourceType: "workspace", OptionalResourceId: r.WorkspaceId, OptionalSubjectFilter: &az.SubjectFilter{SubjectType: "user"}}, sdk.Consistency(ctx), pageSize(r.PageSize), r.PageToken)
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +76,8 @@ func (s *Server) AddMember(ctx context.Context, r *pb.AddMemberRequest) (*pb.Wor
 }
 
 func (s *Server) memberAdmission(ctx context.Context, workspaceID, userID string) (pb.WorkspaceRole, error) {
-	rels, _, err := s.relationships(ctx, &az.RelationshipFilter{ResourceType: "workspace", OptionalResourceId: workspaceID, OptionalSubjectFilter: &az.SubjectFilter{SubjectType: "user"}}, uint32(s.Settings.MaxMembers+1), "")
+	consistency := &az.Consistency{Requirement: &az.Consistency_FullyConsistent{FullyConsistent: true}}
+	rels, _, err := s.relationships(ctx, &az.RelationshipFilter{ResourceType: "workspace", OptionalResourceId: workspaceID, OptionalSubjectFilter: &az.SubjectFilter{SubjectType: "user"}}, consistency, uint32(s.Settings.MaxMembers+1), "")
 	if err != nil {
 		return pb.WorkspaceRole_WORKSPACE_ROLE_UNSPECIFIED, err
 	}

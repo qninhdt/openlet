@@ -115,8 +115,8 @@ func pageSize(n int32) uint32 {
 	}
 	return uint32(n)
 }
-func (s *Server) relationships(ctx context.Context, f *az.RelationshipFilter, limit uint32, cursor string) ([]*az.Relationship, string, error) {
-	req := &az.ReadRelationshipsRequest{RelationshipFilter: f, Consistency: sdk.Consistency(ctx), OptionalLimit: limit}
+func (s *Server) relationships(ctx context.Context, f *az.RelationshipFilter, consistency *az.Consistency, limit uint32, cursor string) ([]*az.Relationship, string, error) {
+	req := &az.ReadRelationshipsRequest{RelationshipFilter: f, Consistency: consistency, OptionalLimit: limit}
 	if cursor != "" {
 		req.OptionalCursor = &az.Cursor{Token: cursor}
 	}
