@@ -8,6 +8,18 @@ credential_list:
       api_key: os.environ/OPENAI_API_KEY
 
 model_list:
+  - model_name: openai/gpt-6.2-sol
+    litellm_params:
+      model: gpt-6.2-sol
+      custom_llm_provider: custom_openai
+      litellm_credential_name: vilao
+      allowed_openai_params: [reasoning_effort]
+    model_info:
+      max_input_tokens: 131072
+      base_model: gpt-6.2-sol
+      access_groups: [leta]
+      supported_reasoning_efforts: [low, medium, high]
+      supports_response_schema: false
   - model_name: openai/gpt-6.1-sol
     litellm_params:
       # Vilao's Chat Completions stream works; avoid OpenAI's automatic Responses bridge.
