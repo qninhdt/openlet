@@ -205,8 +205,20 @@ const albumLimit = 6;
 
 function MessagePhotos({ photos }: { photos: AttachmentFile[] }) {
   const [opened, setOpened] = useState<{ index: number; trigger: HTMLButtonElement }>();
+  const [ratios, setRatios] = useState<Record<string, number>>({});
   const single = photos.length === 1;
-  const visible = photos.slice(0, albumLimit);
+  const visible = photos.slice(0, albumLimit).map((photo, index) => {
+    const key = `${photo.reference.storage_id}/${photo.reference.node_id}`;
+    return { photo, index, key, ratio: ratios[key] ?? 1 };
+  });
+  const firstRow = visible.length === 4 || visible.length === 5 ? 2 : 3;
+  const rows = [visible.slice(0, firstRow), visible.slice(firstRow)].filter((row) => row.length);
+  const width = Math.min(
+    512,
+    ...rows.map(
+      (row) => row.reduce((sum, tile) => sum + tile.ratio, 0) * 192 + 2 * (row.length - 1),
+    ),
+  );
   const remaining = photos.length - visible.length;
   return (
     <>
@@ -215,49 +227,76 @@ function MessagePhotos({ photos }: { photos: AttachmentFile[] }) {
           'min-w-0 max-w-full',
           single
             ? 'w-fit max-w-[min(100%,24rem)]'
-            : 'grid w-lg grid-cols-6 gap-0.5 overflow-hidden rounded-xl',
+            : 'flex flex-col gap-0.5 overflow-hidden rounded-xl',
         )}
+        style={single ? undefined : { width }}
         role="group"
         aria-label={single ? 'Photo attachment' : 'Photo album'}
       >
-        {visible.map((photo, index) => {
-          const name = photoName(photo);
-          const more = remaining > 0 && index === albumLimit - 1;
-          const half =
-            visible.length === 2 || visible.length === 4 || (visible.length === 5 && index < 2);
-          return (
-            <button
-              key={`${photo.reference.storage_id}/${photo.reference.node_id}`}
-              type="button"
-              className={cn(
-                'relative block min-w-0 overflow-hidden bg-muted outline-none focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
-                single ? 'rounded-xl' : 'aspect-[4/3] max-h-40 w-full',
-                !single && (half ? 'col-span-3' : 'col-span-2'),
-              )}
-              aria-label={more ? `View ${remaining} more photos` : `Preview ${name}`}
-              onClick={(event) =>
-                setOpened({ index: more ? albumLimit : index, trigger: event.currentTarget })
-              }
-            >
-              <MessagePhoto
-                photo={photo}
-                className={
-                  single
-                    ? 'block max-w-full [&:not(:has(img))]:h-32 [&:not(:has(img))]:w-56 [&_img]:h-auto [&_img]:max-h-80 [&_img]:w-auto [&_img]:max-w-full'
-                    : 'block size-full [&_img]:object-contain'
-                }
-              />
-              {more && (
-                <span
-                  aria-hidden="true"
-                  className="absolute inset-0 grid place-items-center bg-black/65 text-base font-semibold text-white"
+        {rows.map((row) => (
+          <div
+            key={row[0].key}
+            className={single ? undefined : 'grid gap-0.5'}
+            style={
+              single
+                ? undefined
+                : { gridTemplateColumns: row.map(({ ratio }) => `minmax(0, ${ratio}fr)`).join(' ') }
+            }
+          >
+            {row.map(({ photo, index, key, ratio }) => {
+              const name = photoName(photo);
+              const more = remaining > 0 && index === albumLimit - 1;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  className={cn(
+                    'relative block min-w-0 overflow-hidden bg-muted outline-none focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
+                    single ? 'rounded-xl' : 'w-full',
+                  )}
+                  style={single ? undefined : { aspectRatio: ratio }}
+                  aria-label={more ? `View ${remaining} more photos` : `Preview ${name}`}
+                  onLoad={
+                    single
+                      ? undefined
+                      : (event) => {
+                          const image = event.target;
+                          if (!(image instanceof HTMLImageElement) || !image.naturalHeight) return;
+                          // Keep extreme panoramas and screenshots usable on narrow screens.
+                          const next = Math.max(
+                            0.55,
+                            Math.min(2.25, image.naturalWidth / image.naturalHeight),
+                          );
+                          setRatios((current) =>
+                            current[key] === next ? current : { ...current, [key]: next },
+                          );
+                        }
+                  }
+                  onClick={(event) =>
+                    setOpened({ index: more ? albumLimit : index, trigger: event.currentTarget })
+                  }
                 >
-                  +{remaining}
-                </span>
-              )}
-            </button>
-          );
-        })}
+                  <MessagePhoto
+                    photo={photo}
+                    className={
+                      single
+                        ? 'block max-w-full [&:not(:has(img))]:h-32 [&:not(:has(img))]:w-56 [&_img]:h-auto [&_img]:max-h-80 [&_img]:w-auto [&_img]:max-w-full'
+                        : 'absolute inset-0 size-full [&_img]:object-contain'
+                    }
+                  />
+                  {more && (
+                    <span
+                      aria-hidden="true"
+                      className="absolute inset-0 grid place-items-center bg-black/65 text-base font-semibold text-white"
+                    >
+                      +{remaining}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        ))}
       </div>
       {opened && photos[opened.index] && (
         <PhotoGallery
