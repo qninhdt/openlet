@@ -8,6 +8,7 @@ export type BoxAgent = {
   leta_id: string;
   box_id: string | null;
   name: string;
+  handle?: string;
   title: string;
   appearance?: AgentAppearance;
   description: string;
@@ -24,6 +25,7 @@ export type AgentBox = {
   id: string;
   leta_id: string;
   name: string;
+  handle?: string;
   description: string;
   leader_agent_id: string;
   state: string;

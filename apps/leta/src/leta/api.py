@@ -501,17 +501,19 @@ async def send(leta_id: UUID, body: SendMessage, s: Service, actor: User) -> JSO
     await conversations.storage(s, leta_id, actor.id)
     return await deliver(
         s,
-        Message(
-            id=body.message_id,
-            recipient_agent_id=leta_id,
-            source_kind="user",
-            source_id=actor.id,
-            conversation_id=messages.conversation(leta_id, "user", actor.id),
-            content=body.content,
-            file_refs=refs,
-            in_reply_to_message_id=body.in_reply_to,
-            in_reply_to_role=body.in_reply_to_role,
-        ),
+        [
+            Message(
+                id=body.message_id,
+                recipient_agent_id=leta_id,
+                source_kind="user",
+                source_id=actor.id,
+                conversation_id=messages.conversation(leta_id, "user", actor.id),
+                content=body.content,
+                file_refs=refs,
+                in_reply_to_message_id=body.in_reply_to,
+                in_reply_to_role=body.in_reply_to_role,
+            )
+        ],
     )
 
 
@@ -546,8 +548,8 @@ async def attach_file(
             metadata=actor.metadata,
             timeout=15,
         )
-        if source.kind != fs.NODE_KIND_FILE:
-            raise ValueError("only files can be attached")
+        if source.kind not in (fs.NODE_KIND_FILE, fs.NODE_KIND_DIRECTORY):
+            raise ValueError("only stored files and folders can be attached")
         copied: fs.Node = await s.files.CopyNode(
             fs.TransferNodeRequest(
                 workspace_id=workspace,
@@ -562,13 +564,7 @@ async def attach_file(
             timeout=15,
         )
         storage_id, node_id = UUID(copied.storage_id), UUID(copied.id)
-    label = (
-        body.label.replace("\\", "\\\\")
-        .replace("]", "\\]")
-        .replace("[", "\\[")
-        .replace("\n", " ")
-    )
-    token = f":file[{label}]{{name={storage_id}/{node_id}}}"
+    token = file_refs.token(body.label, str(storage_id), str(node_id))
     refs = await file_refs.validate(
         s, cast(UUID, resource["workspace_id"]), actor, Actor("agent", leta_id), token
     )

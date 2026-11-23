@@ -49,6 +49,7 @@ function createAttachmentToken(ref: FileRef) {
   token.contentEditable = 'false';
   token.dataset.attachmentReferenceId = `${ref.storage_id}/${ref.node_id}`;
   token.dataset.attachmentReferenceName = ref.label;
+  if (ref.kind === 'folder') token.dataset.attachmentReferenceKind = 'folder';
   token.className = fileReferenceStyles;
   token.setAttribute('role', 'button');
   token.tabIndex = 0;
@@ -58,7 +59,11 @@ function createAttachmentToken(ref: FileRef) {
   svg.setAttribute('viewBox', '0 0 20 20');
   svg.setAttribute('class', 'size-4 shrink-0 fill-none stroke-current text-muted-foreground');
   svg.setAttribute('aria-hidden', 'true');
-  for (const d of ['M5 2.75h6l4 4v10.5H5z', 'M11 2.75v4h4M7.5 11h5M7.5 14h5']) {
+  const paths =
+    ref.kind === 'folder'
+      ? ['M2.5 5h6l2 2h7v8h-15z']
+      : ['M5 2.75h6l4 4v10.5H5z', 'M11 2.75v4h4M7.5 11h5M7.5 14h5'];
+  for (const d of paths) {
     const path = document.createElementNS(svg.namespaceURI, 'path');
     path.setAttribute('d', d);
     svg.append(path);
@@ -96,10 +101,8 @@ export function ComposerEditor({ onEmptyChange }: { onEmptyChange: (empty: boole
   const [label, setLabel] = useState('');
   const optionsId = useId();
   const files = useFileChoices(!!mention, mention?.query ?? '');
-  const choices = files.nodes.filter(
-    (node) =>
-      node.kind === 'file' &&
-      node.name.toLowerCase().includes((mention?.query ?? '').toLowerCase()),
+  const choices = files.nodes.filter((node) =>
+    node.name.toLowerCase().includes((mention?.query ?? '').toLowerCase()),
   );
 
   const latest = useRef({ p, onEmptyChange });
@@ -445,7 +448,7 @@ export function ComposerEditor({ onEmptyChange }: { onEmptyChange: (empty: boole
         <div
           id={optionsId}
           role="listbox"
-          aria-label="Files"
+          aria-label="Files and folders"
           className="absolute bottom-full left-0 z-30 mb-2 max-h-64 w-72 max-w-[calc(100vw-32px)] overflow-auto rounded-xl border bg-popover p-1 text-popover-foreground shadow-md"
         >
           {choices.map((node, index) => (
@@ -467,7 +470,7 @@ export function ComposerEditor({ onEmptyChange }: { onEmptyChange: (empty: boole
             <p className="p-3 text-xs text-muted-foreground">
               {files.query.isFetching
                 ? 'Searching…'
-                : (files.query.error?.message ?? 'No files found. Use + to browse storage.')}
+                : (files.query.error?.message ?? 'No files or folders found.')}
             </p>
           )}
         </div>
@@ -480,7 +483,7 @@ export function ComposerEditor({ onEmptyChange }: { onEmptyChange: (empty: boole
           }}
         >
           <DialogHeader>
-            <DialogTitle>File label</DialogTitle>
+            <DialogTitle>Attachment label</DialogTitle>
           </DialogHeader>
           <form
             onSubmit={(event) => {
@@ -494,6 +497,7 @@ export function ComposerEditor({ onEmptyChange }: { onEmptyChange: (empty: boole
                   node_id,
                   label: label.trim(),
                   name: editing.title,
+                  kind: editing.dataset.attachmentReferenceKind === 'folder' ? 'folder' : 'file',
                 }),
               );
               emitValue();
@@ -503,7 +507,7 @@ export function ComposerEditor({ onEmptyChange }: { onEmptyChange: (empty: boole
           >
             <Input
               autoFocus
-              aria-label="File label"
+              aria-label="Attachment label"
               value={label}
               maxLength={255}
               onChange={(event) => setLabel(event.target.value)}

@@ -1,15 +1,6 @@
 import { useState } from 'react';
 import { useInfiniteQuery } from '@tanstack/react-query';
-import {
-  ArrowLeft,
-  CalendarClock,
-  CheckCheck,
-  Inbox,
-  Search,
-  UserRound,
-  Network,
-  ShieldCheck,
-} from 'lucide-react';
+import { ArrowLeft, CalendarClock, CheckCheck, Inbox, Search, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
 import {
@@ -28,10 +19,9 @@ import { MessageReactions, ReactionPicker } from './message-reactions';
 import { MessagePreview } from './message-preview';
 import { MessageFiles } from './message-files';
 import { AgentMarkdown } from './agent-rich-content';
+import { ActivityIdentity } from './activity-identity';
 
 const sourceIcon = {
-  user: UserRound,
-  agent: Network,
   schedule: CalendarClock,
   hitl: ShieldCheck,
 };
@@ -178,7 +168,15 @@ function LiveInbox() {
         ) : selected ? (
           <>
             <h3 className="px-2 py-3 text-sm font-medium">
-              {selected.source_name ?? selected.source_kind}
+              {selected.source_kind === 'user' || selected.source_kind === 'agent' ? (
+                <ActivityIdentity
+                  kind={selected.source_kind}
+                  address={selected.source_id}
+                  name={selected.source_name ?? undefined}
+                />
+              ) : (
+                (selected.source_name ?? selected.source_kind)
+              )}
             </h3>
             {detail.data?.pages
               .flatMap((page) => page.items)
@@ -188,10 +186,14 @@ function LiveInbox() {
                   className="mb-3 rounded-xl bg-muted/60 p-3"
                 >
                   <div className="mb-2 flex justify-between gap-2 text-xs text-muted-foreground">
-                    <span className="flex items-center gap-2">
-                      {item.direction === 'out'
-                        ? p.activityAgent.name
-                        : (item.source_name ?? item.source_kind)}
+                    <span>
+                      {item.direction === 'out' && (
+                        <ActivityIdentity
+                          kind="agent"
+                          address={p.activityAgent.id}
+                          name={p.activityAgent.name}
+                        />
+                      )}
                     </span>
                     <span>
                       {item.direction === 'in'
@@ -292,17 +294,22 @@ function LiveInbox() {
                       className="flex w-full items-start gap-3 rounded-lg p-3 text-left hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring"
                       onClick={() => setSelected(item)}
                     >
-                      <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-muted">
-                        <Icon className="size-4 text-muted-foreground" />
-                      </span>
+                      {item.source_kind !== 'user' && item.source_kind !== 'agent' && (
+                        <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-muted">
+                          <Icon className="size-4 text-muted-foreground" />
+                        </span>
+                      )}
                       <span className="min-w-0 flex-1">
                         <span className="flex items-center justify-between gap-2 text-sm font-medium">
-                          <span className="truncate">
-                            {item.source_name ??
-                              (item.source_kind === 'user'
-                                ? 'User conversation'
-                                : item.source_kind)}
-                          </span>
+                          {item.source_kind === 'user' || item.source_kind === 'agent' ? (
+                            <ActivityIdentity
+                              kind={item.source_kind}
+                              address={item.source_id}
+                              name={item.source_name ?? undefined}
+                            />
+                          ) : (
+                            <span className="truncate">{item.source_name ?? item.source_kind}</span>
+                          )}
                           {item.unread_count ? (
                             <span
                               title="Unread by agent"

@@ -4,18 +4,17 @@ import {
   Bell,
   MessageCircleQuestion,
   ShieldCheck,
-  UserRound,
   SmilePlus,
   BellOff,
 } from 'lucide-react';
 import { Bubble, BubbleContent } from '@/components/ui/bubble';
-import { AgentAvatar } from '@/components/agent-avatar';
 import type { InputItem, Json } from '@/lib/agent-api';
 import { MessagePreview } from './message-preview';
 import { MessageFiles } from './message-files';
 import { AgentMarkdown } from './agent-rich-content';
 import { MessageReactions } from './message-reactions';
 import { useAgentPreview } from './agent-preview';
+import { ActivityIdentity } from './activity-identity';
 
 function record(value: Json | undefined): Record<string, Json> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -28,20 +27,14 @@ function PersonInput({ item }: { item: InputItem }) {
       data-input={item.preview ? 'notification' : 'message'}
       className="flex min-w-0 gap-2 py-1"
     >
-      {item.source_kind === 'agent' ? (
-        <AgentAvatar
-          name={item.source_name ?? 'Agent'}
-          agentId={item.source_id}
-          className="mt-0.5 size-5 shrink-0"
-        />
-      ) : (
-        <UserRound className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-      )}
       <div className="min-w-0 flex-1">
         <div className="mb-1.5 flex items-center gap-2 text-caption">
-          <span className="font-medium">
-            {item.source_name ?? (item.source_kind === 'user' ? 'User' : item.source_kind)}
-          </span>
+          <ActivityIdentity
+            kind={item.source_kind === 'user' ? 'user' : 'agent'}
+            address={item.source_id ?? item.source_handle}
+            name={item.source_name}
+            className="font-medium"
+          />
           {item.preview && (
             <Bell aria-label="Notification" className="size-3 text-muted-foreground" />
           )}
@@ -170,9 +163,12 @@ export function InputMessage({ item }: { item: InputItem }) {
       </span>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 text-caption">
-          <span className="font-medium">
-            {item.source_name ?? (item.source_kind === 'user' ? 'User' : 'Agent')}
-          </span>
+          <ActivityIdentity
+            kind={item.source_kind === 'user' ? 'user' : 'agent'}
+            address={item.source_id ?? item.source_handle}
+            name={item.source_name}
+            className="font-medium"
+          />
           <span className="text-muted-foreground">
             {item.input_payload.emoji ? 'reacted' : 'removed a reaction'}
           </span>

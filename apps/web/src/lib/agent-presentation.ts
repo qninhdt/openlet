@@ -11,6 +11,7 @@ export type ToolItem = {
   meta?: string;
   status?: string;
   sender?: string;
+  address?: string;
   time?: string;
 };
 export type ToolResult = {
@@ -23,7 +24,7 @@ export type ToolResult = {
   exitCode?: number;
   file?: FileRef;
   items?: ToolItem[];
-  fileRefs?: FileRef[];
+  messages?: { content: string; fileRefs: FileRef[] }[];
   title?: string;
   content?: string;
   timing?: string;
@@ -32,6 +33,13 @@ export type ToolResult = {
   timezone?: string;
   upcoming?: string[];
   target?: string;
+  recipient?: { kind: 'user' | 'agent'; id: string };
+  agentStatus?: {
+    title: string;
+    leader: boolean;
+    assignments: { sender: string; label: string; preview: string; message: string }[];
+    activity: { tool: string; status: string; at: string }[];
+  };
   status?: string;
   duration?: string;
   home?: string;
@@ -99,7 +107,8 @@ export function activityToolResult(entry: ActivityEntry): ToolResult | string {
       truncated: data.truncated === true,
     };
   }
-  if (!ui && payload.name !== 'execute') return payload.text ?? '';
+  if (!ui && name === 'agent_status' && entry.has_details && payload.status !== 'error') return {};
+  if (!ui && name !== 'execute') return payload.text ?? '';
   const data = object(ui?.data);
   const items = rows(data.items ?? data.members ?? data.boxes ?? data.letis ?? data.entries);
   const result: ToolResult = {
@@ -125,6 +134,7 @@ export function activityToolResult(entry: ActivityEntry): ToolResult | string {
       title: string(item.name ?? item.title ?? item.path ?? item.displayName ?? item.id),
       detail: string(item.description ?? item.content ?? item.preview),
       meta: string(item.title ?? item.role ?? item.target_name ?? item.source_kind),
+      address: string(item.recipient_user_id ?? item.handle),
       status: string(item.status ?? item.state ?? (item.paused ? 'Paused' : undefined)),
       kind: item.kind === 'directory' ? 'folder' : 'file',
       file: item.kind === 'directory' && !item.artifacts ? undefined : file(item),
@@ -149,6 +159,26 @@ export function activityToolResult(entry: ActivityEntry): ToolResult | string {
     result.title = string(workspace.name);
     result.home = string(workspace.shared_path);
   }
+  if (name === 'agent_status') {
+    result.target = string(data.handle);
+    result.agentStatus = {
+      title: string(data.title),
+      leader: data.is_leader === true,
+      assignments: rows(data.assignment_inputs).map((item) => ({
+        sender: string(item.sender),
+        label: string(item.task_label),
+        preview: string(item.preview),
+        message: string(item.message),
+      })),
+      activity: rows(data.recent_activity)
+        .filter((item) => typeof item.tool === 'string' && item.tool)
+        .map((item) => ({
+          tool: string(item.tool),
+          status: string(item.status),
+          at: string(item.created_at),
+        })),
+    };
+  }
   if (name.startsWith('box_')) {
     result.title = string(data.name ?? data.box);
     result.home = string(data.home);
@@ -161,19 +191,36 @@ export function activityToolResult(entry: ActivityEntry): ToolResult | string {
   }
   if (name === 'execute') result.exitCode = payload.status === 'error' ? 1 : 0;
   if (name === 'inbox_send') {
-    result.content = typeof data.content === 'string' ? data.content : undefined;
-    result.fileRefs = rows(data.file_refs).flatMap((ref) => {
-      const reference = file(ref);
-      return reference
-        ? [{ ...reference, label: string(ref.label ?? ref.name), mime: string(ref.mime) }]
-        : [];
-    });
+    const recipient = object(data.recipient);
+    if (
+      (recipient.kind === 'user' || recipient.kind === 'agent') &&
+      typeof recipient.id === 'string'
+    )
+      result.recipient = { kind: recipient.kind, id: recipient.id };
+    result.messages = rows(data.messages).map((message) => ({
+      content: string(message.content),
+      fileRefs: rows(message.file_refs).flatMap((ref) => {
+        const reference = file(ref);
+        return reference
+          ? [
+              {
+                ...reference,
+                label: string(ref.label ?? ref.name),
+                mime: string(ref.mime),
+                ...(ref.kind === 'folder' ? { kind: 'folder' as const } : {}),
+              },
+            ]
+          : [];
+      }),
+    }));
   }
   if (name === 'inbox_react')
     result.reaction = {
       emoji: typeof data.emoji === 'string' ? data.emoji : null,
       content: string(data.content),
     };
+  if (name === 'hitl_ask' || name === 'hitl_request' || name === 'hitl_get')
+    result.target = string(data.recipient_user_id);
   if (name === 'hitl_ask' || name === 'hitl_request')
     result.request = {
       title: string(data.title),
@@ -207,7 +254,7 @@ export function activityToolResult(entry: ActivityEntry): ToolResult | string {
     result.items = items.map((item) => ({
       title: string(item.title) || 'Scheduled instruction',
       detail: string(item.content),
-      meta: string(item.target),
+      meta: string(item.target_name),
       time: scheduleTiming(object(item.spec)),
       status: item.deleted_at ? 'Deleted' : item.paused ? 'Paused' : 'Active',
     }));

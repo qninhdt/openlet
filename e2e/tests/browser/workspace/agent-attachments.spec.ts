@@ -6,6 +6,7 @@ const ids = {
   first: '00000000-0000-4000-8000-000000000003',
   second: '00000000-0000-4000-8000-000000000004',
   unavailable: '00000000-0000-4000-8000-000000000005',
+  folder: '00000000-0000-4000-8000-000000000006',
 };
 const ref = (node_id: string, label: string, mime = 'text/plain') => ({
   storage_id: storage,
@@ -44,6 +45,13 @@ test('mentions stay inline; explicit attachments support albums, file-only messa
       },
       { id: 'file-only', content: '', file_refs: [ref(ids.report, 'report.txt')] },
       {
+        id: 'folder',
+        content: `See :folder[Research notes]{name=${storage}/${ids.folder}}.`,
+        file_refs: [
+          { storage_id: storage, node_id: ids.folder, label: 'Research', kind: 'folder' },
+        ],
+      },
+      {
         id: 'unavailable',
         content: 'File không còn khả dụng.',
         file_refs: [ref(ids.unavailable, 'unavailable.txt')],
@@ -62,6 +70,17 @@ test('mentions stay inline; explicit attachments support albums, file-only messa
     const id = url.pathname.split('/nodes/')[1].split(/[/:]/)[0];
     if (id === ids.unavailable)
       return route.fulfill({ status: 404, json: { detail: 'File unavailable' } });
+    if (id === ids.folder)
+      return route.fulfill({
+        json: {
+          id,
+          storageId: storage,
+          parentId: 'fixture-root',
+          name: 'Research',
+          kind: 'NODE_KIND_DIRECTORY',
+          directory: {},
+        },
+      });
     const imageContent = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"><rect width="640" height="480" fill="${id === ids.first ? '#b0d5d0' : '#e3c6ab'}"/><circle cx="320" cy="240" r="120" fill="${id === ids.first ? '#658b7f' : '#b27e5c'}"/></svg>`;
     if (url.pathname.endsWith(':download'))
       return route.fulfill({
@@ -109,6 +128,10 @@ test('mentions stay inline; explicit attachments support albums, file-only messa
   const only = page.locator('#chat-assistant-file-only');
   await expect(only.locator('[data-slot=bubble]')).toHaveCount(0);
   await expect(only.getByRole('button', { name: 'Download report.txt' })).toBeEnabled();
+  const folder = page.locator('#chat-assistant-folder');
+  await expect(folder.getByRole('button', { name: 'Research notes' })).toBeVisible();
+  await expect(folder.getByRole('button', { name: 'Research Folder', exact: true })).toBeEnabled();
+  await expect(folder.getByRole('button', { name: /^Download / })).toHaveCount(0);
   const downloading = page.waitForEvent('download');
   await only.getByRole('button', { name: 'Download report.txt' }).click();
   expect((await downloading).suggestedFilename()).toBe('report.txt');

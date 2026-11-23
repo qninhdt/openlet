@@ -173,11 +173,11 @@ async def test_paths_resolve_without_turning_mentions_into_attachments() -> None
 @pytest.mark.parametrize(
     "kind,extra",
     [
-        ("directory", {"storage_id": "storage", "node_id": "node"}),
+        ("directory", {}),
         ("file", {}),
     ],
 )
-async def test_path_attachments_reject_directories_and_nonstored_artifacts(
+async def test_path_attachments_reject_nonstored_nodes(
     kind: str, extra: dict[str, str]
 ) -> None:
     from mirage import FileStat, FileType
@@ -294,7 +294,7 @@ async def test_invalid_batch_is_rejected_before_copying_any_file() -> None:
             ),
         ),
     )
-    with pytest.raises(ValueError, match="only files"):
+    with pytest.raises(ValueError, match="Copy the folder only if authorized"):
         await file_refs.validate(
             services,
             uuid4(),

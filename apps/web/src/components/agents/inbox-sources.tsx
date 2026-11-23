@@ -5,6 +5,7 @@ import type { HumanRequest, Json } from '@/lib/agent-api';
 import { scheduleTiming } from '@/lib/schedule-presentation';
 import { useAgentPreview } from './agent-preview';
 import { AgentMarkdown } from './agent-rich-content';
+import { ActivityIdentity } from './activity-identity';
 
 export type ScheduleRecord = {
   id: string;
@@ -56,9 +57,7 @@ export function RequestInspector({ request }: { request: HumanRequest }) {
           {value.status === 'accepted' ? ` · ${value.outcome?.status ?? 'Applying access…'}` : ''}
         </p>
       </div>
-      <p className="text-xs text-muted-foreground wrap-anywhere">
-        Recipient: {value.recipient_user_id}
-      </p>
+      <ActivityIdentity kind="user" address={value.recipient_user_id} className="text-caption" />
       {value.payload.questions?.map((q) => (
         <div key={q.id}>
           <p className="text-sm font-medium">{q.text}</p>

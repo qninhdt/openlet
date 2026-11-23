@@ -1,4 +1,5 @@
 import json
+from dataclasses import dataclass
 from datetime import datetime
 from hashlib import md5
 from typing import Literal, cast
@@ -109,7 +110,21 @@ async def name_users(client: PlatformInternalServiceAsyncStub, rows: list[Row]) 
             row["source_handle"] = user.handle
 
 
-async def admit(db: Pool, auth: Authorization, message: Message) -> dict[str, JSON]:
+async def admit(
+    db: Pool, auth: Authorization, messages: list[Message]
+) -> dict[str, JSON]:
+    message = messages[0]
+    if any(
+        item.recipient_agent_id != message.recipient_agent_id
+        or item.source_id != message.source_id
+        or item.source_kind != "agent"
+        or message.source_kind != "agent"
+        or item.conversation_id != message.conversation_id
+        or item.silent
+        or message.silent
+        for item in messages[1:]
+    ):
+        raise ValueError("messages must use one sender and conversation")
     recipient = await get_agent(db, message.recipient_agent_id)
     if message.source_kind == "user":
         if recipient["box_id"] is not None:
@@ -121,7 +136,10 @@ async def admit(db: Pool, auth: Authorization, message: Message) -> dict[str, JS
             "use",
         )
     async with db.connection() as conn, conn.transaction():
-        return await admit_in(conn, message, recipient)
+        result = await admit_in(conn, message, recipient)
+        for item in messages[1:]:
+            result = await admit_in(conn, item, recipient)
+        return result
 
 
 async def admit_in(
@@ -516,16 +534,22 @@ async def list_inbox(
     return rows
 
 
+@dataclass(frozen=True)
+class Outgoing:
+    id: UUID
+    content: str
+    file_refs: list[JSON]
+
+
 async def deliver_user(
     db: Pool,
     sender: UUID,
     user: UUID,
-    content: str,
-    id: UUID,
     conversation: UUID,
     reply: UUID | None,
-    file_refs: list[JSON] | None = None,
+    messages: list[Outgoing],
 ) -> dict[str, JSON]:
+    first = messages[0].id
     async with db.connection() as conn, conn.transaction():
         await gate(conn, sender)
         if reply:
@@ -540,20 +564,25 @@ async def deliver_user(
                     "in_reply_to must be a message ID from this user's inbox_read results, "
                     "not a conversation ID or another sender's message; omit it for a new message"
                 )
-        await conn.execute(
-            """INSERT INTO user_messages(id,leta_id,recipient_user_id,conversation_id,in_reply_to_message_id,content,file_refs)
-            VALUES(%s,%s,%s,%s,%s,%s,%s::jsonb) ON CONFLICT(id) DO NOTHING""",
-            (
-                id,
-                sender,
-                user,
-                conversation,
-                reply,
-                content,
-                json.dumps(file_refs or []),
-            ),
-        )
-    return {"id": str(id)}
+        async with conn.cursor() as cur:
+            await cur.executemany(
+                """INSERT INTO user_messages(id,leta_id,recipient_user_id,conversation_id,in_reply_to_message_id,content,file_refs,message_group_id)
+                VALUES(%s,%s,%s,%s,%s,%s,%s::jsonb,%s) ON CONFLICT(id) DO NOTHING""",
+                [
+                    (
+                        message.id,
+                        sender,
+                        user,
+                        conversation,
+                        reply if index == 0 else None,
+                        message.content,
+                        json.dumps(message.file_refs),
+                        first if len(messages) > 1 else None,
+                    )
+                    for index, message in enumerate(messages)
+                ],
+            )
+    return {"id": str(first)}
 
 
 def conversation(root: UUID, kind: str, source: UUID) -> UUID:

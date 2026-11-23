@@ -164,7 +164,7 @@ async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None
                                 "name": "inbox_send",
                                 "args": {
                                     "to": "reviewer",
-                                    "content": "Review the quote.",
+                                    "messages": [{"content": "Review the quote."}],
                                 },
                             },
                             {
@@ -506,7 +506,10 @@ async def test_file_tool_snapshots_reuse_metadata_without_extra_reads(
         ("mixed", 2),
         ("teammate", 2),
         ("missing", None),
-        ("directory", None),
+        ("directory", 2),
+        ("virtual-directory", None),
+        ("several", 1),
+        ("invalid-second", None),
         ("empty", None),
         ("too-many", None),
     ],
@@ -523,8 +526,14 @@ async def test_inbox_send_paths_and_explicit_attachments(
     from mirage import FileStat, FileType
     from openlet_api.letfs.v1 import letfs_pb2 as fs
 
-    root, user, storage, one, two, teammate = (uuid4() for _ in range(6))
+    root, user, storage, one, two, teammate, folder = (uuid4() for _ in range(7))
     nodes = {
+        "directory": fs.Node(
+            id=str(folder),
+            storage_id=str(storage),
+            name="directory",
+            kind=fs.NODE_KIND_DIRECTORY,
+        ),
         "one.txt": fs.Node(
             id=str(one),
             storage_id=str(storage),
@@ -545,12 +554,14 @@ async def test_inbox_send_paths_and_explicit_attachments(
         assert path.startswith("/home/")
         if path.endswith("missing"):
             raise FileNotFoundError("file not found")
-        if path.endswith("directory"):
+        if path.endswith("virtual-directory"):
             return FileStat(name="directory", type=FileType.DIRECTORY)
         node = nodes[posixpath.basename(path)]
         return FileStat(
             name=node.name,
-            type=FileType.FILE,
+            type=FileType.DIRECTORY
+            if node.kind == fs.NODE_KIND_DIRECTORY
+            else FileType.FILE,
             extra={"storage_id": str(storage), "node_id": node.id},
         )
 
@@ -622,14 +633,24 @@ async def test_inbox_send_paths_and_explicit_attachments(
     arguments: dict[str, object] = {
         "to": "agent:vega-the-analyst" if case == "teammate" else "user:emma"
     }
+    body: dict[str, object] = {}
     if case in ("mention", "mixed"):
-        arguments["content"] = "Xem :file[Bản mới]{path=~/one.txt}"
+        body["content"] = "Xem :file[Bản mới]{path=~/one.txt}"
     if case in ("files-only", "mixed", "teammate"):
-        arguments["attachments"] = ["~/one.txt", "two.png", "/home/one.txt"]
-    if case in ("missing", "directory"):
-        arguments["attachments"] = ["~/one.txt", "~/" + case]
+        body["attachments"] = ["~/one.txt", "two.png", "/home/one.txt"]
+    if case in ("missing", "directory", "virtual-directory", "several"):
+        body["attachments"] = (
+            ["~/one.txt"] if case == "several" else ["~/one.txt", "~/" + case]
+        )
     if case == "too-many":
-        arguments["attachments"] = ["~/one.txt"] * 21
+        body["attachments"] = ["~/one.txt"] * 21
+    arguments["messages"] = (
+        [{"content": "First"}, body]
+        if case == "several"
+        else [{"content": "First"}, {}]
+        if case == "invalid-second"
+        else [body]
+    )
     result = await graph.ainvoke(  # pyright: ignore[reportUnknownMemberType]  # Native invocation overload.
         {
             "messages": [
@@ -655,20 +676,30 @@ async def test_inbox_send_paths_and_explicit_attachments(
         handoff.assert_not_awaited()
         return
     assert reply.status == "success", reply.text
-    assert reply.text == '{"sent": true}'
+    count = 2 if case == "several" else 1
+    assert reply.text == f'{{"sent": {count}}}'
     snapshot = cast(dict[str, dict[str, dict[str, JSON]]], reply.artifact)["ui"]["data"]
-    assert isinstance(snapshot["file_refs"], list)
-    assert isinstance(snapshot["content"], str)
-    assert len(snapshot["file_refs"]) == expected_files
-    assert "{path=" not in snapshot["content"]
+    entries = cast(list[dict[str, JSON]], snapshot["messages"])
+    assert len(entries) == count
+    entry = entries[-1]
+    assert isinstance(entry["file_refs"], list)
+    assert isinstance(entry["content"], str)
+    assert len(entry["file_refs"]) == expected_files
+    assert "{path=" not in entry["content"]
     if case == "mention":
-        assert f"{{name={storage}/{one}}}" in snapshot["content"]
+        assert f"{{name={storage}/{one}}}" in entry["content"]
+    if case == "directory":
+        assert cast(dict[str, JSON], entry["file_refs"][-1])["kind"] == "folder"
     if case == "teammate":
         assert handoff.await_args is not None
-        message = cast(messages.Message, handoff.await_args.args[1])
+        message = cast(list[messages.Message], handoff.await_args.args[1])[0]
         assert message.content == "" and len(message.file_refs) == 2
         delivered.assert_not_awaited()
     else:
         assert delivered.await_args is not None
-        assert delivered.await_args.args[3] == snapshot["content"]
-        assert delivered.await_args.args[-1] == snapshot["file_refs"]
+        outgoing = cast(list[messages.Outgoing], delivered.await_args.args[-1])
+        assert outgoing[-1].content == entry["content"]
+        assert outgoing[-1].file_refs == entry["file_refs"]
+        if case == "several":
+            assert outgoing[0].content == "First"
+            assert outgoing[0].id < outgoing[1].id

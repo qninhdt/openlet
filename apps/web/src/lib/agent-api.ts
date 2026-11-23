@@ -40,6 +40,7 @@ export type ChatMessage = {
   content: string;
   created_at: string;
   conversation_id?: string;
+  message_group_id?: string | null;
   read_at?: string | null;
   reply?: ReplyRef | null;
   status?: 'sending' | 'failed';
@@ -84,6 +85,7 @@ export type InputItem = {
   source_kind: string;
   source_id?: string;
   source_name?: string;
+  source_handle?: string;
   conversation_id?: string;
   content: string;
   preview?: boolean;

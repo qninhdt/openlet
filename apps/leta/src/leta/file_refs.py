@@ -12,15 +12,17 @@ from openlet_sdk.config import JSON
 from .auth import Actor
 from .config import Services
 
-PATTERN = re.compile(r":file\[((?:\\.|[^\]\\\n]){1,1024})\]\{name=([\w:-]+/[\w:-]+)\}")
+PATTERN = re.compile(
+    r":(?:file|folder)\[((?:\\.|[^\]\\\n]){1,1024})\]\{name=([\w:-]+/[\w:-]+)\}"
+)
 PATH_PATTERN = re.compile(
     r":file\[((?:\\.|[^\]\\\n]){1,1024})\]\{path=((?:\\.|[^}\\\n]){1,4096})\}"
 )
 
 
-def token(label: str, storage: str, node: str) -> str:
+def token(label: str, storage: str, node: str, *, folder: bool = False) -> str:
     label = re.sub(r"([\\\[\]])", r"\\\1", label.replace("\n", " "))
-    return f":file[{label}]{{name={storage}/{node}}}"
+    return f":{'folder' if folder else 'file'}[{label}]{{name={storage}/{node}}}"
 
 
 async def resolve(
@@ -29,12 +31,17 @@ async def resolve(
     async def reference(path: str, label: str | None = None) -> str:
         metadata = await stat(path)
         storage, node = metadata.extra.get("storage_id"), metadata.extra.get("node_id")
-        if metadata.type != FileType.FILE or not storage or not node:
-            raise ValueError(
-                f"Cannot attach {path}: choose a stored file, not a directory or extracted artifact"
-            )
+        if (
+            metadata.type not in (FileType.FILE, FileType.DIRECTORY)
+            or not storage
+            or not node
+        ):
+            raise ValueError(f"Cannot attach {path}: choose a stored file or folder")
         return token(
-            label if label is not None else metadata.name, str(storage), str(node)
+            label if label is not None else metadata.name,
+            str(storage),
+            str(node),
+            folder=metadata.type == FileType.DIRECTORY,
         )
 
     parts: list[str] = []
@@ -84,6 +91,7 @@ async def validate(
     content: str,
     *,
     copy_request: UUID | None = None,
+    copy_folders: bool = False,
 ) -> list[JSON]:
     result: list[JSON] = []
     sources: list[tuple[str, UUID, UUID, fs.Node, bool]] = []
@@ -103,8 +111,12 @@ async def validate(
             metadata=sender.metadata,
             timeout=15,
         )
-        if node.kind != fs.NODE_KIND_FILE:
-            raise ValueError("only files can be attached to messages")
+        if node.kind not in (fs.NODE_KIND_FILE, fs.NODE_KIND_DIRECTORY):
+            raise ValueError("only stored files and folders can be attached")
+        if copy and node.kind == fs.NODE_KIND_DIRECTORY and not copy_folders:
+            raise ValueError(
+                f"The recipient cannot read {node.name}. Copy the folder only if authorized."
+            )
         sources.append((label, storage, node_id, node, copy))
     for label, storage, node_id, node, copy in sources:
         if copy:
@@ -155,9 +167,15 @@ async def validate(
                 "node_id": str(node_id),
                 "label": label,
                 "name": node.name,
-                "mime": node.file.media_type,
-                "size": node.file.size_bytes,
-                "version": node.file.version,
+                **(
+                    {
+                        "mime": node.file.media_type,
+                        "size": node.file.size_bytes,
+                        "version": node.file.version,
+                    }
+                    if node.kind == fs.NODE_KIND_FILE
+                    else {"kind": "folder"}
+                ),
             }
         )
     return result

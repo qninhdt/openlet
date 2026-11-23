@@ -92,11 +92,39 @@ export function useAgentLive(
     if (!enabled || !request) return;
     const abort = new AbortController();
     let refresh: ReturnType<typeof setTimeout> | undefined;
+    let activityPending = false;
+    let activityRefreshing = false;
+    const activityKey = [...scope, 'activity'];
+    const refreshActivity = async () => {
+      if (!manage || abort.signal.aborted) return;
+      activityPending = true;
+      if (activityRefreshing) return;
+      activityRefreshing = true;
+      try {
+        // An event received during a fetch needs one more read, without canceling the fetch.
+        while (activityPending && !abort.signal.aborted) {
+          activityPending = false;
+          const alreadyFetching = client.getQueryState(activityKey)?.fetchStatus === 'fetching';
+          await client.invalidateQueries(
+            { queryKey: activityKey, exact: true },
+            {
+              cancelRefetch: false,
+            },
+          );
+          if (alreadyFetching) activityPending = true;
+        }
+      } finally {
+        activityRefreshing = false;
+      }
+    };
     const invalidate = () => {
       if (refresh) return;
       refresh = setTimeout(() => {
         refresh = undefined;
-        void client.invalidateQueries({ queryKey: scope });
+        void client.invalidateQueries({
+          queryKey: scope,
+          predicate: ({ queryKey }) => queryKey[scope.length] !== 'activity',
+        });
         void client.invalidateQueries({ queryKey: ['box-graph', actorId, workspace] });
       }, 180);
     };
@@ -114,12 +142,16 @@ export function useAgentLive(
           setConnection('Live');
           retries = 0;
           invalidate();
-          if (owner) setStreaming({ scope: streamScope, items: [] });
+          if (owner) {
+            setStreaming({ scope: streamScope, items: [] });
+            void refreshActivity();
+          }
           const parser = createParser({
             maxBufferSize: 1_000_000,
             onError: () => {
               cursor = '';
               invalidate();
+              if (owner) void refreshActivity();
             },
             onEvent: (event) => {
               if (event.id) cursor = event.id;
@@ -131,23 +163,36 @@ export function useAgentLive(
               if (owner) {
                 if (data.name === 'openlet.resync_required') {
                   setStreaming({ scope: streamScope, items: [] });
-                } else
-                  setStreaming((current) => ({
-                    scope: streamScope,
-                    items: reduceActivityStream(
+                } else {
+                  setStreaming((current) => {
+                    const items = reduceActivityStream(
                       current.scope === streamScope ? current.items : [],
                       data,
                       activityAgent,
-                    ),
-                  }));
+                    );
+                    return current.scope === streamScope && current.items === items
+                      ? current
+                      : { scope: streamScope, items };
+                  });
+                }
               }
+              if (
+                owner &&
+                (data.name === 'openlet.resync_required' ||
+                  data.name === 'openlet.preview_changed' ||
+                  data.value?.resource === 'reactions' ||
+                  (data.metadata?.openlet?.agentId === activityAgent &&
+                    (data.name === 'openlet.history' ||
+                      data.type === 'RUN_FINISHED' ||
+                      data.type === 'RUN_ERROR')))
+              )
+                void refreshActivity();
               // SQL is canonical; token deltas never become addressed chat deliveries.
               if (
-                data.type === 'CUSTOM' ||
+                (data.type === 'CUSTOM' && data.name !== 'openlet.history') ||
                 data.type === 'RUN_STARTED' ||
                 data.type === 'RUN_FINISHED' ||
-                data.type === 'RUN_ERROR' ||
-                data.type === 'TOOL_CALL_RESULT'
+                data.type === 'RUN_ERROR'
               )
                 invalidate();
             },
@@ -176,6 +221,7 @@ export function useAgentLive(
         if (!abort.signal.aborted) {
           setConnection('Reconnecting');
           invalidate();
+          if (owner) void refreshActivity();
           await new Promise<void>((resolve) => {
             const done = () => {
               clearTimeout(timer);

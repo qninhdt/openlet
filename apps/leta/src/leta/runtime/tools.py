@@ -17,7 +17,7 @@ from mirage import ContentType, FileStat, Session
 from openlet_api.platform.v1 import internal_pb2 as platform
 from openlet_api.platform.v1 import platform_pb2 as platform_api
 from openlet_sdk.config import JSON
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from .. import (
     box_views,
@@ -26,11 +26,11 @@ from .. import (
     file_refs,
     history,
     hitl,
-    messages,
     reactions,
     schedules,
 )
-from ..agents import json_row, stable
+from .. import messages as inbox_messages
+from ..agents import Input, json_row, stable
 from ..auth import Actor
 from ..boxes import BoxCreation, CreateBox, LetiDefinition
 from ..config import Services
@@ -116,27 +116,106 @@ async def inbox_address(ctx: Context, address: str) -> tuple[str, UUID]:
     raise ValueError("Use a user:<handle> or agent:<handle> address")
 
 
+class InboxMessage(Input):
+    content: str = Field(default="", max_length=32000)
+    attachments: list[Annotated[str, Field(min_length=1, max_length=4096)]] = Field(
+        default_factory=list, max_length=20
+    )
+
+    @model_validator(mode="after")
+    def nonempty(self) -> "InboxMessage":
+        if not self.content.strip() and not self.attachments:
+            raise ValueError("A message requires content or attachments")
+        return self
+
+
+async def prepare_outgoing(
+    runtime: ToolRuntime[Context, State],
+    message: InboxMessage,
+    id: UUID,
+    target: UUID,
+    *,
+    human: bool,
+    copy_folders: bool,
+) -> inbox_messages.Outgoing:
+    ctx = runtime.context
+    s, agent = ctx.services, ctx.agent
+    content = message.content
+    attachment_content = ""
+    if message.attachments or file_refs.PATH_PATTERN.search(content):
+        vfs = (await session(runtime)).vfs
+
+        async def stat(path: str) -> FileStat:
+            return await vfs.stat(file_path(path))
+
+        content, attachment_content = await file_refs.resolve(
+            content, message.attachments, stat
+        )
+    try:
+        refs: list[JSON] = await file_refs.validate(
+            s,
+            cast(UUID, agent["workspace_id"]),
+            Actor("agent", ctx.leta_id),
+            Actor("user", target) if human else Actor("agent", ctx.leta_id),
+            content + "\n" + attachment_content,
+            copy_request=id if human else None,
+            copy_folders=copy_folders,
+        )
+    except HTTPException as error:
+        raise PermissionError(str(error.detail)) from error
+    except grpc.aio.AioRpcError as error:
+        if error.code() not in (
+            grpc.StatusCode.NOT_FOUND,
+            grpc.StatusCode.PERMISSION_DENIED,
+            grpc.StatusCode.INVALID_ARGUMENT,
+            grpc.StatusCode.ALREADY_EXISTS,
+            grpc.StatusCode.FAILED_PRECONDITION,
+            grpc.StatusCode.RESOURCE_EXHAUSTED,
+            grpc.StatusCode.ABORTED,
+        ):
+            raise
+        raise ValueError(
+            error.details() or "Could not attach files or folders"
+        ) from error
+    replacements = {
+        f"{storage}/{node}": ref
+        for (_, storage, node), ref in zip(
+            file_refs.references(content + "\n" + attachment_content), refs, strict=True
+        )
+        if isinstance(ref, dict)
+    }
+    content = file_refs.PATTERN.sub(
+        lambda match: file_refs.token(
+            re.sub(r"\\(.)", r"\1", match[1]),
+            str(replacements[match[2]]["storage_id"]),
+            str(replacements[match[2]]["node_id"]),
+            folder=replacements[match[2]].get("kind") == "folder",
+        ),
+        content,
+    )
+    refs = [
+        replacements[f"{storage}/{node}"]
+        for _, storage, node in file_refs.references(attachment_content)
+    ]
+    return inbox_messages.Outgoing(id, content, refs)
+
+
 @tool(response_format="content_and_artifact")
 async def inbox_send(
     runtime: ToolRuntime[Context, State],
-    content: Annotated[str, Field(max_length=32000)] = "",
+    messages: Annotated[list[InboxMessage], Field(min_length=1, max_length=5)],
     to: str | None = None,
     in_reply_to: Annotated[int | None, Field(ge=1)] = None,
-    attachments: Annotated[
-        list[Annotated[str, Field(min_length=1, max_length=4096)]] | None,
-        Field(max_length=20),
-    ] = None,
     task_label: Annotated[str | None, Field(max_length=255)] = None,
+    copy_folders: bool = False,
 ) -> tuple[JSON, dict[str, JSON]]:
-    """Send text and optional file attachments to user:<handle> or a permitted agent:<handle>. Quote a received message by its number with in_reply_to. Paths can also be linked inline using :file[label]{path=path}. Use task_label for a short assignment label."""
+    """Send messages in order to user:<handle> or agent:<handle>. Each message can attach file or folder paths. Use :file[label]{path=path} for inline links. in_reply_to quotes a received message in the first message. Use task_label for assignments. Set copy_folders only when authorized to share the entire contents of an otherwise inaccessible folder."""
     from ..worker import deliver
 
     ctx = runtime.context
     s, agent = ctx.services, ctx.agent
-    if not content.strip() and not attachments:
-        raise ValueError("A message requires content or attachments")
     original = (
-        await messages.incoming(s.db, ctx.id, in_reply_to)
+        await inbox_messages.incoming(s.db, ctx.id, in_reply_to)
         if in_reply_to is not None
         else None
     )
@@ -166,7 +245,7 @@ async def inbox_send(
                     (target,),
                 )
             ).fetchone()
-            if recipient is None or not await messages.can_contact(
+            if recipient is None or not await inbox_messages.can_contact(
                 conn, agent, recipient
             ):
                 raise ValueError("recipient is outside the communication graph")
@@ -178,98 +257,69 @@ async def inbox_send(
             cast(UUID, agent["workspace_id"]),
             "participate",
         )
-    attachment_content = ""
-    if attachments or file_refs.PATH_PATTERN.search(content):
-        vfs = (await session(runtime)).vfs
-
-        async def stat(path: str) -> FileStat:
-            return await vfs.stat(file_path(path))
-
-        content, attachment_content = await file_refs.resolve(
-            content, attachments or [], stat
+    # Messages from one transaction share a timestamp. Keep their UUID order stable across retries.
+    first_id = id.int & ~0xFF if len(messages) > 1 else id.int
+    outgoing = [
+        await prepare_outgoing(
+            runtime,
+            message,
+            UUID(int=first_id + index),
+            target,
+            human=human,
+            copy_folders=copy_folders,
         )
-    try:
-        refs: list[JSON] = await file_refs.validate(
-            s,
-            cast(UUID, agent["workspace_id"]),
-            Actor("agent", ctx.leta_id),
-            Actor("user", target) if human else Actor("agent", ctx.leta_id),
-            content + "\n" + attachment_content,
-            copy_request=id if human else None,
-        )
-    except HTTPException as error:
-        raise PermissionError(str(error.detail)) from error
-    except grpc.aio.AioRpcError as error:
-        if error.code() not in (
-            grpc.StatusCode.NOT_FOUND,
-            grpc.StatusCode.PERMISSION_DENIED,
-            grpc.StatusCode.INVALID_ARGUMENT,
-            grpc.StatusCode.ALREADY_EXISTS,
-            grpc.StatusCode.FAILED_PRECONDITION,
-            grpc.StatusCode.RESOURCE_EXHAUSTED,
-            grpc.StatusCode.ABORTED,
-        ):
-            raise
-        raise ValueError(error.details() or "Could not attach files") from error
-    replacements = {
-        f"{storage}/{node}": ref
-        for (_, storage, node), ref in zip(
-            file_refs.references(content + "\n" + attachment_content), refs, strict=True
-        )
-        if isinstance(ref, dict)
-    }
-    content = file_refs.PATTERN.sub(
-        lambda match: file_refs.token(
-            re.sub(r"\\(.)", r"\1", match[1]),
-            str(replacements[match[2]]["storage_id"]),
-            str(replacements[match[2]]["node_id"]),
-        ),
-        content,
-    )
-    refs = [
-        replacements[f"{storage}/{node}"]
-        for _, storage, node in file_refs.references(attachment_content)
+        for index, message in enumerate(messages)
     ]
+    reply = cast(UUID, original["id"]) if original else None
     if human:
         await conversations.storage(s, ctx.leta_id, target)
-        await messages.deliver_user(
+        await inbox_messages.deliver_user(
             s.db,
             ctx.leta_id,
             target,
-            content,
-            id,
             cast(UUID, original["conversation_id"])
             if original
-            else messages.conversation(ctx.leta_id, "user", target),
-            cast(UUID, original["id"]) if original else None,
-            refs,
+            else inbox_messages.conversation(ctx.leta_id, "user", target),
+            reply,
+            outgoing,
         )
         ctx.filesystem.discovered = 0
         from .. import events
 
-        await events.changed(s.redis, ctx.leta_id, "messages", id, target)
+        await events.changed(s.redis, ctx.leta_id, "messages", outgoing[0].id, target)
     else:
+        conversation = (
+            cast(UUID, original["conversation_id"])
+            if original
+            else inbox_messages.agent_conversation(ctx.id, target)
+        )
         await deliver(
             s,
-            Message(
-                id=id,
-                recipient_agent_id=target,
-                source_kind="agent",
-                source_id=ctx.id,
-                conversation_id=(
-                    cast(UUID, original["conversation_id"])
-                    if original
-                    else messages.agent_conversation(ctx.id, target)
-                ),
-                content=content,
-                file_refs=refs,
-                task_label=task_label,
-                in_reply_to_message_id=cast(UUID, original["id"]) if original else None,
-            ),
+            [
+                Message(
+                    id=message.id,
+                    recipient_agent_id=target,
+                    source_kind="agent",
+                    source_id=ctx.id,
+                    conversation_id=conversation,
+                    content=message.content,
+                    file_refs=message.file_refs,
+                    task_label=task_label if index == 0 else None,
+                    in_reply_to_message_id=reply if index == 0 else None,
+                )
+                for index, message in enumerate(outgoing)
+            ],
         )
-    result: JSON = {"sent": True}
     return presented(
-        "inbox_send", result, {"sent": True, "content": content, "file_refs": refs}
+        "inbox_send",
+        {"sent": len(outgoing)},
+        {
+            "messages": [
+                {"content": message.content, "file_refs": message.file_refs}
+                for message in outgoing
+            ],
+            "recipient": {"kind": kind, "id": str(target)},
+        },
     )
 
 
@@ -284,7 +334,7 @@ async def inbox_react(
     """React to a received user or teammate message using its sender address and inbox message number. One emoji per agent per message; add replaces your previous emoji, remove clears it. Feedback is silent and does not wake another agent."""
     ctx = runtime.context
     kind, sender = await inbox_address(ctx, source)
-    original = await messages.incoming(ctx.services.db, ctx.id, message)
+    original = await inbox_messages.incoming(ctx.services.db, ctx.id, message)
     if original["source_kind"] != kind or original["source_id"] != sender:
         raise LookupError("Message number does not belong to that conversation")
     result = await reactions.react(
@@ -318,17 +368,17 @@ async def inbox_list(
 ) -> tuple[JSON, dict[str, JSON]]:
     """List inbox notifications grouped by conversation, including silent feedback that does not wake you."""
     ctx = runtime.context
-    rows = await messages.list_inbox(
+    rows = await inbox_messages.list_inbox(
         ctx.services.db, ctx.id, int(cursor or 0), unread_only
     )
-    await messages.name_users(ctx.services.internal, rows)
+    await inbox_messages.name_users(ctx.services.internal, rows)
     result = (
-        messages.input_batch(rows, root=True)
+        inbox_messages.input_batch(rows, root=True)
         or "No messages matching this inbox filter."
     )
     if len(rows) == 20:
         result += f"\nNext cursor: {rows[-1]['seq']}"
-    return result, {"ui": messages.input_data(rows, root=True)}
+    return result, {"ui": inbox_messages.input_data(rows, root=True)}
 
 
 @tool(response_format="content_and_artifact")
@@ -341,10 +391,10 @@ async def inbox_read(
     """Read up to 20 messages from the conversation with user:<handle> or agent:<handle>. By default, read only unread messages. Use the returned cursor for the next page."""
     ctx = runtime.context
     kind, sender = await inbox_address(ctx, source)
-    rows = await messages.read(
+    rows = await inbox_messages.read(
         ctx.services.db, ctx.id, sender, kind, int(cursor or 0), unread_only
     )
-    await messages.name_users(ctx.services.internal, rows)
+    await inbox_messages.name_users(ctx.services.internal, rows)
     if rows:
         async with ctx.services.db.connection() as conn:
             await conn.execute(
@@ -358,12 +408,12 @@ async def inbox_read(
                 ctx.services.redis, ctx.leta_id, "messages", ctx.id, sender
             )
     text = (
-        messages.input_batch(rows, root=False)
+        inbox_messages.input_batch(rows, root=False)
         or "No messages matching this conversation and filter."
     )
     if len(rows) == 20:
         text += f"\nNext cursor: {rows[-1]['seq']}"
-    return text, {"ui": messages.input_data(rows, root=False)}
+    return text, {"ui": inbox_messages.input_data(rows, root=False)}
 
 
 @tool(response_format="content_and_artifact")
@@ -466,7 +516,7 @@ async def agent_status(
             or (ctx.id == ctx.leta_id and agent["box_id"] is None)
             or (
                 ctx.id != ctx.leta_id
-                and not await messages.can_contact(conn, ctx.agent, agent)
+                and not await inbox_messages.can_contact(conn, ctx.agent, agent)
             )
         ):
             raise LookupError("agent is outside your status scope")

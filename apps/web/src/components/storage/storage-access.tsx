@@ -1,8 +1,8 @@
+import { useWorkspaceMembers } from '@/lib/workspace-members';
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Users } from 'lucide-react';
 import { useBackend } from '@/lib/backend';
-import type { Member } from '@/components/workspace-settings';
 import { useStorageBrowser } from './storage-context';
 import { Button } from '@/components/ui/button';
 import {
@@ -48,23 +48,7 @@ export function StorageAccess() {
     queryFn: () => api!<Access>(path + '/access'),
     enabled: open,
   });
-  const members = useQuery({
-    queryKey: ['workspace-members', actorId, b.workspace.id],
-    enabled: open,
-    queryFn: async () => {
-      const people: Member[] = [];
-      let token = '';
-      do {
-        const page = await api!<{ members?: Member[]; nextPageToken?: string }>(
-          `/v1/workspaces/${b.workspace.id}/members?` +
-            new URLSearchParams({ page_size: '100', page_token: token }),
-        );
-        people.push(...(page.members ?? []));
-        token = page.nextPageToken ?? '';
-      } while (token);
-      return people;
-    },
-  });
+  const members = useWorkspaceMembers(b.workspace.id, open);
   const actors = [
     ...(members.data ?? []).map((member) => ({
       key: `user:${member.user.id}`,

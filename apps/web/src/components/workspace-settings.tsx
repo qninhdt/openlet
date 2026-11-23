@@ -1,9 +1,9 @@
+import { useWorkspaceMembers } from '@/lib/workspace-members';
 import { useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { toast } from 'sonner';
 import { useBackend } from '@/lib/backend';
-import type { Account } from '@/lib/account';
 import { useShellLocation } from '@/lib/shell-navigation';
 import { AgentAvatar } from './agent-avatar';
 import { Button } from './ui/button';
@@ -20,7 +20,6 @@ import {
   AlertDialogAction,
 } from './ui/alert-dialog';
 
-export type Member = { user: Account; role: string };
 type Invitation = { id: string; email: string; expiresAt: string; acceptedByUserId?: string };
 
 export function WorkspaceSettings({ section }: { section: 'general' | 'members' }) {
@@ -44,21 +43,7 @@ export function WorkspaceSettings({ section }: { section: 'general' | 'members' 
     queryKey: ['workspace-settings', actorId, workspace],
     queryFn: () => api!<{ name: string; role?: string }>(path),
   });
-  const members = useQuery({
-    queryKey: ['workspace-members', actorId, workspace],
-    queryFn: async () => {
-      const items: Member[] = [];
-      let token = '';
-      do {
-        const page = await api!<{ members?: Member[]; nextPageToken?: string }>(
-          path + '/members?' + new URLSearchParams({ page_size: '100', page_token: token }),
-        );
-        items.push(...(page.members ?? []));
-        token = page.nextPageToken ?? '';
-      } while (token);
-      return items;
-    },
-  });
+  const members = useWorkspaceMembers(workspace);
   const owner =
     members.data?.some(
       (member) => member.user.id === actorId && member.role === 'WORKSPACE_ROLE_OWNER',

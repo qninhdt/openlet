@@ -1,7 +1,7 @@
+import { useWorkspaceMembers } from '@/lib/workspace-members';
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useBackend } from '@/lib/backend';
-import type { Member } from '@/components/workspace-settings';
 import { useAgentPreview } from './agent-preview';
 import { Button } from '@/components/ui/button';
 import {
@@ -36,22 +36,7 @@ export function AgentAccess() {
       return people;
     },
   });
-  const members = useQuery({
-    queryKey: ['workspace-members', actorId, p.workspace.id],
-    queryFn: async () => {
-      const people: Member[] = [];
-      let token = '';
-      do {
-        const page = await api!<{ members?: Member[]; nextPageToken?: string }>(
-          `/v1/workspaces/${p.workspace.id}/members?` +
-            new URLSearchParams({ page_size: '100', page_token: token }),
-        );
-        people.push(...(page.members ?? []));
-        token = page.nextPageToken ?? '';
-      } while (token);
-      return people;
-    },
-  });
+  const members = useWorkspaceMembers(p.workspace.id);
   async function change(user: string, grant: boolean) {
     setBusy(true);
     setError('');

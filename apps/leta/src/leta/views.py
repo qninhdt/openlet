@@ -101,11 +101,11 @@ async def mark_chat_read(db: Pool, root: UUID, user: UUID, through: UUID) -> Non
 CHAT = """WITH chat AS (
             SELECT id,content,file_refs,created_at,source_id AS user_id,'user'::text AS role,
                 conversation_id,read_at,in_reply_to_message_id AS in_reply_to,
-                coalesce(in_reply_to_role,'user') AS in_reply_to_role
+                coalesce(in_reply_to_role,'user') AS in_reply_to_role,NULL::uuid AS message_group_id
             FROM agent_messages WHERE recipient_agent_id=%s AND source_kind='user' AND source_id=%s AND input_type='message'
             UNION ALL
             SELECT id,content,file_refs,created_at,recipient_user_id,'assistant',conversation_id,
-                NULL::timestamptz,in_reply_to_message_id,'user'
+                NULL::timestamptz,in_reply_to_message_id,'user',message_group_id
             FROM user_messages WHERE leta_id=%s AND recipient_user_id=%s
             ) """
 
@@ -235,7 +235,7 @@ async def activity(
             CASE WHEN kind='tool_result' AND payload->>'name' IN ('websearch','webfetch') AND payload->>'status'='success'
                     THEN payload - 'text'
                 WHEN octet_length(payload::text)<=8192 THEN payload
-                ELSE jsonb_build_object('text',left(payload->>'text',400),'reasoning',left(payload->>'reasoning',400),'name',payload->'name','tool_call_id',payload->'tool_call_id') END AS payload
+                ELSE jsonb_build_object('text',left(payload->>'text',400),'reasoning',left(payload->>'reasoning',400),'name',payload->'name','tool_call_id',payload->'tool_call_id','status',payload->'status') END AS payload
             FROM history WHERE agent_id=%s AND (%s::bigint IS NULL OR seq<%s)
             AND (%s::bigint IS NULL OR seq>%s) ORDER BY """
                 + ("seq ASC" if after is not None else "seq DESC")

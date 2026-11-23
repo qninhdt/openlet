@@ -293,6 +293,11 @@ class ExecutionModel(AgentMiddleware[State, Context]):
     async def abefore_model(
         self, state: State, runtime: Runtime[Context]
     ) -> dict[str, object] | None:
+        messages = state["messages"]
+        last = messages[-1] if messages else None
+        # With sync durability the preceding Inbox node is already checkpointed.
+        if isinstance(last, HumanMessage) and "openlet" in last.additional_kwargs:
+            await project(self.s, runtime.context, [last])
         return await self.summary.abefore_model(state, runtime)
 
     async def awrap_model_call(
@@ -807,7 +812,11 @@ async def run(s: Services, lf: Langfuse, input: RunInput) -> RunResult:
                                 ):
                                     await live.chunk(message)
                             elif mode == "updates":
-                                for update in cast(dict[str, object], value).values():
+                                for node, update in cast(
+                                    dict[str, object], value
+                                ).items():
+                                    if node == "Inbox.before_model":
+                                        continue
                                     if isinstance(update, dict):
                                         changed.extend(
                                             cast(

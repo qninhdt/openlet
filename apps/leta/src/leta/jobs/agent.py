@@ -54,23 +54,25 @@ class Agent:
         self.rotating |= workflow.info().is_continue_as_new_suggested()
 
     @workflow.update
-    async def receive(self, message: Message) -> dict[str, JSON]:
+    async def receive(self, messages: list[Message]) -> dict[str, JSON]:
         result = await workflow.execute_local_activity(
             "admit_input",
-            message,
+            messages,
             retry_policy=RETRY,
             start_to_close_timeout=timedelta(seconds=15),
             result_type=dict[str, JSON],
         )
         seq = result.get("seq")
-        if isinstance(seq, int) and not message.silent:
+        if isinstance(seq, int) and not messages[0].silent:
             self.admitted_seq = max(self.admitted_seq, seq)
         self.rotate()
         return result
 
     @receive.validator
-    def validate_receive(self, message: Message) -> None:
-        if message.recipient_agent_id != self.input.agent_id:
+    def validate_receive(self, messages: list[Message]) -> None:
+        if not messages or any(
+            message.recipient_agent_id != self.input.agent_id for message in messages
+        ):
             raise ValueError("recipient does not match workflow")
         if self.stopped or self.stopping or self.rotating:
             raise ApplicationError(
