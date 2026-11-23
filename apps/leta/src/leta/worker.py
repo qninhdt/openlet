@@ -16,6 +16,7 @@ from openlet_sdk.config import JSON, load
 from openlet_sdk.telemetry import initialize, initialize_langfuse
 from opentelemetry.instrumentation.psycopg import PsycopgInstrumentor
 from opentelemetry.instrumentation.redis import RedisInstrumentor
+from pydantic import RootModel
 from temporalio import activity
 from temporalio.client import WithStartWorkflowOperation, WorkflowUpdateFailedError
 from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
@@ -31,7 +32,8 @@ from temporalio.runtime import (
 from temporalio.service import RPCError, RPCStatusCode
 from temporalio.worker import Worker
 
-from . import agents, boxes, events, hitl, messages, schedules
+from . import agents, boxes, events, hitl, schedules
+from . import messages as inbox_messages
 from .agents import LetaCreation, get_agent, stable
 from .auth import Actor, relationship
 from .boxes import BoxCreation
@@ -44,9 +46,10 @@ from .jobs.schedules import ScheduleChanges, ScheduleDelivery, ScheduleInput
 from .messages import Message
 
 
-async def deliver(s: Services, message: Message) -> dict[str, JSON]:
+async def deliver(s: Services, messages: list[Message]) -> dict[str, JSON]:
+    message = messages[0]
     if message.silent:
-        return await messages.admit(s.db, s.auth, message)
+        return await inbox_messages.admit(s.db, s.auth, messages)
     queue = s.config["dependencies"]["temporal"]["queues"]
     start: WithStartWorkflowOperation[Agent, None] = WithStartWorkflowOperation(
         Agent.run,
@@ -59,8 +62,8 @@ async def deliver(s: Services, message: Message) -> dict[str, JSON]:
     )
     return await s.temporal.execute_update_with_start_workflow(  # pyright: ignore[reportUnknownMemberType]  # Upstream SDK has an untyped overload or kwargs.
         Agent.receive,
-        message,
-        id=request_hash(message).hex(),
+        messages,
+        id=request_hash(RootModel(messages)).hex(),
         start_workflow_operation=start,
     )
 
@@ -210,8 +213,9 @@ class Activities:
         return await run(self.s, self.langfuse, input)
 
     @activity.defn
-    async def admit_input(self, message: Message) -> dict[str, JSON]:
-        result = await messages.admit(self.s.db, self.s.auth, message)
+    async def admit_input(self, messages: list[Message]) -> dict[str, JSON]:
+        message = messages[0]
+        result = await inbox_messages.admit(self.s.db, self.s.auth, messages)
         if not result.get("skipped"):
             agent = await get_agent(self.s.db, message.recipient_agent_id)
             await events.changed(
@@ -281,7 +285,7 @@ class Activities:
                 and target["box_state"] != "active"
             ):
                 return {"skipped": True}
-            return await deliver(self.s, message)
+            return await deliver(self.s, [message])
         except WorkflowUpdateFailedError as error:
             if (
                 isinstance(error.cause, ApplicationError)
@@ -681,7 +685,7 @@ class Activities:
             recipient_agent_id=target,
             source_kind="schedule",
             source_id=id,
-            conversation_id=messages.conversation(target, "schedule", id),
+            conversation_id=inbox_messages.conversation(target, "schedule", id),
             scheduled_at=nominal,
             schedule_title=str(value["title"]),
             content=str(value["content"]),

@@ -64,7 +64,12 @@ function serializeNode(node: Node): string {
   const attachmentName = node.dataset.attachmentReferenceName;
   if (attachmentId && attachmentName) {
     const [storage_id, node_id] = attachmentId.split('/');
-    return fileToken({ storage_id, node_id, label: attachmentName });
+    return fileToken({
+      storage_id,
+      node_id,
+      label: attachmentName,
+      kind: node.dataset.attachmentReferenceKind === 'folder' ? 'folder' : 'file',
+    });
   }
   if (node.tagName === 'BR') return '\n';
   const content = Array.from(node.childNodes).map(serializeNode).join('');

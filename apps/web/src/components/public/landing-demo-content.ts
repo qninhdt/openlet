@@ -142,13 +142,21 @@ Choose the channels whenever you’re ready. Nothing has been published.`,
         name: 'inbox_send',
         args: {
           to: 'Scout',
-          content:
-            'Verify activation rates and spend per activated user. Flag channels where traffic hides a weak conversion.',
+          messages: [
+            {
+              content:
+                'Verify activation rates and spend per activated user. Flag channels where traffic hides a weak conversion.',
+            },
+          ],
         },
         data: {
           target_name: 'Scout',
-          content:
-            'Verify activation rates and spend per activated user. Flag channels where traffic hides a weak conversion.',
+          messages: [
+            {
+              content:
+                'Verify activation rates and spend per activated user. Flag channels where traffic hides a weak conversion.',
+            },
+          ],
         },
       },
       {
@@ -298,13 +306,21 @@ I saved the findings with the ${file('team-research', 'interview notes')} and ke
         name: 'inbox_send',
         args: {
           to: 'Atlas',
-          content:
-            'Newsletter + blog is supported. Three interviews are directional; social onboarding needs a separate check.',
+          messages: [
+            {
+              content:
+                'Newsletter + blog is supported. Three interviews are directional; social onboarding needs a separate check.',
+            },
+          ],
         },
         data: {
           target_name: 'Atlas',
-          content:
-            'Newsletter + blog is supported. Three interviews are directional; social onboarding needs a separate check.',
+          messages: [
+            {
+              content:
+                'Newsletter + blog is supported. Three interviews are directional; social onboarding needs a separate check.',
+            },
+          ],
         },
       },
     ],
@@ -362,13 +378,21 @@ The full ${file('team-announcement', 'announcement and newsletter')} is ready to
         name: 'inbox_send',
         args: {
           to: 'Atlas',
-          content:
-            'Announcement + newsletter ready. Recommended subject: Your next client handoff, without the chase. No infrastructure or usage promises.',
+          messages: [
+            {
+              content:
+                'Announcement + newsletter ready. Recommended subject: Your next client handoff, without the chase. No infrastructure or usage promises.',
+            },
+          ],
         },
         data: {
           target_name: 'Atlas',
-          content:
-            'Announcement + newsletter ready. Recommended subject: Your next client handoff, without the chase.',
+          messages: [
+            {
+              content:
+                'Announcement + newsletter ready. Recommended subject: Your next client handoff, without the chase.',
+            },
+          ],
         },
       },
     ],

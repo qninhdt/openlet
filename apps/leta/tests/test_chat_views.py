@@ -259,23 +259,24 @@ async def test_private_chat_reply_roles_and_nonmutating_inbox(
         await messages.admit(
             db,
             auth,
-            messages.Message(
-                id=id,
-                recipient_agent_id=root,
-                source_kind="user",
-                source_id=actor,
-                conversation_id=messages.conversation(root, "user", actor),
-                content=text,
-            ),
+            [
+                messages.Message(
+                    id=id,
+                    recipient_agent_id=root,
+                    source_kind="user",
+                    source_id=actor,
+                    conversation_id=messages.conversation(root, "user", actor),
+                    content=text,
+                )
+            ],
         )
     await messages.deliver_user(
         db,
         root,
         user,
-        "agent reply",
-        collision,
         messages.conversation(root, "user", user),
         collision,
+        [messages.Outgoing(collision, "agent reply", [])],
     )
     reply = messages.Message(
         id=uuid4(),
@@ -287,9 +288,9 @@ async def test_private_chat_reply_roles_and_nonmutating_inbox(
         in_reply_to_message_id=collision,
         in_reply_to_role="assistant",
     )
-    await messages.admit(db, auth, reply)
-    assert await messages.admit(db, auth, reply) == await messages.admit(
-        db, auth, reply
+    await messages.admit(db, auth, [reply])
+    assert await messages.admit(db, auth, [reply]) == await messages.admit(
+        db, auth, [reply]
     )
     chat = await views.chat(db, root, user)
     items = cast(list[dict[str, object]], chat["items"])
@@ -326,7 +327,7 @@ async def test_private_chat_reply_roles_and_nonmutating_inbox(
         }
     )
     with pytest.raises(ValueError, match="this conversation"):
-        await messages.admit(db, auth, foreign)
+        await messages.admit(db, auth, [foreign])
     inbox = await views.inbox(db, root)
     assert len(cast(list[object], inbox["items"])) == 2
     detail = await views.conversation(
@@ -461,7 +462,12 @@ async def test_reactions_are_private_idempotent_and_silent(
     original = uuid4()
     conv = messages.conversation(root, "user", user)
     await messages.deliver_user(
-        db, root, user, "The launch is ready", original, conv, None
+        db,
+        root,
+        user,
+        conv,
+        None,
+        [messages.Outgoing(original, "The launch is ready", [])],
     )
     change = reactions.React(request_id=uuid4(), emoji="🎉")
     first = await reactions.react(
@@ -500,7 +506,7 @@ async def test_reactions_are_private_idempotent_and_silent(
         conversation_id=conv,
         content="Continue",
     )
-    await messages.admit(db, auth, wake)
+    await messages.admit(db, auth, [wake])
     batch = await messages.pending(db, root, 0, root=True)
     assert [r["input_type"] for r in batch] == ["reaction", "message"]
     assert "Reaction from user" in messages.input_batch(batch, root=True)
@@ -519,7 +525,7 @@ async def test_reactions_are_private_idempotent_and_silent(
     rows = await messages.read(db, root, user, "user")
     text = messages.input_batch(rows, root=False)
     assert any(r["input_type"] == "reaction" for r in rows) and "❤️" in text
-    await messages.admit(db, auth, wake.model_copy(update={"id": uuid4()}))
+    await messages.admit(db, auth, [wake.model_copy(update={"id": uuid4()})])
     # Explicitly reading a later reaction never skips another ordinary input.
     assert [
         r["input_type"] for r in await messages.pending(db, root, 2, silent_after=1)
@@ -535,17 +541,24 @@ async def test_agent_reaction_targets_received_message_and_roles_do_not_collide(
     await messages.admit(
         db,
         auth,
-        messages.Message(
-            id=id,
-            recipient_agent_id=root,
-            source_kind="user",
-            source_id=user,
-            conversation_id=messages.conversation(root, "user", user),
-            content="We shipped!",
-        ),
+        [
+            messages.Message(
+                id=id,
+                recipient_agent_id=root,
+                source_kind="user",
+                source_id=user,
+                conversation_id=messages.conversation(root, "user", user),
+                content="We shipped!",
+            )
+        ],
     )
     await messages.deliver_user(
-        db, root, user, "Great", id, messages.conversation(root, "user", user), None
+        db,
+        root,
+        user,
+        messages.conversation(root, "user", user),
+        None,
+        [messages.Outgoing(id, "Great", [])],
     )
     await reactions.react(
         db,
@@ -587,29 +600,33 @@ async def test_silent_backlog_does_not_skip_across_bounded_batches(
         await messages.admit(
             db,
             auth,
-            messages.Message(
-                id=uuid4(),
-                recipient_agent_id=root,
-                source_kind="user",
-                source_id=user,
-                conversation_id=conv,
-                content=str(i),
-                silent=True,
-            ),
+            [
+                messages.Message(
+                    id=uuid4(),
+                    recipient_agent_id=root,
+                    source_kind="user",
+                    source_id=user,
+                    conversation_id=conv,
+                    content=str(i),
+                    silent=True,
+                )
+            ],
         )
 
     async def wake() -> None:
         await messages.admit(
             db,
             auth,
-            messages.Message(
-                id=uuid4(),
-                recipient_agent_id=root,
-                source_kind="user",
-                source_id=user,
-                conversation_id=conv,
-                content="wake",
-            ),
+            [
+                messages.Message(
+                    id=uuid4(),
+                    recipient_agent_id=root,
+                    source_kind="user",
+                    source_id=user,
+                    conversation_id=conv,
+                    content="wake",
+                )
+            ],
         )
 
     await wake()
@@ -662,14 +679,16 @@ async def test_activity_and_inbox_use_canonical_reactions(
     await messages.admit(
         db,
         auth,
-        messages.Message(
-            id=original,
-            recipient_agent_id=root,
-            source_kind="user",
-            source_id=user,
-            conversation_id=conv,
-            content="Approved",
-        ),
+        [
+            messages.Message(
+                id=original,
+                recipient_agent_id=root,
+                source_kind="user",
+                source_id=user,
+                conversation_id=conv,
+                content="Approved",
+            )
+        ],
     )
     await reactions.react(
         db,
@@ -829,14 +848,16 @@ async def test_agent_reactions_follow_graph_and_roll_back_invalid_delivery(
     await messages.admit(
         db,
         auth,
-        messages.Message(
-            id=original,
-            recipient_agent_id=scout,
-            source_kind="agent",
-            source_id=forge,
-            conversation_id=uuid4(),
-            content="Checks passed",
-        ),
+        [
+            messages.Message(
+                id=original,
+                recipient_agent_id=scout,
+                source_kind="agent",
+                source_id=forge,
+                conversation_id=uuid4(),
+                content="Checks passed",
+            )
+        ],
     )
     await reactions.react(
         db,
@@ -898,10 +919,9 @@ async def test_reaction_endpoint_publishes_only_authorized_user_changes(
         db,
         root,
         user,
-        "Ready for review",
-        original,
         messages.conversation(root, "user", user),
         None,
+        [messages.Outgoing(original, "Ready for review", [])],
     )
     published: list[tuple[UUID, UUID | None]] = []
 
@@ -1280,9 +1300,14 @@ async def test_chat_and_inbox_preserve_file_metadata_without_prompt_inventory(
         content=token,
         file_refs=refs,
     )
-    await messages.admit(db, cast(Authorization, UseAuth()), message)
+    await messages.admit(db, cast(Authorization, UseAuth()), [message])
     await messages.deliver_user(
-        db, root, user, token, uuid4(), message.conversation_id, None, refs
+        db,
+        root,
+        user,
+        message.conversation_id,
+        None,
+        [messages.Outgoing(uuid4(), token, refs)],
     )
     chat = await views.chat(db, root, user)
     assert all(
@@ -1318,14 +1343,16 @@ async def test_injected_full_messages_are_read_but_previews_remain_unread(
         await messages.admit(
             db,
             auth,
-            messages.Message(
-                id=uuid4(),
-                recipient_agent_id=root,
-                source_kind="user",
-                source_id=user,
-                conversation_id=messages.conversation(root, "user", user),
-                content=text,
-            ),
+            [
+                messages.Message(
+                    id=uuid4(),
+                    recipient_agent_id=root,
+                    source_kind="user",
+                    source_id=user,
+                    conversation_id=messages.conversation(root, "user", user),
+                    content=text,
+                )
+            ],
         )
     batch = await messages.pending(db, root, 0, root=True)
     body = messages.input_batch(batch, root=True)
@@ -1357,14 +1384,16 @@ async def test_inbox_listing_marks_only_complete_returned_message_read(
         await messages.admit(
             db,
             auth,
-            messages.Message(
-                id=uuid4(),
-                recipient_agent_id=root,
-                source_kind="user",
-                source_id=user,
-                conversation_id=messages.conversation(root, "user", user),
-                content=text,
-            ),
+            [
+                messages.Message(
+                    id=uuid4(),
+                    recipient_agent_id=root,
+                    source_kind="user",
+                    source_id=user,
+                    conversation_id=messages.conversation(root, "user", user),
+                    content=text,
+                )
+            ],
         )
     rows = await messages.list_inbox(db, root)
     text = messages.input_batch(rows, root=True)

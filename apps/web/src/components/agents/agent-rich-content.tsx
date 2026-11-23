@@ -89,9 +89,12 @@ export function HighlightedCode({
   );
 }
 
+const attachmentLink = /^openlet-(file|folder):/;
+
 function FileReference({ target, label }: { target: string; label: ReactNode }) {
   const p = useAgentPreview();
-  const [storage, id] = target.replace('openlet-file:', '').split('/');
+  const [storage, id] = target.replace(attachmentLink, '').split('/');
+  const kind = target.startsWith('openlet-folder:') ? 'folder' : 'file';
   const node = p.fileNodes[id];
   return (
     <button
@@ -102,7 +105,7 @@ function FileReference({ target, label }: { target: string; label: ReactNode }) 
         void p.openFileReference({ storage_id: storage, node_id: id, label: String(label) })
       }
     >
-      <FileIcon node={node ?? { kind: 'file', mime: '', name: String(label) }} />
+      <FileIcon node={node ?? { kind, mime: '', name: String(label) }} />
       <span className="truncate">{label}</span>
     </button>
   );
@@ -123,7 +126,7 @@ export function AgentMarkdown({ text }: { text: string }) {
       <Markdown
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[[rehypeKatex, { trust: false }]]}
-        urlTransform={(url) => (url.startsWith('openlet-file:') ? url : defaultUrlTransform(url))}
+        urlTransform={(url) => (attachmentLink.test(url) ? url : defaultUrlTransform(url))}
         components={{
           span: MathSpan,
           h1: ({ children }) => <h1 className="text-xl font-medium">{children}</h1>,
@@ -154,7 +157,7 @@ export function AgentMarkdown({ text }: { text: string }) {
               const [, label, storage, id] = mention[0];
               return (
                 <FileReference
-                  target={`openlet-file:${storage}/${id}`}
+                  target={`openlet-${text.trim().startsWith(':folder[') ? 'folder' : 'file'}:${storage}/${id}`}
                   label={label.replace(/\\(.)/g, '$1')}
                 />
               );
@@ -182,7 +185,7 @@ export function AgentMarkdown({ text }: { text: string }) {
             <td className="border-r border-b px-3 py-2 last:border-r-0">{children}</td>
           ),
           a: ({ href, children }) =>
-            href?.startsWith('openlet-file:') ? (
+            href && attachmentLink.test(href) ? (
               <FileReference target={href} label={children} />
             ) : (
               <a

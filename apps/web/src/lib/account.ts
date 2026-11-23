@@ -13,6 +13,7 @@ export const defaultPreferences: Preferences = {
 export type Account = {
   id: string;
   displayName: string;
+  handle?: string;
   avatarUrl?: string;
   appearance?: AgentAppearance;
   preferences?: Partial<Preferences>;

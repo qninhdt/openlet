@@ -37,6 +37,7 @@ import { MessageFiles } from './message-files';
 import { AgentMarkdown, HighlightedCode } from './agent-rich-content';
 import { useAgentPreview } from './agent-preview';
 import { InputItems } from './agent-inputs';
+import { ActivityIdentity } from './activity-identity';
 import type { ToolResult } from '@/lib/agent-presentation';
 import type { FileRef } from '@/lib/file-refs';
 
@@ -54,7 +55,7 @@ function ToolStep({
   props: ToolCallMessagePartProps;
   label: string;
   icon: ReactNode;
-  children: ReactNode;
+  children?: ReactNode;
   wide?: boolean;
 }) {
   const error = props.isError || props.status.type === 'incomplete';
@@ -75,17 +76,19 @@ function ToolStep({
         {props.status.type === 'running' ? (
           <LoaderCircle className="animate-spin motion-reduce:animate-none" />
         ) : (
-          !error && <Check />
+          !error && props.result !== undefined && <Check />
         )}
       </div>
-      <div
-        className={cn(
-          'max-w-full min-w-0 pt-3 pb-3 pl-5.5',
-          wide ? 'w-(--message-wide-bubble-width)' : 'w-fit',
-        )}
-      >
-        {children}
-      </div>
+      {children != null && (
+        <div
+          className={cn(
+            'max-w-full min-w-0 pt-3 pb-3 pl-5.5',
+            wide ? 'w-(--message-wide-bubble-width)' : 'w-fit',
+          )}
+        >
+          {children}
+        </div>
+      )}
     </div>
   );
 }
@@ -325,15 +328,18 @@ const ReactionTool: ToolCallMessagePartComponent = (props) => {
 const InboxTool: ToolCallMessagePartComponent = (props) => {
   const p = useAgentPreview();
   const result = resultOf(props);
-  const target = String(props.args.to ?? result.target ?? 'Inbox');
+  const [recipientKind, recipientHandle] = String(props.args.to ?? '').split(':', 2);
   const send = props.toolName === 'inbox_send';
+  const outgoing = result.messages ?? [];
   const list = props.toolName === 'inbox_list';
   return (
     <ToolStep
       props={props}
       label={
         send
-          ? `Sent a message to ${target}`
+          ? outgoing.length > 1
+            ? 'Sent messages'
+            : 'Sent a message'
           : list
             ? 'Checked inbox conversations'
             : 'Read inbox messages'
@@ -343,25 +349,38 @@ const InboxTool: ToolCallMessagePartComponent = (props) => {
       {send ? (
         <ActionCard>
           <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2.5 text-caption">
-            <AgentAvatar
+            <ActivityIdentity
+              kind="agent"
+              address={p.activityAgent.id}
               name={p.activityAgent.name}
-              agentId={p.activityAgent.id}
-              className="size-6"
             />
-            <span>{p.activityAgent.name}</span>
-            <ArrowRight className="size-3.5 text-muted-foreground" />
-            <span className="flex size-6 items-center justify-center rounded-md bg-muted">
-              <Network className="size-3.5 text-muted-foreground" />
-            </span>
-            <span className="font-medium">{target}</span>
+            <ArrowRight aria-label="to" className="size-3.5 shrink-0 text-muted-foreground" />
+            <ActivityIdentity
+              kind={result.recipient?.kind ?? (recipientKind === 'agent' ? 'agent' : 'user')}
+              address={result.recipient?.id ?? recipientHandle}
+              name={!result.recipient && !recipientHandle ? 'Recipient' : undefined}
+              className="font-medium"
+            />
           </div>
-          <div className="px-3 py-3 text-sm leading-relaxed">
-            <AgentMarkdown text={result.content ?? String(props.args.content ?? '')} />
-            <MessageFiles references={result.fileRefs} />
-          </div>
+          {outgoing.length > 0 && (
+            <div className="flex flex-col items-start gap-1 px-3 py-3 text-sm leading-relaxed">
+              {outgoing.map((message, index) => (
+                <div key={index} className="flex max-w-full flex-col gap-1">
+                  {message.content && (
+                    <div className="rounded-lg bg-muted px-3 py-2">
+                      <AgentMarkdown text={message.content} />
+                    </div>
+                  )}
+                  <MessageFiles references={message.fileRefs} />
+                </div>
+              ))}
+            </div>
+          )}
         </ActionCard>
-      ) : result.inputItems ? (
+      ) : result.inputItems?.length ? (
         <InputItems items={result.inputItems} />
+      ) : result.inputItems ? (
+        <EmptyResult icon={<Inbox />}>No matching messages.</EmptyResult>
       ) : list ? (
         <ActionCard>
           <ul className="divide-y">
@@ -443,10 +462,7 @@ const ScheduleTool: ToolCallMessagePartComponent = (props) => {
                     <Status>{item.status}</Status>
                   </div>
                   <p className="mt-1 text-caption text-muted-foreground">{item.detail}</p>
-                  <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <AgentAvatar name={item.meta ?? 'Pulse'} className="size-4" />
-                    {item.meta}
-                  </p>
+                  {item.meta && <ScheduleTarget target={item.meta} />}
                 </div>
               </li>
             ))}
@@ -498,12 +514,7 @@ const ScheduleTool: ToolCallMessagePartComponent = (props) => {
                 <Globe2 className="size-3.5 shrink-0" />
                 <span className="wrap-anywhere">{result.timezone}</span>
               </p>
-              {result.target && (
-                <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <AgentAvatar name={result.target} className="size-4" />
-                  {result.target}
-                </p>
-              )}
+              {result.target && <ScheduleTarget target={result.target} />}
             </div>
           </div>
           <p className="px-4 pb-4 text-caption leading-relaxed">
@@ -544,6 +555,31 @@ const ScheduleTool: ToolCallMessagePartComponent = (props) => {
     </ToolStep>
   );
 };
+
+function ScheduleTarget({ target }: { target: string }) {
+  const { activityAgent, graph, resource } = useAgentPreview();
+  const [team, member] = target.split('/', 2);
+  const box = graph.boxes.find((item) => item.handle === team || item.name === team);
+  const agent =
+    graph.agents.find((item) => item.box_id === box?.id && item.name === member) ??
+    graph.agents.find((item) => item.name === target || item.handle === target);
+  return (
+    <ActivityIdentity
+      kind={box && !member ? 'box' : 'agent'}
+      address={agent?.id ?? box?.id ?? (target === 'Leta' ? resource.id : undefined)}
+      name={
+        agent?.name ??
+        box?.name ??
+        (target === 'Leta'
+          ? resource.name
+          : target === activityAgent.name
+            ? activityAgent.name
+            : undefined)
+      }
+      className="mt-2 text-xs text-muted-foreground"
+    />
+  );
+}
 
 const HistoryTool: ToolCallMessagePartComponent = (props) => {
   const result = resultOf(props);
@@ -601,11 +637,81 @@ const ContextTool: ToolCallMessagePartComponent = (props) => {
         <ul className="divide-y">
           {result.items?.map((item) => (
             <li key={item.title} className="flex justify-between gap-3 px-4 py-2 text-caption">
-              <span>{item.title}</span>
+              <ActivityIdentity kind="user" address={item.address} name={item.title} />
               <span className="text-muted-foreground">{item.meta}</span>
             </li>
           ))}
         </ul>
+      </ActionCard>
+    </ToolStep>
+  );
+};
+const AgentStatusTool: ToolCallMessagePartComponent = (props) => {
+  const result = resultOf(props);
+  const details = result.agentStatus;
+  return (
+    <ToolStep props={props} label="Checked agent status" icon={<Users />}>
+      <ActionCard>
+        <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5">
+          <div className="min-w-0 space-y-1">
+            <ActivityIdentity
+              kind="agent"
+              address={result.target || String(props.args.target ?? '').replace(/^agent:/, '')}
+              name={result.title}
+              className="font-medium"
+            />
+            {details?.title && (
+              <p className="text-caption text-muted-foreground">
+                {details.title}
+                {details.leader && ' · Team lead'}
+              </p>
+            )}
+          </div>
+          <Status>
+            {result.status ? result.status[0].toUpperCase() + result.status.slice(1) : undefined}
+          </Status>
+        </div>
+        {!!details?.assignments.length && (
+          <div className="border-t px-3 py-2.5 text-caption">
+            <h3 className="mb-2 font-medium">Work received</h3>
+            <ul className="space-y-2">
+              {details.assignments.map((item, index) => (
+                <li key={item.message || index} className="space-y-1">
+                  <ActivityIdentity kind="agent" address={item.sender} />
+                  {item.label && <p className="font-medium">{item.label}</p>}
+                  {item.preview && (
+                    <p className="line-clamp-3 text-muted-foreground">
+                      <MessagePreview text={item.preview} />
+                    </p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {!!details?.activity.length && (
+          <div className="border-t px-3 py-2.5 text-caption">
+            <h3 className="mb-2 font-medium">Recent activity</h3>
+            <ul className="space-y-1.5">
+              {details.activity.map(({ tool, status, at }, index) => (
+                <li key={index} className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="capitalize">{tool.replaceAll('_', ' ')}</span>
+                  <span className="text-muted-foreground">
+                    {at && (
+                      <time dateTime={at}>
+                        {new Date(at).toLocaleTimeString([], {
+                          hour: 'numeric',
+                          minute: '2-digit',
+                        })}
+                      </time>
+                    )}
+                    {status === 'error' && <span className="ml-2 text-destructive">Failed</span>}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </ActionCard>
     </ToolStep>
   );
@@ -617,7 +723,7 @@ const BoxTool: ToolCallMessagePartComponent = (props) => {
   return (
     <ToolStep
       props={props}
-      label={`${name === 'box_create' ? 'Created' : deleted ? 'Archived' : 'Checked'} ${String(props.args.name ?? props.args.box ?? 'agent teams')}`}
+      label={`${name === 'box_create' ? 'Created' : deleted ? 'Archived' : 'Checked'} ${result.title || 'agent teams'}`}
       icon={deleted ? <Trash2 /> : <Network />}
     >
       {name === 'box_list' ? (
@@ -665,10 +771,14 @@ const BoxTool: ToolCallMessagePartComponent = (props) => {
           <div className="flex flex-col gap-3 p-4">
             {result.items?.map((item) => (
               <div key={item.title} className="flex items-start gap-3">
-                <AgentAvatar name={item.title} className="size-9 shrink-0" />
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium">{item.title}</span>
+                    <ActivityIdentity
+                      kind="agent"
+                      address={item.address}
+                      name={item.title}
+                      className="font-medium"
+                    />
                     <Badge variant={item.title === result.leader ? 'secondary' : 'outline'}>
                       {item.meta}
                     </Badge>
@@ -722,7 +832,13 @@ const HitlStatusTool: ToolCallMessagePartComponent = (props) => {
                     <Status>{item.status}</Status>
                   </div>
                   <p className="mt-1 text-caption text-muted-foreground">{item.detail}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">{item.meta}</p>
+                  {item.address && (
+                    <ActivityIdentity
+                      kind="user"
+                      address={item.address}
+                      className="mt-1 text-xs text-muted-foreground"
+                    />
+                  )}
                 </div>
               </li>
             ))}
@@ -752,9 +868,9 @@ const HitlStatusTool: ToolCallMessagePartComponent = (props) => {
           </div>
           <div className="flex flex-col gap-3 p-4">
             <p className="text-caption">{result.content}</p>
-            <p className="text-caption text-muted-foreground">
-              Decision from <span className="text-foreground">{result.target}</span>
-            </p>
+            {result.target && (
+              <ActivityIdentity kind="user" address={result.target} className="text-caption" />
+            )}
           </div>
           <p className="border-t bg-muted/30 px-4 py-3 text-xs text-muted-foreground">
             {result.summary}
@@ -809,9 +925,11 @@ const WebTool: ToolCallMessagePartComponent = (props) => {
 
 const UnknownTool: ToolCallMessagePartComponent = (props) => (
   <ToolStep props={props} label={props.toolName.replaceAll('_', ' ')} icon={<Search />}>
-    <p className="text-caption whitespace-pre-wrap text-muted-foreground">
-      {typeof props.result === 'string' ? props.result : 'This tool has no detailed preview.'}
-    </p>
+    {props.result !== undefined && (
+      <p className="text-caption whitespace-pre-wrap text-muted-foreground">
+        {typeof props.result === 'string' ? props.result : 'This tool has no detailed preview.'}
+      </p>
+    )}
   </ToolStep>
 );
 
@@ -837,6 +955,7 @@ const renderers = {
     history_search: HistoryTool,
     history_read: HistoryTool,
     get_context: ContextTool,
+    agent_status: AgentStatusTool,
     box_create: BoxTool,
     box_list: BoxTool,
     box_get: BoxTool,
@@ -856,7 +975,11 @@ export const agentToolRenderers = {
     Object.entries(renderers.by_name).map(([name, Renderer]) => [
       name,
       (props: ToolCallMessagePartProps) =>
-        typeof props.result === 'string' ? <UnknownTool {...props} /> : <Renderer {...props} />,
+        props.result === undefined || typeof props.result === 'string' ? (
+          <UnknownTool {...props} />
+        ) : (
+          <Renderer {...props} />
+        ),
     ]),
   ),
 };

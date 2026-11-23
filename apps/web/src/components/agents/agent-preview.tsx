@@ -245,11 +245,15 @@ function usePreviewState() {
   async function openFileReference(ref: FileRef, line?: number) {
     try {
       const node = await filesApi.stat(ref.storage_id, ref.node_id);
-      if (!node) throw new Error('This file is no longer available.');
+      if (!node) throw new Error('This attachment is no longer available.');
+      if (node.kind === 'folder') {
+        await navigate({ view: 'storage', storage: node.storage, folder: node.id, file: '' });
+        return;
+      }
       setFileNodes((current) => ({ ...current, [node.id]: node }));
       openFile(node, line);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not open file.');
+      toast.error(error instanceof Error ? error.message : 'Could not open attachment.');
     }
   }
   function insertFileIntoDraft(
@@ -258,7 +262,7 @@ function usePreviewState() {
     label = node.name,
     selection?: ComposerSelection,
   ) {
-    const ref = { label, storage_id: node.storage, node_id: node.id };
+    const ref = { label, storage_id: node.storage, node_id: node.id, kind: node.kind };
     const editor = composers.get(agentId);
     if (editor) editor.insertFile(ref, selection);
     else {

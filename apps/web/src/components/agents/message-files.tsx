@@ -36,7 +36,8 @@ function MessageFile({
   onPreview: () => void;
 }) {
   const p = useAgentPreview();
-  const image = (node?.mime ?? reference.mime ?? '').startsWith('image/');
+  const folder = (node?.kind ?? reference.kind) === 'folder';
+  const image = !folder && (node?.mime ?? reference.mime ?? '').startsWith('image/');
   async function download() {
     if (!node) return;
     try {
@@ -79,28 +80,40 @@ function MessageFile({
           onClick={() => void p.openFileReference(reference)}
         >
           <FileIcon
-            node={node ?? { kind: 'file', name: reference.label, mime: reference.mime ?? '' }}
+            node={
+              node ?? {
+                kind: folder ? 'folder' : 'file',
+                name: reference.label,
+                mime: reference.mime ?? '',
+              }
+            }
           />
           <span className="min-w-0">
             <span className="block truncate text-sm">{node?.name ?? reference.label}</span>
             <span className="block text-xs text-muted-foreground">
               {error
-                ? 'Unavailable · retry preview'
-                : node
-                  ? formatBytes(node.size)
-                  : 'Loading file…'}
+                ? folder
+                  ? 'Folder unavailable'
+                  : 'Unavailable · retry preview'
+                : folder
+                  ? 'Folder'
+                  : node
+                    ? formatBytes(node.size)
+                    : 'Loading file…'}
             </span>
           </span>
         </button>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label={`Download ${node?.name ?? reference.label}`}
-          disabled={!node || error}
-          onClick={() => void download()}
-        >
-          <Download />
-        </Button>
+        {!folder && (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={`Download ${node?.name ?? reference.label}`}
+            disabled={!node || error}
+            onClick={() => void download()}
+          >
+            <Download />
+          </Button>
+        )}
       </div>
     </Attachment>
   );

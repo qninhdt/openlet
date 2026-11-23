@@ -4,7 +4,7 @@ import { reduceActivityStream, type StreamingItem } from '../src/lib/agent-strea
 import { scheduleTiming } from '../src/lib/schedule-presentation.js';
 import type { ActivityEntry, LiveEvent } from '../src/lib/agent-api.js';
 
-test('activity adapters preserve actual snapshots and legacy tool text', () => {
+test('activity adapters render structured snapshots and tool errors', () => {
   const entry: ActivityEntry = {
     id: 'entry',
     agent_id: 'root',
@@ -12,9 +12,9 @@ test('activity adapters preserve actual snapshots and legacy tool text', () => {
     seq: 1,
     kind: 'tool_result',
     created_at: '2026-11-16T00:00:00Z',
-    payload: { name: 'file_read', text: 'Legacy file contents' },
+    payload: { name: 'file_read', text: 'File not found', status: 'error' },
   };
-  expect(activityToolResult(entry)).toBe('Legacy file contents');
+  expect(activityToolResult(entry)).toBe('File not found');
   const adapt = (name: string, data: NonNullable<ActivityEntry['payload']['ui']>['data']) =>
     activityToolResult({ ...entry, payload: { name, ui: { version: 1, kind: name, data } } });
   expect(
@@ -22,14 +22,26 @@ test('activity adapters preserve actual snapshots and legacy tool text', () => {
   ).toMatchObject({ file: { storage_id: 'storage', node_id: 'node', label: '~/report.txt' } });
   expect(
     adapt('inbox_send', {
-      content: ':file[Report]{name=storage/node}',
-      file_refs: [{ storage_id: 'storage', node_id: 'image', label: 'Photo', mime: 'image/png' }],
+      messages: [
+        { content: 'The report is ready.', file_refs: [] },
+        {
+          content: '',
+          file_refs: [
+            { storage_id: 'storage', node_id: 'folder', label: 'Research', kind: 'folder' },
+          ],
+        },
+      ],
     }),
   ).toMatchObject({
-    content: ':file[Report]{name=storage/node}',
-    fileRefs: [{ storage_id: 'storage', node_id: 'image', label: 'Photo', mime: 'image/png' }],
+    messages: [
+      { content: 'The report is ready.', fileRefs: [] },
+      {
+        content: '',
+        fileRefs: [{ storage_id: 'storage', node_id: 'folder', label: 'Research', kind: 'folder' }],
+      },
+    ],
   });
-  expect(adapt('file_read', { path: '~/legacy.txt', content: 'snapshot' })).toMatchObject({
+  expect(adapt('file_read', { path: '~/report.txt', content: 'snapshot' })).toMatchObject({
     content: 'snapshot',
     file: undefined,
   });

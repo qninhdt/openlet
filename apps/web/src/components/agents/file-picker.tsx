@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAgentPreview } from './agent-preview';
 import { rootId, type StorageNode } from '@/lib/storage-preview';
-import { StorageProvider } from '@/components/storage/storage-context';
+import { StorageProvider, useStorageBrowser } from '@/components/storage/storage-context';
+import { Button } from '@/components/ui/button';
 import { StoragePage } from '@/components/storage/storage-page';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
@@ -57,7 +58,7 @@ export function FilePicker({
     <Dialog open={open} onOpenChange={(value) => !value && onClose()}>
       <DialogContent className="flex h-[min(640px,85dvh)] max-w-3xl! flex-col gap-3">
         <DialogHeader>
-          <DialogTitle>Choose a file</DialogTitle>
+          <DialogTitle>Choose a file or folder</DialogTitle>
         </DialogHeader>
         <Select value={files.current} onValueChange={files.setStorage}>
           <SelectTrigger aria-label="Storage">
@@ -83,7 +84,12 @@ export function FilePicker({
               root={root}
               onOpenFile={onSelect}
             >
-              <StoragePage embedded />
+              <div className="flex h-full min-h-0 flex-col">
+                <div className="min-h-0 flex-1">
+                  <StoragePage embedded />
+                </div>
+                <AttachFolder onSelect={onSelect} />
+              </div>
             </StorageProvider>
           ) : (
             <p role="status" className="p-4 text-sm text-muted-foreground">
@@ -93,5 +99,18 @@ export function FilePicker({
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function AttachFolder({ onSelect }: { onSelect: (node: StorageNode) => void }) {
+  const browser = useStorageBrowser();
+  const folder = browser.path.at(-1);
+  if (!folder || browser.trash || folder.id === rootId(browser.storage.id)) return null;
+  return (
+    <div className="flex shrink-0 justify-end border-t p-2">
+      <Button size="sm" onClick={() => onSelect(folder)}>
+        Attach folder
+      </Button>
+    </div>
   );
 }

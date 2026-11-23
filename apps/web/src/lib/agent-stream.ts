@@ -16,6 +16,8 @@ export function reduceActivityStream(
   const agent = event.metadata?.openlet?.agentId;
   const run = event.metadata?.openlet?.runId;
   if (agent !== root || !run) return items;
+  if (event.type === 'RUN_FINISHED' || event.type === 'RUN_ERROR')
+    return items.filter((item) => item.run !== run);
   const text = event.type.startsWith('TEXT_MESSAGE_');
   const reasoning = event.type.startsWith('REASONING_MESSAGE_');
   const kind: StreamingItem['kind'] = reasoning ? 'reasoning' : text ? 'text' : 'tool';

@@ -55,7 +55,7 @@ export function ConversationComposer() {
         <div className="flex min-h-12 items-end gap-1 p-2">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon-sm" aria-label="Attach file">
+              <Button variant="ghost" size="icon-sm" aria-label="Add attachment">
                 <Plus />
               </Button>
             </DropdownMenuTrigger>
@@ -106,8 +106,11 @@ export function ConversationComposer() {
           <AlertDialogHeader>
             <AlertDialogTitle>Send a copy?</AlertDialogTitle>
             <AlertDialogDescription>
-              {p.profile.name} cannot read this file. Copy it to your conversation storage so both
-              of you can edit it.
+              {p.profile.name} cannot read this{' '}
+              {p.copyRequest?.node.kind === 'folder' ? 'folder' : 'file'}.
+              {p.copyRequest?.node.kind === 'folder'
+                ? ' Copy the folder and all its contents to your conversation storage.'
+                : ' Copy it to your conversation storage so both of you can edit it.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

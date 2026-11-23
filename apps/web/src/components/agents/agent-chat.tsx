@@ -29,10 +29,14 @@ import { MessageFiles } from './message-files';
 function ChatBubble() {
   const p = useAgentPreview();
   const id = useAuiState((s) => s.message.id);
-  const message = p.chatMessages.find((m) => messageKey(m) === id);
+  const index = p.chatMessages.findIndex((m) => messageKey(m) === id);
+  const message = p.chatMessages[index];
   // The external runtime can render an evicted row until it reconciles a refreshed page.
   if (!message) return null;
   const user = message.role === 'user';
+  const grouped =
+    !!message.message_group_id &&
+    p.chatMessages[index - 1]?.message_group_id === message.message_group_id;
   const lastMessage = p.chatMessages.at(-1);
   const latestMessage = p.live.chat.data?.pages[0]?.items[0];
   const showReceipt =
@@ -40,7 +44,7 @@ function ChatBubble() {
     message === lastMessage &&
     (!p.linkedMessage || (latestMessage?.role === message.role && latestMessage.id === message.id));
   return (
-    <MessageScrollerItem messageId={id}>
+    <MessageScrollerItem messageId={id} className={grouped ? '-mt-2' : undefined}>
       <MessagePrimitive.Root asChild>
         <Message align={user ? 'end' : 'start'}>
           <MessageContent className="gap-0.5">

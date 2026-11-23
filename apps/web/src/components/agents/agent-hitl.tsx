@@ -1,16 +1,20 @@
 import { MessageCircleQuestion, ShieldCheck } from 'lucide-react';
 import type { ToolResult } from '@/lib/agent-presentation';
+import { ActivityIdentity } from './activity-identity';
 
 function RequestSummary({
   type,
   inline,
   result,
+  recipient,
 }: {
   type: 'ask' | 'approval';
   inline: boolean;
   result?: unknown;
+  recipient?: string;
 }) {
-  const request = (result as ToolResult | undefined)?.request;
+  const presentation = result as ToolResult | undefined;
+  const request = presentation?.request;
   const Icon = type === 'ask' ? MessageCircleQuestion : ShieldCheck;
   return (
     <section
@@ -24,10 +28,15 @@ function RequestSummary({
             {request?.title ?? (type === 'ask' ? 'Questions sent' : 'Access requested')}
           </p>
           <p className="mt-1 text-caption text-muted-foreground">
-            {request?.status === 'pending'
-              ? 'Waiting for the addressed person'
-              : (request?.status ?? 'Pending')}
+            {request?.status === 'pending' ? 'Awaiting response' : (request?.status ?? 'Pending')}
           </p>
+          {(presentation?.target || recipient) && (
+            <ActivityIdentity
+              kind="user"
+              address={presentation?.target || recipient}
+              className="mt-2 text-caption"
+            />
+          )}
           {request?.response?.answers && (
             <dl className="mt-4 space-y-3">
               {request.payload.questions?.map((q) => (
@@ -54,15 +63,25 @@ function RequestSummary({
     </section>
   );
 }
-export function AskCard({ inline = false, result }: { inline?: boolean; result?: unknown }) {
-  return <RequestSummary type="ask" inline={inline} result={result} />;
+type RequestCardProps = { inline?: boolean; result?: unknown; args?: Record<string, unknown> };
+
+export function AskCard({ inline = false, result, args }: RequestCardProps) {
+  return (
+    <RequestSummary
+      type="ask"
+      inline={inline}
+      result={result}
+      recipient={typeof args?.user_handle === 'string' ? args.user_handle : undefined}
+    />
+  );
 }
-export function AccessRequestCard({
-  inline = false,
-  result,
-}: {
-  inline?: boolean;
-  result?: unknown;
-}) {
-  return <RequestSummary type="approval" inline={inline} result={result} />;
+export function AccessRequestCard({ inline = false, result, args }: RequestCardProps) {
+  return (
+    <RequestSummary
+      type="approval"
+      inline={inline}
+      result={result}
+      recipient={typeof args?.user_handle === 'string' ? args.user_handle : undefined}
+    />
+  );
 }

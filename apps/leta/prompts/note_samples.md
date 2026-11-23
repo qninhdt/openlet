@@ -1,3 +1,5 @@
+Here are some sample notes:
+
 ```text
 Maya asked me to update the new-starter checklist. It sends everyone to reception, but Jordan's Facilities memo says sponsors collect contractor badges. I updated the employee section in the draft and asked Jordan what remote sponsors should do. Once he replies, I can finish the contractor section and send Maya the revised draft. The help page still links to the old checklist, so update that link after Maya approves the new one.
 

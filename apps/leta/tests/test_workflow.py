@@ -22,8 +22,8 @@ async def test_consumed_late_admissions_do_not_wake_again_but_new_input_does(
 
     async def local(name: str, *args: object, **kwargs: object) -> dict[str, JSON]:
         if name == "admit_input":
-            message = cast(Message, args[0])
-            return await admissions[message.id]
+            messages = cast(list[Message], args[0])
+            return await admissions[messages[-1].id]
         return {}
 
     def start(*args: object, **kwargs: object) -> workflow.ActivityHandle[RunResult]:
@@ -67,7 +67,7 @@ async def test_consumed_late_admissions_do_not_wake_again_but_new_input_does(
     first, second = message(), message()
     handlers = [
         asyncio.ensure_future(
-            cast(Awaitable[dict[str, JSON]], Agent.receive(agent, value))
+            cast(Awaitable[dict[str, JSON]], Agent.receive(agent, [value]))
         )
         for value in (first, second)
     ]
@@ -83,24 +83,25 @@ async def test_consumed_late_admissions_do_not_wake_again_but_new_input_does(
 
     quiet = message().model_copy(update={"silent": True})
     admissions[quiet.id].set_result({"seq": 3})
-    await cast(Awaitable[dict[str, JSON]], Agent.receive(agent, quiet))
+    await cast(Awaitable[dict[str, JSON]], Agent.receive(agent, [quiet]))
     await asyncio.sleep(0.01)
     assert len(runs) == 1 and agent.admitted_seq == 2
 
     third = message()
     admissions[third.id].set_result({"seq": 3})
-    await cast(Awaitable[dict[str, JSON]], Agent.receive(agent, third))
+    await cast(Awaitable[dict[str, JSON]], Agent.receive(agent, [third]))
     await until(lambda: len(runs) == 2)
     assert agent.run_id is not None
     await cast(Awaitable[None], Agent.cancel_current(agent, agent.run_id))
     await asyncio.sleep(0.01)
     assert len(runs) == 2 and agent.suppressed_through == 3
 
-    fourth = message()
-    admissions[fourth.id].set_result({"seq": 4})
-    await cast(Awaitable[dict[str, JSON]], Agent.receive(agent, fourth))
+    fourth, fifth = message(), message()
+    admissions[fifth.id].set_result({"seq": 5})
+    await cast(Awaitable[dict[str, JSON]], Agent.receive(agent, [fourth, fifth]))
     await until(lambda: len(runs) == 3)
-    runs[2].set_result(RunResult(status="completed", inbox_cursor=4))
+    assert agent.admitted_seq == 5
+    runs[2].set_result(RunResult(status="completed", inbox_cursor=5))
     await until(lambda: agent.active is None)
     agent.stopping = True
     await asyncio.wait_for(execution, 2)
@@ -125,11 +126,11 @@ async def test_silent_delivery_never_calls_temporal(
         silent=True,
     )
 
-    async def admit(db: object, auth: object, value: Message) -> dict[str, JSON]:
-        assert value == message
+    async def admit(db: object, auth: object, value: list[Message]) -> dict[str, JSON]:
+        assert value == [message]
         return {"seq": 1}
 
     monkeypatch.setattr(messages, "admit", admit)
     # No config or Temporal client exists: this must only persist the input.
     services = cast(Services, SimpleNamespace(db=None, auth=None))
-    assert await deliver(services, message) == {"seq": 1}
+    assert await deliver(services, [message]) == {"seq": 1}
