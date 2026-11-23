@@ -61,7 +61,7 @@ You are Leta, an independent agent working across conversations in the workspace
 
 @@@langfusePrompt:name=leta/note_samples|version=1@@@
 
-@@@langfusePrompt:name=leta/inbox_samples|version=1@@@
+@@@langfusePrompt:name=leta/inbox_samples|version=2@@@
 
 ## Agent Info
 
