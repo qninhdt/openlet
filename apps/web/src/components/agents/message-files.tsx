@@ -25,14 +25,14 @@ function MessageFile({
   node,
   pending,
   error,
-  multiple,
+  singleImage,
   onPreview,
 }: {
   reference: FileRef;
   node?: StorageNode;
   pending: boolean;
   error: boolean;
-  multiple: boolean;
+  singleImage: boolean;
   onPreview: () => void;
 }) {
   const p = useAgentPreview();
@@ -51,15 +51,19 @@ function MessageFile({
       <button
         type="button"
         className={cn(
-          'overflow-hidden rounded-xl bg-muted outline-none focus-visible:ring-2 focus-visible:ring-ring',
-          multiple ? 'col-span-1 aspect-square' : 'col-span-2 aspect-4/3',
+          'min-h-16 min-w-0 overflow-hidden rounded-xl bg-muted outline-none focus-visible:ring-2 focus-visible:ring-ring',
+          singleImage && 'col-span-full',
         )}
         aria-label={`Preview ${node?.name ?? reference.label}`}
         disabled={!node || error}
         onClick={onPreview}
       >
         {node ? (
-          <StorageImage node={node} alt={node.name} className="block size-full" />
+          <StorageImage
+            node={node}
+            alt={node.name}
+            className="block w-full [&_img]:h-auto [&_img]:max-h-72 [&_img]:object-contain"
+          />
         ) : (
           <span className="p-3 text-caption text-muted-foreground">
             {error ? 'Image unavailable' : 'Loading image…'}
@@ -70,7 +74,7 @@ function MessageFile({
   return (
     <Attachment
       state={error ? 'error' : pending ? 'processing' : 'done'}
-      className="col-span-2 min-w-0 w-full"
+      className="col-span-full min-w-0 w-full"
     >
       <div className="flex min-w-0 w-full items-center gap-2 p-2">
         <button
@@ -147,11 +151,20 @@ export function MessageFiles({ references }: { references?: FileRef[] }) {
   const images = files.flatMap((file) =>
     file.data?.mime.startsWith('image/') && !file.isError ? [file.data] : [],
   );
+  const imageCount = unique.filter((ref, index) =>
+    (files[index].data?.mime ?? ref.mime ?? '').startsWith('image/'),
+  ).length;
   const imageIndex = images.findIndex((node) => `${node.storage}/${node.id}` === selected);
   if (!unique.length) return null;
   return (
     <>
-      <div className="grid w-80 max-w-full grid-cols-2 gap-1" aria-label="Attached files">
+      <div
+        className={cn(
+          'grid max-w-full grid-cols-[repeat(auto-fit,minmax(min(100%,7rem),1fr))] items-start gap-1',
+          imageCount > 1 ? 'w-2xl' : imageCount === 1 ? 'w-md' : 'w-80',
+        )}
+        aria-label="Attached files"
+      >
         {unique.map((ref, index) => (
           <MessageFile
             key={`${ref.storage_id}/${ref.node_id}`}
@@ -159,7 +172,7 @@ export function MessageFiles({ references }: { references?: FileRef[] }) {
             node={files[index].data}
             pending={files[index].isPending}
             error={files[index].isError}
-            multiple={unique.length > 1}
+            singleImage={imageCount === 1}
             onPreview={() => {
               trigger.current = document.activeElement as HTMLElement;
               setSelected(`${ref.storage_id}/${ref.node_id}`);
