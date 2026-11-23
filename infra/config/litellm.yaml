@@ -16,7 +16,7 @@ model_list:
       litellm_credential_name: vilao
       allowed_openai_params: [reasoning_effort]
     model_info:
-      max_input_tokens: 65536
+      max_input_tokens: 131072
       base_model: gpt-6.1-sol
       access_groups: [leta]
       supported_reasoning_efforts: [low, medium, high]
@@ -29,7 +29,7 @@ model_list:
       allowed_openai_params: [reasoning_effort]
     model_info:
       # Conservative deployment working bounds; not a provider capacity claim.
-      max_input_tokens: 65536
+      max_input_tokens: 131072
       max_output_tokens: 8192
       supported_reasoning_efforts: [low, medium, high]
       access_groups: [leta]

@@ -43,7 +43,9 @@ from langgraph.types import Command
 from openlet_sdk.config import JSON, ReasoningEffort, secret
 from openlet_sdk.inference import InferenceSettings, response_cost
 from opentelemetry import metrics
+from psycopg import AsyncConnection
 from psycopg import Error as DatabaseError
+from psycopg.rows import dict_row
 from psycopg_pool import PoolTimeout
 from temporalio import activity
 from temporalio.client import WorkflowUpdateFailedError
@@ -607,9 +609,17 @@ async def run(s: Services, lf: Langfuse, input: RunInput) -> RunResult:
                 pass
 
         stack.push_async_callback(stop_heartbeat)
-        lock = await stack.enter_async_context(s.db.connection())
+        # Closing the checkpoint session releases the lock even if acquisition is cancelled.
+        checkpoint_conn = await stack.enter_async_context(
+            await AsyncConnection[Row].connect(
+                dsn(s.config),
+                autocommit=True,
+                prepare_threshold=0,
+                row_factory=dict_row,
+            )
+        )
         row = await (
-            await lock.execute(
+            await checkpoint_conn.execute(
                 "SELECT pg_try_advisory_lock(hashtextextended(%s,2)) AS acquired",
                 (str(input.agent_id),),
             )
@@ -618,16 +628,7 @@ async def run(s: Services, lf: Langfuse, input: RunInput) -> RunResult:
         if not row["acquired"]:
             raise ApplicationError("agent writer is busy", type="writer_busy")
 
-        async def unlock() -> None:
-            await lock.execute(
-                "SELECT pg_advisory_unlock(hashtextextended(%s,2))",
-                (str(input.agent_id),),
-            )
-
-        stack.push_async_callback(unlock)
-        saver = await stack.enter_async_context(
-            AsyncPostgresSaver.from_conn_string(dsn(s.config))
-        )
+        saver = AsyncPostgresSaver(checkpoint_conn)
         agent = await runtime_agent(s, input.agent_id)
         ctx = Context(s, agent, input.run_id, Filesystem(s, agent))
         stack.push_async_callback(ctx.filesystem.close)
