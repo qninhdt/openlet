@@ -21,6 +21,7 @@ from mirage.runtime.python.monty.config import MontyConfig  # pyright: ignore[re
 from mirage.types import FileChangeKind, FileEvent
 from mirage.utils.path import expand_tilde, norm
 from openlet_api.letfs.v1 import letfs_pb2 as fs
+from openlet_api.platform.v1 import internal_pb2 as platform
 
 from ..auth import Actor
 from ..config import Services, redis_url
@@ -33,13 +34,14 @@ from .letfs import LetFS
 class StorageMount:
     root: UUID
     writable: bool
-    name: str
+    storage: UUID
 
 
 class Filesystem:
     def __init__(self, s: Services, agent: Row) -> None:
         self.s, self.agent = s, agent
         self.bindings: dict[str, StorageMount] = {}
+        self.mounted: dict[str, StorageMount] = {}
         self.discovered = 0.0
         self.workspace: Workspace | None = None
         self.session: Session | None = None
@@ -49,7 +51,7 @@ class Filesystem:
         if monotonic() - self.discovered < 30:
             return
         token = ""
-        bindings: dict[str, StorageMount] = {}
+        storages: list[fs.Storage] = []
         while True:
             response: fs.ListStoragesResponse = await self.s.files.ListStorages(
                 fs.ListStoragesRequest(
@@ -60,16 +62,52 @@ class Filesystem:
                 metadata=Actor("agent", cast(UUID, self.agent["leta_id"])).metadata,
                 timeout=15,
             )
-            for storage in response.storages:
-                if storage.id != str(self.agent["storage_id"]):
-                    bindings[storage.id] = StorageMount(
-                        UUID(storage.root_node_id),
-                        storage.capabilities.write,
-                        storage.name,
-                    )
+            storages.extend(response.storages)
             token = response.next_page_token
             if not token:
                 break
+        async with self.s.db.connection() as conn:
+            chats = await (
+                await conn.execute(
+                    "SELECT id,user_id FROM conversations WHERE leta_id=%s AND ready",
+                    (self.agent["leta_id"],),
+                )
+            ).fetchall()
+        chat_users = {str(row["id"]): str(row["user_id"]) for row in chats}
+        ids = list(
+            set(chat_users.values())
+            | {
+                storage.ownership.user_id
+                for storage in storages
+                if storage.ownership.user_id
+            }
+        )
+        handles: dict[str, str] = {}
+        for index in range(0, len(ids), 100):
+            result = await self.s.internal.BatchGetUsers(
+                platform.BatchGetUsersRequest(user_ids=ids[index : index + 100]),
+                timeout=15,
+            )
+            handles.update({user.id: user.handle for user in result.users})
+
+        bindings: dict[str, StorageMount] = {}
+        for storage in storages:
+            owner = storage.ownership
+            if owner.workspace_id:
+                mount = "/shared"
+            elif owner.user_id and (handle := handles.get(owner.user_id)):
+                mount = f"/user/{handle}"
+            elif owner.conversation_id and (
+                handle := handles.get(chat_users.get(owner.conversation_id, ""))
+            ):
+                mount = f"/chat/{handle}"
+            else:
+                continue
+            bindings[mount] = StorageMount(
+                UUID(storage.root_node_id),
+                storage.capabilities.write,
+                UUID(storage.id),
+            )
         self.bindings, self.discovered = bindings, monotonic()
 
     async def open(self) -> Session:
@@ -77,7 +115,7 @@ class Filesystem:
             return await self._open()
 
     async def _open(self) -> Session:
-        previous = self.bindings if self.workspace is not None else {}
+        previous = self.mounted
         await self.discover()
         actor = Actor("agent", cast(UUID, self.agent["leta_id"]))
         workspace = cast(UUID, self.agent["workspace_id"])
@@ -96,32 +134,33 @@ class Filesystem:
             self.workspace = Workspace(
                 {"/home": Mount(vfs=driver, mode=MountMode.EXEC, read=ReadSpec())},
                 network=True,
-                max_memory="32MB",
+                max_memory="64MB",
                 cache=RedisCacheConfig(
                     url=redis_url(self.s.config), key_prefix=cache_id + ":content:"
                 ),
                 index=RedisIndexConfig(
                     url=redis_url(self.s.config), key_prefix=cache_id + ":index:"
                 ),
-                runtimes=[MontyRuntime(config=MontyConfig(max_memory="16MB"))],
+                runtimes=[MontyRuntime(config=MontyConfig(max_memory="64MB"))],
                 env={"HOME": "/home", "PWD": "/home"},
             )
         ws = self.workspace
         if previous != self.bindings:
-            for id, binding in previous.items():
-                if id not in self.bindings or self.bindings[id].root != binding.root:
-                    await ws.unmount(f"/mnt/{id}")
-            for id, binding in self.bindings.items():
+            for mount, binding in previous.items():
+                new = self.bindings.get(mount)
+                if new is None or new.root != binding.root:
+                    await ws.unmount(mount)
+            for mount, binding in self.bindings.items():
                 mode = MountMode.EXEC if binding.writable else MountMode.READ
-                old = previous.get(id)
+                old = previous.get(mount)
                 if old is None or old.root != binding.root:
                     ws.add_mount(
-                        f"/mnt/{id}",
+                        mount,
                         LetFS(
                             self.s.files,
                             actor,
                             workspace,
-                            UUID(id),
+                            binding.storage,
                             binding.root,
                             settings,
                         ),
@@ -129,7 +168,8 @@ class Filesystem:
                         read=ReadSpec(),
                     )
                 elif old.writable != binding.writable:
-                    ws.set_mount_mode(f"/mnt/{id}", mode)
+                    ws.set_mount_mode(mount, mode)
+            self.mounted = self.bindings
         if self.session is None:
             self.session = await ws.session("tools")
         return self.session
@@ -168,22 +208,32 @@ async def shell(
     captured = bytearray()
     capture_limit = 1024 * 1024
     complete = True
-    async with asyncio.timeout(30):
-        execution = await session.shell(command, cwd=cwd, record=False, stream=True)
-        async with execution:
-            async for event in execution.events:
-                buffer.extend(event.data)
-                # Drain all events, retaining a bounded head and rolling tail in received order.
-                if len(buffer) > BYTE_BUDGET + 1:
-                    del buffer[BYTE_BUDGET // 2 : -(BYTE_BUDGET // 2 + 1)]
-                remaining = capture_limit - len(captured)
-                captured.extend(event.data[:remaining])
-                complete &= len(event.data) <= remaining
-            result = await execution.wait()
+    timed_out = False
+    try:
+        async with asyncio.timeout(60):
+            execution = await session.shell(command, cwd=cwd, record=False, stream=True)
+            async with execution:
+                async for event in execution.events:
+                    buffer.extend(event.data)
+                    # Retain a bounded head and rolling tail in received order.
+                    if len(buffer) > BYTE_BUDGET + 1:
+                        del buffer[BYTE_BUDGET // 2 : -(BYTE_BUDGET // 2 + 1)]
+                    remaining = capture_limit - len(captured)
+                    captured.extend(event.data[:remaining])
+                    complete &= len(event.data) <= remaining
+                result = await execution.wait()
+        code = result.exit_code
+    except TimeoutError:
+        timed_out, code = True, 124
     output = preview(bytes(buffer), BYTE_BUDGET) or "(no output)"
-    if result.exit_code:
-        output += f"\n\nCommand exited with code {result.exit_code}."
-    if result.exit_code == 126 and "Permission denied" in output:
+    if timed_out:
+        output = (
+            "Command exceeded the 60-second execution limit. File changes may be incomplete. "
+            "Inspect affected files before retrying.\n\nPartial output:\n" + output
+        )
+    elif code:
+        output += f"\n\nCommand exited with code {code}."
+    if code == 126 and "Permission denied" in output:
         output += (
             "\nThe shell may have rejected an unsupported command. Check the supported command list; "
             "this message alone does not establish a storage permission problem."
@@ -192,8 +242,10 @@ async def shell(
         try:
             await session.vfs.write(output_path, bytes(captured))
             output += f"\nSaved output: {output_path}"
+            if timed_out:
+                output += " (partial capture)"
             if not complete:
                 output += " (first 1 MiB only; the preview includes the final output)"
         except (ValueError, LookupError, OSError) as error:
-            output += f"\nCommand finished, but output could not be saved: {error}"
-    return output, result.exit_code
+            output += f"\nOutput could not be saved: {error}"
+    return output, code

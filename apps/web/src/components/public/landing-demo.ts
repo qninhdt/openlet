@@ -208,11 +208,11 @@ export function createLandingDemo() {
         leta_id: 'atlas',
         name: 'Friday launch',
         description: 'Prepare the research and launch brief.',
-        representative_agent_id: 'researcher',
+        leader_agent_id: 'researcher',
         state: 'active',
       },
     ],
-    edges: [{ box_id: 'launch', agent_low_id: 'researcher', agent_high_id: 'writer' }],
+    additional_links: [],
     schedules: [
       {
         id: 'weekly',
@@ -226,7 +226,7 @@ export function createLandingDemo() {
         paused: false,
       },
     ],
-    roots: profiles.map((p) => p.id),
+    letas: profiles.map((p) => p.id),
   };
   for (const [id, name, title, color] of [
     ['researcher', 'Nova', 'Market researcher', 'vert'],

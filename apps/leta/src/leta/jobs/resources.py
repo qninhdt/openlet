@@ -10,7 +10,7 @@ with workflow.unsafe.imports_passed_through():
     from openlet_sdk.config import JSON
     from pydantic import BaseModel
 
-    from ..agents import RootCreation, RootRequest
+    from ..agents import LetaCreation, LetaRequest
     from ..boxes import BoxCreation
 
 
@@ -19,7 +19,7 @@ class ResourceOperation(BaseModel):
     action: str
     request_id: UUID
     bridge_queue: str
-    root: RootRequest | None = None
+    leta: LetaRequest | None = None
     box: BoxCreation | None = None
 
 
@@ -43,11 +43,11 @@ class LetaLifecycle:
     @workflow.run
     async def run(self, operation: ResourceOperation) -> dict[str, JSON]:
         if operation.action == "create":
-            assert operation.root is not None
-            creation = RootCreation(
-                workspace_id=operation.root.workspace_id,
-                owner_id=operation.root.owner_id,
-                request=operation.root.request,
+            assert operation.leta is not None
+            creation = LetaCreation(
+                workspace_id=operation.leta.workspace_id,
+                owner_id=operation.leta.owner_id,
+                request=operation.leta.request,
                 leta_id=workflow.uuid4(),
                 storage_id=workflow.uuid4(),
                 root_node_id=workflow.uuid4(),
@@ -125,18 +125,11 @@ class BoxLifecycle:
     async def run(self, operation: ResourceOperation) -> dict[str, JSON]:
         if operation.action == "create":
             assert operation.box is not None
-            home = await workflow.execute_activity(
+            self.result = await workflow.execute_activity(
                 "provision_box",
                 operation.box,
                 retry_policy=RETRY,
                 start_to_close_timeout=timedelta(minutes=2),
-                result_type=UUID,
-            )
-            self.result = await workflow.execute_local_activity(
-                "prepare_box",
-                args=[operation.box, home],
-                retry_policy=RETRY,
-                start_to_close_timeout=timedelta(seconds=15),
                 result_type=dict[str, JSON],
             )
         else:

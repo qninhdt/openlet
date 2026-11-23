@@ -204,7 +204,12 @@ class Authorization:
         )
         return {
             "items": [
-                {"user_id": user.id, "name": user.display_name, "role": roles[user.id]}
+                {
+                    "user_id": user.id,
+                    "handle": user.handle,
+                    "name": user.display_name,
+                    "role": roles[user.id],
+                }
                 for user in users.users
             ],
             "next_cursor": next_cursor if len(roles) == 20 else None,

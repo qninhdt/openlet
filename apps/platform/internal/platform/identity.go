@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"encoding/json"
+	"github.com/jackc/pgx/v5"
 	"strings"
 
 	"github.com/clerk/clerk-sdk-go/v2/user"
@@ -36,11 +37,11 @@ func (s *Server) Onboard(ctx context.Context, _ *emptypb.Empty) (*pb.User, error
 			INSERT INTO users(id, clerk_subject, display_name, avatar_url)
 			VALUES($1, $2, $3, $4)
 			ON CONFLICT(clerk_subject) DO NOTHING
-			RETURNING id, display_name, avatar_url, appearance
+			RETURNING id, display_name, avatar_url, appearance, handle
 		)
-		SELECT id, display_name, avatar_url, appearance FROM inserted
+		SELECT id, display_name, avatar_url, appearance, handle FROM inserted
 		UNION ALL
-		SELECT id, display_name, avatar_url, appearance FROM users
+		SELECT id, display_name, avatar_url, appearance, handle FROM users
 		WHERE clerk_subject=$2 AND NOT EXISTS(SELECT 1 FROM inserted)
 	`, uuid.NewString(), subject, name, profile.ImageURL))
 	if err != nil {
@@ -68,7 +69,7 @@ func (s *Server) GetMe(ctx context.Context, _ *emptypb.Empty) (*pb.User, error) 
 	if err != nil {
 		return nil, err
 	}
-	u, err := scanUser(s.DB.QueryRow(ctx, `SELECT id,display_name,avatar_url,appearance FROM users WHERE clerk_subject=$1`, subject))
+	u, err := scanUser(s.DB.QueryRow(ctx, `SELECT id,display_name,avatar_url,appearance,handle FROM users WHERE clerk_subject=$1`, subject))
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +118,7 @@ func (s *Server) UpdateMe(ctx context.Context, r *pb.UpdateMeRequest) (*pb.User,
 	return s.GetMe(ctx, &emptypb.Empty{})
 }
 func (s *Server) BatchGetUsers(ctx context.Context, r *pb.BatchGetUsersRequest) (*pb.BatchGetUsersResponse, error) {
-	rows, err := s.DB.Query(ctx, `SELECT id,display_name,avatar_url,appearance FROM users WHERE id=ANY($1::uuid[])`, r.UserIds)
+	rows, err := s.DB.Query(ctx, `SELECT id,display_name,avatar_url,appearance,handle FROM users WHERE id=ANY($1::uuid[])`, r.UserIds)
 	if err != nil {
 		return nil, err
 	}
@@ -131,4 +132,12 @@ func (s *Server) BatchGetUsers(ctx context.Context, r *pb.BatchGetUsersRequest) 
 		out.Users = append(out.Users, u)
 	}
 	return out, rows.Err()
+}
+
+func (s *Server) GetUserByHandle(ctx context.Context, r *pb.UserHandleRequest) (*pb.User, error) {
+	user, err := scanUser(s.DB.QueryRow(ctx, `SELECT id,display_name,avatar_url,appearance,handle FROM users WHERE handle=$1`, r.Handle))
+	if err == pgx.ErrNoRows {
+		return nil, notFound("user")
+	}
+	return user, err
 }

@@ -200,6 +200,7 @@ function AgentCreateForm() {
               <FieldLabel htmlFor="agent-name">Name</FieldLabel>
               <Input
                 id="agent-name"
+                pattern="[A-Za-z]+"
                 required
                 maxLength={255}
                 value={draft.name}
@@ -211,6 +212,7 @@ function AgentCreateForm() {
             <FieldLabel htmlFor="agent-title">Title</FieldLabel>
             <Input
               id="agent-title"
+              required
               maxLength={255}
               value={draft.title}
               onChange={(event) => updateDraft({ title: event.target.value })}

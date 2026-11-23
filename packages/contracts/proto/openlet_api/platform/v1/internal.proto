@@ -8,7 +8,10 @@ message CreateWorkspaceRequest { string owner_user_id = 1 [(buf.validate.field).
 message BatchGetUsersRequest { repeated string user_ids = 1 [(buf.validate.field).repeated = {max_items: 100, items: {string: {uuid: true}}}]; }
 message BatchGetUsersResponse { repeated User users = 1; }
 message CheckWorkspaceActiveRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; }
+message UserHandleRequest { string handle = 1; }
 service PlatformInternalService {
+ rpc GetUserByHandle(UserHandleRequest) returns (User);
+ rpc GetWorkspaceInfo(WorkspaceRequest) returns (Workspace);
  rpc CheckWorkspaceActive(CheckWorkspaceActiveRequest) returns (google.protobuf.Empty);
  rpc CreateWorkspace(CreateWorkspaceRequest) returns (Workspace);
  rpc BatchGetUsers(BatchGetUsersRequest) returns (BatchGetUsersResponse);

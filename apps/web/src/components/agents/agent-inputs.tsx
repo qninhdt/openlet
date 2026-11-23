@@ -28,7 +28,7 @@ function PersonInput({ item }: { item: InputItem }) {
       data-input={item.preview ? 'notification' : 'message'}
       className="flex min-w-0 gap-2 py-1"
     >
-      {item.source_kind === 'agent' || item.source_kind === 'box' ? (
+      {item.source_kind === 'agent' ? (
         <AgentAvatar
           name={item.source_name ?? 'Agent'}
           agentId={item.source_id}

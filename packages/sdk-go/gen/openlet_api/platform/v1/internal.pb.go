@@ -215,6 +215,50 @@ func (x *CheckWorkspaceActiveRequest) GetWorkspaceId() string {
 	return ""
 }
 
+type UserHandleRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Handle        string                 `protobuf:"bytes,1,opt,name=handle,proto3" json:"handle,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UserHandleRequest) Reset() {
+	*x = UserHandleRequest{}
+	mi := &file_openlet_api_platform_v1_internal_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UserHandleRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UserHandleRequest) ProtoMessage() {}
+
+func (x *UserHandleRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_openlet_api_platform_v1_internal_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UserHandleRequest.ProtoReflect.Descriptor instead.
+func (*UserHandleRequest) Descriptor() ([]byte, []int) {
+	return file_openlet_api_platform_v1_internal_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *UserHandleRequest) GetHandle() string {
+	if x != nil {
+		return x.Handle
+	}
+	return ""
+}
+
 var File_openlet_api_platform_v1_internal_proto protoreflect.FileDescriptor
 
 const file_openlet_api_platform_v1_internal_proto_rawDesc = "" +
@@ -230,8 +274,12 @@ const file_openlet_api_platform_v1_internal_proto_rawDesc = "" +
 	"\x15BatchGetUsersResponse\x12/\n" +
 	"\x05users\x18\x01 \x03(\v2\x19.openlet.platform.v1.UserR\x05users\"J\n" +
 	"\x1bCheckWorkspaceActiveRequest\x12+\n" +
-	"\fworkspace_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\vworkspaceId2\xc3\x02\n" +
-	"\x17PlatformInternalService\x12`\n" +
+	"\fworkspace_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\vworkspaceId\"+\n" +
+	"\x11UserHandleRequest\x12\x16\n" +
+	"\x06handle\x18\x01 \x01(\tR\x06handle2\xf4\x03\n" +
+	"\x17PlatformInternalService\x12T\n" +
+	"\x0fGetUserByHandle\x12&.openlet.platform.v1.UserHandleRequest\x1a\x19.openlet.platform.v1.User\x12Y\n" +
+	"\x10GetWorkspaceInfo\x12%.openlet.platform.v1.WorkspaceRequest\x1a\x1e.openlet.platform.v1.Workspace\x12`\n" +
 	"\x14CheckWorkspaceActive\x120.openlet.platform.v1.CheckWorkspaceActiveRequest\x1a\x16.google.protobuf.Empty\x12^\n" +
 	"\x0fCreateWorkspace\x12+.openlet.platform.v1.CreateWorkspaceRequest\x1a\x1e.openlet.platform.v1.Workspace\x12f\n" +
 	"\rBatchGetUsers\x12).openlet.platform.v1.BatchGetUsersRequest\x1a*.openlet.platform.v1.BatchGetUsersResponseBSZQgithub.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/platform/v1;platformv1b\x06proto3"
@@ -248,26 +296,32 @@ func file_openlet_api_platform_v1_internal_proto_rawDescGZIP() []byte {
 	return file_openlet_api_platform_v1_internal_proto_rawDescData
 }
 
-var file_openlet_api_platform_v1_internal_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_openlet_api_platform_v1_internal_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
 var file_openlet_api_platform_v1_internal_proto_goTypes = []any{
 	(*CreateWorkspaceRequest)(nil),      // 0: openlet.platform.v1.CreateWorkspaceRequest
 	(*BatchGetUsersRequest)(nil),        // 1: openlet.platform.v1.BatchGetUsersRequest
 	(*BatchGetUsersResponse)(nil),       // 2: openlet.platform.v1.BatchGetUsersResponse
 	(*CheckWorkspaceActiveRequest)(nil), // 3: openlet.platform.v1.CheckWorkspaceActiveRequest
-	(*User)(nil),                        // 4: openlet.platform.v1.User
-	(*emptypb.Empty)(nil),               // 5: google.protobuf.Empty
-	(*Workspace)(nil),                   // 6: openlet.platform.v1.Workspace
+	(*UserHandleRequest)(nil),           // 4: openlet.platform.v1.UserHandleRequest
+	(*User)(nil),                        // 5: openlet.platform.v1.User
+	(*WorkspaceRequest)(nil),            // 6: openlet.platform.v1.WorkspaceRequest
+	(*Workspace)(nil),                   // 7: openlet.platform.v1.Workspace
+	(*emptypb.Empty)(nil),               // 8: google.protobuf.Empty
 }
 var file_openlet_api_platform_v1_internal_proto_depIdxs = []int32{
-	4, // 0: openlet.platform.v1.BatchGetUsersResponse.users:type_name -> openlet.platform.v1.User
-	3, // 1: openlet.platform.v1.PlatformInternalService.CheckWorkspaceActive:input_type -> openlet.platform.v1.CheckWorkspaceActiveRequest
-	0, // 2: openlet.platform.v1.PlatformInternalService.CreateWorkspace:input_type -> openlet.platform.v1.CreateWorkspaceRequest
-	1, // 3: openlet.platform.v1.PlatformInternalService.BatchGetUsers:input_type -> openlet.platform.v1.BatchGetUsersRequest
-	5, // 4: openlet.platform.v1.PlatformInternalService.CheckWorkspaceActive:output_type -> google.protobuf.Empty
-	6, // 5: openlet.platform.v1.PlatformInternalService.CreateWorkspace:output_type -> openlet.platform.v1.Workspace
-	2, // 6: openlet.platform.v1.PlatformInternalService.BatchGetUsers:output_type -> openlet.platform.v1.BatchGetUsersResponse
-	4, // [4:7] is the sub-list for method output_type
-	1, // [1:4] is the sub-list for method input_type
+	5, // 0: openlet.platform.v1.BatchGetUsersResponse.users:type_name -> openlet.platform.v1.User
+	4, // 1: openlet.platform.v1.PlatformInternalService.GetUserByHandle:input_type -> openlet.platform.v1.UserHandleRequest
+	6, // 2: openlet.platform.v1.PlatformInternalService.GetWorkspaceInfo:input_type -> openlet.platform.v1.WorkspaceRequest
+	3, // 3: openlet.platform.v1.PlatformInternalService.CheckWorkspaceActive:input_type -> openlet.platform.v1.CheckWorkspaceActiveRequest
+	0, // 4: openlet.platform.v1.PlatformInternalService.CreateWorkspace:input_type -> openlet.platform.v1.CreateWorkspaceRequest
+	1, // 5: openlet.platform.v1.PlatformInternalService.BatchGetUsers:input_type -> openlet.platform.v1.BatchGetUsersRequest
+	5, // 6: openlet.platform.v1.PlatformInternalService.GetUserByHandle:output_type -> openlet.platform.v1.User
+	7, // 7: openlet.platform.v1.PlatformInternalService.GetWorkspaceInfo:output_type -> openlet.platform.v1.Workspace
+	8, // 8: openlet.platform.v1.PlatformInternalService.CheckWorkspaceActive:output_type -> google.protobuf.Empty
+	7, // 9: openlet.platform.v1.PlatformInternalService.CreateWorkspace:output_type -> openlet.platform.v1.Workspace
+	2, // 10: openlet.platform.v1.PlatformInternalService.BatchGetUsers:output_type -> openlet.platform.v1.BatchGetUsersResponse
+	6, // [6:11] is the sub-list for method output_type
+	1, // [1:6] is the sub-list for method input_type
 	1, // [1:1] is the sub-list for extension type_name
 	1, // [1:1] is the sub-list for extension extendee
 	0, // [0:1] is the sub-list for field type_name
@@ -285,7 +339,7 @@ func file_openlet_api_platform_v1_internal_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_openlet_api_platform_v1_internal_proto_rawDesc), len(file_openlet_api_platform_v1_internal_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   4,
+			NumMessages:   5,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

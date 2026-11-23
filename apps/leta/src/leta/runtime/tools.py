@@ -14,10 +14,22 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.tools import BaseTool
 from langfuse import propagate_attributes
 from mirage import ContentType, FileStat, Session
+from openlet_api.platform.v1 import internal_pb2 as platform
+from openlet_api.platform.v1 import platform_pb2 as platform_api
 from openlet_sdk.config import JSON
 from pydantic import Field
 
-from .. import boxes, file_refs, history, hitl, messages, reactions, schedules
+from .. import (
+    box_views,
+    boxes,
+    conversations,
+    file_refs,
+    history,
+    hitl,
+    messages,
+    reactions,
+    schedules,
+)
 from ..agents import json_row, stable
 from ..auth import Actor
 from ..boxes import BoxCreation, CreateBox, LetiDefinition
@@ -61,7 +73,7 @@ class Context:
         return cast(UUID, self.agent["id"])
 
     @property
-    def root(self) -> UUID:
+    def leta_id(self) -> UUID:
         return cast(UUID, self.agent["leta_id"])
 
 
@@ -74,6 +86,36 @@ async def session(runtime: ToolRuntime[Context, State]) -> Session:
     return await runtime.context.filesystem.open()
 
 
+async def user_id(ctx: Context, handle: str) -> UUID:
+    try:
+        user = await ctx.services.internal.GetUserByHandle(
+            platform.UserHandleRequest(handle=handle), timeout=15
+        )
+    except grpc.aio.AioRpcError as error:
+        if error.code() == grpc.StatusCode.NOT_FOUND:
+            raise LookupError("user handle not found") from None
+        raise
+    return UUID(user.id)
+
+
+async def inbox_address(ctx: Context, address: str) -> tuple[str, UUID]:
+    kind, _, handle = address.partition(":")
+    if kind == "user" and handle:
+        return kind, await user_id(ctx, handle)
+    if kind == "agent" and handle:
+        async with ctx.services.db.connection() as conn:
+            agent = await (
+                await conn.execute(
+                    "SELECT id FROM agents WHERE leta_id=%s AND handle=%s",
+                    (ctx.leta_id, handle),
+                )
+            ).fetchone()
+        if agent is None:
+            raise LookupError("agent handle not found")
+        return kind, cast(UUID, agent["id"])
+    raise ValueError("Use a user:<handle> or agent:<handle> address")
+
+
 @tool(response_format="content_and_artifact")
 async def inbox_send(
     runtime: ToolRuntime[Context, State],
@@ -84,8 +126,9 @@ async def inbox_send(
         list[Annotated[str, Field(min_length=1, max_length=4096)]] | None,
         Field(max_length=20),
     ] = None,
+    task_label: Annotated[str | None, Field(max_length=255)] = None,
 ) -> tuple[JSON, dict[str, JSON]]:
-    """Send to a box name, permitted teammate name, root, or human user_id; use the inbox's to address for ordinary messages. Optional in_reply_to quotes a specific incoming message: use it only when that reference matters, such as an older request or parallel tasks; then to may be omitted. attachments accepts file paths; mention a file inline with :file[label]{path=path}. Mentions are inline links; only attachments creates file cards. Send text, files, or both, up to 20 distinct files. Files a user cannot read are copied into the private conversation storage."""
+    """Send text and optional file attachments to user:<handle> or a permitted agent:<handle>. Quote a received message by its number with in_reply_to. Paths can also be linked inline using :file[label]{path=path}. Use task_label for a short assignment label."""
     from ..worker import deliver
 
     ctx = runtime.context
@@ -98,75 +141,35 @@ async def inbox_send(
         else None
     )
     if original and (
-        original["source_kind"] not in ("user", "agent", "box")
-        or original.get("input_type", "message") != "message"
+        original["source_kind"] not in ("user", "agent")
+        or original["input_type"] != "message"
     ):
         raise ValueError("System events are not reply destinations")
-    if to is None and original is None:
-        raise ValueError("New messages require to; replies require in_reply_to")
-    async with s.db.connection() as conn:
-        if original and to is None:
-            if original["source_kind"] == "box":
-                query, params = (
-                    "SELECT representative_agent_id AS id, id AS box_id FROM boxes WHERE id=%s",
-                    (original["source_id"],),
-                )
-            elif original["source_kind"] == "agent":
-                query, params = (
-                    "SELECT id,box_id FROM agents WHERE id=%s AND leta_id=%s",
-                    (original["source_id"], ctx.root),
-                )
-            else:
-                query, params = (
-                    "SELECT %s::uuid AS id,NULL::uuid AS box_id",
-                    (original["source_id"],),
-                )
-            recipient = await (await conn.execute(query, params)).fetchone()
-        elif ctx.id == ctx.root:
-            recipient = await (
-                await conn.execute(
-                    "SELECT representative_agent_id AS id,id AS box_id FROM boxes WHERE leta_id=%s AND name=%s AND state='active'",
-                    (ctx.root, to),
-                )
-            ).fetchone()
-        elif to == "root":
-            recipient = {"id": ctx.root, "box_id": None}
-        else:
-            recipient = await (
-                await conn.execute(
-                    "SELECT id,box_id FROM agents WHERE leta_id=%s AND box_id=%s AND name=%s",
-                    (ctx.root, agent["box_id"], to),
-                )
-            ).fetchone()
-        human = bool(original and original["source_kind"] == "user" and to is None)
-        if recipient is None:
-            if ctx.id != ctx.root:
-                raise ValueError("recipient is outside the communication graph")
-            try:
-                target = UUID(str(to))
-            except ValueError:
-                raise LookupError(
-                    "recipient not found; use an exact box name or member user_id"
-                ) from None
-            human = True
-        else:
-            target = cast(UUID, recipient["id"])
-        if original:
-            expected = original["source_id"]
-            if original["source_kind"] == "box":
-                matched = recipient is not None and recipient["box_id"] == expected
-            else:
-                matched = target == expected
-            if not matched:
-                raise ValueError("to does not match the sender of in_reply_to")
-    if (
-        target == ctx.root
-        and ctx.id != ctx.root
-        and agent["representative_agent_id"] != ctx.id
+    if to is not None:
+        kind, target = await inbox_address(ctx, to)
+    elif original:
+        kind, target = str(original["source_kind"]), cast(UUID, original["source_id"])
+    else:
+        raise ValueError("Provide to or in_reply_to")
+    if original and (
+        kind != original["source_kind"] or target != original["source_id"]
     ):
-        raise ValueError(
-            "Only the representative can contact root; send the result through your permitted teammates"
-        )
+        raise ValueError("to does not match the sender of in_reply_to")
+    human = kind == "user"
+    if human and ctx.id != ctx.leta_id:
+        raise ValueError("Only Leta can message users")
+    if not human:
+        async with s.db.connection() as conn:
+            recipient = await (
+                await conn.execute(
+                    "SELECT id,leta_id,box_id FROM agents WHERE id=%s",
+                    (target,),
+                )
+            ).fetchone()
+            if recipient is None or not await messages.can_contact(
+                conn, agent, recipient
+            ):
+                raise ValueError("recipient is outside the communication graph")
     id = request_id(runtime)
     if human:
         await s.auth.require(
@@ -189,8 +192,8 @@ async def inbox_send(
         refs: list[JSON] = await file_refs.validate(
             s,
             cast(UUID, agent["workspace_id"]),
-            Actor("agent", ctx.root),
-            Actor("user", target) if human else Actor("agent", ctx.root),
+            Actor("agent", ctx.leta_id),
+            Actor("user", target) if human else Actor("agent", ctx.leta_id),
             content + "\n" + attachment_content,
             copy_request=id if human else None,
         )
@@ -228,45 +231,39 @@ async def inbox_send(
         for _, storage, node in file_refs.references(attachment_content)
     ]
     if human:
+        await conversations.storage(s, ctx.leta_id, target)
         await messages.deliver_user(
             s.db,
-            ctx.root,
+            ctx.leta_id,
             target,
             content,
             id,
             cast(UUID, original["conversation_id"])
             if original
-            else messages.conversation(ctx.root, "user", target),
+            else messages.conversation(ctx.leta_id, "user", target),
             cast(UUID, original["id"]) if original else None,
             refs,
         )
+        ctx.filesystem.discovered = 0
         from .. import events
 
-        await events.changed(s.redis, ctx.root, "messages", id, target)
+        await events.changed(s.redis, ctx.leta_id, "messages", id, target)
     else:
-        assert recipient is not None
-        source_kind = "box" if target == ctx.root and agent["box_id"] else "agent"
-        source = cast(UUID, agent["box_id"]) if source_kind == "box" else ctx.id
-        endpoint = cast(UUID, recipient["box_id"]) if recipient["box_id"] else source
-        conversation = (
-            cast(UUID, original["conversation_id"])
-            if original
-            else messages.conversation(
-                ctx.root,
-                "box" if recipient["box_id"] or agent["box_id"] else "agent",
-                endpoint,
-            )
-        )
         await deliver(
             s,
             Message(
                 id=id,
                 recipient_agent_id=target,
-                source_kind=source_kind,
-                source_id=source,
-                conversation_id=conversation,
+                source_kind="agent",
+                source_id=ctx.id,
+                conversation_id=(
+                    cast(UUID, original["conversation_id"])
+                    if original
+                    else messages.agent_conversation(ctx.id, target)
+                ),
                 content=content,
                 file_refs=refs,
+                task_label=task_label,
                 in_reply_to_message_id=cast(UUID, original["id"]) if original else None,
             ),
         )
@@ -279,17 +276,21 @@ async def inbox_send(
 @tool(response_format="content_and_artifact")
 async def inbox_react(
     runtime: ToolRuntime[Context, State],
+    source: str,
     message: Annotated[int, Field(ge=1)],
     emoji: str,
     action: Literal["add", "remove"] = "add",
 ) -> tuple[JSON, dict[str, JSON]]:
-    """React to a received user or teammate message using its inbox message number. One emoji per agent per message; add replaces your previous emoji, remove clears it. Feedback is silent and does not wake another agent."""
+    """React to a received user or teammate message using its sender address and inbox message number. One emoji per agent per message; add replaces your previous emoji, remove clears it. Feedback is silent and does not wake another agent."""
     ctx = runtime.context
+    kind, sender = await inbox_address(ctx, source)
     original = await messages.incoming(ctx.services.db, ctx.id, message)
+    if original["source_kind"] != kind or original["source_id"] != sender:
+        raise LookupError("Message number does not belong to that conversation")
     result = await reactions.react(
         ctx.services.db,
         ctx.services.auth,
-        ctx.root,
+        ctx.leta_id,
         cast(UUID, original["id"]),
         "incoming",
         Actor("agent", ctx.id),
@@ -301,12 +302,12 @@ async def inbox_react(
 
     await events.changed(
         ctx.services.redis,
-        ctx.root,
+        ctx.leta_id,
         "reactions",
         cast(UUID, original["id"]),
         UUID(str(result["user_id"])) if result["user_id"] else None,
     )
-    return presented("reaction", result, result)
+    return presented("reaction", {"sent": True}, result)
 
 
 @tool(response_format="content_and_artifact")
@@ -314,108 +315,163 @@ async def inbox_list(
     runtime: ToolRuntime[Context, State],
     cursor: str = "",
     unread_only: bool = True,
-    source_id: UUID | None = None,
 ) -> tuple[JSON, dict[str, JSON]]:
     """List inbox notifications grouped by conversation, including silent feedback that does not wake you."""
     ctx = runtime.context
-    result, rows = await messages.list_inbox(
-        ctx.services.db, ctx.id, int(cursor or 0), unread_only, source_id
+    rows = await messages.list_inbox(
+        ctx.services.db, ctx.id, int(cursor or 0), unread_only
     )
+    await messages.name_users(ctx.services.internal, rows)
+    result = (
+        messages.input_batch(rows, root=True)
+        or "No messages matching this inbox filter."
+    )
+    if len(rows) == 20:
+        result += f"\nNext cursor: {rows[-1]['seq']}"
     return result, {"ui": messages.input_data(rows, root=True)}
 
 
 @tool(response_format="content_and_artifact")
 async def inbox_read(
     runtime: ToolRuntime[Context, State],
-    message: Annotated[int, Field(ge=1)],
+    source: str,
     cursor: str = "",
     unread_only: bool = True,
 ) -> tuple[str, dict[str, JSON]]:
-    """Read up to 20 unread messages in the conversation containing message, oldest first, and mark them read. message selects the conversation, not a starting position; cursor continues after a sequence. unread_only=false also rereads previously read messages."""
+    """Read up to 20 messages from the conversation with user:<handle> or agent:<handle>. By default, read only unread messages. Use the returned cursor for the next page."""
     ctx = runtime.context
-    text, rows = await messages.read(
-        ctx.services.db,
-        ctx.id,
-        message,
-        int(cursor or 0),
-        unread_only,
+    kind, sender = await inbox_address(ctx, source)
+    rows = await messages.read(
+        ctx.services.db, ctx.id, sender, kind, int(cursor or 0), unread_only
     )
-    from .. import events
-
-    for user in {
-        cast(UUID, row["source_id"]) for row in rows if row["source_kind"] == "user"
-    }:
+    await messages.name_users(ctx.services.internal, rows)
+    if rows:
         async with ctx.services.db.connection() as conn:
             await conn.execute(
-                "UPDATE agent_messages SET processing_run_id=%s WHERE recipient_agent_id=%s AND source_kind='user' AND source_id=%s AND id=ANY(%s)",
-                (ctx.run_id, ctx.id, user, [row["id"] for row in rows]),
+                "UPDATE agent_messages SET processing_run_id=coalesce(processing_run_id,%s) WHERE id=ANY(%s)",
+                (ctx.run_id, [row["id"] for row in rows]),
             )
-        await events.changed(ctx.services.redis, ctx.root, "messages", ctx.id, user)
+        if kind == "user":
+            from .. import events
+
+            await events.changed(
+                ctx.services.redis, ctx.leta_id, "messages", ctx.id, sender
+            )
+    text = (
+        messages.input_batch(rows, root=False)
+        or "No messages matching this conversation and filter."
+    )
+    if len(rows) == 20:
+        text += f"\nNext cursor: {rows[-1]['seq']}"
     return text, {"ui": messages.input_data(rows, root=False)}
 
 
 @tool(response_format="content_and_artifact")
-async def workspace_get(
-    runtime: ToolRuntime[Context, State], cursor: UUID | None = None
+async def get_context(
+    runtime: ToolRuntime[Context, State],
 ) -> tuple[JSON, dict[str, JSON]]:
-    """Get your identity, home and allowed messaging recipients."""
+    """Get the current workspace snapshot, including members, chats and their paths, accessible storage, and brief summaries of open HITL requests, schedules, and active Boxes. Call once at the start of a fresh Leta thread and once after context compaction. Reuse the snapshot for subsequent work."""
     ctx = runtime.context
-    async with ctx.services.db.connection() as conn:
-        if ctx.agent["box_id"] is None:
-            rows = await (
-                await conn.execute(
-                    "SELECT id,name,description FROM boxes WHERE leta_id=%s AND state='active' AND (%s::uuid IS NULL OR id>%s) ORDER BY id LIMIT 20",
-                    (ctx.root, cursor, cursor),
-                )
-            ).fetchall()
-        else:
-            rows = await (
-                await conn.execute(
-                    """SELECT a.id,a.name,a.description FROM agents a JOIN box_edges e ON
-                (e.agent_low_id=%s AND e.agent_high_id=a.id) OR (e.agent_high_id=%s AND e.agent_low_id=a.id)
-                WHERE e.box_id=%s AND (%s::uuid IS NULL OR a.id>%s) ORDER BY a.id LIMIT 20""",
-                    (ctx.id, ctx.id, ctx.agent["box_id"], cursor, cursor),
-                )
-            ).fetchall()
-            box = await (
-                await conn.execute(
-                    "SELECT representative_agent_id FROM boxes WHERE id=%s",
-                    (ctx.agent["box_id"],),
-                )
-            ).fetchone()
-            if box and box["representative_agent_id"] == ctx.id and cursor is None:
-                rows.insert(
-                    0, {"id": ctx.root, "name": "root", "description": "Root agent"}
-                )
-    result: JSON = {
-        **(
-            {"workdir": f"~/.boxes/{ctx.agent['box_name']}/"}
-            if ctx.agent["box_id"]
-            else {}
-        ),
-        "name": str(ctx.agent["name"]),
-        "home": "~",
-        "recipients": [
-            {"name": str(row["name"]), "description": str(row["description"])}
-            for row in rows
-        ],
-        **({"next_cursor": str(rows[-1]["id"])} if len(rows) >= 20 else {}),
+    s = ctx.services
+    workspace_id = cast(UUID, ctx.agent["workspace_id"])
+    workspace = await s.internal.GetWorkspaceInfo(
+        platform_api.WorkspaceRequest(workspace_id=str(workspace_id)), timeout=15
+    )
+    members: list[dict[str, JSON]] = []
+    cursor = ""
+    while True:
+        page = await s.auth.members(s.internal, workspace_id, cursor)
+        members.extend(cast(list[dict[str, JSON]], page["items"]))
+        if not page["next_cursor"]:
+            break
+        cursor = str(page["next_cursor"])
+    await ctx.filesystem.discover()
+    async with s.db.connection() as conn:
+        owners = (
+            [ctx.id]
+            if ctx.id != ctx.leta_id
+            else [
+                row["id"]
+                for row in await (
+                    await conn.execute(
+                        "SELECT id FROM agents WHERE leta_id=%s", (ctx.leta_id,)
+                    )
+                ).fetchall()
+            ]
+        )
+        requests = await (
+            await conn.execute(
+                "SELECT id,title,type FROM hitl_requests WHERE requester_agent_id=ANY(%s) AND status='pending' ORDER BY created_at LIMIT 20",
+                (owners,),
+            )
+        ).fetchall()
+        alarms = await (
+            await conn.execute(
+                "SELECT id,title,type,paused FROM schedules WHERE creator_agent_id=ANY(%s) AND deleted_at IS NULL ORDER BY created_at LIMIT 20",
+                (owners,),
+            )
+        ).fetchall()
+        teams = await (
+            await conn.execute(
+                "SELECT name,handle FROM boxes WHERE leta_id=%s AND state='active' ORDER BY created_at LIMIT 20",
+                (ctx.leta_id,),
+            )
+        ).fetchall()
+    bindings = ctx.filesystem.bindings
+    people: list[JSON] = []
+    for member in members:
+        handle = member["handle"]
+        person = {key: member[key] for key in ("name", "handle", "role")}
+        if f"/chat/{handle}" in bindings:
+            person["chat_path"] = f"/chat/{handle}"
+        if (personal := bindings.get(f"/user/{handle}")) is not None:
+            person["personal_path"] = f"/user/{handle}"
+            person["personal_access"] = (
+                "read-write" if personal.writable else "read-only"
+            )
+        people.append(person)
+    result: dict[str, JSON] = {
+        "workspace": {
+            "name": workspace.name,
+            "shared_path": "/shared" if "/shared" in bindings else None,
+        },
+        "members": people,
+        "open_hitl": [json_row(row) for row in requests],
+        "schedules": [json_row(row) for row in alarms],
+        "boxes": [json_row(row) for row in teams],
     }
-    return presented("workspace_get", result, result)
+    return presented("get_context", result, result)
 
 
 @tool(response_format="content_and_artifact")
-async def workspace_member_list(
-    runtime: ToolRuntime[Context, State], cursor: str = ""
+async def agent_status(
+    runtime: ToolRuntime[Context, State],
+    target: str,
+    activity_limit: Annotated[int, Field(ge=0, le=5)] = 2,
 ) -> tuple[JSON, dict[str, JSON]]:
-    """Find current workspace members and user IDs for HITL."""
+    """Inspect one agent:<handle> for runtime state, latest run inputs, and recorded work. An input shows what reached the run. Ask the Leader to confirm commitments."""
     ctx = runtime.context
-    result = await ctx.services.auth.members(
-        ctx.services.internal, cast(UUID, ctx.agent["workspace_id"]), cursor
-    )
-    if not result.get("next_cursor"):
-        result.pop("next_cursor", None)
-    return presented("workspace_member_list", result, result)
+    if not target.startswith("agent:"):
+        raise ValueError("Use an agent:<handle> address")
+    _, id = await inbox_address(ctx, target)
+    async with ctx.services.db.connection() as conn:
+        agent = await (
+            await conn.execute(
+                "SELECT id,leta_id,box_id FROM agents WHERE id=%s",
+                (id,),
+            )
+        ).fetchone()
+        if (
+            agent is None
+            or (ctx.id == ctx.leta_id and agent["box_id"] is None)
+            or (
+                ctx.id != ctx.leta_id
+                and not await messages.can_contact(conn, ctx.agent, agent)
+            )
+        ):
+            raise LookupError("agent is outside your status scope")
+        result = await box_views.status(conn, id, activity_limit)
+    return presented("agent_status", result, result)
 
 
 @tool(response_format="content_and_artifact")
@@ -423,65 +479,55 @@ async def box_create(
     runtime: ToolRuntime[Context, State],
     name: str,
     letis: list[LetiDefinition],
-    edges: list[tuple[str, str]],
-    representative: str,
+    leader: str,
     description: str = "",
+    workflow: str = "",
+    additional_links: list[tuple[str, str]] | None = None,
 ) -> tuple[JSON, dict[str, JSON]]:
-    """Create a fixed team with shared home. Give each Leti a name and a role title (titles may repeat). Edges are bidirectional; list each pair once. Send work to the box with inbox_send."""
+    """Create a Box. Its Leader can contact every member. Declare optional additional links between non-Leader members by name. Address the returned Leader handle to start work."""
     from ..worker import operation
 
     ctx = runtime.context
     id = request_id(runtime)
-    creation = BoxCreation(
-        leta_id=ctx.root,
-        box_id=id,
-        request_id=id,
-        request=CreateBox(
-            name=name,
-            description=description,
-            letis=letis,
-            edges=edges,
-            representative=representative,
-        ),
-    )
-    await operation(
+    result = await operation(
         ctx.services,
         ResourceOperation(
             id=id,
             request_id=id,
             action="create",
-            box=creation,
+            box=BoxCreation(
+                leta_id=ctx.leta_id,
+                box_id=id,
+                request_id=id,
+                request=CreateBox(
+                    name=name,
+                    description=description,
+                    letis=letis,
+                    leader=leader,
+                    workflow=workflow,
+                    additional_links=additional_links or [],
+                ),
+            ),
             bridge_queue=ctx.services.config["dependencies"]["temporal"]["queues"][
                 "leta_bridge"
             ],
         ),
         wait=True,
     )
-    await ctx.filesystem.changed(f"~/.boxes/{name}")
-    result = f"Box: {name}\nState: active\nWork directory: ~/.boxes/{name}/\nRepresentative: {representative}"
-    return presented(
-        "box_create",
-        result,
-        {
-            "name": name,
-            "state": "active",
-            "home": f"~/.boxes/{name}/",
-            "representative": representative,
-            "letis": [item.model_dump(mode="json") for item in letis],
-            "edges": [list(edge) for edge in edges],
-        },
-    )
+    await ctx.filesystem.changed(str(result["home"]))
+    content = {key: value for key, value in result.items() if key != "id"}
+    return presented("box_create", content, content)
 
 
 @tool(response_format="content_and_artifact")
 async def box_list(
     runtime: ToolRuntime[Context, State], cursor: UUID | None = None
 ) -> tuple[JSON, dict[str, JSON]]:
-    """List boxes and work counts."""
+    """List Boxes by name, handle, lifecycle state, and team size."""
     ctx = runtime.context
-    result = await boxes.list_boxes(ctx.services.db, ctx.root, cursor)
+    result = await boxes.list_boxes(ctx.services.db, ctx.leta_id, cursor)
     lines = [
-        f"{item['name']} | {item['state']} | {item['agent_count']} members\n{item['description']}"
+        f"{item['name']} ({item['handle']}) | {item['state']} | {item['agent_count']} members\n{item['description']}"
         for item in cast(list[dict[str, JSON]], result["boxes"])
     ]
     if result.get("next_cursor"):
@@ -493,28 +539,42 @@ async def box_list(
 async def box_get(
     runtime: ToolRuntime[Context, State], box: str, include_prompts: bool = False
 ) -> tuple[JSON, dict[str, JSON]]:
-    """Get box members, links and representative; prompts are opt-in."""
+    """Get Box configuration and roster by Box handle. Include standing instructions on request."""
     ctx = runtime.context
-    result = await boxes.get(ctx.services.db, ctx.root, box, include_prompts)
+    identity = await boxes.by_handle(ctx.services.db, ctx.leta_id, box)
+    result = await boxes.get(
+        ctx.services.db, ctx.leta_id, cast(UUID, identity["id"]), include_prompts
+    )
     members = cast(list[dict[str, JSON]], result["letis"])
-    names = {str(member["id"]): str(member["name"]) for member in members}
-    lines = [
-        f"Box: {result['name']} | {result['state']}",
-        str(result["description"]),
-        f"Work directory: ~/.boxes/{result['name']}/",
-        f"Representative: {names[str(result['representative_agent_id'])]}",
-        "Members:",
+    by_id = {
+        member["id"]: member for member in members if isinstance(member["id"], str)
+    }
+    leader = by_id[str(result["leader_agent_id"])]
+    roster: list[JSON] = [
+        {
+            key: member[key]
+            for key in ("name", "title", "handle", "description", "system_prompt")
+            if key in member
+        }
+        for member in members
     ]
-    for member in members:
-        lines.append(f"- {member['name']}: {member['description']}")
-        if include_prompts:
-            lines.append(str(member["system_prompt"]))
-    lines.append("Links:")
-    for edge in cast(list[dict[str, JSON]], result["edges"]):
-        lines.append(
-            f"- {names[str(edge['agent_low_id'])]} ↔ {names[str(edge['agent_high_id'])]}"
-        )
-    return presented("box_get", "\n".join(lines), result)
+    content: dict[str, JSON] = {
+        "name": result["name"],
+        "handle": box,
+        "description": result["description"],
+        "home": f"~/.boxes/{box}/",
+        "leader": {"name": leader["name"], "handle": leader["handle"]},
+        "letis": roster,
+        "workflow": result["workflow"],
+        "additional_links": [
+            [
+                by_id[str(link[key])]["handle"]
+                for key in ("agent_low_id", "agent_high_id")
+            ]
+            for link in cast(list[dict[str, JSON]], result["additional_links"])
+        ],
+    }
+    return presented("box_get", content, content)
 
 
 @tool(response_format="content_and_artifact")
@@ -525,7 +585,7 @@ async def box_delete(
     from ..worker import operation
 
     ctx = runtime.context
-    identity = await boxes.named(ctx.services.db, ctx.root, box)
+    identity = await boxes.by_handle(ctx.services.db, ctx.leta_id, box)
     await operation(
         ctx.services,
         ResourceOperation(
@@ -547,13 +607,15 @@ async def box_delete(
 @tool(response_format="content_and_artifact")
 async def hitl_ask(
     runtime: ToolRuntime[Context, State],
-    recipient_user_id: UUID,
+    user_handle: str,
     questions: Annotated[list[hitl.Question], Field(min_length=1, max_length=10)],
     title: str = "",
 ) -> tuple[JSON, dict[str, JSON]]:
     """Ask any current workspace member; the answer arrives later in your inbox."""
     ctx = runtime.context
     from ..worker import submit_hitl
+
+    recipient_user_id = await user_id(ctx, user_handle)
 
     result = await submit_hitl(
         ctx.services,
@@ -582,20 +644,22 @@ async def hitl_ask(
 @tool(response_format="content_and_artifact")
 async def hitl_request(
     runtime: ToolRuntime[Context, State],
-    user_id: UUID,
+    user_handle: str,
     role: Literal["viewer", "editor"] = "viewer",
     reason: str = "",
 ) -> tuple[JSON, dict[str, JSON]]:
-    """Ask a workspace member for access to their Personal storage, shared by root and its Leti. Wait for the grant outcome."""
+    """Ask a workspace member for access to their Personal storage, shared by Leta and its Leti. Wait for the grant outcome."""
     ctx = runtime.context
     from ..worker import submit_hitl
+
+    recipient = await user_id(ctx, user_handle)
 
     result = await submit_hitl(
         ctx.services,
         hitl.OpenRequest(
             id=request_id(runtime),
             requester_agent_id=ctx.id,
-            recipient_user_id=user_id,
+            recipient_user_id=recipient,
             type="approval",
             title="Storage access request",
             payload={"role": role, "reason": reason},
@@ -609,7 +673,7 @@ async def hitl_request(
             {
                 **cast(dict[str, JSON], result),
                 "title": "Storage access request",
-                "recipient_user_id": str(user_id),
+                "recipient_user_id": str(recipient),
                 "payload": {"role": role, "reason": reason},
             },
         )
@@ -620,7 +684,7 @@ async def hitl_request(
         {
             **cast(dict[str, JSON], result),
             "title": "Storage access request",
-            "recipient_user_id": str(user_id),
+            "recipient_user_id": str(recipient),
             "payload": {"role": role, "reason": reason},
         },
     )
@@ -630,7 +694,7 @@ async def own_hitl(ctx: Context, id: UUID) -> dict[str, JSON]:
     return await hitl.get(
         ctx.services.db,
         id,
-        root=ctx.root,
+        root=ctx.leta_id,
         requester=ctx.id if ctx.agent["box_id"] is not None else None,
     )
 
@@ -679,7 +743,7 @@ async def list_hitl(
             WHERE a.leta_id=%s AND (%s::uuid IS NULL OR a.id=%s) AND (%s::text IS NULL OR h.status=%s)
             AND (%s::uuid IS NULL OR a.box_id=%s) AND (%s::uuid IS NULL OR h.id>%s) ORDER BY h.id LIMIT 20""",
                 (
-                    ctx.root,
+                    ctx.leta_id,
                     ctx.id if ctx.agent["box_id"] else None,
                     ctx.id,
                     status,
@@ -714,22 +778,24 @@ async def list_hitl(
 
 
 @tool("hitl_list", response_format="content_and_artifact")
-async def root_hitl_list(
+async def leta_hitl_list(
     runtime: ToolRuntime[Context, State],
     status: Status | None = None,
     cursor: UUID | None = None,
     box: str | None = None,
 ) -> tuple[JSON, dict[str, JSON]]:
-    """List human requests across root and boxes; box filters by requester box."""
+    """List human requests across Leta and its Boxes. Filter by Box handle if needed."""
     result = await list_hitl(
         runtime.context,
         status,
         cursor,
         cast(
             UUID,
-            (await boxes.named(runtime.context.services.db, runtime.context.root, box))[
-                "id"
-            ],
+            (
+                await boxes.by_handle(
+                    runtime.context.services.db, runtime.context.leta_id, box
+                )
+            )["id"],
         )
         if box
         else None,
@@ -769,13 +835,13 @@ async def own_schedule(ctx: Context, id: UUID) -> dict[str, JSON]:
     return await schedules.get(
         ctx.services.db,
         id,
-        root=ctx.root,
+        root=ctx.leta_id,
         creator=ctx.id if ctx.agent["box_id"] is not None else None,
     )
 
 
 @tool("schedule_create", response_format="content_and_artifact")
-async def root_schedule_create(
+async def leta_schedule_create(
     runtime: ToolRuntime[Context, State],
     content: str,
     title: str = "",
@@ -793,8 +859,8 @@ async def root_schedule_create(
     id = request_id(runtime)
     target = ctx.id
     if target_box:
-        box = await boxes.named(ctx.services.db, ctx.root, target_box)
-        target = UUID(str(box["representative_agent_id"]))
+        box = await boxes.by_handle(ctx.services.db, ctx.leta_id, target_box)
+        target = UUID(str(box["leader_agent_id"]))
     result = await change_schedule(
         runtime,
         schedules.Change(
@@ -813,7 +879,7 @@ async def root_schedule_create(
             ends_at=ends_at,
             timezone=timezone,
         ),
-        target_box or "root",
+        target_box or "Leta",
     )
     return presented(
         "schedule_create",
@@ -856,12 +922,8 @@ async def leti_schedule_create(
             ends_at=ends_at,
             timezone=timezone,
         ),
-        str(ctx.agent["box_name"])
-        + (
-            ""
-            if ctx.id == ctx.agent["representative_agent_id"]
-            else f"/{ctx.agent['name']}"
-        ),
+        str(ctx.agent["box_handle"])
+        + ("" if ctx.id == ctx.agent["leader_agent_id"] else f"/{ctx.agent['name']}"),
     )
     return presented(
         "schedule_create",
@@ -983,11 +1045,11 @@ async def list_schedules(
     async with ctx.services.db.connection() as conn:
         rows = await (
             await conn.execute(
-                """SELECT sc.id,sc.title,sc.type,sc.spec,sc.paused,sc.deleted_at,CASE WHEN target.id=b.representative_agent_id THEN b.name WHEN target.box_id IS NOT NULL THEN b.name||'/'||target.name ELSE 'root' END AS target_name FROM schedules sc JOIN agents a ON a.id=sc.creator_agent_id
+                """SELECT sc.id,sc.title,sc.type,sc.spec,sc.paused,sc.deleted_at,CASE WHEN target.id=b.leader_agent_id THEN b.name ELSE target.name END AS target_name FROM schedules sc JOIN agents a ON a.id=sc.creator_agent_id
             JOIN agents target ON target.id=sc.target_agent_id LEFT JOIN boxes b ON b.id=target.box_id WHERE a.leta_id=%s AND (%s::uuid IS NULL OR a.id=%s)
             AND (%s::uuid IS NULL OR target.box_id=%s) AND (%s::uuid IS NULL OR sc.id>%s) ORDER BY sc.id LIMIT 20""",
                 (
-                    ctx.root,
+                    ctx.leta_id,
                     ctx.id if ctx.agent["box_id"] else None,
                     ctx.id,
                     box_id,
@@ -1013,20 +1075,22 @@ async def list_schedules(
 
 
 @tool("schedule_list", response_format="content_and_artifact")
-async def root_schedule_list(
+async def leta_schedule_list(
     runtime: ToolRuntime[Context, State],
     cursor: UUID | None = None,
     box: str | None = None,
 ) -> tuple[JSON, dict[str, JSON]]:
-    """List root and box schedules; box filters by target box."""
+    """List Leta and Box schedules. Filter by Box handle if needed."""
     return await list_schedules(
         runtime.context,
         cursor,
         cast(
             UUID,
-            (await boxes.named(runtime.context.services.db, runtime.context.root, box))[
-                "id"
-            ],
+            (
+                await boxes.by_handle(
+                    runtime.context.services.db, runtime.context.leta_id, box
+                )
+            )["id"],
         )
         if box
         else None,
@@ -1078,28 +1142,8 @@ async def file_list(
     cursor: str = "",
     depth: Annotated[int, Field(ge=1, le=10)] = 1,
 ) -> tuple[JSON, dict[str, JSON]]:
-    """List files and directories; /mnt lists accessible personal, shared and conversation storages with their identity and write access."""
-    if file_path(path) == "/mnt":
-        runtime.context.filesystem.discovered = 0
+    """List files and directories with optional pagination and depth."""
     vfs = (await session(runtime)).vfs
-    if file_path(path) == "/mnt":
-        content = (
-            "\n\n".join(
-                f"{binding.name} — {'read/write' if binding.writable else 'read-only'}\n  /mnt/{id}"
-                for id, binding in runtime.context.filesystem.bindings.items()
-            )
-            or "No accessible external storages."
-        )
-        return presented(
-            "file_list",
-            content,
-            {
-                "items": [
-                    {"path": f"/mnt/{id}", "kind": "directory", "name": binding.name}
-                    for id, binding in runtime.context.filesystem.bindings.items()
-                ]
-            },
-        )
     result, _ = await vfs.dispatch("list_page", scope(path), cursor=cursor, depth=depth)
     return presented(
         "file_list",
@@ -1246,7 +1290,7 @@ async def file_semantic_search(
         metadata={
             "workspace_id": str(ctx.agent["workspace_id"]),
             "agent_id": str(ctx.id),
-            "leta_id": str(ctx.root),
+            "leta_id": str(ctx.leta_id),
             "run_id": str(ctx.run_id),
             **({"box_id": str(ctx.agent["box_id"])} if ctx.agent["box_id"] else {}),
         },
@@ -1292,7 +1336,7 @@ async def file_semantic_search(
 async def execute(
     runtime: ToolRuntime[Context, State], command: str, cwd: str = "~"
 ) -> ToolMessage:
-    """Run supported shell commands and Python over workspace files; use curl or wget for HTTP requests. Shell commands and Python can read or edit file contents only for text files. For HTTP(S) downloads, use curl -fLsS -o <file> <url>. Use cwd for the working directory. Output is capped; read the saved output when needed. No host programs."""
+    """Run a Bash command or script in the workspace sandbox. Returns a bounded output preview, exit status, and a saved capture path when available."""
     output, code = await shell(
         await session(runtime),
         command,
@@ -1392,14 +1436,14 @@ async def webfetch(
     return presented("webfetch", {**metadata, "content": content}, metadata)
 
 
-def tools(*, root: bool, web: bool = False) -> list[BaseTool]:
+def tools(*, leta: bool, web: bool = False) -> list[BaseTool]:
     shared = [
         inbox_send,
         inbox_react,
         inbox_read,
         inbox_list,
-        workspace_get,
-        workspace_member_list,
+        get_context,
+        agent_status,
         hitl_ask,
         hitl_request,
         hitl_get,
@@ -1418,12 +1462,12 @@ def tools(*, root: bool, web: bool = False) -> list[BaseTool]:
     ]
     if web:
         shared.extend((websearch, webfetch))
-    if root:
+    if leta:
         catalog = [
             *shared,
-            root_hitl_list,
-            root_schedule_create,
-            root_schedule_list,
+            leta_hitl_list,
+            leta_schedule_create,
+            leta_schedule_list,
             box_create,
             box_list,
             box_get,

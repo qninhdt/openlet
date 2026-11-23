@@ -33,6 +33,8 @@ class PlatformInternalServiceStub:
     def __new__(cls, channel: _grpc.Channel) -> _Self: ...
     @_typing.overload
     def __new__(cls, channel: _aio.Channel) -> PlatformInternalServiceAsyncStub: ...
+    GetUserByHandle: _grpc.UnaryUnaryMultiCallable[_internal_pb2.UserHandleRequest, _platform_pb2.User]
+    GetWorkspaceInfo: _grpc.UnaryUnaryMultiCallable[_platform_pb2.WorkspaceRequest, _platform_pb2.Workspace]
     CheckWorkspaceActive: _grpc.UnaryUnaryMultiCallable[_internal_pb2.CheckWorkspaceActiveRequest, _empty_pb2.Empty]
     CreateWorkspace: _grpc.UnaryUnaryMultiCallable[_internal_pb2.CreateWorkspaceRequest, _platform_pb2.Workspace]
     BatchGetUsers: _grpc.UnaryUnaryMultiCallable[_internal_pb2.BatchGetUsersRequest, _internal_pb2.BatchGetUsersResponse]
@@ -40,11 +42,25 @@ class PlatformInternalServiceStub:
 @_typing.type_check_only
 class PlatformInternalServiceAsyncStub(PlatformInternalServiceStub):
     def __init__(self, channel: _aio.Channel) -> None: ...
+    GetUserByHandle: _aio.UnaryUnaryMultiCallable[_internal_pb2.UserHandleRequest, _platform_pb2.User]  # type: ignore[assignment]
+    GetWorkspaceInfo: _aio.UnaryUnaryMultiCallable[_platform_pb2.WorkspaceRequest, _platform_pb2.Workspace]  # type: ignore[assignment]
     CheckWorkspaceActive: _aio.UnaryUnaryMultiCallable[_internal_pb2.CheckWorkspaceActiveRequest, _empty_pb2.Empty]  # type: ignore[assignment]
     CreateWorkspace: _aio.UnaryUnaryMultiCallable[_internal_pb2.CreateWorkspaceRequest, _platform_pb2.Workspace]  # type: ignore[assignment]
     BatchGetUsers: _aio.UnaryUnaryMultiCallable[_internal_pb2.BatchGetUsersRequest, _internal_pb2.BatchGetUsersResponse]  # type: ignore[assignment]
 
 class PlatformInternalServiceServicer:
+    def GetUserByHandle(
+        self,
+        request: _internal_pb2.UserHandleRequest,
+        context: _ServicerContext,
+    ) -> _typing.Union[_platform_pb2.User, _abc.Awaitable[_platform_pb2.User]]: ...
+
+    def GetWorkspaceInfo(
+        self,
+        request: _platform_pb2.WorkspaceRequest,
+        context: _ServicerContext,
+    ) -> _typing.Union[_platform_pb2.Workspace, _abc.Awaitable[_platform_pb2.Workspace]]: ...
+
     def CheckWorkspaceActive(
         self,
         request: _internal_pb2.CheckWorkspaceActiveRequest,

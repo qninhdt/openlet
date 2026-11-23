@@ -34,7 +34,6 @@ const sourceIcon = {
   agent: Network,
   schedule: CalendarClock,
   hitl: ShieldCheck,
-  box: Network,
 };
 export function ActivityInbox() {
   const p = useAgentPreview();

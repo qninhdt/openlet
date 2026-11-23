@@ -56,18 +56,20 @@ class AccountPreferences(_message.Message):
     def __init__(self, theme: _Optional[str] = ..., send_shortcut: _Optional[str] = ..., show_agent_steps: _Optional[bool] = ..., compact_message_actions: _Optional[bool] = ..., message_sound: _Optional[bool] = ...) -> None: ...
 
 class User(_message.Message):
-    __slots__ = ("id", "display_name", "avatar_url", "appearance", "preferences")
+    __slots__ = ("id", "display_name", "avatar_url", "appearance", "preferences", "handle")
     ID_FIELD_NUMBER: _ClassVar[int]
     DISPLAY_NAME_FIELD_NUMBER: _ClassVar[int]
     AVATAR_URL_FIELD_NUMBER: _ClassVar[int]
     APPEARANCE_FIELD_NUMBER: _ClassVar[int]
     PREFERENCES_FIELD_NUMBER: _ClassVar[int]
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
     id: str
     display_name: str
     avatar_url: str
     appearance: AvatarAppearance
     preferences: AccountPreferences
-    def __init__(self, id: _Optional[str] = ..., display_name: _Optional[str] = ..., avatar_url: _Optional[str] = ..., appearance: _Optional[_Union[AvatarAppearance, _Mapping]] = ..., preferences: _Optional[_Union[AccountPreferences, _Mapping]] = ...) -> None: ...
+    handle: str
+    def __init__(self, id: _Optional[str] = ..., display_name: _Optional[str] = ..., avatar_url: _Optional[str] = ..., appearance: _Optional[_Union[AvatarAppearance, _Mapping]] = ..., preferences: _Optional[_Union[AccountPreferences, _Mapping]] = ..., handle: _Optional[str] = ...) -> None: ...
 
 class Workspace(_message.Message):
     __slots__ = ("id", "name", "state", "created_at", "role")

@@ -51,17 +51,20 @@ test('activity adapters preserve actual snapshots and legacy tool text', () => {
   expect(
     adapt('box_get', {
       name: 'review',
-      representative_agent_id: 'scout',
+      handle: 'review',
+      home: '~/.boxes/review/',
+      leader: { name: 'Scout', handle: 'scout-the-researcher' },
       letis: [
-        { id: 'scout', name: 'Scout' },
-        { id: 'forge', name: 'Forge' },
+        { name: 'Scout', handle: 'scout-the-researcher' },
+        { name: 'Forge', handle: 'forge-the-analyst' },
+        { name: 'Altair', handle: 'altair-the-writer' },
       ],
-      edges: [{ agent_low_id: 'scout', agent_high_id: 'forge' }],
+      additional_links: [['Forge', 'Altair']],
     }),
   ).toMatchObject({
     home: '~/.boxes/review/',
-    representative: 'Scout',
-    edges: [['Scout', 'Forge']],
+    leader: 'Scout',
+    edges: [['Forge', 'Altair']],
   });
   expect(
     adapt('schedule_update', {

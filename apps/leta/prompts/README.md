@@ -1,9 +1,9 @@
 # Managed prompts
 
-These Markdown files are the authoring source for `leta/common`, `leta/root`, `leta/leti`, and `leta/compaction` in Langfuse. Runtime fetches Langfuse prompts by the configured label; these files are not a runtime fallback.
+The Markdown files are the authoring source for the `leta/common`, `leta/leta`, `leta/leti`, `leta/note_samples`, `leta/inbox_samples`, and `leta/compaction` Langfuse prompts. Runtime fetches the role prompts by the configured label.
 
-Publish common first. Root and Leti reference its numeric version using `@@@langfusePrompt:name=leta/common|version=N@@@`, followed by the corresponding role file. Keep `{{agent_instructions}}`, `{{box_context}}`, and `{{summary_max_tokens}}` as Langfuse placeholders.
+Publish Common and both samples first. Replace each `version=N` in the role files with the corresponding published version, then publish the role prompts under the configured label before deploying the worker. Keep the agent metadata, `{{agent_instructions}}`, `{{box_context}}`, and `{{summary_max_tokens}}` as Langfuse placeholders.
 
-Preserve the existing prompt config when publishing a text change. Model and generation defaults belong to the role prompt config; an agent's database selection overrides its defaults. Compaction uses the current agent model and reasoning effort.
+Use the existing role prompt configs when publishing. An agent's model selection overrides the role defaults. Compaction uses the current agent model and reasoning effort.
 
-WireMock fixtures contain compiled common + role text because the public Langfuse API resolves composition before returning prompts. Keep them aligned when publishing a prompt revision.
+WireMock fixtures contain the role prompts with the referenced sections expanded. Keep them aligned with the authoring files.

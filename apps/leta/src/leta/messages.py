@@ -1,14 +1,17 @@
 import json
 from datetime import datetime
+from hashlib import md5
 from typing import Literal, cast
 from uuid import UUID
 
+from openlet_api.platform.v1 import internal_pb2 as platform
 from openlet_sdk.config import JSON
 from opentelemetry import metrics
 from pydantic import Field, model_validator
 
 from .agents import Input, gate, get_agent, json_row, stable
 from .auth import Actor, Authorization
+from .config import PlatformInternalServiceAsyncStub
 from .db import Connection, Pool, Row
 from .hitl import render as render_hitl
 
@@ -21,11 +24,12 @@ PREVIEW_CHARS = 120
 class Message(Input):
     id: UUID
     recipient_agent_id: UUID
-    source_kind: Literal["user", "agent", "box", "hitl", "schedule"]
+    source_kind: Literal["user", "agent", "hitl", "schedule"]
     source_id: UUID
     conversation_id: UUID
     in_reply_to_message_id: UUID | None = None
     in_reply_to_role: Literal["user", "assistant"] | None = None
+    task_label: str | None = None
     scheduled_at: datetime | None = None
     schedule_title: str | None = None
     content: str = Field(max_length=32000)
@@ -54,11 +58,62 @@ class SendMessage(Input):
         return self
 
 
+async def can_contact(conn: Connection, sender: Row, recipient: Row) -> bool:
+    if sender["leta_id"] != recipient["leta_id"] or sender["id"] == recipient["id"]:
+        return False
+    sender_box, recipient_box = sender["box_id"], recipient["box_id"]
+    if (
+        sender_box is not None
+        and recipient_box is not None
+        and sender_box != recipient_box
+    ):
+        return False
+    box = await (
+        await conn.execute(
+            "SELECT leader_agent_id FROM boxes WHERE id=%s AND state='active'",
+            (sender_box or recipient_box,),
+        )
+    ).fetchone()
+    if box is None:
+        return False
+    if box["leader_agent_id"] in (sender["id"], recipient["id"]):
+        return True
+    if sender_box is None or recipient_box is None:
+        return False
+    row = await (
+        await conn.execute(
+            "SELECT 1 FROM box_links WHERE box_id=%s AND agent_low_id=%s AND agent_high_id=%s",
+            (
+                sender_box,
+                *sorted((cast(UUID, sender["id"]), cast(UUID, recipient["id"]))),
+            ),
+        )
+    ).fetchone()
+    return row is not None
+
+
+async def name_users(client: PlatformInternalServiceAsyncStub, rows: list[Row]) -> None:
+    ids = {str(row["source_id"]) for row in rows if row["source_kind"] == "user"}
+    if not ids:
+        return
+    people = await client.BatchGetUsers(
+        platform.BatchGetUsersRequest(user_ids=ids), timeout=15
+    )
+    users = {user.id: user for user in people.users}
+    for row in rows:
+        if (
+            row["source_kind"] == "user"
+            and (user := users.get(str(row["source_id"]))) is not None
+        ):
+            row["source_name"] = user.display_name
+            row["source_handle"] = user.handle
+
+
 async def admit(db: Pool, auth: Authorization, message: Message) -> dict[str, JSON]:
     recipient = await get_agent(db, message.recipient_agent_id)
     if message.source_kind == "user":
         if recipient["box_id"] is not None:
-            raise ValueError("human messages must address root")
+            raise ValueError("human messages must address Leta")
         await auth.require(
             Actor("user", message.source_id),
             "agent",
@@ -85,58 +140,21 @@ async def admit_in(
             if saved[key] != value:
                 raise ValueError("message ID was already used with different input")
         return {"id": str(message.id), "seq": cast(int, saved["seq"])}
-    if message.source_kind in ("agent", "box"):
-        if message.source_kind == "box":
-            source = await (
-                await conn.execute(
-                    "SELECT representative_agent_id FROM boxes WHERE id=%s AND state='active'",
-                    (message.source_id,),
-                )
-            ).fetchone()
-            if source is None:
-                raise ValueError("source box is inactive")
-            sender_id = cast(UUID, source["representative_agent_id"])
-        else:
-            sender_id = message.source_id
+    if message.source_kind == "agent":
         sender = await (
             await conn.execute(
-                "SELECT id,leta_id,box_id FROM agents WHERE id=%s", (sender_id,)
+                "SELECT id,leta_id,box_id FROM agents WHERE id=%s",
+                (message.source_id,),
             )
         ).fetchone()
         if sender is None:
             raise LookupError("sender not found")
-        if sender["leta_id"] != recipient["leta_id"]:
-            raise ValueError("cross-Leta delivery is not allowed")
+        if not await can_contact(conn, sender, recipient):
+            raise ValueError("recipient is outside the communication graph")
         if sender["box_id"] is not None and sender["box_id"] != recipient["box_id"]:
             await gate(
                 conn, cast(UUID, sender["leta_id"]), cast(UUID, sender["box_id"])
             )
-        if sender["box_id"] is None:
-            edge = await (
-                await conn.execute(
-                    "SELECT 1 FROM boxes WHERE id=%s AND representative_agent_id=%s",
-                    (recipient["box_id"], message.recipient_agent_id),
-                )
-            ).fetchone()
-        elif recipient["box_id"] is None:
-            edge = await (
-                await conn.execute(
-                    "SELECT 1 FROM boxes WHERE id=%s AND representative_agent_id=%s",
-                    (sender["box_id"], sender_id),
-                )
-            ).fetchone()
-        elif sender["box_id"] == recipient["box_id"]:
-            low, high = sorted((sender_id, message.recipient_agent_id))
-            edge = await (
-                await conn.execute(
-                    "SELECT 1 FROM box_edges WHERE box_id=%s AND agent_low_id=%s AND agent_high_id=%s",
-                    (sender["box_id"], low, high),
-                )
-            ).fetchone()
-        else:
-            edge = None
-        if edge is None:
-            raise ValueError("recipient is outside the communication graph")
     if message.source_kind == "schedule":
         row = await (
             await conn.execute(
@@ -181,7 +199,7 @@ async def admit_in(
     assert counter is not None
     await conn.execute(
         """INSERT INTO agent_messages(id,recipient_agent_id,seq,source_kind,source_id,conversation_id,
-        in_reply_to_message_id,in_reply_to_role,scheduled_at,schedule_title,content,silent,input_type,input_payload,file_refs) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb)""",
+        in_reply_to_message_id,in_reply_to_role,scheduled_at,schedule_title,content,silent,input_type,input_payload,file_refs,task_label) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s)""",
         (
             message.id,
             message.recipient_agent_id,
@@ -200,13 +218,14 @@ async def admit_in(
             if message.input_payload is not None
             else None,
             json.dumps(message.file_refs),
+            message.task_label,
         ),
     )
     inbox_count.add(
         1,
         {
             "direction": "accepted",
-            "agent_role": "leti" if recipient["box_id"] else "root",
+            "agent_role": "leti" if recipient["box_id"] else "leta",
         },
     )
     return {"id": str(message.id), "seq": cast(int, counter["inbox_seq"])}
@@ -241,13 +260,11 @@ async def pending(
                 CASE WHEN %s AND m.input_type='message' AND m.source_kind NOT IN ('hitl','schedule')
                     THEN left(m.content,%s)
                     ELSE m.content END AS content,
-                coalesce(a.name,b.name) AS source_name,
-                CASE WHEN a.id=a.leta_id THEN 'root' ELSE coalesce(a.name,b.name,m.source_id::text) END AS reply_to,
+                a.name AS source_name,a.handle AS source_handle,
                 h.title AS request_title,h.type AS request_type,h.payload AS request_payload,
                 m.schedule_title,m.file_refs
                 FROM agent_messages m
                 LEFT JOIN agents a ON m.source_kind='agent' AND a.id=m.source_id
-                LEFT JOIN boxes b ON m.source_kind='box' AND b.id=m.source_id
                 LEFT JOIN hitl_requests h ON m.source_kind='hitl' AND h.id=m.source_id
                 LEFT JOIN schedules sc ON m.source_kind='schedule' AND sc.id=m.source_id
                 WHERE m.recipient_agent_id=%s AND m.seq IN (SELECT seq FROM normal UNION ALL SELECT seq FROM quiet) ORDER BY m.seq""",
@@ -323,13 +340,16 @@ def input_batch(rows: list[Row], *, root: bool) -> str:
     items: list[str] = []
     for row in rows:
         kind = row["source_kind"]
+        sender = str(row.get("source_name") or kind)
+        if handle := row.get("source_handle"):
+            sender += f"#{handle}"
         if row.get("input_type") == "reaction":
             if latest_reaction[reaction_key(row)] != row["seq"]:
                 continue
             event = cast(dict[str, JSON], row.get("input_payload") or {})
             target = cast(dict[str, JSON], event.get("target") or {})
             items.append(
-                f"Reaction from {row.get('source_name') or kind} | message={row['seq']} (silent)"
+                f"Reaction from {sender} | message={row['seq']} (silent)"
                 f"\nTarget: {target.get('message_id')}\nEmoji: {event.get('emoji') or 'removed'}"
                 f"\nQuote: {target.get('content', '')}"
             )
@@ -352,9 +372,8 @@ def input_batch(rows: list[Row], *, root: bool) -> str:
                 f"\nScheduled for: {row['scheduled_at']}\n{row['content']}"
             )
         else:
-            sender = str(row.get("source_name") or ("User" if kind == "user" else kind))
-            if kind == "box":
-                sender = "box " + sender
+            if sender == "user":
+                sender = "User"
             body = str(row["content"])
             attached = [
                 ref
@@ -370,11 +389,11 @@ def input_batch(rows: list[Row], *, root: bool) -> str:
                     )
                     for ref in attached
                 )
-            header = f"{sender} | message={row['seq']} | to={row['reply_to']}"
+            header = f"{sender} | message={row['seq']}"
             if is_preview(row, root=root):
                 body = " ".join(body.split())[: PREVIEW_CHARS - 1] + "…"
                 items.append(
-                    f"New inbox message from {header}\nPreview: {body}\n[truncated; use inbox_read before acting]"
+                    f"From {header}\nPreview: {body}\n[truncated; use inbox_read before acting]"
                 )
             else:
                 items.append(f"From {header}\nFull message:\n{body}")
@@ -397,46 +416,25 @@ async def incoming(db: Pool, agent: UUID, seq: int) -> Row:
 
 
 async def read(
-    db: Pool, agent: UUID, message: int, after: int = 0, unread: bool = True
-) -> tuple[str, list[Row]]:
+    db: Pool, agent: UUID, source: UUID, kind: str, after: int = 0, unread: bool = True
+) -> list[Row]:
     async with db.connection() as conn, conn.transaction():
         rows = await (
             await conn.execute(
-                """SELECT m.*,coalesce(a.name,b.name) AS source_name,
-                CASE WHEN a.id=a.leta_id THEN 'root' ELSE coalesce(a.name,b.name,m.source_id::text) END AS reply_to,
-                h.title AS request_title,h.type AS request_type,h.payload AS request_payload,m.schedule_title,m.file_refs
-                FROM (SELECT recipient_agent_id,conversation_id FROM agent_messages
-                    WHERE recipient_agent_id=%s AND seq=%s) original
-            LEFT JOIN LATERAL (
-                SELECT * FROM agent_messages
-                WHERE recipient_agent_id=original.recipient_agent_id AND conversation_id=original.conversation_id
-                AND seq>%s AND (NOT %s OR read_at IS NULL)
-                ORDER BY seq LIMIT 20 FOR UPDATE
-            ) m ON true
-            LEFT JOIN agents a ON m.source_kind='agent' AND a.id=m.source_id
-            LEFT JOIN boxes b ON m.source_kind='box' AND b.id=m.source_id
-            LEFT JOIN hitl_requests h ON m.source_kind='hitl' AND h.id=m.source_id
-            LEFT JOIN schedules sc ON m.source_kind='schedule' AND sc.id=m.source_id
-            ORDER BY m.seq""",
-                (agent, message, after, unread),
+                """SELECT m.*,a.name AS source_name,a.handle AS source_handle
+                FROM agent_messages m
+                LEFT JOIN agents a ON m.source_kind='agent' AND a.id=m.source_id
+                WHERE m.recipient_agent_id=%s AND m.source_id=%s AND m.source_kind=%s
+                AND m.seq>%s AND (NOT %s OR m.read_at IS NULL)
+                ORDER BY m.seq LIMIT 20 FOR UPDATE OF m""",
+                (agent, source, kind, after, unread),
             )
         ).fetchall()
-        if not rows:
-            raise LookupError(
-                "incoming message not found; use a message number from your inbox"
-            )
-        rows = [row for row in rows if row["id"] is not None]
         await conn.execute(
             "UPDATE agent_messages SET read_at=coalesce(read_at,now()) WHERE id=ANY(%s)",
             ([r["id"] for r in rows],),
         )
-    body = (
-        input_batch(rows, root=False)
-        or "No messages matching this conversation and filter."
-    )
-    if len(rows) == 20:
-        body += f"\nNext cursor: {rows[-1]['seq']}"
-    return body, rows
+    return rows
 
 
 def input_data(rows: list[Row], *, root: bool) -> dict[str, JSON]:
@@ -459,6 +457,7 @@ def input_data(rows: list[Row], *, root: bool) -> dict[str, JSON]:
                     "source_id",
                     "conversation_id",
                     "source_name",
+                    "source_handle",
                     "scheduled_at",
                     "created_at",
                     "request_title",
@@ -496,32 +495,25 @@ async def list_inbox(
     agent: UUID,
     after: int = 0,
     unread: bool = True,
-    source: UUID | None = None,
-) -> tuple[str, list[Row]]:
+) -> list[Row]:
     async with db.connection() as conn:
         rows = await (
             await conn.execute(
-                """SELECT n.*,coalesce(a.name,b.name) AS source_name,
-                CASE WHEN a.id=a.leta_id THEN 'root' ELSE coalesce(a.name,b.name,n.source_id::text) END AS reply_to,
+                """SELECT n.*,a.name AS source_name,a.handle AS source_handle,
                 h.title AS request_title,h.type AS request_type,h.payload AS request_payload,n.schedule_title
                 FROM (
-                SELECT DISTINCT ON (conversation_id) * FROM agent_messages
+                SELECT DISTINCT ON (source_kind,source_id) * FROM agent_messages
                 WHERE recipient_agent_id=%s AND seq>%s AND (NOT %s OR read_at IS NULL)
-                AND (%s::uuid IS NULL OR source_id=%s)
-                ORDER BY conversation_id,seq DESC
+                ORDER BY source_kind,source_id,seq DESC
             ) n LEFT JOIN agents a ON n.source_kind='agent' AND a.id=n.source_id
-            LEFT JOIN boxes b ON n.source_kind='box' AND b.id=n.source_id
             LEFT JOIN hitl_requests h ON n.source_kind='hitl' AND h.id=n.source_id
             LEFT JOIN schedules sc ON n.source_kind='schedule' AND sc.id=n.source_id
             ORDER BY n.seq LIMIT 20""",
-                (agent, after, unread, source, source),
+                (agent, after, unread),
             )
         ).fetchall()
-    body = input_batch(rows, root=True) or "No messages matching this inbox filter."
     await mark_presented(db, agent, rows, root=True)
-    if len(rows) == 20:
-        body += f"\nNext cursor: {rows[-1]['seq']}"
-    return body, rows
+    return rows
 
 
 async def deliver_user(
@@ -566,3 +558,8 @@ async def deliver_user(
 
 def conversation(root: UUID, kind: str, source: UUID) -> UUID:
     return stable(root, f"{kind}/{source}")
+
+
+def agent_conversation(sender: UUID, recipient: UUID) -> UUID:
+    first, second = sorted((sender, recipient))
+    return UUID(md5(f"{first}{second}".encode(), usedforsecurity=False).hexdigest())

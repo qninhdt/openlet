@@ -492,6 +492,7 @@ type Storage struct {
 	AllowBlobFiles bool                   `protobuf:"varint,6,opt,name=allow_blob_files,json=allowBlobFiles,proto3" json:"allow_blob_files,omitempty"`
 	AllowIndexing  bool                   `protobuf:"varint,7,opt,name=allow_indexing,json=allowIndexing,proto3" json:"allow_indexing,omitempty"`
 	Capabilities   *StorageCapabilities   `protobuf:"bytes,8,opt,name=capabilities,proto3" json:"capabilities,omitempty"`
+	Ownership      *StorageOwnership      `protobuf:"bytes,9,opt,name=ownership,proto3" json:"ownership,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -578,6 +579,13 @@ func (x *Storage) GetAllowIndexing() bool {
 func (x *Storage) GetCapabilities() *StorageCapabilities {
 	if x != nil {
 		return x.Capabilities
+	}
+	return nil
+}
+
+func (x *Storage) GetOwnership() *StorageOwnership {
+	if x != nil {
+		return x.Ownership
 	}
 	return nil
 }
@@ -5558,7 +5566,7 @@ const file_openlet_api_letfs_v1_letfs_proto_rawDesc = "" +
 	"\x13StorageCapabilities\x12\x12\n" +
 	"\x04read\x18\x01 \x01(\bR\x04read\x12\x14\n" +
 	"\x05write\x18\x02 \x01(\bR\x05write\x12#\n" +
-	"\rmanage_access\x18\x03 \x01(\bR\fmanageAccess\"\xd3\x02\n" +
+	"\rmanage_access\x18\x03 \x01(\bR\fmanageAccess\"\x95\x03\n" +
 	"\aStorage\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12!\n" +
 	"\fworkspace_id\x18\x02 \x01(\tR\vworkspaceId\x12\x12\n" +
@@ -5570,7 +5578,8 @@ const file_openlet_api_letfs_v1_letfs_proto_rawDesc = "" +
 	"rootNodeId\x12(\n" +
 	"\x10allow_blob_files\x18\x06 \x01(\bR\x0eallowBlobFiles\x12%\n" +
 	"\x0eallow_indexing\x18\a \x01(\bR\rallowIndexing\x12I\n" +
-	"\fcapabilities\x18\b \x01(\v2%.openlet.letfs.v1.StorageCapabilitiesR\fcapabilities\"u\n" +
+	"\fcapabilities\x18\b \x01(\v2%.openlet.letfs.v1.StorageCapabilitiesR\fcapabilities\x12@\n" +
+	"\townership\x18\t \x01(\v2\".openlet.letfs.v1.StorageOwnershipR\townership\"u\n" +
 	"\x10WorkspaceStorage\x12!\n" +
 	"\fworkspace_id\x18\x01 \x01(\tR\vworkspaceId\x12\x1f\n" +
 	"\vquota_bytes\x18\x02 \x01(\x03R\n" +
@@ -6186,159 +6195,160 @@ var file_openlet_api_letfs_v1_letfs_proto_goTypes = []any{
 var file_openlet_api_letfs_v1_letfs_proto_depIdxs = []int32{
 	0,   // 0: openlet.letfs.v1.Storage.visibility:type_name -> openlet.letfs.v1.StorageVisibility
 	6,   // 1: openlet.letfs.v1.Storage.capabilities:type_name -> openlet.letfs.v1.StorageCapabilities
-	4,   // 2: openlet.letfs.v1.AccessGrant.actor:type_name -> openlet.letfs.v1.ActorRef
-	1,   // 3: openlet.letfs.v1.AccessGrant.role:type_name -> openlet.letfs.v1.StorageRole
-	5,   // 4: openlet.letfs.v1.StorageAccess.ownership:type_name -> openlet.letfs.v1.StorageOwnership
-	9,   // 5: openlet.letfs.v1.StorageAccess.grants:type_name -> openlet.letfs.v1.AccessGrant
-	0,   // 6: openlet.letfs.v1.StorageAccess.visibility:type_name -> openlet.letfs.v1.StorageVisibility
-	3,   // 7: openlet.letfs.v1.FileHeader.type:type_name -> openlet.letfs.v1.FileType
-	12,  // 8: openlet.letfs.v1.FileHeader.metadata:type_name -> openlet.letfs.v1.FileMetadata
-	13,  // 9: openlet.letfs.v1.FileHeader.processing:type_name -> openlet.letfs.v1.ProcessingSummary
-	2,   // 10: openlet.letfs.v1.Node.kind:type_name -> openlet.letfs.v1.NodeKind
-	83,  // 11: openlet.letfs.v1.Node.created_at:type_name -> google.protobuf.Timestamp
-	83,  // 12: openlet.letfs.v1.Node.updated_at:type_name -> google.protobuf.Timestamp
-	14,  // 13: openlet.letfs.v1.Node.file:type_name -> openlet.letfs.v1.FileHeader
-	0,   // 14: openlet.letfs.v1.ListStoragesRequest.visibility:type_name -> openlet.letfs.v1.StorageVisibility
-	7,   // 15: openlet.letfs.v1.ListStoragesResponse.storages:type_name -> openlet.letfs.v1.Storage
-	4,   // 16: openlet.letfs.v1.SetStorageAccessRequest.actor:type_name -> openlet.letfs.v1.ActorRef
-	1,   // 17: openlet.letfs.v1.SetStorageAccessRequest.role:type_name -> openlet.letfs.v1.StorageRole
-	4,   // 18: openlet.letfs.v1.RevokeStorageAccessRequest.actor:type_name -> openlet.letfs.v1.ActorRef
-	11,  // 19: openlet.letfs.v1.NodeRequest.target:type_name -> openlet.letfs.v1.NodeLocator
-	11,  // 20: openlet.letfs.v1.RetryProcessingRequest.target:type_name -> openlet.letfs.v1.NodeLocator
-	11,  // 21: openlet.letfs.v1.BatchStatRequest.targets:type_name -> openlet.letfs.v1.NodeLocator
-	15,  // 22: openlet.letfs.v1.StatResult.node:type_name -> openlet.letfs.v1.Node
-	84,  // 23: openlet.letfs.v1.StatResult.error:type_name -> google.rpc.Status
-	27,  // 24: openlet.letfs.v1.BatchStatResponse.results:type_name -> openlet.letfs.v1.StatResult
-	11,  // 25: openlet.letfs.v1.ListNodesRequest.parent:type_name -> openlet.letfs.v1.NodeLocator
-	15,  // 26: openlet.letfs.v1.ListNodesResponse.nodes:type_name -> openlet.letfs.v1.Node
-	11,  // 27: openlet.letfs.v1.ReadTreeRequest.root:type_name -> openlet.letfs.v1.NodeLocator
-	15,  // 28: openlet.letfs.v1.TreeEntry.node:type_name -> openlet.letfs.v1.Node
-	32,  // 29: openlet.letfs.v1.ReadTreeResponse.entries:type_name -> openlet.letfs.v1.TreeEntry
-	11,  // 30: openlet.letfs.v1.CreateNodeRequest.parent:type_name -> openlet.letfs.v1.NodeLocator
-	85,  // 31: openlet.letfs.v1.CreateNodeRequest.directory:type_name -> google.protobuf.Empty
-	34,  // 32: openlet.letfs.v1.CreateNodeRequest.text:type_name -> openlet.letfs.v1.TextContent
-	11,  // 33: openlet.letfs.v1.CreateDirectoriesRequest.base:type_name -> openlet.letfs.v1.NodeLocator
-	11,  // 34: openlet.letfs.v1.TransferNodeRequest.source:type_name -> openlet.letfs.v1.NodeLocator
-	11,  // 35: openlet.letfs.v1.TransferNodeRequest.parent:type_name -> openlet.letfs.v1.NodeLocator
-	11,  // 36: openlet.letfs.v1.ReadTextRequest.target:type_name -> openlet.letfs.v1.NodeLocator
-	38,  // 37: openlet.letfs.v1.ReadTextRequest.bytes:type_name -> openlet.letfs.v1.ByteRange
-	39,  // 38: openlet.letfs.v1.ReadTextRequest.lines:type_name -> openlet.letfs.v1.LineRange
-	41,  // 39: openlet.letfs.v1.ReadTextResponse.metrics:type_name -> openlet.letfs.v1.TextMetrics
-	43,  // 40: openlet.letfs.v1.TextPatch.edits:type_name -> openlet.letfs.v1.TextEdit
-	11,  // 41: openlet.letfs.v1.MutateTextRequest.target:type_name -> openlet.letfs.v1.NodeLocator
-	44,  // 42: openlet.letfs.v1.MutateTextRequest.patch:type_name -> openlet.letfs.v1.TextPatch
-	45,  // 43: openlet.letfs.v1.MutateTextRequest.overwrite:type_name -> openlet.letfs.v1.TextOverwrite
-	46,  // 44: openlet.letfs.v1.MutateTextRequest.literal_replace:type_name -> openlet.letfs.v1.TextReplace
-	11,  // 45: openlet.letfs.v1.ReadImageRequest.target:type_name -> openlet.letfs.v1.NodeLocator
-	83,  // 46: openlet.letfs.v1.SignedDownload.expires_at:type_name -> google.protobuf.Timestamp
-	49,  // 47: openlet.letfs.v1.GetDownloadResponse.blob:type_name -> openlet.letfs.v1.SignedDownload
-	50,  // 48: openlet.letfs.v1.GetDownloadResponse.text:type_name -> openlet.letfs.v1.TextDownload
-	83,  // 49: openlet.letfs.v1.ArchiveDownloadTicket.expires_at:type_name -> google.protobuf.Timestamp
-	11,  // 50: openlet.letfs.v1.DownloadArchiveRequest.targets:type_name -> openlet.letfs.v1.NodeLocator
-	11,  // 51: openlet.letfs.v1.SearchFilesRequest.root:type_name -> openlet.letfs.v1.NodeLocator
-	15,  // 52: openlet.letfs.v1.SearchFilesResponse.hits:type_name -> openlet.letfs.v1.Node
-	11,  // 53: openlet.letfs.v1.TextSearchRequest.root:type_name -> openlet.letfs.v1.NodeLocator
-	15,  // 54: openlet.letfs.v1.TextHit.node:type_name -> openlet.letfs.v1.Node
-	58,  // 55: openlet.letfs.v1.TextSearchResponse.hits:type_name -> openlet.letfs.v1.TextHit
-	11,  // 56: openlet.letfs.v1.SemanticSearchRequest.root:type_name -> openlet.letfs.v1.NodeLocator
-	15,  // 57: openlet.letfs.v1.SemanticHit.node:type_name -> openlet.letfs.v1.Node
-	61,  // 58: openlet.letfs.v1.SemanticSearchResponse.hits:type_name -> openlet.letfs.v1.SemanticHit
-	11,  // 59: openlet.letfs.v1.TrashNodeRequest.target:type_name -> openlet.letfs.v1.NodeLocator
-	15,  // 60: openlet.letfs.v1.TrashEntry.node:type_name -> openlet.letfs.v1.Node
-	4,   // 61: openlet.letfs.v1.TrashEntry.trashed_by:type_name -> openlet.letfs.v1.ActorRef
-	83,  // 62: openlet.letfs.v1.TrashEntry.trashed_at:type_name -> google.protobuf.Timestamp
-	64,  // 63: openlet.letfs.v1.ListTrashResponse.entries:type_name -> openlet.letfs.v1.TrashEntry
-	11,  // 64: openlet.letfs.v1.RestoreTrashRequest.parent:type_name -> openlet.letfs.v1.NodeLocator
-	11,  // 65: openlet.letfs.v1.UploadCreate.parent:type_name -> openlet.letfs.v1.NodeLocator
-	11,  // 66: openlet.letfs.v1.UploadReplace.target:type_name -> openlet.letfs.v1.NodeLocator
-	69,  // 67: openlet.letfs.v1.CreateUploadRequest.create:type_name -> openlet.letfs.v1.UploadCreate
-	70,  // 68: openlet.letfs.v1.CreateUploadRequest.replace:type_name -> openlet.letfs.v1.UploadReplace
-	81,  // 69: openlet.letfs.v1.SignedPart.headers:type_name -> openlet.letfs.v1.SignedPart.HeadersEntry
-	82,  // 70: openlet.letfs.v1.TransferDescriptor.headers:type_name -> openlet.letfs.v1.TransferDescriptor.HeadersEntry
-	83,  // 71: openlet.letfs.v1.Upload.expires_at:type_name -> google.protobuf.Timestamp
-	74,  // 72: openlet.letfs.v1.Upload.transfer:type_name -> openlet.letfs.v1.TransferDescriptor
-	15,  // 73: openlet.letfs.v1.Upload.completed:type_name -> openlet.letfs.v1.Node
-	79,  // 74: openlet.letfs.v1.Upload.completed_parts:type_name -> openlet.letfs.v1.CompletedPart
-	73,  // 75: openlet.letfs.v1.SignPartsRequest.parts:type_name -> openlet.letfs.v1.UploadPart
-	72,  // 76: openlet.letfs.v1.SignPartsResponse.parts:type_name -> openlet.letfs.v1.SignedPart
-	79,  // 77: openlet.letfs.v1.CompleteUploadRequest.parts:type_name -> openlet.letfs.v1.CompletedPart
-	16,  // 78: openlet.letfs.v1.LetFSService.GetWorkspaceStorage:input_type -> openlet.letfs.v1.WorkspaceStorageRequest
-	17,  // 79: openlet.letfs.v1.LetFSService.UpdateStorageQuota:input_type -> openlet.letfs.v1.UpdateStorageQuotaRequest
-	19,  // 80: openlet.letfs.v1.LetFSService.ListStorages:input_type -> openlet.letfs.v1.ListStoragesRequest
-	18,  // 81: openlet.letfs.v1.LetFSService.GetStorage:input_type -> openlet.letfs.v1.StorageRequest
-	21,  // 82: openlet.letfs.v1.LetFSService.UpdateStorage:input_type -> openlet.letfs.v1.UpdateStorageRequest
-	18,  // 83: openlet.letfs.v1.LetFSService.ListStorageAccess:input_type -> openlet.letfs.v1.StorageRequest
-	22,  // 84: openlet.letfs.v1.LetFSService.SetStorageAccess:input_type -> openlet.letfs.v1.SetStorageAccessRequest
-	23,  // 85: openlet.letfs.v1.LetFSService.RevokeStorageAccess:input_type -> openlet.letfs.v1.RevokeStorageAccessRequest
-	24,  // 86: openlet.letfs.v1.LetFSService.Stat:input_type -> openlet.letfs.v1.NodeRequest
-	25,  // 87: openlet.letfs.v1.LetFSService.RetryProcessing:input_type -> openlet.letfs.v1.RetryProcessingRequest
-	26,  // 88: openlet.letfs.v1.LetFSService.BatchStat:input_type -> openlet.letfs.v1.BatchStatRequest
-	29,  // 89: openlet.letfs.v1.LetFSService.ListNodes:input_type -> openlet.letfs.v1.ListNodesRequest
-	31,  // 90: openlet.letfs.v1.LetFSService.ReadTree:input_type -> openlet.letfs.v1.ReadTreeRequest
-	35,  // 91: openlet.letfs.v1.LetFSService.CreateNode:input_type -> openlet.letfs.v1.CreateNodeRequest
-	36,  // 92: openlet.letfs.v1.LetFSService.CreateDirectories:input_type -> openlet.letfs.v1.CreateDirectoriesRequest
-	37,  // 93: openlet.letfs.v1.LetFSService.MoveNode:input_type -> openlet.letfs.v1.TransferNodeRequest
-	37,  // 94: openlet.letfs.v1.LetFSService.CopyNode:input_type -> openlet.letfs.v1.TransferNodeRequest
-	40,  // 95: openlet.letfs.v1.LetFSService.ReadText:input_type -> openlet.letfs.v1.ReadTextRequest
-	47,  // 96: openlet.letfs.v1.LetFSService.MutateText:input_type -> openlet.letfs.v1.MutateTextRequest
-	48,  // 97: openlet.letfs.v1.LetFSService.ReadImage:input_type -> openlet.letfs.v1.ReadImageRequest
-	24,  // 98: openlet.letfs.v1.LetFSService.GetDownload:input_type -> openlet.letfs.v1.NodeRequest
-	54,  // 99: openlet.letfs.v1.LetFSService.CreateArchiveDownload:input_type -> openlet.letfs.v1.DownloadArchiveRequest
-	53,  // 100: openlet.letfs.v1.LetFSService.DownloadArchiveTicket:input_type -> openlet.letfs.v1.ArchiveDownloadTicketRequest
-	54,  // 101: openlet.letfs.v1.LetFSService.DownloadArchive:input_type -> openlet.letfs.v1.DownloadArchiveRequest
-	55,  // 102: openlet.letfs.v1.LetFSService.SearchFiles:input_type -> openlet.letfs.v1.SearchFilesRequest
-	57,  // 103: openlet.letfs.v1.LetFSService.TextSearch:input_type -> openlet.letfs.v1.TextSearchRequest
-	60,  // 104: openlet.letfs.v1.LetFSService.SemanticSearch:input_type -> openlet.letfs.v1.SemanticSearchRequest
-	63,  // 105: openlet.letfs.v1.LetFSService.TrashNode:input_type -> openlet.letfs.v1.TrashNodeRequest
-	65,  // 106: openlet.letfs.v1.LetFSService.ListTrash:input_type -> openlet.letfs.v1.ListTrashRequest
-	67,  // 107: openlet.letfs.v1.LetFSService.RestoreTrash:input_type -> openlet.letfs.v1.RestoreTrashRequest
-	68,  // 108: openlet.letfs.v1.LetFSService.PurgeTrash:input_type -> openlet.letfs.v1.PurgeTrashRequest
-	71,  // 109: openlet.letfs.v1.LetFSService.CreateUpload:input_type -> openlet.letfs.v1.CreateUploadRequest
-	76,  // 110: openlet.letfs.v1.LetFSService.GetUpload:input_type -> openlet.letfs.v1.UploadRequest
-	77,  // 111: openlet.letfs.v1.LetFSService.SignParts:input_type -> openlet.letfs.v1.SignPartsRequest
-	80,  // 112: openlet.letfs.v1.LetFSService.CompleteUpload:input_type -> openlet.letfs.v1.CompleteUploadRequest
-	76,  // 113: openlet.letfs.v1.LetFSService.AbortUpload:input_type -> openlet.letfs.v1.UploadRequest
-	8,   // 114: openlet.letfs.v1.LetFSService.GetWorkspaceStorage:output_type -> openlet.letfs.v1.WorkspaceStorage
-	8,   // 115: openlet.letfs.v1.LetFSService.UpdateStorageQuota:output_type -> openlet.letfs.v1.WorkspaceStorage
-	20,  // 116: openlet.letfs.v1.LetFSService.ListStorages:output_type -> openlet.letfs.v1.ListStoragesResponse
-	7,   // 117: openlet.letfs.v1.LetFSService.GetStorage:output_type -> openlet.letfs.v1.Storage
-	7,   // 118: openlet.letfs.v1.LetFSService.UpdateStorage:output_type -> openlet.letfs.v1.Storage
-	10,  // 119: openlet.letfs.v1.LetFSService.ListStorageAccess:output_type -> openlet.letfs.v1.StorageAccess
-	9,   // 120: openlet.letfs.v1.LetFSService.SetStorageAccess:output_type -> openlet.letfs.v1.AccessGrant
-	85,  // 121: openlet.letfs.v1.LetFSService.RevokeStorageAccess:output_type -> google.protobuf.Empty
-	15,  // 122: openlet.letfs.v1.LetFSService.Stat:output_type -> openlet.letfs.v1.Node
-	15,  // 123: openlet.letfs.v1.LetFSService.RetryProcessing:output_type -> openlet.letfs.v1.Node
-	28,  // 124: openlet.letfs.v1.LetFSService.BatchStat:output_type -> openlet.letfs.v1.BatchStatResponse
-	30,  // 125: openlet.letfs.v1.LetFSService.ListNodes:output_type -> openlet.letfs.v1.ListNodesResponse
-	33,  // 126: openlet.letfs.v1.LetFSService.ReadTree:output_type -> openlet.letfs.v1.ReadTreeResponse
-	15,  // 127: openlet.letfs.v1.LetFSService.CreateNode:output_type -> openlet.letfs.v1.Node
-	15,  // 128: openlet.letfs.v1.LetFSService.CreateDirectories:output_type -> openlet.letfs.v1.Node
-	15,  // 129: openlet.letfs.v1.LetFSService.MoveNode:output_type -> openlet.letfs.v1.Node
-	15,  // 130: openlet.letfs.v1.LetFSService.CopyNode:output_type -> openlet.letfs.v1.Node
-	42,  // 131: openlet.letfs.v1.LetFSService.ReadText:output_type -> openlet.letfs.v1.ReadTextResponse
-	15,  // 132: openlet.letfs.v1.LetFSService.MutateText:output_type -> openlet.letfs.v1.Node
-	86,  // 133: openlet.letfs.v1.LetFSService.ReadImage:output_type -> google.api.HttpBody
-	51,  // 134: openlet.letfs.v1.LetFSService.GetDownload:output_type -> openlet.letfs.v1.GetDownloadResponse
-	52,  // 135: openlet.letfs.v1.LetFSService.CreateArchiveDownload:output_type -> openlet.letfs.v1.ArchiveDownloadTicket
-	86,  // 136: openlet.letfs.v1.LetFSService.DownloadArchiveTicket:output_type -> google.api.HttpBody
-	86,  // 137: openlet.letfs.v1.LetFSService.DownloadArchive:output_type -> google.api.HttpBody
-	56,  // 138: openlet.letfs.v1.LetFSService.SearchFiles:output_type -> openlet.letfs.v1.SearchFilesResponse
-	59,  // 139: openlet.letfs.v1.LetFSService.TextSearch:output_type -> openlet.letfs.v1.TextSearchResponse
-	62,  // 140: openlet.letfs.v1.LetFSService.SemanticSearch:output_type -> openlet.letfs.v1.SemanticSearchResponse
-	64,  // 141: openlet.letfs.v1.LetFSService.TrashNode:output_type -> openlet.letfs.v1.TrashEntry
-	66,  // 142: openlet.letfs.v1.LetFSService.ListTrash:output_type -> openlet.letfs.v1.ListTrashResponse
-	15,  // 143: openlet.letfs.v1.LetFSService.RestoreTrash:output_type -> openlet.letfs.v1.Node
-	85,  // 144: openlet.letfs.v1.LetFSService.PurgeTrash:output_type -> google.protobuf.Empty
-	75,  // 145: openlet.letfs.v1.LetFSService.CreateUpload:output_type -> openlet.letfs.v1.Upload
-	75,  // 146: openlet.letfs.v1.LetFSService.GetUpload:output_type -> openlet.letfs.v1.Upload
-	78,  // 147: openlet.letfs.v1.LetFSService.SignParts:output_type -> openlet.letfs.v1.SignPartsResponse
-	15,  // 148: openlet.letfs.v1.LetFSService.CompleteUpload:output_type -> openlet.letfs.v1.Node
-	85,  // 149: openlet.letfs.v1.LetFSService.AbortUpload:output_type -> google.protobuf.Empty
-	114, // [114:150] is the sub-list for method output_type
-	78,  // [78:114] is the sub-list for method input_type
-	78,  // [78:78] is the sub-list for extension type_name
-	78,  // [78:78] is the sub-list for extension extendee
-	0,   // [0:78] is the sub-list for field type_name
+	5,   // 2: openlet.letfs.v1.Storage.ownership:type_name -> openlet.letfs.v1.StorageOwnership
+	4,   // 3: openlet.letfs.v1.AccessGrant.actor:type_name -> openlet.letfs.v1.ActorRef
+	1,   // 4: openlet.letfs.v1.AccessGrant.role:type_name -> openlet.letfs.v1.StorageRole
+	5,   // 5: openlet.letfs.v1.StorageAccess.ownership:type_name -> openlet.letfs.v1.StorageOwnership
+	9,   // 6: openlet.letfs.v1.StorageAccess.grants:type_name -> openlet.letfs.v1.AccessGrant
+	0,   // 7: openlet.letfs.v1.StorageAccess.visibility:type_name -> openlet.letfs.v1.StorageVisibility
+	3,   // 8: openlet.letfs.v1.FileHeader.type:type_name -> openlet.letfs.v1.FileType
+	12,  // 9: openlet.letfs.v1.FileHeader.metadata:type_name -> openlet.letfs.v1.FileMetadata
+	13,  // 10: openlet.letfs.v1.FileHeader.processing:type_name -> openlet.letfs.v1.ProcessingSummary
+	2,   // 11: openlet.letfs.v1.Node.kind:type_name -> openlet.letfs.v1.NodeKind
+	83,  // 12: openlet.letfs.v1.Node.created_at:type_name -> google.protobuf.Timestamp
+	83,  // 13: openlet.letfs.v1.Node.updated_at:type_name -> google.protobuf.Timestamp
+	14,  // 14: openlet.letfs.v1.Node.file:type_name -> openlet.letfs.v1.FileHeader
+	0,   // 15: openlet.letfs.v1.ListStoragesRequest.visibility:type_name -> openlet.letfs.v1.StorageVisibility
+	7,   // 16: openlet.letfs.v1.ListStoragesResponse.storages:type_name -> openlet.letfs.v1.Storage
+	4,   // 17: openlet.letfs.v1.SetStorageAccessRequest.actor:type_name -> openlet.letfs.v1.ActorRef
+	1,   // 18: openlet.letfs.v1.SetStorageAccessRequest.role:type_name -> openlet.letfs.v1.StorageRole
+	4,   // 19: openlet.letfs.v1.RevokeStorageAccessRequest.actor:type_name -> openlet.letfs.v1.ActorRef
+	11,  // 20: openlet.letfs.v1.NodeRequest.target:type_name -> openlet.letfs.v1.NodeLocator
+	11,  // 21: openlet.letfs.v1.RetryProcessingRequest.target:type_name -> openlet.letfs.v1.NodeLocator
+	11,  // 22: openlet.letfs.v1.BatchStatRequest.targets:type_name -> openlet.letfs.v1.NodeLocator
+	15,  // 23: openlet.letfs.v1.StatResult.node:type_name -> openlet.letfs.v1.Node
+	84,  // 24: openlet.letfs.v1.StatResult.error:type_name -> google.rpc.Status
+	27,  // 25: openlet.letfs.v1.BatchStatResponse.results:type_name -> openlet.letfs.v1.StatResult
+	11,  // 26: openlet.letfs.v1.ListNodesRequest.parent:type_name -> openlet.letfs.v1.NodeLocator
+	15,  // 27: openlet.letfs.v1.ListNodesResponse.nodes:type_name -> openlet.letfs.v1.Node
+	11,  // 28: openlet.letfs.v1.ReadTreeRequest.root:type_name -> openlet.letfs.v1.NodeLocator
+	15,  // 29: openlet.letfs.v1.TreeEntry.node:type_name -> openlet.letfs.v1.Node
+	32,  // 30: openlet.letfs.v1.ReadTreeResponse.entries:type_name -> openlet.letfs.v1.TreeEntry
+	11,  // 31: openlet.letfs.v1.CreateNodeRequest.parent:type_name -> openlet.letfs.v1.NodeLocator
+	85,  // 32: openlet.letfs.v1.CreateNodeRequest.directory:type_name -> google.protobuf.Empty
+	34,  // 33: openlet.letfs.v1.CreateNodeRequest.text:type_name -> openlet.letfs.v1.TextContent
+	11,  // 34: openlet.letfs.v1.CreateDirectoriesRequest.base:type_name -> openlet.letfs.v1.NodeLocator
+	11,  // 35: openlet.letfs.v1.TransferNodeRequest.source:type_name -> openlet.letfs.v1.NodeLocator
+	11,  // 36: openlet.letfs.v1.TransferNodeRequest.parent:type_name -> openlet.letfs.v1.NodeLocator
+	11,  // 37: openlet.letfs.v1.ReadTextRequest.target:type_name -> openlet.letfs.v1.NodeLocator
+	38,  // 38: openlet.letfs.v1.ReadTextRequest.bytes:type_name -> openlet.letfs.v1.ByteRange
+	39,  // 39: openlet.letfs.v1.ReadTextRequest.lines:type_name -> openlet.letfs.v1.LineRange
+	41,  // 40: openlet.letfs.v1.ReadTextResponse.metrics:type_name -> openlet.letfs.v1.TextMetrics
+	43,  // 41: openlet.letfs.v1.TextPatch.edits:type_name -> openlet.letfs.v1.TextEdit
+	11,  // 42: openlet.letfs.v1.MutateTextRequest.target:type_name -> openlet.letfs.v1.NodeLocator
+	44,  // 43: openlet.letfs.v1.MutateTextRequest.patch:type_name -> openlet.letfs.v1.TextPatch
+	45,  // 44: openlet.letfs.v1.MutateTextRequest.overwrite:type_name -> openlet.letfs.v1.TextOverwrite
+	46,  // 45: openlet.letfs.v1.MutateTextRequest.literal_replace:type_name -> openlet.letfs.v1.TextReplace
+	11,  // 46: openlet.letfs.v1.ReadImageRequest.target:type_name -> openlet.letfs.v1.NodeLocator
+	83,  // 47: openlet.letfs.v1.SignedDownload.expires_at:type_name -> google.protobuf.Timestamp
+	49,  // 48: openlet.letfs.v1.GetDownloadResponse.blob:type_name -> openlet.letfs.v1.SignedDownload
+	50,  // 49: openlet.letfs.v1.GetDownloadResponse.text:type_name -> openlet.letfs.v1.TextDownload
+	83,  // 50: openlet.letfs.v1.ArchiveDownloadTicket.expires_at:type_name -> google.protobuf.Timestamp
+	11,  // 51: openlet.letfs.v1.DownloadArchiveRequest.targets:type_name -> openlet.letfs.v1.NodeLocator
+	11,  // 52: openlet.letfs.v1.SearchFilesRequest.root:type_name -> openlet.letfs.v1.NodeLocator
+	15,  // 53: openlet.letfs.v1.SearchFilesResponse.hits:type_name -> openlet.letfs.v1.Node
+	11,  // 54: openlet.letfs.v1.TextSearchRequest.root:type_name -> openlet.letfs.v1.NodeLocator
+	15,  // 55: openlet.letfs.v1.TextHit.node:type_name -> openlet.letfs.v1.Node
+	58,  // 56: openlet.letfs.v1.TextSearchResponse.hits:type_name -> openlet.letfs.v1.TextHit
+	11,  // 57: openlet.letfs.v1.SemanticSearchRequest.root:type_name -> openlet.letfs.v1.NodeLocator
+	15,  // 58: openlet.letfs.v1.SemanticHit.node:type_name -> openlet.letfs.v1.Node
+	61,  // 59: openlet.letfs.v1.SemanticSearchResponse.hits:type_name -> openlet.letfs.v1.SemanticHit
+	11,  // 60: openlet.letfs.v1.TrashNodeRequest.target:type_name -> openlet.letfs.v1.NodeLocator
+	15,  // 61: openlet.letfs.v1.TrashEntry.node:type_name -> openlet.letfs.v1.Node
+	4,   // 62: openlet.letfs.v1.TrashEntry.trashed_by:type_name -> openlet.letfs.v1.ActorRef
+	83,  // 63: openlet.letfs.v1.TrashEntry.trashed_at:type_name -> google.protobuf.Timestamp
+	64,  // 64: openlet.letfs.v1.ListTrashResponse.entries:type_name -> openlet.letfs.v1.TrashEntry
+	11,  // 65: openlet.letfs.v1.RestoreTrashRequest.parent:type_name -> openlet.letfs.v1.NodeLocator
+	11,  // 66: openlet.letfs.v1.UploadCreate.parent:type_name -> openlet.letfs.v1.NodeLocator
+	11,  // 67: openlet.letfs.v1.UploadReplace.target:type_name -> openlet.letfs.v1.NodeLocator
+	69,  // 68: openlet.letfs.v1.CreateUploadRequest.create:type_name -> openlet.letfs.v1.UploadCreate
+	70,  // 69: openlet.letfs.v1.CreateUploadRequest.replace:type_name -> openlet.letfs.v1.UploadReplace
+	81,  // 70: openlet.letfs.v1.SignedPart.headers:type_name -> openlet.letfs.v1.SignedPart.HeadersEntry
+	82,  // 71: openlet.letfs.v1.TransferDescriptor.headers:type_name -> openlet.letfs.v1.TransferDescriptor.HeadersEntry
+	83,  // 72: openlet.letfs.v1.Upload.expires_at:type_name -> google.protobuf.Timestamp
+	74,  // 73: openlet.letfs.v1.Upload.transfer:type_name -> openlet.letfs.v1.TransferDescriptor
+	15,  // 74: openlet.letfs.v1.Upload.completed:type_name -> openlet.letfs.v1.Node
+	79,  // 75: openlet.letfs.v1.Upload.completed_parts:type_name -> openlet.letfs.v1.CompletedPart
+	73,  // 76: openlet.letfs.v1.SignPartsRequest.parts:type_name -> openlet.letfs.v1.UploadPart
+	72,  // 77: openlet.letfs.v1.SignPartsResponse.parts:type_name -> openlet.letfs.v1.SignedPart
+	79,  // 78: openlet.letfs.v1.CompleteUploadRequest.parts:type_name -> openlet.letfs.v1.CompletedPart
+	16,  // 79: openlet.letfs.v1.LetFSService.GetWorkspaceStorage:input_type -> openlet.letfs.v1.WorkspaceStorageRequest
+	17,  // 80: openlet.letfs.v1.LetFSService.UpdateStorageQuota:input_type -> openlet.letfs.v1.UpdateStorageQuotaRequest
+	19,  // 81: openlet.letfs.v1.LetFSService.ListStorages:input_type -> openlet.letfs.v1.ListStoragesRequest
+	18,  // 82: openlet.letfs.v1.LetFSService.GetStorage:input_type -> openlet.letfs.v1.StorageRequest
+	21,  // 83: openlet.letfs.v1.LetFSService.UpdateStorage:input_type -> openlet.letfs.v1.UpdateStorageRequest
+	18,  // 84: openlet.letfs.v1.LetFSService.ListStorageAccess:input_type -> openlet.letfs.v1.StorageRequest
+	22,  // 85: openlet.letfs.v1.LetFSService.SetStorageAccess:input_type -> openlet.letfs.v1.SetStorageAccessRequest
+	23,  // 86: openlet.letfs.v1.LetFSService.RevokeStorageAccess:input_type -> openlet.letfs.v1.RevokeStorageAccessRequest
+	24,  // 87: openlet.letfs.v1.LetFSService.Stat:input_type -> openlet.letfs.v1.NodeRequest
+	25,  // 88: openlet.letfs.v1.LetFSService.RetryProcessing:input_type -> openlet.letfs.v1.RetryProcessingRequest
+	26,  // 89: openlet.letfs.v1.LetFSService.BatchStat:input_type -> openlet.letfs.v1.BatchStatRequest
+	29,  // 90: openlet.letfs.v1.LetFSService.ListNodes:input_type -> openlet.letfs.v1.ListNodesRequest
+	31,  // 91: openlet.letfs.v1.LetFSService.ReadTree:input_type -> openlet.letfs.v1.ReadTreeRequest
+	35,  // 92: openlet.letfs.v1.LetFSService.CreateNode:input_type -> openlet.letfs.v1.CreateNodeRequest
+	36,  // 93: openlet.letfs.v1.LetFSService.CreateDirectories:input_type -> openlet.letfs.v1.CreateDirectoriesRequest
+	37,  // 94: openlet.letfs.v1.LetFSService.MoveNode:input_type -> openlet.letfs.v1.TransferNodeRequest
+	37,  // 95: openlet.letfs.v1.LetFSService.CopyNode:input_type -> openlet.letfs.v1.TransferNodeRequest
+	40,  // 96: openlet.letfs.v1.LetFSService.ReadText:input_type -> openlet.letfs.v1.ReadTextRequest
+	47,  // 97: openlet.letfs.v1.LetFSService.MutateText:input_type -> openlet.letfs.v1.MutateTextRequest
+	48,  // 98: openlet.letfs.v1.LetFSService.ReadImage:input_type -> openlet.letfs.v1.ReadImageRequest
+	24,  // 99: openlet.letfs.v1.LetFSService.GetDownload:input_type -> openlet.letfs.v1.NodeRequest
+	54,  // 100: openlet.letfs.v1.LetFSService.CreateArchiveDownload:input_type -> openlet.letfs.v1.DownloadArchiveRequest
+	53,  // 101: openlet.letfs.v1.LetFSService.DownloadArchiveTicket:input_type -> openlet.letfs.v1.ArchiveDownloadTicketRequest
+	54,  // 102: openlet.letfs.v1.LetFSService.DownloadArchive:input_type -> openlet.letfs.v1.DownloadArchiveRequest
+	55,  // 103: openlet.letfs.v1.LetFSService.SearchFiles:input_type -> openlet.letfs.v1.SearchFilesRequest
+	57,  // 104: openlet.letfs.v1.LetFSService.TextSearch:input_type -> openlet.letfs.v1.TextSearchRequest
+	60,  // 105: openlet.letfs.v1.LetFSService.SemanticSearch:input_type -> openlet.letfs.v1.SemanticSearchRequest
+	63,  // 106: openlet.letfs.v1.LetFSService.TrashNode:input_type -> openlet.letfs.v1.TrashNodeRequest
+	65,  // 107: openlet.letfs.v1.LetFSService.ListTrash:input_type -> openlet.letfs.v1.ListTrashRequest
+	67,  // 108: openlet.letfs.v1.LetFSService.RestoreTrash:input_type -> openlet.letfs.v1.RestoreTrashRequest
+	68,  // 109: openlet.letfs.v1.LetFSService.PurgeTrash:input_type -> openlet.letfs.v1.PurgeTrashRequest
+	71,  // 110: openlet.letfs.v1.LetFSService.CreateUpload:input_type -> openlet.letfs.v1.CreateUploadRequest
+	76,  // 111: openlet.letfs.v1.LetFSService.GetUpload:input_type -> openlet.letfs.v1.UploadRequest
+	77,  // 112: openlet.letfs.v1.LetFSService.SignParts:input_type -> openlet.letfs.v1.SignPartsRequest
+	80,  // 113: openlet.letfs.v1.LetFSService.CompleteUpload:input_type -> openlet.letfs.v1.CompleteUploadRequest
+	76,  // 114: openlet.letfs.v1.LetFSService.AbortUpload:input_type -> openlet.letfs.v1.UploadRequest
+	8,   // 115: openlet.letfs.v1.LetFSService.GetWorkspaceStorage:output_type -> openlet.letfs.v1.WorkspaceStorage
+	8,   // 116: openlet.letfs.v1.LetFSService.UpdateStorageQuota:output_type -> openlet.letfs.v1.WorkspaceStorage
+	20,  // 117: openlet.letfs.v1.LetFSService.ListStorages:output_type -> openlet.letfs.v1.ListStoragesResponse
+	7,   // 118: openlet.letfs.v1.LetFSService.GetStorage:output_type -> openlet.letfs.v1.Storage
+	7,   // 119: openlet.letfs.v1.LetFSService.UpdateStorage:output_type -> openlet.letfs.v1.Storage
+	10,  // 120: openlet.letfs.v1.LetFSService.ListStorageAccess:output_type -> openlet.letfs.v1.StorageAccess
+	9,   // 121: openlet.letfs.v1.LetFSService.SetStorageAccess:output_type -> openlet.letfs.v1.AccessGrant
+	85,  // 122: openlet.letfs.v1.LetFSService.RevokeStorageAccess:output_type -> google.protobuf.Empty
+	15,  // 123: openlet.letfs.v1.LetFSService.Stat:output_type -> openlet.letfs.v1.Node
+	15,  // 124: openlet.letfs.v1.LetFSService.RetryProcessing:output_type -> openlet.letfs.v1.Node
+	28,  // 125: openlet.letfs.v1.LetFSService.BatchStat:output_type -> openlet.letfs.v1.BatchStatResponse
+	30,  // 126: openlet.letfs.v1.LetFSService.ListNodes:output_type -> openlet.letfs.v1.ListNodesResponse
+	33,  // 127: openlet.letfs.v1.LetFSService.ReadTree:output_type -> openlet.letfs.v1.ReadTreeResponse
+	15,  // 128: openlet.letfs.v1.LetFSService.CreateNode:output_type -> openlet.letfs.v1.Node
+	15,  // 129: openlet.letfs.v1.LetFSService.CreateDirectories:output_type -> openlet.letfs.v1.Node
+	15,  // 130: openlet.letfs.v1.LetFSService.MoveNode:output_type -> openlet.letfs.v1.Node
+	15,  // 131: openlet.letfs.v1.LetFSService.CopyNode:output_type -> openlet.letfs.v1.Node
+	42,  // 132: openlet.letfs.v1.LetFSService.ReadText:output_type -> openlet.letfs.v1.ReadTextResponse
+	15,  // 133: openlet.letfs.v1.LetFSService.MutateText:output_type -> openlet.letfs.v1.Node
+	86,  // 134: openlet.letfs.v1.LetFSService.ReadImage:output_type -> google.api.HttpBody
+	51,  // 135: openlet.letfs.v1.LetFSService.GetDownload:output_type -> openlet.letfs.v1.GetDownloadResponse
+	52,  // 136: openlet.letfs.v1.LetFSService.CreateArchiveDownload:output_type -> openlet.letfs.v1.ArchiveDownloadTicket
+	86,  // 137: openlet.letfs.v1.LetFSService.DownloadArchiveTicket:output_type -> google.api.HttpBody
+	86,  // 138: openlet.letfs.v1.LetFSService.DownloadArchive:output_type -> google.api.HttpBody
+	56,  // 139: openlet.letfs.v1.LetFSService.SearchFiles:output_type -> openlet.letfs.v1.SearchFilesResponse
+	59,  // 140: openlet.letfs.v1.LetFSService.TextSearch:output_type -> openlet.letfs.v1.TextSearchResponse
+	62,  // 141: openlet.letfs.v1.LetFSService.SemanticSearch:output_type -> openlet.letfs.v1.SemanticSearchResponse
+	64,  // 142: openlet.letfs.v1.LetFSService.TrashNode:output_type -> openlet.letfs.v1.TrashEntry
+	66,  // 143: openlet.letfs.v1.LetFSService.ListTrash:output_type -> openlet.letfs.v1.ListTrashResponse
+	15,  // 144: openlet.letfs.v1.LetFSService.RestoreTrash:output_type -> openlet.letfs.v1.Node
+	85,  // 145: openlet.letfs.v1.LetFSService.PurgeTrash:output_type -> google.protobuf.Empty
+	75,  // 146: openlet.letfs.v1.LetFSService.CreateUpload:output_type -> openlet.letfs.v1.Upload
+	75,  // 147: openlet.letfs.v1.LetFSService.GetUpload:output_type -> openlet.letfs.v1.Upload
+	78,  // 148: openlet.letfs.v1.LetFSService.SignParts:output_type -> openlet.letfs.v1.SignPartsResponse
+	15,  // 149: openlet.letfs.v1.LetFSService.CompleteUpload:output_type -> openlet.letfs.v1.Node
+	85,  // 150: openlet.letfs.v1.LetFSService.AbortUpload:output_type -> google.protobuf.Empty
+	115, // [115:151] is the sub-list for method output_type
+	79,  // [79:115] is the sub-list for method input_type
+	79,  // [79:79] is the sub-list for extension type_name
+	79,  // [79:79] is the sub-list for extension extendee
+	0,   // [0:79] is the sub-list for field type_name
 }
 
 func init() { file_openlet_api_letfs_v1_letfs_proto_init() }

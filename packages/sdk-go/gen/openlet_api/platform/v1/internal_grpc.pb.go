@@ -20,6 +20,8 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	PlatformInternalService_GetUserByHandle_FullMethodName      = "/openlet.platform.v1.PlatformInternalService/GetUserByHandle"
+	PlatformInternalService_GetWorkspaceInfo_FullMethodName     = "/openlet.platform.v1.PlatformInternalService/GetWorkspaceInfo"
 	PlatformInternalService_CheckWorkspaceActive_FullMethodName = "/openlet.platform.v1.PlatformInternalService/CheckWorkspaceActive"
 	PlatformInternalService_CreateWorkspace_FullMethodName      = "/openlet.platform.v1.PlatformInternalService/CreateWorkspace"
 	PlatformInternalService_BatchGetUsers_FullMethodName        = "/openlet.platform.v1.PlatformInternalService/BatchGetUsers"
@@ -29,6 +31,8 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type PlatformInternalServiceClient interface {
+	GetUserByHandle(ctx context.Context, in *UserHandleRequest, opts ...grpc.CallOption) (*User, error)
+	GetWorkspaceInfo(ctx context.Context, in *WorkspaceRequest, opts ...grpc.CallOption) (*Workspace, error)
 	CheckWorkspaceActive(ctx context.Context, in *CheckWorkspaceActiveRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	CreateWorkspace(ctx context.Context, in *CreateWorkspaceRequest, opts ...grpc.CallOption) (*Workspace, error)
 	BatchGetUsers(ctx context.Context, in *BatchGetUsersRequest, opts ...grpc.CallOption) (*BatchGetUsersResponse, error)
@@ -40,6 +44,26 @@ type platformInternalServiceClient struct {
 
 func NewPlatformInternalServiceClient(cc grpc.ClientConnInterface) PlatformInternalServiceClient {
 	return &platformInternalServiceClient{cc}
+}
+
+func (c *platformInternalServiceClient) GetUserByHandle(ctx context.Context, in *UserHandleRequest, opts ...grpc.CallOption) (*User, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(User)
+	err := c.cc.Invoke(ctx, PlatformInternalService_GetUserByHandle_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformInternalServiceClient) GetWorkspaceInfo(ctx context.Context, in *WorkspaceRequest, opts ...grpc.CallOption) (*Workspace, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Workspace)
+	err := c.cc.Invoke(ctx, PlatformInternalService_GetWorkspaceInfo_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *platformInternalServiceClient) CheckWorkspaceActive(ctx context.Context, in *CheckWorkspaceActiveRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
@@ -76,6 +100,8 @@ func (c *platformInternalServiceClient) BatchGetUsers(ctx context.Context, in *B
 // All implementations should embed UnimplementedPlatformInternalServiceServer
 // for forward compatibility.
 type PlatformInternalServiceServer interface {
+	GetUserByHandle(context.Context, *UserHandleRequest) (*User, error)
+	GetWorkspaceInfo(context.Context, *WorkspaceRequest) (*Workspace, error)
 	CheckWorkspaceActive(context.Context, *CheckWorkspaceActiveRequest) (*emptypb.Empty, error)
 	CreateWorkspace(context.Context, *CreateWorkspaceRequest) (*Workspace, error)
 	BatchGetUsers(context.Context, *BatchGetUsersRequest) (*BatchGetUsersResponse, error)
@@ -88,6 +114,12 @@ type PlatformInternalServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedPlatformInternalServiceServer struct{}
 
+func (UnimplementedPlatformInternalServiceServer) GetUserByHandle(context.Context, *UserHandleRequest) (*User, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetUserByHandle not implemented")
+}
+func (UnimplementedPlatformInternalServiceServer) GetWorkspaceInfo(context.Context, *WorkspaceRequest) (*Workspace, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetWorkspaceInfo not implemented")
+}
 func (UnimplementedPlatformInternalServiceServer) CheckWorkspaceActive(context.Context, *CheckWorkspaceActiveRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method CheckWorkspaceActive not implemented")
 }
@@ -115,6 +147,42 @@ func RegisterPlatformInternalServiceServer(s grpc.ServiceRegistrar, srv Platform
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&PlatformInternalService_ServiceDesc, srv)
+}
+
+func _PlatformInternalService_GetUserByHandle_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UserHandleRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformInternalServiceServer).GetUserByHandle(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformInternalService_GetUserByHandle_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformInternalServiceServer).GetUserByHandle(ctx, req.(*UserHandleRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformInternalService_GetWorkspaceInfo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WorkspaceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformInternalServiceServer).GetWorkspaceInfo(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformInternalService_GetWorkspaceInfo_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformInternalServiceServer).GetWorkspaceInfo(ctx, req.(*WorkspaceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _PlatformInternalService_CheckWorkspaceActive_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -178,6 +246,14 @@ var PlatformInternalService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "openlet.platform.v1.PlatformInternalService",
 	HandlerType: (*PlatformInternalServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "GetUserByHandle",
+			Handler:    _PlatformInternalService_GetUserByHandle_Handler,
+		},
+		{
+			MethodName: "GetWorkspaceInfo",
+			Handler:    _PlatformInternalService_GetWorkspaceInfo_Handler,
+		},
 		{
 			MethodName: "CheckWorkspaceActive",
 			Handler:    _PlatformInternalService_CheckWorkspaceActive_Handler,

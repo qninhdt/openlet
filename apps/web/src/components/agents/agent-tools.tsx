@@ -592,67 +592,21 @@ const HistoryTool: ToolCallMessagePartComponent = (props) => {
     </ToolStep>
   );
 };
-const WorkspaceTool: ToolCallMessagePartComponent = (props) => {
+const ContextTool: ToolCallMessagePartComponent = (props) => {
   const result = resultOf(props);
-  const members = props.toolName === 'workspace_member_list';
   return (
-    <ToolStep
-      props={props}
-      label={members ? 'Checked workspace members' : 'Checked workspace details'}
-      icon={<Users />}
-    >
-      {members ? (
-        <ActionCard>
-          <table className="w-full text-left text-caption">
-            <thead className="border-b bg-muted/40 text-xs text-muted-foreground">
-              <tr>
-                <th className="px-3 py-2 font-normal">Member</th>
-                <th className="px-3 py-2 font-normal">Role</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {result.items?.map((item) => (
-                <tr key={item.title}>
-                  <td className="px-3 py-3">
-                    <span className="flex items-center gap-2">
-                      <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted font-medium">
-                        {item.title[0]}
-                      </span>
-                      <span>{item.title}</span>
-                    </span>
-                  </td>
-                  <td className="px-3 py-3">
-                    <Badge variant="outline">{item.meta}</Badge>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </ActionCard>
-      ) : (
-        <ActionCard>
-          <div className="flex items-center gap-3 border-b p-4">
-            <AgentAvatar name={result.title ?? 'Atlas'} className="size-10" />
-            <div>
-              <p className="font-medium">{result.title}</p>
-              <p className="text-caption text-muted-foreground">{result.summary}</p>
-            </div>
-          </div>
-          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-5 gap-y-3 p-4 text-caption">
-            <dt className="text-muted-foreground">Home directory</dt>
-            <dd className="font-mono">{result.home}</dd>
-            <dt className="text-muted-foreground">Can message</dt>
-            <dd className="flex flex-wrap gap-1.5">
-              {result.items?.map((item) => (
-                <Badge variant="outline" key={item.title}>
-                  <Network className="size-3" />
-                  {item.title}
-                </Badge>
-              ))}
-            </dd>
-          </dl>
-        </ActionCard>
-      )}
+    <ToolStep props={props} label="Checked workspace context" icon={<Users />}>
+      <ActionCard>
+        <div className="border-b px-4 py-3 font-medium">{result.title}</div>
+        <ul className="divide-y">
+          {result.items?.map((item) => (
+            <li key={item.title} className="flex justify-between gap-3 px-4 py-2 text-caption">
+              <span>{item.title}</span>
+              <span className="text-muted-foreground">{item.meta}</span>
+            </li>
+          ))}
+        </ul>
+      </ActionCard>
     </ToolStep>
   );
 };
@@ -715,14 +669,9 @@ const BoxTool: ToolCallMessagePartComponent = (props) => {
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-medium">{item.title}</span>
-                    <Badge variant={item.title === result.representative ? 'secondary' : 'outline'}>
+                    <Badge variant={item.title === result.leader ? 'secondary' : 'outline'}>
                       {item.meta}
                     </Badge>
-                    {item.status === 'Done' ? (
-                      <Check className="ml-auto size-3.5 text-muted-foreground" />
-                    ) : (
-                      <Clock3 className="ml-auto size-3.5 text-muted-foreground" />
-                    )}
                   </div>
                   <p className="mt-1 text-caption leading-relaxed text-muted-foreground">
                     {item.detail}
@@ -887,8 +836,7 @@ const renderers = {
     schedule_list: ScheduleTool,
     history_search: HistoryTool,
     history_read: HistoryTool,
-    workspace_get: WorkspaceTool,
-    workspace_member_list: WorkspaceTool,
+    get_context: ContextTool,
     box_create: BoxTool,
     box_list: BoxTool,
     box_get: BoxTool,

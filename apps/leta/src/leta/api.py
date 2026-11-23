@@ -50,7 +50,7 @@ from .agents import (
     ConfigureAgent,
     CreateLeta,
     Input,
-    RootRequest,
+    LetaRequest,
     gate,
     get_agent,
     json_row,
@@ -330,7 +330,7 @@ async def create_leta(
         await s.models.get(body.model_id, body.reasoning_effort)
     elif body.reasoning_effort is not None:
         raise ValueError("reasoning effort requires an explicit model")
-    creation = RootRequest(
+    creation = LetaRequest(
         workspace_id=workspace_id,
         owner_id=actor.id,
         request=body,
@@ -341,7 +341,7 @@ async def create_leta(
             id=body.request_id,
             request_id=body.request_id,
             action="create",
-            root=creation,
+            leta=creation,
             bridge_queue=s.config["dependencies"]["temporal"]["queues"]["leta_bridge"],
         ),
     )
@@ -498,6 +498,7 @@ async def send(leta_id: UUID, body: SendMessage, s: Service, actor: User) -> JSO
         Actor("agent", leta_id),
         body.content,
     )
+    await conversations.storage(s, leta_id, actor.id)
     return await deliver(
         s,
         Message(
@@ -910,7 +911,7 @@ async def list_boxes(leta_id: UUID, s: Service, cursor: UUID | None = None) -> J
 async def get_box(
     leta_id: UUID, box_id: UUID, s: Service, include_prompts: bool = False
 ) -> JSON:
-    return await boxes.get(s.db, leta_id, str(box_id), include_prompts)
+    return await boxes.get(s.db, leta_id, box_id, include_prompts)
 
 
 @app.delete(root_path + "/boxes/{box_id}", dependencies=[Depends(manageable)])
@@ -1186,7 +1187,7 @@ async def create_schedule(leta_id: UUID, body: ScheduleCreate, s: Service) -> JS
     target = leta_id
     if body.target_box_id:
         box = await boxes.identity(s.db, leta_id, body.target_box_id)
-        target = UUID(str(box["representative_agent_id"]))
+        target = UUID(str(box["leader_agent_id"]))
     data = body.model_dump(exclude={"request_id", "target_box_id"})
     return await submit_schedule(
         s,
