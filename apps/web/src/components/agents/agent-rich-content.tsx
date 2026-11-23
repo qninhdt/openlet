@@ -7,7 +7,13 @@ import {
   type ReactNode,
 } from 'react';
 import Markdown, { defaultUrlTransform, type ExtraProps } from 'react-markdown';
+import { Globe } from 'lucide-react';
+import githubIcon from '@/assets/source-icons/github.png';
+import mdnIcon from '@/assets/source-icons/mdn.png';
+import stripeIcon from '@/assets/source-icons/stripe.png';
+import wikipediaIcon from '@/assets/source-icons/wikipedia.png';
 import { fileReferenceStyles } from '@/components/ui/styles';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { fileMarkdown, fileTokenPattern, type MessageSource } from '@/lib/file-refs';
 import { FileIcon } from '@/components/storage/file-icon';
 import { useAgentPreview } from './agent-preview';
@@ -92,31 +98,70 @@ export function HighlightedCode({
 const attachmentLink = /^openlet-(file|folder):/;
 const citationLink = /^openlet-citation:([1-9]\d*)$/;
 
-function Citation({ source, number }: { source: MessageSource; number: string }) {
+const sourceIcons = new Map([
+  ['github.com', githubIcon],
+  ['docs.github.com', githubIcon],
+  ['developer.mozilla.org', mdnIcon],
+  ['stripe.com', stripeIcon],
+  ['docs.stripe.com', stripeIcon],
+  ['en.wikipedia.org', wikipediaIcon],
+]);
+
+function Citation({ source }: { source: MessageSource }) {
   const p = useAgentPreview();
-  const label =
+  const [failedIcon, setFailedIcon] = useState<string>();
+  const url = source.kind === 'web' ? URL.parse(source.url) : null;
+  const domain = url?.hostname.replace(/^www\./, '');
+  if (source.kind === 'web' && (!url || !/^https?:$/.test(url.protocol))) return source.title;
+  const detail =
     source.kind === 'web'
-      ? source.title
+      ? `${source.title} · ${domain}`
       : source.label +
         (source.page ? ` · Page ${source.page}` : source.line ? ` · Line ${source.line}` : '');
+  const icon = domain ? sourceIcons.get(domain) : undefined;
   const props = {
-    'aria-label': `Source ${number}: ${label}`,
-    title: label,
+    'aria-label': detail,
     className:
-      'mx-0.5 inline-flex h-5 min-w-5 items-center justify-center rounded-md bg-foreground/10 px-1 align-baseline text-xs font-medium tabular-nums hover:bg-foreground/20',
+      'mx-0.5 inline-flex h-6 max-w-[min(100%,14rem)] cursor-pointer items-center gap-1.5 rounded-md bg-foreground/10 px-1.5 align-middle text-xs font-medium outline-none hover:bg-foreground/15 focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-3.5!',
   };
-  return source.kind === 'web' ? (
-    <a {...props} href={defaultUrlTransform(source.url)} target="_blank" rel="noreferrer">
-      {number}
-    </a>
-  ) : (
-    <button
-      {...props}
-      type="button"
-      onClick={() => void p.openFileReference(source, source.line, source.page)}
-    >
-      {number}
-    </button>
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        {source.kind === 'web' ? (
+          <a {...props} href={url?.href} target="_blank" rel="noreferrer">
+            {icon && icon !== failedIcon ? (
+              <img
+                src={icon}
+                alt=""
+                className="size-3.5 shrink-0 rounded-sm bg-white"
+                onError={() => setFailedIcon(icon)}
+              />
+            ) : (
+              <Globe aria-hidden="true" className="shrink-0 text-muted-foreground" />
+            )}
+            <span className="truncate">{domain}</span>
+          </a>
+        ) : (
+          <button
+            {...props}
+            type="button"
+            onClick={() => void p.openFileReference(source, source.line, source.page)}
+          >
+            <FileIcon
+              node={{
+                kind: source.kind,
+                name: source.name ?? source.label,
+                mime: source.mime ?? '',
+              }}
+            />
+            <span className="truncate">{source.label}</span>
+          </button>
+        )}
+      </TooltipTrigger>
+      <TooltipContent sideOffset={4} className="wrap-anywhere">
+        {detail}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -224,7 +269,7 @@ export function AgentMarkdown({ text, sources }: { text: string; sources?: Messa
             const number = href && citationLink.exec(href)?.[1];
             if (number) {
               const source = sources?.[Number(number) - 1];
-              return source ? <Citation number={number} source={source} /> : <>{children}</>;
+              return source ? <Citation source={source} /> : <>{children}</>;
             }
             return (
               <a
