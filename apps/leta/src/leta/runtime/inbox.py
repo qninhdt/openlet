@@ -12,7 +12,7 @@ from opentelemetry import metrics
 
 from ..agents import stable
 from ..db import Pool
-from ..messages import inbox_count, input_batch, input_data, pending
+from ..messages import inbox_count, input_batch, input_data, name_users, pending
 
 if TYPE_CHECKING:
     from .tools import Context
@@ -46,6 +46,7 @@ class Inbox(AgentMiddleware[State, "Context"]):
         if not rows:
             return None
         ctx = runtime.context
+        await name_users(ctx.services.internal, rows)
         async with self.db.connection() as conn:
             await conn.execute(
                 "UPDATE agent_messages SET processing_run_id=%s WHERE recipient_agent_id=%s AND id=ANY(%s)",
@@ -56,11 +57,13 @@ class Inbox(AgentMiddleware[State, "Context"]):
         for user in {
             cast(UUID, row["source_id"]) for row in rows if row["source_kind"] == "user"
         }:
-            await events.changed(ctx.services.redis, ctx.root, "messages", ctx.id, user)
-        if any(row["source_kind"] == "hitl" for row in rows):
+            await events.changed(
+                ctx.services.redis, ctx.leta_id, "messages", ctx.id, user
+            )
+        if any(row["source_kind"] in ("user", "hitl") for row in rows):
             runtime.context.filesystem.discovered = 0
         last = cast(int, rows[-1]["seq"])
-        labels = {"agent_role": "root" if self.root else "leti"}
+        labels = {"agent_role": "leta" if self.root else "leti"}
         inbox_count.add(len(rows), {**labels, "direction": "consumed"})
         now = datetime.now(timezone.utc)
         for row in rows:

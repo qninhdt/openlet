@@ -36,3 +36,9 @@ class CheckWorkspaceActiveRequest(_message.Message):
     WORKSPACE_ID_FIELD_NUMBER: _ClassVar[int]
     workspace_id: str
     def __init__(self, workspace_id: _Optional[str] = ...) -> None: ...
+
+class UserHandleRequest(_message.Message):
+    __slots__ = ("handle",)
+    HANDLE_FIELD_NUMBER: _ClassVar[int]
+    handle: str
+    def __init__(self, handle: _Optional[str] = ...) -> None: ...

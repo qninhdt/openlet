@@ -19,7 +19,7 @@ from leta.schedules import Timing, native_spec, normalize
         (["inbox_send", "inbox_react"], True),
     ],
 )
-async def test_delivery_batch_ends_without_inference_and_resumes_after_checkpoint(
+async def test_delivery_batch_returns_results_after_checkpoint(
     names: list[str], fail: bool
 ) -> None:
     from typing import cast
@@ -90,8 +90,7 @@ async def test_delivery_batch_ends_without_inference_and_resumes_after_checkpoin
                 ],
             )
         )
-    elif "file_read" in names:
-        responses.append(AIMessage(content="Used the file result."))
+    responses.append(AIMessage(content="Used the tool results."))
     responses.append(AIMessage(content="Next incoming message."))
     model = Model(responses=responses)
     graph = cast(
@@ -118,12 +117,20 @@ async def test_delivery_batch_ends_without_inference_and_resumes_after_checkpoin
         pytest.fail("graph did not finish")
 
     await advance("incoming")
-    assert model.i == (2 if fail or "file_read" in names else 1)
+    assert model.i == 2 + int(fail)
     state = await graph.aget_state(config)
     results = [m for m in state.values["messages"] if isinstance(m, ToolMessage)]
     assert len(results) == len(names) + int(fail)
     assert sum(m.status == "error" for m in results) == int(fail)
-    assert delivered.count("0") == 1
+    assert state.values["messages"][-1].text == "Used the tool results."
+    expected = [
+        str(index)
+        for index, name in enumerate(names)
+        if name != "file_read" and not (fail and name == "inbox_react")
+    ]
+    if fail:
+        expected.append("fixed")
+    assert sorted(delivered) == sorted(expected)
     await advance("new incoming")
     assert model.i == 0
     assert (await graph.aget_state(config)).values["messages"][
@@ -205,7 +212,7 @@ async def test_reasoning_projection_and_stream_preserve_only_readable_text(
     )
     assert reasoning_text(signed) == "Readable summary"
     root, run = uuid4(), uuid4()
-    ctx = cast(Context, SimpleNamespace(root=root, id=root, run_id=run))
+    ctx = cast(Context, SimpleNamespace(leta_id=root, id=root, run_id=run))
     services = cast(Services, SimpleNamespace(db=None, redis=None))
     streamed: list[dict[str, object]] = []
     projected: list[tuple[str, str, object]] = []
@@ -372,8 +379,8 @@ async def test_execution_reuses_client_and_native_compaction_preserves_prefix(
     agent: Row = {
         "model_id": None,
         "reasoning_effort": None,
-        "root_model_id": None,
-        "root_reasoning_effort": None,
+        "leta_model_id": None,
+        "leta_reasoning_effort": None,
         "system_prompt": "Do useful work.",
     }
     await runtime.refresh(agent)

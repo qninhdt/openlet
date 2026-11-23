@@ -92,6 +92,9 @@ func (s *Server) GetWorkspace(ctx context.Context, r *pb.WorkspaceRequest) (*pb.
 	}
 	return scanWorkspace(s.DB.QueryRow(ctx, `SELECT id,name,state,created_at FROM workspaces WHERE id=$1`, r.WorkspaceId))
 }
+func (s *Server) GetWorkspaceInfo(ctx context.Context, r *pb.WorkspaceRequest) (*pb.Workspace, error) {
+	return scanWorkspace(s.DB.QueryRow(ctx, `SELECT id,name,state,created_at FROM workspaces WHERE id=$1`, r.WorkspaceId))
+}
 func (s *Server) UpdateWorkspace(ctx context.Context, r *pb.UpdateWorkspaceRequest) (*pb.Workspace, error) {
 	if _, err := s.check(ctx, r.WorkspaceId, "manage"); err != nil {
 		return nil, err

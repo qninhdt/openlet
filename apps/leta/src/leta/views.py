@@ -290,11 +290,10 @@ async def activity_entry(db: Pool, agent: UUID, entry: UUID) -> dict[str, JSON]:
 # Both directions use one conversation identity; inspecting it must not mark it read.
 INBOX = """WITH inbox AS (
     SELECT m.id,m.conversation_id,m.source_kind,m.source_id,m.content,m.created_at,m.read_at,
-        'in'::text AS direction,coalesce(a.name,b.name,h.title,sc.title) AS source_name,
+        'in'::text AS direction,coalesce(a.name,h.title,sc.title) AS source_name,
         h.type AS request_type,h.payload AS request_payload,m.schedule_title,m.scheduled_at,m.input_type,m.silent,m.input_payload,m.file_refs
     FROM agent_messages m
     LEFT JOIN agents a ON m.source_kind='agent' AND a.id=m.source_id
-    LEFT JOIN boxes b ON m.source_kind='box' AND b.id=m.source_id
     LEFT JOIN hitl_requests h ON m.source_kind='hitl' AND h.id=m.source_id
     LEFT JOIN schedules sc ON m.source_kind='schedule' AND sc.id=m.source_id
     WHERE m.recipient_agent_id=%s
@@ -302,16 +301,12 @@ INBOX = """WITH inbox AS (
     SELECT id,conversation_id,'user',recipient_user_id,content,created_at,NULL::timestamptz,
         'out',NULL,NULL,NULL::jsonb,NULL,NULL::timestamptz,'message',false,NULL::jsonb,file_refs FROM user_messages WHERE leta_id=%s
     UNION ALL
-    SELECT m.id,m.conversation_id,
-        CASE WHEN sender.box_id IS NULL AND target.box_id IS NOT NULL THEN 'box' ELSE 'agent' END,
-        CASE WHEN sender.box_id IS NULL AND target.box_id IS NOT NULL THEN target.box_id ELSE target.id END,
-        m.content,m.created_at,NULL::timestamptz,'out',coalesce(b.name,target.name),
+    SELECT m.id,m.conversation_id,'agent',target.id,
+        m.content,m.created_at,NULL::timestamptz,'out',target.name,
         NULL,NULL::jsonb,NULL,NULL::timestamptz,m.input_type,m.silent,m.input_payload,m.file_refs
-    FROM agents sender LEFT JOIN boxes own ON own.id=sender.box_id
-    JOIN agent_messages m ON (m.source_kind='agent' AND m.source_id=sender.id)
-        OR (m.source_kind='box' AND m.source_id=own.id AND own.representative_agent_id=sender.id)
+    FROM agent_messages m
+    JOIN agents sender ON m.source_kind='agent' AND m.source_id=sender.id
     JOIN agents target ON target.id=m.recipient_agent_id
-    LEFT JOIN boxes b ON b.id=target.box_id AND sender.box_id IS NULL
     WHERE sender.id=%s
 ) """
 

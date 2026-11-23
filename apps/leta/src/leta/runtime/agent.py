@@ -15,7 +15,6 @@ from langchain.agents.middleware import (
     ModelResponse,
     SummarizationMiddleware,
     ToolCallRequest,
-    hook_config,
 )
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import (
@@ -85,30 +84,6 @@ class InferenceCost(BaseCallbackHandler):
 
 
 class ToolEffects(AgentMiddleware[State, Context]):
-    @hook_config(can_jump_to=["end"])
-    async def abefore_model(
-        self, state: State, runtime: Runtime[Context]
-    ) -> dict[str, object] | None:
-        results: dict[str, ToolMessage] = {}
-        for message in reversed(state["messages"]):
-            if isinstance(message, ToolMessage):
-                results[message.tool_call_id] = message
-                continue
-            if (
-                isinstance(message, AIMessage)
-                and message.tool_calls
-                and not message.invalid_tool_calls
-                and all(
-                    call["name"] in {"inbox_send", "inbox_react"}
-                    and call["id"] in results
-                    and results[call["id"]].status == "success"
-                    for call in message.tool_calls
-                )
-            ):
-                return {"jump_to": "end"}
-            break
-        return None
-
     async def awrap_tool_call(
         self,
         request: ToolCallRequest,
@@ -187,23 +162,27 @@ class ExecutionModel(AgentMiddleware[State, Context]):
             compaction,
         )
         self.catalog, self.box_context = catalog, box_context
-        self.selection: tuple[str, ReasoningEffort, str] | None = None
+        self.selection: tuple[str, ReasoningEffort, str, str, str, str] | None = None
         self.chat: ChatModel
         self.summary: SummarizationMiddleware[JSON, Context]
         self.system = ""
         self.tokens = 0
 
     async def refresh(self, agent: Row) -> None:
-        selected = cast(str | None, agent["model_id"] or agent["root_model_id"])
+        selected = cast(str | None, agent["model_id"] or agent["leta_model_id"])
         effort = cast(
             ReasoningEffort,
             agent["reasoning_effort"]
             if agent["model_id"]
-            else agent["root_reasoning_effort"],
+            else agent["leta_reasoning_effort"],
         )
         if selected is None:
             selected, effort = self.defaults.model, self.defaults.reasoning_effort
-        selection = (selected, effort, str(agent["system_prompt"]))
+        instructions = str(agent["system_prompt"])
+        name, title, handle = (
+            str(agent.get(field, "")) for field in ("name", "title", "handle")
+        )
+        selection = (selected, effort, instructions, name, title, handle)
         if selection == self.selection:
             return
         entry = await self.s.models.get(selected, effort)
@@ -216,7 +195,11 @@ class ExecutionModel(AgentMiddleware[State, Context]):
             summary_max_tokens=settings["summary_max_tokens"]
         )
         self.system = self.prompt.compile(
-            agent_instructions=selection[2], box_context=self.box_context
+            agent_instructions=instructions,
+            agent_name=name,
+            agent_title=title,
+            agent_handle=handle,
+            box_context=self.box_context,
         )
         gateway = self.s.config["models"]["gateway"]
         if self.selection is None or selection[:2] != self.selection[:2]:
@@ -329,8 +312,8 @@ async def runtime_agent(s: Services, id: UUID) -> Row:
     async with s.db.connection() as conn:
         row = await (
             await conn.execute(
-                """SELECT a.*,l.workspace_id,l.storage_id,l.state,l.paused,b.name AS box_name,b.representative_agent_id,b.state AS box_state,
-            r.model_id AS root_model_id,r.reasoning_effort AS root_reasoning_effort
+                """SELECT a.*,l.workspace_id,l.storage_id,l.state,l.paused,b.handle AS box_handle,b.leader_agent_id,b.state AS box_state,
+            r.handle AS leta_handle,r.model_id AS leta_model_id,r.reasoning_effort AS leta_reasoning_effort
             FROM agents a JOIN letas l ON l.id=a.leta_id JOIN agents r ON r.id=a.leta_id
             LEFT JOIN boxes b ON b.id=a.box_id WHERE a.id=%s""",
                 (id,),
@@ -347,45 +330,40 @@ async def box_context(s: Services, agent: Row) -> str:
     async with s.db.connection() as conn:
         box = await (
             await conn.execute(
-                "SELECT name,description,representative_agent_id FROM boxes WHERE id=%s",
+                "SELECT name,handle,description,workflow,leader_agent_id FROM boxes WHERE id=%s",
                 (agent["box_id"],),
             )
         ).fetchone()
         members = await (
             await conn.execute(
-                """SELECT a.id,a.name,a.title,a.description,EXISTS(SELECT 1 FROM box_edges e
+                """SELECT a.id,a.name,a.title,a.description,a.handle,EXISTS(SELECT 1 FROM box_links e
             WHERE e.box_id=a.box_id AND ((e.agent_low_id=%s AND e.agent_high_id=a.id)
             OR (e.agent_high_id=%s AND e.agent_low_id=a.id))) AS connected
-            FROM agents a WHERE a.box_id=%s ORDER BY a.name,a.id""",
-                (agent["id"], agent["id"], agent["box_id"]),
+            FROM agents a WHERE a.box_id=%s AND a.id<>%s ORDER BY a.name,a.id""",
+                (agent["id"], agent["id"], agent["box_id"], agent["id"]),
             )
         ).fetchall()
     assert box is not None
+    leader = box["leader_agent_id"]
     lines = [
         f"Box: {box['name']}",
         f"Purpose: {box['description']}",
-        f"Work directory: ~/.boxes/{box['name']}/",
-        f"You: {agent['name']} ({agent.get('title', '')})",
-        "Teammates:",
+        f"Work directory: ~/.boxes/{box['handle']}/",
     ]
+    if box["workflow"]:
+        lines.append(f"Workflow: {box['workflow']}")
+    if agent["id"] == leader:
+        lines.append(f"You are the Box Leader. Leta: agent:{agent['leta_handle']}")
+    lines.append("Teammates:")
     for member in members:
-        if member["id"] == agent["id"]:
-            continue
-        representative = (
-            " (representative)"
-            if member["id"] == box["representative_agent_id"]
-            else ""
+        name = f"{member['name']} The {member['title']}"
+        role = " (Leader)" if member["id"] == leader else ""
+        contact = (
+            f"agent:{member['handle']}"
+            if agent["id"] == leader or member["id"] == leader or member["connected"]
+            else "contact through the Leader"
         )
-        recipient = (
-            "; contact permitted"
-            if member["connected"]
-            else "; contact through representative"
-        )
-        lines.append(
-            f"- {member['name']} ({member['title']}){representative}: {member['description']}{recipient}"
-        )
-    if box["representative_agent_id"] == agent["id"]:
-        lines.append("You are the representative. Root contact: root")
+        lines.append(f"- {name}{role} | {contact} | {member['description']}")
     return "\n".join(lines)
 
 
@@ -518,7 +496,7 @@ async def project(s: Services, ctx: Context, messages: Sequence[BaseMessage]) ->
                 "CUSTOM", ctx.id, ctx.run_id, name="openlet.history", value=reference
             )
         )
-    await events.publish_batch(s.redis, ctx.root, projected)
+    await events.publish_batch(s.redis, ctx.leta_id, projected)
 
 
 class Live:
@@ -534,7 +512,7 @@ class Live:
         if self.available:
             self.available = await events.publish(
                 self.s.redis,
-                self.ctx.root,
+                self.ctx.leta_id,
                 events.event(type, self.ctx.id, self.ctx.run_id, **fields),
             )
 
@@ -688,13 +666,13 @@ async def run(s: Services, lf: Langfuse, input: RunInput) -> RunResult:
             if "langfuse" in s.config
             else "production"
         )
-        role = "root" if agent["box_id"] is None else "leti"
-        trace_name = "leta.agent" if role == "root" else "leti.agent"
+        role = "leta" if agent["box_id"] is None else "leti"
+        trace_name = f"{role}.agent"
         execution = activity.info()
         metadata = {
             "workspace_id": str(agent["workspace_id"]),
             "agent_id": str(ctx.id),
-            "leta_id": str(ctx.root),
+            "leta_id": str(ctx.leta_id),
             "run_id": str(ctx.run_id),
             "temporal_workflow_id": execution.workflow_id or "",
             "temporal_run_id": execution.workflow_run_id or "",
@@ -740,7 +718,7 @@ async def run(s: Services, lf: Langfuse, input: RunInput) -> RunResult:
         active.add(1, {"agent_role": role})
         await events.publish(
             s.redis,
-            ctx.root,
+            ctx.leta_id,
             events.event(
                 "RUN_STARTED",
                 ctx.id,
@@ -749,7 +727,7 @@ async def run(s: Services, lf: Langfuse, input: RunInput) -> RunResult:
                 runId=str(ctx.run_id),
             ),
         )
-        catalog = tools(root=agent["box_id"] is None, web=s.web is not None)
+        catalog = tools(leta=agent["box_id"] is None, web=s.web is not None)
         execution_model = ExecutionModel(
             s,
             InferenceSettings.model_validate(prompt.config),
@@ -770,8 +748,8 @@ async def run(s: Services, lf: Langfuse, input: RunInput) -> RunResult:
                 checkpointer=saver,
                 middleware=[
                     Inbox(s.db, ctx.id, agent["box_id"] is None),
-                    ToolEffects(),
                     execution_model,
+                    ToolEffects(),
                 ],
                 interrupt_after=["model", "tools"],
             ),

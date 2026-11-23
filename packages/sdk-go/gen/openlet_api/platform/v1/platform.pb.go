@@ -262,6 +262,7 @@ type User struct {
 	AvatarUrl     *string                `protobuf:"bytes,3,opt,name=avatar_url,json=avatarUrl,proto3,oneof" json:"avatar_url,omitempty"`
 	Appearance    *AvatarAppearance      `protobuf:"bytes,4,opt,name=appearance,proto3" json:"appearance,omitempty"`
 	Preferences   *AccountPreferences    `protobuf:"bytes,5,opt,name=preferences,proto3" json:"preferences,omitempty"`
+	Handle        string                 `protobuf:"bytes,6,opt,name=handle,proto3" json:"handle,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -329,6 +330,13 @@ func (x *User) GetPreferences() *AccountPreferences {
 		return x.Preferences
 	}
 	return nil
+}
+
+func (x *User) GetHandle() string {
+	if x != nil {
+		return x.Handle
+	}
+	return ""
 }
 
 type Workspace struct {
@@ -1477,7 +1485,7 @@ const file_openlet_api_platform_v1_platform_proto_rawDesc = "" +
 	"\x0e_send_shortcutB\x13\n" +
 	"\x11_show_agent_stepsB\x1a\n" +
 	"\x18_compact_message_actionsB\x10\n" +
-	"\x0e_message_sound\"\xfe\x01\n" +
+	"\x0e_message_sound\"\x96\x02\n" +
 	"\x04User\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12!\n" +
 	"\fdisplay_name\x18\x02 \x01(\tR\vdisplayName\x12\"\n" +
@@ -1486,7 +1494,8 @@ const file_openlet_api_platform_v1_platform_proto_rawDesc = "" +
 	"\n" +
 	"appearance\x18\x04 \x01(\v2%.openlet.platform.v1.AvatarAppearanceR\n" +
 	"appearance\x12I\n" +
-	"\vpreferences\x18\x05 \x01(\v2'.openlet.platform.v1.AccountPreferencesR\vpreferencesB\r\n" +
+	"\vpreferences\x18\x05 \x01(\v2'.openlet.platform.v1.AccountPreferencesR\vpreferences\x12\x16\n" +
+	"\x06handle\x18\x06 \x01(\tR\x06handleB\r\n" +
 	"\v_avatar_url\"\xeb\x01\n" +
 	"\tWorkspace\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +

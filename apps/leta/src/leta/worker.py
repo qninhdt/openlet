@@ -32,7 +32,7 @@ from temporalio.service import RPCError, RPCStatusCode
 from temporalio.worker import Worker
 
 from . import agents, boxes, events, hitl, messages, schedules
-from .agents import RootCreation, get_agent, stable
+from .agents import LetaCreation, get_agent, stable
 from .auth import Actor, relationship
 from .boxes import BoxCreation
 from .config import Services, connect, validate
@@ -128,13 +128,13 @@ async def operation(
 ) -> dict[str, JSON]:
     async with s.db.connection() as conn:
         saved = None
-        if command.root is not None:
+        if command.leta is not None:
             saved = await receipt(
                 conn,
-                f"user:{command.root.owner_id}",
+                f"user:{command.leta.owner_id}",
                 "leta.create",
                 command.request_id,
-                command.root,
+                command.leta,
             )
         elif command.box is not None:
             saved = await receipt(
@@ -150,14 +150,12 @@ async def operation(
             )
     if saved is not None:
         return cast(dict[str, JSON], saved)
-    if command.box is not None:
-        await boxes.available(s.db, command.box)
     is_box = command.box is not None or command.action == "delete_box"
     type = BoxLifecycle if is_box else LetaLifecycle
     action = "delete" if command.action == "delete_box" else command.action
     id = f"{'box' if is_box else 'leta'}/{command.id}/{action}"
-    if command.root is not None:
-        id = f"leta/create/{command.root.owner_id}/{command.request_id}"
+    if command.leta is not None:
+        id = f"leta/create/{command.leta.owner_id}/{command.request_id}"
     if action in ("pause", "resume"):
         id = f"leta/{command.id}/control/{command.request_id}"
     try:
@@ -295,11 +293,11 @@ class Activities:
             raise
 
     @activity.defn
-    async def prepare_leta(self, creation: RootCreation) -> dict[str, JSON]:
+    async def prepare_leta(self, creation: LetaCreation) -> dict[str, JSON]:
         return await agents.prepare(self.s.db, creation)
 
     @activity.defn
-    async def provision_leta(self, creation: RootCreation) -> None:
+    async def provision_leta(self, creation: LetaCreation) -> None:
         async with effect(self.s.db, creation.leta_id):
             agent = await get_agent(self.s.db, creation.leta_id)
             if agent["state"] not in ("provisioning", "active"):
@@ -402,11 +400,12 @@ class Activities:
         await fanout(rows, refresh)
 
     @activity.defn
-    async def provision_box(self, creation: BoxCreation) -> UUID:
+    async def provision_box(self, creation: BoxCreation) -> dict[str, JSON]:
         async with effect(self.s.db, creation.leta_id):
             root = await get_agent(self.s.db, creation.leta_id)
             if root["state"] != "active":
                 raise ValueError("Leta is inactive")
+            handle = await boxes.next_handle(self.s.db, creation)
             storage = await self.s.files.GetStorage(
                 fs.StorageRequest(
                     workspace_id=str(root["workspace_id"]),
@@ -422,16 +421,12 @@ class Activities:
                     base=fs.NodeLocator(
                         node_id=storage.root_node_id, root_node_id=storage.root_node_id
                     ),
-                    path=f".boxes/{creation.request.name}",
+                    path=f".boxes/{handle}",
                 ),
                 metadata=Actor("agent", creation.leta_id).metadata,
                 timeout=30,
             )
-            return UUID(node.id)
-
-    @activity.defn
-    async def prepare_box(self, creation: BoxCreation, home: UUID) -> dict[str, JSON]:
-        return await boxes.prepare(self.s.db, creation, home)
+            return await boxes.prepare(self.s.db, creation, UUID(node.id), handle)
 
     @activity.defn
     async def close_box(self, id: UUID) -> None:
@@ -757,7 +752,6 @@ async def main() -> None:
                         activities.close_leta,
                         activities.set_leta_paused,
                         activities.provision_box,
-                        activities.prepare_box,
                         activities.close_box,
                         activities.open_hitl_request,
                         activities.resolve_hitl_request,

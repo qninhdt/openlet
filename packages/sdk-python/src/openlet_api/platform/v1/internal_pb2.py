@@ -27,7 +27,7 @@ from openlet_api.platform.v1 import platform_pb2 as openlet__api_dot_platform_do
 from buf.validate import validate_pb2 as buf_dot_validate_dot_validate__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n&openlet_api/platform/v1/internal.proto\x12\x13openlet.platform.v1\x1a\x1bgoogle/protobuf/empty.proto\x1a&openlet_api/platform/v1/platform.proto\x1a\x1b\x62uf/validate/validate.proto\"\x8c\x01\n\x16\x43reateWorkspaceRequest\x12,\n\rowner_user_id\x18\x01 \x01(\tB\x08\xbaH\x05r\x03\xb0\x01\x01R\x0bownerUserId\x12\x1b\n\x04name\x18\x02 \x01(\tB\x07\xbaH\x04r\x02\x10\x01R\x04name\x12\'\n\nrequest_id\x18\x03 \x01(\tB\x08\xbaH\x05r\x03\xb0\x01\x01R\trequestId\"B\n\x14\x42\x61tchGetUsersRequest\x12*\n\x08user_ids\x18\x01 \x03(\tB\x0f\xbaH\x0c\x92\x01\t\x10\x64\"\x05r\x03\xb0\x01\x01R\x07userIds\"H\n\x15\x42\x61tchGetUsersResponse\x12/\n\x05users\x18\x01 \x03(\x0b\x32\x19.openlet.platform.v1.UserR\x05users\"J\n\x1b\x43heckWorkspaceActiveRequest\x12+\n\x0cworkspace_id\x18\x01 \x01(\tB\x08\xbaH\x05r\x03\xb0\x01\x01R\x0bworkspaceId2\xc3\x02\n\x17PlatformInternalService\x12`\n\x14\x43heckWorkspaceActive\x12\x30.openlet.platform.v1.CheckWorkspaceActiveRequest\x1a\x16.google.protobuf.Empty\x12^\n\x0f\x43reateWorkspace\x12+.openlet.platform.v1.CreateWorkspaceRequest\x1a\x1e.openlet.platform.v1.Workspace\x12\x66\n\rBatchGetUsers\x12).openlet.platform.v1.BatchGetUsersRequest\x1a*.openlet.platform.v1.BatchGetUsersResponseBSZQgithub.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/platform/v1;platformv1b\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n&openlet_api/platform/v1/internal.proto\x12\x13openlet.platform.v1\x1a\x1bgoogle/protobuf/empty.proto\x1a&openlet_api/platform/v1/platform.proto\x1a\x1b\x62uf/validate/validate.proto\"\x8c\x01\n\x16\x43reateWorkspaceRequest\x12,\n\rowner_user_id\x18\x01 \x01(\tB\x08\xbaH\x05r\x03\xb0\x01\x01R\x0bownerUserId\x12\x1b\n\x04name\x18\x02 \x01(\tB\x07\xbaH\x04r\x02\x10\x01R\x04name\x12\'\n\nrequest_id\x18\x03 \x01(\tB\x08\xbaH\x05r\x03\xb0\x01\x01R\trequestId\"B\n\x14\x42\x61tchGetUsersRequest\x12*\n\x08user_ids\x18\x01 \x03(\tB\x0f\xbaH\x0c\x92\x01\t\x10\x64\"\x05r\x03\xb0\x01\x01R\x07userIds\"H\n\x15\x42\x61tchGetUsersResponse\x12/\n\x05users\x18\x01 \x03(\x0b\x32\x19.openlet.platform.v1.UserR\x05users\"J\n\x1b\x43heckWorkspaceActiveRequest\x12+\n\x0cworkspace_id\x18\x01 \x01(\tB\x08\xbaH\x05r\x03\xb0\x01\x01R\x0bworkspaceId\"+\n\x11UserHandleRequest\x12\x16\n\x06handle\x18\x01 \x01(\tR\x06handle2\xf4\x03\n\x17PlatformInternalService\x12T\n\x0fGetUserByHandle\x12&.openlet.platform.v1.UserHandleRequest\x1a\x19.openlet.platform.v1.User\x12Y\n\x10GetWorkspaceInfo\x12%.openlet.platform.v1.WorkspaceRequest\x1a\x1e.openlet.platform.v1.Workspace\x12`\n\x14\x43heckWorkspaceActive\x12\x30.openlet.platform.v1.CheckWorkspaceActiveRequest\x1a\x16.google.protobuf.Empty\x12^\n\x0f\x43reateWorkspace\x12+.openlet.platform.v1.CreateWorkspaceRequest\x1a\x1e.openlet.platform.v1.Workspace\x12\x66\n\rBatchGetUsers\x12).openlet.platform.v1.BatchGetUsersRequest\x1a*.openlet.platform.v1.BatchGetUsersResponseBSZQgithub.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/platform/v1;platformv1b\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -53,6 +53,8 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_BATCHGETUSERSRESPONSE']._serialized_end=444
   _globals['_CHECKWORKSPACEACTIVEREQUEST']._serialized_start=446
   _globals['_CHECKWORKSPACEACTIVEREQUEST']._serialized_end=520
-  _globals['_PLATFORMINTERNALSERVICE']._serialized_start=523
-  _globals['_PLATFORMINTERNALSERVICE']._serialized_end=846
+  _globals['_USERHANDLEREQUEST']._serialized_start=522
+  _globals['_USERHANDLEREQUEST']._serialized_end=565
+  _globals['_PLATFORMINTERNALSERVICE']._serialized_start=568
+  _globals['_PLATFORMINTERNALSERVICE']._serialized_end=1068
 # @@protoc_insertion_point(module_scope)

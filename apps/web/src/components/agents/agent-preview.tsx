@@ -601,9 +601,9 @@ function usePreviewState() {
     () => ({
       agents: graphQuery.data?.pages.flatMap((p) => p.agents) ?? [],
       boxes: graphQuery.data?.pages.flatMap((p) => p.boxes) ?? [],
-      edges: graphQuery.data?.pages.flatMap((p) => p.edges) ?? [],
+      additional_links: graphQuery.data?.pages.flatMap((p) => p.additional_links) ?? [],
       schedules: graphQuery.data?.pages.flatMap((p) => p.schedules) ?? [],
-      roots: graphQuery.data?.pages.flatMap((p) => p.roots) ?? [],
+      letas: graphQuery.data?.pages.flatMap((p) => p.letas) ?? [],
     }),
     [graphQuery.data],
   );
@@ -657,28 +657,16 @@ function usePreviewState() {
   const activityContact = graph.agents.find(
     (agent) =>
       agent.id ===
-      (activityBox && activityBox.representative_agent_id !== activityAgent.id
-        ? activityBox.representative_agent_id
+      (activityBox && activityBox.leader_agent_id !== activityAgent.id
+        ? activityBox.leader_agent_id
         : resource.id),
   );
-  const peerEdge = graph.edges.find(
-    (edge) => edge.agent_low_id === activityAgent.id || edge.agent_high_id === activityAgent.id,
-  );
-  const activityPeer =
-    graph.agents.find(
-      (agent) =>
-        agent.id ===
-        (peerEdge?.agent_low_id === activityAgent.id
-          ? peerEdge.agent_high_id
-          : peerEdge?.agent_low_id),
-    ) ?? activityContact;
   return {
     resource,
     graphQuery,
     graph,
     activityAgent,
     activityContact,
-    activityPeer,
     activityMode:
       activityMode && capabilities.can_view_activity && (!selectedLetiId || !!selectedLeti),
     openLeti: (agent: BoxAgent) => {

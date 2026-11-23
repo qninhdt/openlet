@@ -20,7 +20,7 @@ message AccountPreferences {
   optional bool message_sound = 5;
 }
 // Preferences are included only in the authenticated user's own account response.
-message User { string id = 1; string display_name = 2; optional string avatar_url = 3; AvatarAppearance appearance = 4; AccountPreferences preferences = 5; }
+message User { string id = 1; string display_name = 2; optional string avatar_url = 3; AvatarAppearance appearance = 4; AccountPreferences preferences = 5; string handle = 6; }
 message Workspace { string id = 1; string name = 2; WorkspaceState state = 3; google.protobuf.Timestamp created_at = 4; optional WorkspaceRole role = 5; }
 message WorkspaceMember { User user = 1; WorkspaceRole role = 2; optional string workspace_id = 3; }
 message Invitation { string id = 1; string workspace_id = 2; string email = 3; google.protobuf.Timestamp expires_at = 4; optional string accepted_by_user_id = 5; }

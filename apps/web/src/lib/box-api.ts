@@ -25,7 +25,7 @@ export type AgentBox = {
   leta_id: string;
   name: string;
   description: string;
-  representative_agent_id: string;
+  leader_agent_id: string;
   state: string;
 };
 export type BoxSchedule = {
@@ -44,8 +44,8 @@ export type BoxGraph = {
   agents: BoxAgent[];
   boxes: AgentBox[];
   schedules: BoxSchedule[];
-  edges: { box_id: string; agent_low_id: string; agent_high_id: string }[];
-  roots: string[];
+  additional_links: { box_id: string; agent_low_id: string; agent_high_id: string }[];
+  letas: string[];
   next_cursor?: string | null;
 };
 export function useBoxGraph(workspace: string, root: string, enabled: boolean) {

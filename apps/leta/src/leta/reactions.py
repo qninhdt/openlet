@@ -73,7 +73,7 @@ async def react(
         else:
             original = await (
                 await conn.execute(
-                    "SELECT *,source_id AS user_id FROM agent_messages WHERE id=%s AND input_type='message' AND source_kind IN ('user','agent','box')",
+                    "SELECT *,source_id AS user_id FROM agent_messages WHERE id=%s AND input_type='message' AND source_kind IN ('user','agent')",
                     (message,),
                 )
             ).fetchone()
@@ -96,19 +96,8 @@ async def react(
                     cast(UUID, agent["workspace_id"]),
                     "participate",
                 )
-            if actor.kind == "agent" and original["source_kind"] in ("agent", "box"):
-                if original["source_kind"] == "box":
-                    box = await (
-                        await conn.execute(
-                            "SELECT representative_agent_id FROM boxes WHERE id=%s AND state='active'",
-                            (original["source_id"],),
-                        )
-                    ).fetchone()
-                    if box is None:
-                        raise LookupError("source box is inactive")
-                    target = cast(UUID, box["representative_agent_id"])
-                else:
-                    target = cast(UUID, original["source_id"])
+            if actor.kind == "agent" and original["source_kind"] == "agent":
+                target = cast(UUID, original["source_id"])
                 recipient = await (
                     await conn.execute(
                         "SELECT id,leta_id,box_id FROM agents WHERE id=%s", (target,)

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"io"
 
 	az "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/google/uuid"
@@ -246,8 +247,48 @@ func (s *Server) listStorages(ctx context.Context, r *pb.ListStoragesRequest, a 
 	}
 	for _, v := range candidates {
 		if v.Capabilities.Read && (!r.OwnedOnly || v.Capabilities.ManageAccess) {
+			if a.Type == "agent" {
+				v.Ownership, err = s.mountOwner(ctx, v.Id)
+				if err != nil {
+					return nil, err
+				}
+			}
 			out.Storages = append(out.Storages, v)
 		}
 	}
 	return out, nil
+}
+
+func (s *Server) mountOwner(ctx context.Context, id string) (*pb.StorageOwnership, error) {
+	stream, err := s.Graph.ReadRelationships(ctx, &az.ReadRelationshipsRequest{
+		RelationshipFilter: &az.RelationshipFilter{ResourceType: "storage", OptionalResourceId: id},
+		Consistency:        sdk.Consistency(ctx),
+	})
+	if err != nil {
+		return nil, err
+	}
+	for {
+		item, err := stream.Recv()
+		if err == io.EOF {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		rel := item.Relationship
+		subject := rel.Subject.Object
+		if rel.Relation == "conversation" {
+			return &pb.StorageOwnership{Owner: &pb.StorageOwnership_ConversationId{ConversationId: subject.ObjectId}}, nil
+		}
+		if rel.Relation == "owner" {
+			switch subject.ObjectType {
+			case "user":
+				return &pb.StorageOwnership{Owner: &pb.StorageOwnership_UserId{UserId: subject.ObjectId}}, nil
+			case "workspace":
+				return &pb.StorageOwnership{Owner: &pb.StorageOwnership_WorkspaceId{WorkspaceId: subject.ObjectId}}, nil
+			case "agent":
+				return nil, nil
+			}
+		}
+	}
 }

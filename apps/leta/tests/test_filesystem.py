@@ -282,7 +282,7 @@ async def test_parallel_file_tools_share_session_and_only_apply_mount_changes(
 
     async def discover(self: Filesystem) -> None:
         await asyncio.sleep(0)
-        self.bindings = {str(storage): StorageMount(root, writable, "Shared")}
+        self.bindings = {"/shared": StorageMount(root, writable, storage)}
 
     monkeypatch.setattr(module, "Workspace", workspace)
 
@@ -321,13 +321,13 @@ async def test_parallel_file_tools_share_session_and_only_apply_mount_changes(
     sessions = await asyncio.gather(*(filesystem.open() for _ in range(5)))
     assert all(session is shared for session in sessions)
     assert (created, opened) == (1, 1)
-    assert changes == [(f"/mnt/{storage}", MountMode.READ)]
+    assert changes == [("/shared", MountMode.READ)]
     writable = True
     await filesystem.open()
     await filesystem.open()
     assert changes == [
-        (f"/mnt/{storage}", MountMode.READ),
-        (f"/mnt/{storage}", MountMode.EXEC),
+        ("/shared", MountMode.READ),
+        ("/shared", MountMode.EXEC),
     ]
 
 

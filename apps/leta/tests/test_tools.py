@@ -13,7 +13,7 @@ from langgraph.graph import END, START, StateGraph  # pyright: ignore[reportMiss
 from langgraph.prebuilt import ToolNode
 from leta.config import Services
 from leta.db import Pool, Row
-from leta.filesystem.workspace import Filesystem, StorageMount
+from leta.filesystem.workspace import Filesystem
 from leta.runtime.agent import ToolEffects
 from leta.runtime.inbox import State
 from leta.runtime.tools import Context, tools
@@ -24,8 +24,8 @@ from pydantic import BaseModel
 
 
 def test_native_tools_expose_only_agent_arguments() -> None:
-    root = {tool.name: tool for tool in tools(root=True)}
-    leti = {tool.name: tool for tool in tools(root=False)}
+    root = {tool.name: tool for tool in tools(leta=True)}
+    leti = {tool.name: tool for tool in tools(leta=False)}
     assert set(root) - set(leti) == {
         "box_create",
         "box_get",
@@ -48,8 +48,8 @@ def test_native_tools_expose_only_agent_arguments() -> None:
             & fields[tool.name]
         )
     assert "target_box" in fields["schedule_create"]
-    assert fields["hitl_request"] == {"user_id", "role", "reason"}
-    assert fields["inbox_react"] == {"message", "emoji", "action"}
+    assert fields["hitl_request"] == {"user_handle", "role", "reason"}
+    assert fields["inbox_react"] == {"source", "message", "emoji", "action"}
     assert not any("emote" in name for name in root)
     schedule = leti["schedule_create"].tool_call_schema
     assert isinstance(schedule, type) and issubclass(schedule, BaseModel)
@@ -60,7 +60,7 @@ async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None
     builder = StateGraph(State, context_schema=Context)
     builder.add_node(  # pyright: ignore[reportUnknownMemberType]  # Native overload leaves cache-policy generics unspecified.
         "tools",
-        ToolNode(tools(root=True), awrap_tool_call=ToolEffects().awrap_tool_call),
+        ToolNode(tools(leta=True), awrap_tool_call=ToolEffects().awrap_tool_call),
     )
     builder.add_edge(START, "tools")
     builder.add_edge("tools", END)
@@ -74,11 +74,6 @@ async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None
     try:
 
         class Files:
-            bindings = {
-                "read-only": StorageMount(uuid4(), False, "Sources"),
-                "editable": StorageMount(uuid4(), True, "Working"),
-            }
-
             async def open(self) -> Session:
                 return await workspace.session("tools")
 
@@ -136,11 +131,6 @@ async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None
                                 "args": {"command": "python -c 'print(1 / 0)'"},
                             },
                             {
-                                "id": "mounts",
-                                "name": "file_list",
-                                "args": {"path": "/mnt"},
-                            },
-                            {
                                 "id": "invalid-calendar",
                                 "name": "schedule_create",
                                 "args": {
@@ -154,11 +144,19 @@ async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None
                                 "args": {
                                     "name": "review-team",
                                     "letis": [
-                                        {"name": "A", "system_prompt": "Analyze."},
-                                        {"name": "B", "system_prompt": "Review."},
+                                        {
+                                            "name": "Vega",
+                                            "title": "Analyst",
+                                            "system_prompt": "Analyze.",
+                                        },
+                                        {
+                                            "name": "Rigel",
+                                            "title": "Reviewer",
+                                            "system_prompt": "Review.",
+                                        },
                                     ],
-                                    "edges": [["A", "B"], ["B", "A"]],
-                                    "representative": "A",
+                                    "additional_links": [["Vega", "Rigel"]],
+                                    "leader": "Vega",
                                 },
                             },
                             {
@@ -195,43 +193,17 @@ async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None
         assert replies["failed-shell"].status == "error"
         assert replies["failed-python"].status == "error"
         assert "ZeroDivisionError" in replies["failed-python"].text
-        assert "Sources — read-only" in replies["mounts"].text
-        assert "Working — read/write" in replies["mounts"].text
         assert replies["invalid-calendar"].status == "error"
         assert "day_of_week" in replies["invalid-calendar"].text
         assert replies["duplicate-edge"].status == "error"
-        assert "bidirectional" in replies["duplicate-edge"].text
-        assert "without also declaring B-A" in replies["duplicate-edge"].text
+        assert "non-Leader" in replies["duplicate-edge"].text
         assert replies["wrong-recipient"].status == "error"
-        assert "recipient not found" in replies["wrong-recipient"].text
+        assert (
+            "Use a user:<handle> or agent:<handle> address"
+            in replies["wrong-recipient"].text
+        )
         assert replies["unsupported-command"].status == "error"
         assert "command not found" in replies["unsupported-command"].text
-        context.agent = {
-            "id": uuid4(),
-            "leta_id": identity,
-            "box_id": uuid4(),
-            "representative_agent_id": uuid4(),
-        }
-        forbidden = await graph.ainvoke(  # pyright: ignore[reportUnknownMemberType]  # Native invocation overload.
-            {
-                "messages": [
-                    AIMessage(
-                        content="",
-                        tool_calls=[
-                            {
-                                "id": "root-contact",
-                                "name": "inbox_send",
-                                "args": {"to": "root", "content": "Unrouted report"},
-                            }
-                        ],
-                    )
-                ]
-            },
-            context=context,
-        )
-        blocked = forbidden["messages"][-1]
-        assert isinstance(blocked, ToolMessage) and blocked.status == "error"
-        assert "Only the representative" in blocked.text
     finally:
         await workspace.close()
 
@@ -243,7 +215,7 @@ async def test_truncated_arguments_cannot_overwrite_an_existing_file() -> None:
     builder = StateGraph(State, context_schema=Context)
     builder.add_node(  # pyright: ignore[reportUnknownMemberType]  # Native overload has unspecified cache generics.
         "tools",
-        ToolNode(tools(root=False), awrap_tool_call=ToolEffects().awrap_tool_call),
+        ToolNode(tools(leta=False), awrap_tool_call=ToolEffects().awrap_tool_call),
     )
     builder.add_edge(START, "tools")
     builder.add_edge("tools", END)
@@ -320,32 +292,27 @@ async def test_tool_timeout_returns_named_actionable_error() -> None:
     assert "time limit" in result.text and "inspect" in result.text
 
 
-def test_box_names_are_path_components_and_root_is_reserved() -> None:
-    import pytest
+def test_box_display_names_and_member_links() -> None:
     from leta.boxes import CreateBox
     from pydantic import ValidationError
 
     fields = {
-        "letis": [{"name": "analyst", "system_prompt": "Analyze sources."}],
-        "edges": [],
-        "representative": "analyst",
+        "letis": [
+            {"name": name, "title": "Analyst", "system_prompt": "Analyze sources."}
+            for name in ("Vega", "Rigel", "Altair")
+        ],
+        "leader": "Vega",
     }
     assert (
-        CreateBox.model_validate({"name": "quote-review", **fields}).name
-        == "quote-review"
+        CreateBox.model_validate({"name": "Quote Review", **fields}).name
+        == "Quote Review"
     )
-    for name in ("Quote Review", "../escape", "review/a", "root", "x" * 65):
+    for name in ("../escape", "review/a", "x" * 65):
         with pytest.raises(ValidationError):
             CreateBox.model_validate({"name": name, **fields})
-    with pytest.raises(ValidationError, match="reserved"):
-        CreateBox.model_validate(
-            {
-                "name": "quote-review",
-                "letis": [{"name": "root", "system_prompt": "Analyze."}],
-                "edges": [],
-                "representative": "root",
-            }
-        )
+    assert CreateBox.model_validate(
+        {"name": "Quote Review", "additional_links": [["Rigel", "Altair"]], **fields}
+    ).additional_links == [("Rigel", "Altair")]
 
 
 async def test_search_keeps_ranked_paths_and_caps_multibyte_excerpts() -> None:
@@ -551,7 +518,7 @@ async def test_inbox_send_paths_and_explicit_attachments(
 ) -> None:
     from unittest.mock import AsyncMock
 
-    from leta import events, messages, worker
+    from leta import conversations, events, messages, worker
     from leta.runtime.tools import inbox_send
     from mirage import FileStat, FileType
     from openlet_api.letfs.v1 import letfs_pb2 as fs
@@ -592,7 +559,16 @@ async def test_inbox_send_paths_and_explicit_attachments(
             return self
 
         async def fetchone(self) -> Row | None:
-            return {"id": teammate, "box_id": None} if case == "teammate" else None
+            return (
+                {
+                    "id": teammate,
+                    "leta_id": root,
+                    "box_id": storage,
+                    "leader_agent_id": teammate,
+                }
+                if case == "teammate"
+                else None
+            )
 
     class Database:
         @asynccontextmanager
@@ -608,6 +584,9 @@ async def test_inbox_send_paths_and_explicit_attachments(
         Services,
         SimpleNamespace(
             db=Database(),
+            internal=SimpleNamespace(
+                GetUserByHandle=AsyncMock(return_value=SimpleNamespace(id=str(user)))
+            ),
             redis=None,
             auth=SimpleNamespace(
                 require=AsyncMock(), allowed=AsyncMock(return_value=True)
@@ -629,6 +608,7 @@ async def test_inbox_send_paths_and_explicit_attachments(
         ),
     )
     delivered, handoff = AsyncMock(), AsyncMock()
+    monkeypatch.setattr(conversations, "storage", AsyncMock())
     monkeypatch.setattr(messages, "deliver_user", delivered)
     monkeypatch.setattr(worker, "deliver", handoff)
     monkeypatch.setattr(events, "changed", AsyncMock())
@@ -639,7 +619,9 @@ async def test_inbox_send_paths_and_explicit_attachments(
     builder.add_edge(START, "tools")
     builder.add_edge("tools", END)
     graph = builder.compile()  # pyright: ignore[reportUnknownMemberType]  # Native overload leaves checkpoint generics unspecified.
-    arguments: dict[str, object] = {"to": str(user)}
+    arguments: dict[str, object] = {
+        "to": "agent:vega-the-analyst" if case == "teammate" else "user:emma"
+    }
     if case in ("mention", "mixed"):
         arguments["content"] = "Xem :file[Bản mới]{path=~/one.txt}"
     if case in ("files-only", "mixed", "teammate"):

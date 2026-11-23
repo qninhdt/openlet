@@ -16,7 +16,8 @@ test('native runtime, box containment, asynchronous HITL and owner-independent s
   const creation = await account.api.post(`${workspace}/letas`, {
     data: {
       request_id: requestId,
-      name: 'Workspace assistant',
+      name: 'Vega',
+      title: 'Workspace Coordinator',
       system_prompt: 'Perform workspace tasks and report the outcome.',
     },
   });
@@ -90,16 +91,16 @@ test('native runtime, box containment, asynchronous HITL and owner-independent s
   const team = await account.api.post(`${path}/boxes`, {
     data: {
       request_id: randomUUID(),
-      name: 'review',
-      letis: [{ name: 'Reviewer', system_prompt: 'Review documents.' }],
-      edges: [],
-      representative: 'Reviewer',
+      name: 'Report Review Team',
+      letis: [{ name: 'Rigel', title: 'Reviewer', system_prompt: 'Review documents.' }],
+      additional_links: [],
+      leader: 'Rigel',
     },
   });
   expect(team.ok(), await team.text()).toBeTruthy();
   const box = await team.json();
   const graph = await (await account.api.get(`${path}/boxes/${box.id}`)).json();
-  const leti: string = graph.representative_agent_id;
+  const leti: string = graph.leader_agent_id;
   const questionId = randomUUID();
   const asked = await account.api.post(`${path}/hitl-requests`, {
     data: {

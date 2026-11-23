@@ -126,7 +126,7 @@ type GraphNode = Node<{
   box?: AgentBox;
   schedule?: BoxSchedule;
   accent: string;
-  representative?: boolean;
+  leader?: boolean;
   working?: number;
   total?: number;
   onOpen?: () => void;
@@ -168,11 +168,8 @@ function GraphCard({ data, selected }: NodeProps<GraphNode>) {
             <span className="flex min-w-0 flex-1 flex-col gap-0.5">
               <span className="flex min-w-0 items-center gap-1.5 text-sm font-medium">
                 <span className="truncate">{a.name}</span>
-                {data.representative && (
-                  <Star
-                    className="size-3 shrink-0 text-muted-foreground"
-                    aria-label="Representative"
-                  />
+                {data.leader && (
+                  <Star className="size-3 shrink-0 text-muted-foreground" aria-label="Leader" />
                 )}
               </span>
               <span className="truncate text-caption text-muted-foreground">{a.title}</span>
@@ -258,7 +255,7 @@ function diagram(
   const nodes: GraphNode[] = [],
     edges: Edge[] = [];
   let top = 24;
-  for (const rootId of graph.roots) {
+  for (const rootId of graph.letas) {
     const root = graph.agents.find((a) => a.id === rootId);
     if (!root) continue;
     const accent = agentAppearance(root.name, root.appearance).background;
@@ -303,15 +300,15 @@ function diagram(
           data: {
             agent,
             accent,
-            representative: agent.id === box.representative_agent_id,
+            leader: agent.id === box.leader_agent_id,
             onOpen: () => open(agent),
           },
         });
       });
       edges.push({
-        id: `representative:${box.id}`,
+        id: `leader:${box.id}`,
         source: root.id,
-        target: closed ? box.id : box.representative_agent_id,
+        target: closed ? box.id : box.leader_agent_id,
         type: 'smoothstep',
         sourceHandle: mobile ? 'left-out' : 'right',
         targetHandle: 'left',
@@ -344,7 +341,16 @@ function diagram(
     });
     top = Math.max((mobile ? boxTop : top + 260) + schedules.length * 164, boxTop) + 80;
   }
-  graph.edges
+  const links = graph.boxes.flatMap((box) =>
+    graph.agents
+      .filter((agent) => agent.box_id === box.id && agent.id !== box.leader_agent_id)
+      .map((agent) => ({
+        box_id: box.id,
+        agent_low_id: box.leader_agent_id,
+        agent_high_id: agent.id,
+      })),
+  );
+  [...links, ...graph.additional_links]
     .filter((edge) => !collapsed.includes(edge.box_id))
     .forEach((edge) =>
       edges.push({
@@ -487,7 +493,7 @@ function Canvas({ graph, viewKey }: { graph: BoxGraph; viewKey: string }) {
             (node) =>
               (node.data.agent?.leta_id ??
                 node.data.box?.leta_id ??
-                node.data.schedule?.leta_id) === graph.roots[0],
+                node.data.schedule?.leta_id) === graph.letas[0],
           ),
         }}
         minZoom={0.18}
@@ -566,7 +572,7 @@ export function BoxView({ root = '' }: { root?: string }) {
   const graph = useMemo(
     () => ({
       ...p.graph,
-      roots: p.graph.roots.filter((id) => !root || id === root),
+      letas: p.graph.letas.filter((id) => !root || id === root),
       agents: p.graph.agents
         .filter((a) => !root || a.leta_id === root)
         .map((a) =>
@@ -576,7 +582,7 @@ export function BoxView({ root = '' }: { root?: string }) {
         ),
       boxes: p.graph.boxes.filter((b) => !root || b.leta_id === root),
       schedules: p.graph.schedules.filter((s) => !root || s.leta_id === root),
-      edges: p.graph.edges.filter(
+      additional_links: p.graph.additional_links.filter(
         (e) => !root || p.graph.boxes.some((b) => b.id === e.box_id && b.leta_id === root),
       ),
     }),
@@ -592,7 +598,7 @@ export function BoxView({ root = '' }: { root?: string }) {
   if (
     p.live.enabled &&
     p.graphQuery.error &&
-    (!graph.roots.length ||
+    (!graph.letas.length ||
       (p.graphQuery.error instanceof ApiError &&
         [401, 403, 404].includes(p.graphQuery.error.status)))
   )
@@ -607,7 +613,7 @@ export function BoxView({ root = '' }: { root?: string }) {
         </Button>
       </div>
     );
-  if (!graph.roots.length)
+  if (!graph.letas.length)
     return (
       <Empty className="h-full">
         <EmptyHeader>

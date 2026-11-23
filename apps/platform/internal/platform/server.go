@@ -83,7 +83,7 @@ func (s *Server) active(ctx context.Context, id string) error {
 func scanUser(row pgx.Row) (*pb.User, error) {
 	u := new(pb.User)
 	var appearance []byte
-	err := row.Scan(&u.Id, &u.DisplayName, &u.AvatarUrl, &appearance)
+	err := row.Scan(&u.Id, &u.DisplayName, &u.AvatarUrl, &appearance, &u.Handle)
 	if err == nil && len(appearance) > 0 {
 		u.Appearance = new(pb.AvatarAppearance)
 		err = protojson.Unmarshal(appearance, u.Appearance)

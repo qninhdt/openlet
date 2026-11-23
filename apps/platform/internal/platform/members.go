@@ -57,7 +57,7 @@ func (s *Server) AddMember(ctx context.Context, r *pb.AddMemberRequest) (*pb.Wor
 	if err := s.active(ctx, r.WorkspaceId); err != nil {
 		return nil, err
 	}
-	u, err := scanUser(s.DB.QueryRow(ctx, `SELECT id,display_name,avatar_url,appearance FROM users WHERE id=$1`, r.UserId))
+	u, err := scanUser(s.DB.QueryRow(ctx, `SELECT id,display_name,avatar_url,appearance,handle FROM users WHERE id=$1`, r.UserId))
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +103,7 @@ func (s *Server) TransferWorkspaceOwnership(ctx context.Context, r *pb.TransferW
 	if err = s.active(ctx, r.WorkspaceId); err != nil {
 		return nil, err
 	}
-	u, err := scanUser(s.DB.QueryRow(ctx, `SELECT id,display_name,avatar_url,appearance FROM users WHERE id=$1`, r.NewOwnerUserId))
+	u, err := scanUser(s.DB.QueryRow(ctx, `SELECT id,display_name,avatar_url,appearance,handle FROM users WHERE id=$1`, r.NewOwnerUserId))
 	if err != nil {
 		return nil, err
 	}

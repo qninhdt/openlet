@@ -1,17 +1,42 @@
+import re
 from datetime import datetime
-from typing import Literal, cast
+from typing import Annotated, Literal, cast
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from openlet_sdk.config import JSON, ReasoningEffort
 from psycopg import sql
 from psycopg.types.json import Jsonb
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
 from .db import Connection, Pool, Row, receipt, save_receipt
 
 
 class Input(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+AgentName = Annotated[str, Field(max_length=255, pattern=r"^[A-Za-z]+$")]
+
+
+def bare_title(value: str) -> str:
+    if value.partition(" ")[0] == "The":
+        raise ValueError("Use a job title without the leading 'The'")
+    return value
+
+
+AgentTitle = Annotated[
+    str,
+    Field(max_length=255, pattern=r"^[A-Z][A-Za-z0-9-]*(?: [A-Z][A-Za-z0-9-]*)*$"),
+    AfterValidator(bare_title),
+]
+
+
+def slug(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+
+
+def agent_handle(name: str, title: str) -> str:
+    return f"{slug(name)}-the-{slug(title)}"
 
 
 class Appearance(Input):
@@ -69,8 +94,8 @@ def appearance(id: UUID) -> dict[str, str]:
 
 class CreateLeta(Input):
     request_id: UUID
-    name: str = Field(min_length=1, max_length=255)
-    title: str = Field(default="", max_length=255)
+    name: AgentName
+    title: AgentTitle
     appearance: Appearance | None = None
     description: str = Field(default="", max_length=4000)
     system_prompt: str = Field(default="", max_length=32000)
@@ -106,13 +131,13 @@ class ConfigureAgent(Input):
         return self
 
 
-class RootRequest(Input):
+class LetaRequest(Input):
     workspace_id: UUID
     owner_id: UUID
     request: CreateLeta
 
 
-class RootCreation(RootRequest):
+class LetaCreation(LetaRequest):
     leta_id: UUID
     storage_id: UUID
     root_node_id: UUID
@@ -155,8 +180,8 @@ async def gate(conn: Connection, leta: UUID, box: UUID | None = None) -> Row:
     return root
 
 
-async def prepare(db: Pool, creation: RootCreation) -> dict[str, JSON]:
-    original = RootRequest(
+async def prepare(db: Pool, creation: LetaCreation) -> dict[str, JSON]:
+    original = LetaRequest(
         workspace_id=creation.workspace_id,
         owner_id=creation.owner_id,
         request=creation.request,
@@ -181,8 +206,8 @@ async def prepare(db: Pool, creation: RootCreation) -> dict[str, JSON]:
         )
         request = creation.request
         await conn.execute(
-            """INSERT INTO agents(id,leta_id,name,description,system_prompt,model_id,reasoning_effort,title,appearance)
-            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            """INSERT INTO agents(id,leta_id,name,description,system_prompt,model_id,reasoning_effort,title,appearance,handle)
+            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
             (
                 creation.leta_id,
                 creation.leta_id,
@@ -197,6 +222,7 @@ async def prepare(db: Pool, creation: RootCreation) -> dict[str, JSON]:
                     if request.appearance
                     else appearance(creation.leta_id)
                 ),
+                agent_handle(request.name, request.title),
             ),
         )
         result: dict[str, JSON] = {"id": str(creation.leta_id), "state": "provisioning"}

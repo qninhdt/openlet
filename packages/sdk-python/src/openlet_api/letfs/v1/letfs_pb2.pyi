@@ -84,7 +84,7 @@ class StorageCapabilities(_message.Message):
     def __init__(self, read: _Optional[bool] = ..., write: _Optional[bool] = ..., manage_access: _Optional[bool] = ...) -> None: ...
 
 class Storage(_message.Message):
-    __slots__ = ("id", "workspace_id", "name", "visibility", "root_node_id", "allow_blob_files", "allow_indexing", "capabilities")
+    __slots__ = ("id", "workspace_id", "name", "visibility", "root_node_id", "allow_blob_files", "allow_indexing", "capabilities", "ownership")
     ID_FIELD_NUMBER: _ClassVar[int]
     WORKSPACE_ID_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
@@ -93,6 +93,7 @@ class Storage(_message.Message):
     ALLOW_BLOB_FILES_FIELD_NUMBER: _ClassVar[int]
     ALLOW_INDEXING_FIELD_NUMBER: _ClassVar[int]
     CAPABILITIES_FIELD_NUMBER: _ClassVar[int]
+    OWNERSHIP_FIELD_NUMBER: _ClassVar[int]
     id: str
     workspace_id: str
     name: str
@@ -101,7 +102,8 @@ class Storage(_message.Message):
     allow_blob_files: bool
     allow_indexing: bool
     capabilities: StorageCapabilities
-    def __init__(self, id: _Optional[str] = ..., workspace_id: _Optional[str] = ..., name: _Optional[str] = ..., visibility: _Optional[_Union[StorageVisibility, str]] = ..., root_node_id: _Optional[str] = ..., allow_blob_files: _Optional[bool] = ..., allow_indexing: _Optional[bool] = ..., capabilities: _Optional[_Union[StorageCapabilities, _Mapping]] = ...) -> None: ...
+    ownership: StorageOwnership
+    def __init__(self, id: _Optional[str] = ..., workspace_id: _Optional[str] = ..., name: _Optional[str] = ..., visibility: _Optional[_Union[StorageVisibility, str]] = ..., root_node_id: _Optional[str] = ..., allow_blob_files: _Optional[bool] = ..., allow_indexing: _Optional[bool] = ..., capabilities: _Optional[_Union[StorageCapabilities, _Mapping]] = ..., ownership: _Optional[_Union[StorageOwnership, _Mapping]] = ...) -> None: ...
 
 class WorkspaceStorage(_message.Message):
     __slots__ = ("workspace_id", "quota_bytes", "used_bytes")

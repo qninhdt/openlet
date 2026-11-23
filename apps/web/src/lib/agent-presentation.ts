@@ -35,7 +35,7 @@ export type ToolResult = {
   status?: string;
   duration?: string;
   home?: string;
-  representative?: string;
+  leader?: string;
   edges?: [string, string][];
   lineRange?: string;
   webSources?: { url: string; title: string; snippet: string; publishedAt: string }[];
@@ -101,9 +101,7 @@ export function activityToolResult(entry: ActivityEntry): ToolResult | string {
   }
   if (!ui && payload.name !== 'execute') return payload.text ?? '';
   const data = object(ui?.data);
-  const items = rows(
-    data.items ?? data.members ?? data.recipients ?? data.boxes ?? data.letis ?? data.entries,
-  );
+  const items = rows(data.items ?? data.members ?? data.boxes ?? data.letis ?? data.entries);
   const result: ToolResult = {
     output: payload.text ?? '',
     content: payload.text ?? '',
@@ -126,7 +124,7 @@ export function activityToolResult(entry: ActivityEntry): ToolResult | string {
     result.items = items.map((item) => ({
       title: string(item.name ?? item.title ?? item.path ?? item.displayName ?? item.id),
       detail: string(item.description ?? item.content ?? item.preview),
-      meta: string(item.role ?? item.target_name ?? item.source_kind),
+      meta: string(item.title ?? item.role ?? item.target_name ?? item.source_kind),
       status: string(item.status ?? item.state ?? (item.paused ? 'Paused' : undefined)),
       kind: item.kind === 'directory' ? 'folder' : 'file',
       file: item.kind === 'directory' && !item.artifacts ? undefined : file(item),
@@ -146,21 +144,18 @@ export function activityToolResult(entry: ActivityEntry): ToolResult | string {
       detail: string(item.text_preview),
       meta: string(item.created_at),
     }));
+  if (name === 'get_context') {
+    const workspace = object(data.workspace);
+    result.title = string(workspace.name);
+    result.home = string(workspace.shared_path);
+  }
   if (name.startsWith('box_')) {
-    const members = rows(data.letis);
-    const names = new Map(members.map((member) => [string(member.id), string(member.name)]));
     result.title = string(data.name ?? data.box);
-    result.home = string(data.home) || (data.name ? `~/.boxes/${string(data.name)}/` : '');
-    result.representative =
-      string(data.representative) || names.get(string(data.representative_agent_id));
-    result.edges = Array.isArray(data.edges)
-      ? data.edges.map((edge) =>
-          Array.isArray(edge)
-            ? [string(edge[0]), string(edge[1])]
-            : [
-                names.get(string(object(edge).agent_low_id)) ?? '',
-                names.get(string(object(edge).agent_high_id)) ?? '',
-              ],
+    result.home = string(data.home);
+    result.leader = string(object(data.leader).name);
+    result.edges = Array.isArray(data.additional_links)
+      ? data.additional_links.flatMap((link) =>
+          Array.isArray(link) ? [[string(link[0]), string(link[1])]] : [],
         )
       : [];
   }

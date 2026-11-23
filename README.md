@@ -44,7 +44,7 @@ test -e .local/openlet.yaml || install -m 600 infra/config/openlet.example.yaml 
 | Model gateway | Set `OPENAI_BASE_URL`, `OPENAI_API_KEY`, and an independent `LITELLM_MASTER_KEY`. Match the model aliases and embedding dimensions to the deployments in [LiteLLM config](infra/config/litellm.yaml). |
 | Document conversion | Set `DATALAB_API_KEY` to process PDF and DOCX. Set `dependencies.s3.processing_download_endpoint` if Datalab should fetch via an externally reachable signed HTTPS URL. |
 | Agent web tools | Set `TINYFISH_API_KEY` and enable `services.leta.web_search` in the shared YAML. |
-| Prompt registry | For Leta runs and ingest enrichment, configure Langfuse credentials and publish the prompt versions under the configured label. The task names are `leta/root`, `leta/leti`, and `letfs/enrichment`. |
+| Prompt registry | Configure Langfuse credentials and publish `leta/leta`, `leta/leti`, `leta/compaction`, and `letfs/enrichment` under the configured label. See the [managed prompt sources](apps/leta/prompts/README.md). |
 
 The sample S3 address belongs to the isolated test stack. For the normal stack, use a bucket reachable from the application and its intended clients. Base Compose starts Platform, LetFS, and the ingest workers. Enable the `leta` profile before startup to add Redis, the Leta API and worker, and the Leta migrations. Set `telemetry.otlp_endpoint: null` for local operation without an OTLP collector. [Secret template](.env.example) · [Shared YAML](infra/config/openlet.example.yaml) · [Compose](infra/compose.yaml)
 

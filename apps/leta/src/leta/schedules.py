@@ -144,8 +144,8 @@ async def get(
     async with db.connection() as conn:
         row = await (
             await conn.execute(
-                """SELECT sc.*,CASE WHEN target.box_id IS NULL THEN 'root'
-                WHEN target.id=b.representative_agent_id THEN b.name
+                """SELECT sc.*,CASE WHEN target.box_id IS NULL THEN target.name
+                WHEN target.id=b.leader_agent_id THEN b.name
                 ELSE b.name||'/'||target.name END AS target
                 FROM schedules sc JOIN agents a ON a.id=sc.creator_agent_id
                 JOIN agents target ON target.id=sc.target_agent_id
@@ -240,7 +240,7 @@ async def save(db: Pool, canonical: CanonicalChange) -> dict[str, JSON]:
         if change.target_agent_id != change.creator_agent_id:
             box = await (
                 await conn.execute(
-                    "SELECT 1 FROM boxes WHERE id=%s AND representative_agent_id=%s",
+                    "SELECT 1 FROM boxes WHERE id=%s AND leader_agent_id=%s",
                     (target["box_id"], change.target_agent_id),
                 )
             ).fetchone()

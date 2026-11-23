@@ -101,7 +101,7 @@ async def database() -> AsyncIterator[tuple[Pool, UUID, UUID, UUID, UUID]]:
                 (root, workspace, uuid4()),
             )
             await conn.execute(
-                "INSERT INTO agents(id,leta_id,name,system_prompt) VALUES(%s,%s,'Atlas','private system instruction')",
+                "INSERT INTO agents(id,leta_id,name,system_prompt,handle) VALUES(%s,%s,'Atlas','private system instruction','atlas-the-agent')",
                 (root, root),
             )
         yield db, root, workspace, user, other
@@ -516,7 +516,8 @@ async def test_reactions_are_private_idempotent_and_silent(
         reactions.React(request_id=uuid4(), emoji="❤️"),
     )
     assert await messages.pending(db, root, 2, silent_after=1) == []
-    text, rows = await messages.read(db, root, 3)
+    rows = await messages.read(db, root, user, "user")
+    text = messages.input_batch(rows, root=False)
     assert any(r["input_type"] == "reaction" for r in rows) and "❤️" in text
     await messages.admit(db, auth, wake.model_copy(update={"id": uuid4()}))
     # Explicitly reading a later reaction never skips another ordinary input.
@@ -807,21 +808,21 @@ async def test_agent_reactions_follow_graph_and_roll_back_invalid_delivery(
     database: tuple[Pool, UUID, UUID, UUID, UUID],
 ) -> None:
     db, root, _, _, _ = database
-    box, scout, forge = uuid4(), uuid4(), uuid4()
+    box, scout, forge, leader = uuid4(), uuid4(), uuid4(), uuid4()
     auth = cast(Authorization, UseAuth())
     low, high = sorted((scout, forge))
     async with db.connection() as conn, conn.transaction():
         await conn.execute(
-            "INSERT INTO boxes(id,leta_id,name,representative_agent_id,home_node_id,state) VALUES(%s,%s,'review',%s,%s,'active')",
-            (box, root, scout, uuid4()),
+            "INSERT INTO boxes(id,leta_id,name,leader_agent_id,home_node_id,state,handle) VALUES(%s,%s,'review',%s,%s,'active','review')",
+            (box, root, leader, uuid4()),
         )
-        for id, name in ((scout, "Scout"), (forge, "Forge")):
+        for id, name in ((scout, "Scout"), (forge, "Forge"), (leader, "Vega")):
             await conn.execute(
-                "INSERT INTO agents(id,leta_id,box_id,name,system_prompt) VALUES(%s,%s,%s,%s,'Work')",
-                (id, root, box, name),
+                "INSERT INTO agents(id,leta_id,box_id,name,system_prompt,handle) VALUES(%s,%s,%s,%s,'Work',%s)",
+                (id, root, box, name, name.lower()),
             )
         await conn.execute(
-            "INSERT INTO box_edges(box_id,agent_low_id,agent_high_id) VALUES(%s,%s,%s)",
+            "INSERT INTO box_links(box_id,agent_low_id,agent_high_id) VALUES(%s,%s,%s)",
             (box, low, high),
         )
     original = uuid4()
@@ -858,7 +859,7 @@ async def test_agent_reactions_follow_graph_and_roll_back_invalid_delivery(
             and notification["silent"]
             and notification["input_type"] == "reaction"
         )
-        await conn.execute("DELETE FROM box_edges WHERE box_id=%s", (box,))
+        await conn.execute("DELETE FROM box_links WHERE box_id=%s", (box,))
     with pytest.raises(ValueError, match="communication graph"):
         await reactions.react(
             db,
@@ -970,8 +971,7 @@ async def test_box_identity_graph_and_runtime_state(
         request_id=uuid4(),
         request=boxes.CreateBox(
             name="research",
-            representative="Iris",
-            edges=[("Iris", "Milo")],
+            leader="Iris",
             letis=[
                 boxes.LetiDefinition(
                     name="Iris", title="Researcher", system_prompt="private iris"
@@ -982,9 +982,9 @@ async def test_box_identity_graph_and_runtime_state(
             ],
         ),
     )
-    first = await boxes.prepare(db, creation, uuid4())
-    assert await boxes.prepare(db, creation, uuid4()) == first
-    detail = await boxes.get(db, root, str(box_id))
+    first = await boxes.prepare(db, creation, uuid4(), creation.request.name)
+    assert await boxes.prepare(db, creation, uuid4(), creation.request.name) == first
+    detail = await boxes.get(db, root, box_id)
     members = cast(list[dict[str, JSON]], detail["letis"])
     assert len(members) == 2 and {str(m["title"]) for m in members} == {"Researcher"}
     iris = next(m for m in members if m["name"] == "Iris")
@@ -999,13 +999,14 @@ async def test_box_identity_graph_and_runtime_state(
         ConfigureAgent(appearance=None)
     assert ConfigureAgent(title="").title == ""
 
-    from leta.agents import get_agent
-    from leta.runtime.agent import box_context
+    from leta.runtime.agent import box_context, runtime_agent
     from psycopg.errors import CheckViolation
 
     services = cast(Services, SimpleNamespace(db=db))
-    context = await box_context(services, await get_agent(db, UUID(str(iris["id"]))))
-    assert "You: Iris (Researcher)" in context and "Milo (Researcher)" in context
+    context = await box_context(
+        services, await runtime_agent(services, UUID(str(iris["id"])))
+    )
+    assert "You are the Box Leader" in context and "Milo The Researcher" in context
     async with db.connection() as conn:
         with pytest.raises(CheckViolation):
             await conn.execute(
@@ -1024,7 +1025,7 @@ async def test_box_identity_graph_and_runtime_state(
     assert next(a for a in agents if a["id"] == iris["id"])["status"] == "working"
     assert next(a for a in agents if a["id"] == milo["id"])["status"] == "unknown"
     assert "private iris" not in json.dumps(graph)
-    assert len(cast(list[JSON], graph["edges"])) == 1
+    assert len(cast(list[JSON], graph["additional_links"])) == 0
     assert (await box_views.graph(db, []))["agents"] == []
     async with db.connection() as conn:
         await conn.execute("UPDATE letas SET paused=true WHERE id=%s", (root,))
@@ -1065,7 +1066,7 @@ async def test_box_view_filters_management_and_workspace(
             path = f"/v1/workspaces/{workspace}/letas/box-view"
             response = await client.get(path)
             assert response.status_code == 200
-            assert response.json()["roots"] == [str(root)]
+            assert response.json()["letas"] == [str(root)]
             assert response.json()["agents"][0]["name"] == "Atlas"
             denied = await client.get(path, headers={"x-openlet-user-id": str(other)})
             assert denied.status_code == 200 and denied.json()["agents"] == []
@@ -1088,8 +1089,7 @@ async def test_leti_inbox_includes_sent_messages_without_marking_read(
         request_id=uuid4(),
         request=boxes.CreateBox(
             name="reporters",
-            representative="Iris",
-            edges=[("Iris", "Milo")],
+            leader="Iris",
             letis=[
                 boxes.LetiDefinition(
                     name="Iris", title="Reporter", system_prompt="Iris"
@@ -1100,8 +1100,8 @@ async def test_leti_inbox_includes_sent_messages_without_marking_read(
             ],
         ),
     )
-    await boxes.prepare(db, creation, uuid4())
-    detail = await boxes.get(db, root, str(creation.box_id))
+    await boxes.prepare(db, creation, uuid4(), creation.request.name)
+    detail = await boxes.get(db, root, creation.box_id)
     members = cast(list[dict[str, JSON]], detail["letis"])
     iris = UUID(str(next(m["id"] for m in members if m["name"] == "Iris")))
     milo = UUID(str(next(m["id"] for m in members if m["name"] == "Milo")))
@@ -1109,8 +1109,8 @@ async def test_leti_inbox_includes_sent_messages_without_marking_read(
     async with db.connection() as conn:
         await conn.execute(
             """INSERT INTO agent_messages(id,recipient_agent_id,seq,source_kind,source_id,conversation_id,content)
-            VALUES(%s,%s,1,'agent',%s,%s,'findings for Milo'),(%s,%s,1,'box',%s,%s,'report to Atlas')""",
-            (uuid4(), milo, iris, peer, uuid4(), root, creation.box_id, parent),
+            VALUES(%s,%s,1,'agent',%s,%s,'findings for Milo'),(%s,%s,1,'agent',%s,%s,'report to Atlas')""",
+            (uuid4(), milo, iris, peer, uuid4(), root, iris, parent),
         )
     inbox = await views.inbox(db, iris)
     assert {str(i["content"]) for i in cast(list[dict[str, JSON]], inbox["items"])} == {
@@ -1145,7 +1145,7 @@ async def test_leti_inbox_includes_sent_messages_without_marking_read(
                 (foreign, workspace, uuid4()),
             )
             await conn.execute(
-                "INSERT INTO agents(id,leta_id,name,system_prompt) VALUES(%s,%s,'Other','secret')",
+                "INSERT INTO agents(id,leta_id,name,system_prompt,handle) VALUES(%s,%s,'Other','secret','other-the-agent')",
                 (foreign, foreign),
             )
         async with httpx.AsyncClient(
@@ -1294,7 +1294,7 @@ async def test_chat_and_inbox_preserve_file_metadata_without_prompt_inventory(
         item["file_refs"] == refs
         for item in cast(list[dict[str, JSON]], inbox["items"])
     )
-    _, rows = await messages.read(db, root, 1)
+    rows = await messages.read(db, root, user, "user")
     prompt = messages.input_batch(rows, root=False)
     assert token in prompt
     assert "\nfiles:" not in prompt
@@ -1307,7 +1307,13 @@ async def test_injected_full_messages_are_read_but_previews_remain_unread(
 ) -> None:
     db, root, _, user, _ = database
     auth = cast(Authorization, UseAuth())
-    contents = ["xin quyền đi", "a" * 120, "\n\t" + " " * 118, "long " * 80, "ok bye"]
+    contents = [
+        "xin quyền đi",
+        "a" * 120,
+        "\n\t" + " " * 117 + "x",
+        "long " * 80,
+        "ok bye",
+    ]
     for text in contents:
         await messages.admit(
             db,
@@ -1325,14 +1331,15 @@ async def test_injected_full_messages_are_read_but_previews_remain_unread(
     body = messages.input_batch(batch, root=True)
     assert all(f"message={i}" in body for i in range(1, 6))
     assert body.count("Full message:") == 4
-    assert f"to={user}" in body
+    assert "From User | message=1" in body
     assert contents[2] in body
     async with db.connection() as conn:
         rows = await (
             await conn.execute("SELECT seq,read_at FROM agent_messages ORDER BY seq")
         ).fetchall()
     assert [row["seq"] for row in rows if row["read_at"] is None] == [4]
-    text, unread = await messages.read(db, root, 5)
+    unread = await messages.read(db, root, user, "user")
+    text = messages.input_batch(unread, root=False)
     assert [row["seq"] for row in unread] == [4]
     assert contents[3] in text and "ok bye" not in text
     # A failed checkpoint may replay the batch; read marks never suppress delivery.
@@ -1359,9 +1366,10 @@ async def test_inbox_listing_marks_only_complete_returned_message_read(
                 content=text,
             ),
         )
-    text, rows = await messages.list_inbox(db, root)
+    rows = await messages.list_inbox(db, root)
+    text = messages.input_batch(rows, root=True)
     assert [row["seq"] for row in rows] == [2] and "Full message:" in text
-    _, unread = await messages.read(db, root, 2)
+    unread = await messages.read(db, root, user, "user")
     assert [row["seq"] for row in unread] == [1]
 
 

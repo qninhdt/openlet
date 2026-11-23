@@ -60,7 +60,7 @@ def test_mixed_input_preserves_short_messages_previews_and_decisions() -> None:
         },
     ]
     for row in rows:
-        row["reply_to"] = str(conversation)
+        row["source_name"], row["source_handle"] = "Emma", "emma"
     root = input_batch(rows, root=True)
     assert root.index("message=1") < root.index("message=2")
     assert "Full message:\nOlder instruction" in root
@@ -69,7 +69,7 @@ def test_mixed_input_preserves_short_messages_previews_and_decisions() -> None:
     assert "Answer: GreenCarton\nNote: Approved within budget" in root
     assert root.count("Original occurrence instruction") == 1
     assert (
-        root.index("New inbox message from User")
+        root.index("From Emma#emma")
         < root.index("Decision:")
         < root.index("Scheduled task:")
     )
@@ -102,13 +102,14 @@ def test_short_message_boundary_preserves_original_whitespace_and_recipient() ->
             "conversation_id": user,
             "source_kind": "user",
             "source_id": user,
-            "reply_to": str(user),
+            "source_name": "Emma",
+            "source_handle": "emma",
             "content": content,
         }
         for i, content in enumerate(("a" * 119, "\n\t" + " " * 118, "x" * 121), 1)
     ]
     body = input_batch(rows, root=True)
-    assert f"to={user}" in body
+    assert "From Emma#emma" in body
     assert "Full message:\n" + str(rows[1]["content"]) in body
     assert body.count("Full message:") == 2
     assert body.count("[truncated; use inbox_read before acting]") == 1
@@ -167,7 +168,8 @@ def test_reaction_input_keeps_latest_feedback_without_superseding_ordinary_messa
             "source_kind": "user",
             "source_id": user,
             "content": "Continue working",
-            "reply_to": str(user),
+            "source_name": "Emma",
+            "source_handle": "emma",
         }
     )
     body = input_batch(rows, root=True)

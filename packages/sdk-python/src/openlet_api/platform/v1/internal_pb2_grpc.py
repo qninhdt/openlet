@@ -36,6 +36,16 @@ class PlatformInternalServiceStub:
         Args:
             channel: A grpc.Channel.
         """
+        self.GetUserByHandle = channel.unary_unary(
+                '/openlet.platform.v1.PlatformInternalService/GetUserByHandle',
+                request_serializer=openlet__api_dot_platform_dot_v1_dot_internal__pb2.UserHandleRequest.SerializeToString,
+                response_deserializer=openlet__api_dot_platform_dot_v1_dot_platform__pb2.User.FromString,
+                _registered_method=True)
+        self.GetWorkspaceInfo = channel.unary_unary(
+                '/openlet.platform.v1.PlatformInternalService/GetWorkspaceInfo',
+                request_serializer=openlet__api_dot_platform_dot_v1_dot_platform__pb2.WorkspaceRequest.SerializeToString,
+                response_deserializer=openlet__api_dot_platform_dot_v1_dot_platform__pb2.Workspace.FromString,
+                _registered_method=True)
         self.CheckWorkspaceActive = channel.unary_unary(
                 '/openlet.platform.v1.PlatformInternalService/CheckWorkspaceActive',
                 request_serializer=openlet__api_dot_platform_dot_v1_dot_internal__pb2.CheckWorkspaceActiveRequest.SerializeToString,
@@ -55,6 +65,18 @@ class PlatformInternalServiceStub:
 
 class PlatformInternalServiceServicer:
     """Missing associated documentation comment in .proto file."""
+
+    def GetUserByHandle(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetWorkspaceInfo(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
 
     def CheckWorkspaceActive(self, request, context):
         """Missing associated documentation comment in .proto file."""
@@ -77,6 +99,16 @@ class PlatformInternalServiceServicer:
 
 def add_PlatformInternalServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
+            'GetUserByHandle': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetUserByHandle,
+                    request_deserializer=openlet__api_dot_platform_dot_v1_dot_internal__pb2.UserHandleRequest.FromString,
+                    response_serializer=openlet__api_dot_platform_dot_v1_dot_platform__pb2.User.SerializeToString,
+            ),
+            'GetWorkspaceInfo': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetWorkspaceInfo,
+                    request_deserializer=openlet__api_dot_platform_dot_v1_dot_platform__pb2.WorkspaceRequest.FromString,
+                    response_serializer=openlet__api_dot_platform_dot_v1_dot_platform__pb2.Workspace.SerializeToString,
+            ),
             'CheckWorkspaceActive': grpc.unary_unary_rpc_method_handler(
                     servicer.CheckWorkspaceActive,
                     request_deserializer=openlet__api_dot_platform_dot_v1_dot_internal__pb2.CheckWorkspaceActiveRequest.FromString,
@@ -102,6 +134,60 @@ def add_PlatformInternalServiceServicer_to_server(servicer, server):
  # This class is part of an EXPERIMENTAL API.
 class PlatformInternalService:
     """Missing associated documentation comment in .proto file."""
+
+    @staticmethod
+    def GetUserByHandle(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/openlet.platform.v1.PlatformInternalService/GetUserByHandle',
+            openlet__api_dot_platform_dot_v1_dot_internal__pb2.UserHandleRequest.SerializeToString,
+            openlet__api_dot_platform_dot_v1_dot_platform__pb2.User.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetWorkspaceInfo(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/openlet.platform.v1.PlatformInternalService/GetWorkspaceInfo',
+            openlet__api_dot_platform_dot_v1_dot_platform__pb2.WorkspaceRequest.SerializeToString,
+            openlet__api_dot_platform_dot_v1_dot_platform__pb2.Workspace.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
 
     @staticmethod
     def CheckWorkspaceActive(request,
