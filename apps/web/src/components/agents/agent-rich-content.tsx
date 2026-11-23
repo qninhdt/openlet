@@ -8,7 +8,7 @@ import {
 } from 'react';
 import Markdown, { defaultUrlTransform, type ExtraProps } from 'react-markdown';
 import { fileReferenceStyles } from '@/components/ui/styles';
-import { fileMarkdown, fileTokenPattern } from '@/lib/file-refs';
+import { fileMarkdown, fileTokenPattern, type MessageSource } from '@/lib/file-refs';
 import { FileIcon } from '@/components/storage/file-icon';
 import { useAgentPreview } from './agent-preview';
 import remarkGfm from 'remark-gfm';
@@ -90,6 +90,35 @@ export function HighlightedCode({
 }
 
 const attachmentLink = /^openlet-(file|folder):/;
+const citationLink = /^openlet-citation:([1-9]\d*)$/;
+
+function Citation({ source, number }: { source: MessageSource; number: string }) {
+  const p = useAgentPreview();
+  const label =
+    source.kind === 'web'
+      ? source.title
+      : source.label +
+        (source.page ? ` · Page ${source.page}` : source.line ? ` · Line ${source.line}` : '');
+  const props = {
+    'aria-label': `Source ${number}: ${label}`,
+    title: label,
+    className:
+      'mx-0.5 inline-flex h-5 min-w-5 items-center justify-center rounded-md bg-foreground/10 px-1 align-baseline text-xs font-medium tabular-nums hover:bg-foreground/20',
+  };
+  return source.kind === 'web' ? (
+    <a {...props} href={defaultUrlTransform(source.url)} target="_blank" rel="noreferrer">
+      {number}
+    </a>
+  ) : (
+    <button
+      {...props}
+      type="button"
+      onClick={() => void p.openFileReference(source, source.line, source.page)}
+    >
+      {number}
+    </button>
+  );
+}
 
 function FileReference({ target, label }: { target: string; label: ReactNode }) {
   const p = useAgentPreview();
@@ -120,13 +149,18 @@ function MathSpan({ node: _node, className, ...props }: ComponentProps<'span'> &
   );
 }
 
-export function AgentMarkdown({ text }: { text: string }) {
+export function AgentMarkdown({ text, sources }: { text: string; sources?: MessageSource[] }) {
+  // Markdown resolves shortcut references while keeping code and existing links intact.
+  const definitions = sources?.map((_, index) => `[${index + 1}]: openlet-citation:${index + 1}`);
+  const content = mathMarkdown(fileMarkdown(text));
   return (
     <article className="agent-markdown flex min-w-0 max-w-full flex-col gap-3 text-sm leading-relaxed wrap-anywhere">
       <Markdown
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[[rehypeKatex, { trust: false }]]}
-        urlTransform={(url) => (attachmentLink.test(url) ? url : defaultUrlTransform(url))}
+        urlTransform={(url) =>
+          attachmentLink.test(url) || citationLink.test(url) ? url : defaultUrlTransform(url)
+        }
         components={{
           span: MathSpan,
           h1: ({ children }) => <h1 className="text-xl font-medium">{children}</h1>,
@@ -184,10 +218,15 @@ export function AgentMarkdown({ text }: { text: string }) {
           td: ({ children }) => (
             <td className="border-r border-b px-3 py-2 last:border-r-0">{children}</td>
           ),
-          a: ({ href, children }) =>
-            href && attachmentLink.test(href) ? (
-              <FileReference target={href} label={children} />
-            ) : (
+          a: ({ href, children }) => {
+            if (href && attachmentLink.test(href))
+              return <FileReference target={href} label={children} />;
+            const number = href && citationLink.exec(href)?.[1];
+            if (number) {
+              const source = sources?.[Number(number) - 1];
+              return source ? <Citation number={number} source={source} /> : <>{children}</>;
+            }
+            return (
               <a
                 href={href}
                 target="_blank"
@@ -196,10 +235,11 @@ export function AgentMarkdown({ text }: { text: string }) {
               >
                 {children}
               </a>
-            ),
+            );
+          },
         }}
       >
-        {mathMarkdown(fileMarkdown(text))}
+        {definitions?.length ? `${definitions.join('\n')}\n\n${content}` : content}
       </Markdown>
     </article>
   );

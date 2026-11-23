@@ -45,6 +45,7 @@ export type ChatMessage = {
   reply?: ReplyRef | null;
   status?: 'sending' | 'failed';
   file_refs?: import('./file-refs.js').FileRef[];
+  sources?: import('./file-refs.js').MessageSource[];
   reactions?: MessageReaction[];
 };
 export type Question = {
@@ -76,6 +77,7 @@ export type HumanRequest = {
 };
 export type InputItem = {
   file_refs?: import('./file-refs.js').FileRef[];
+  sources?: import('./file-refs.js').MessageSource[];
   input_type?: 'message' | 'reaction';
   silent?: boolean;
   input_payload?: ReactionInput;
@@ -117,6 +119,7 @@ export type ActivityEntry = {
 };
 export type InboxItem = {
   file_refs?: import('./file-refs.js').FileRef[];
+  sources?: import('./file-refs.js').MessageSource[];
   input_type?: 'message' | 'reaction';
   silent?: boolean;
   input_payload?: ReactionInput;

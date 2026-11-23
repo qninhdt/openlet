@@ -15,8 +15,6 @@ import {
   FolderPlus,
   Folder,
   Folders,
-  Globe2,
-  MessageCircle,
   CircleUserRound,
   Activity,
   PanelLeft,
@@ -464,7 +462,7 @@ function WorkspaceShell() {
     <div
       className={cn(
         'flex h-dvh overflow-hidden bg-background text-foreground',
-        isMobile && 'flex-col',
+        isMobile && 'flex-col pb-[env(safe-area-inset-bottom)]',
       )}
     >
       <div className="flex min-h-0 min-w-0 flex-1">
@@ -810,39 +808,6 @@ function WorkspaceShell() {
           </main>
         </div>
       </div>
-      {isMobile && (
-        <nav
-          aria-label="Mobile pane navigation"
-          className="flex min-h-16 shrink-0 items-center justify-center border-t bg-sidebar px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]"
-        >
-          <div className="grid w-full max-w-90 grid-cols-2 gap-1">
-            <Button
-              variant={mobilePane === 'conversation' ? 'secondary' : 'ghost'}
-              className="min-h-11"
-              aria-pressed={mobilePane === 'conversation'}
-              onClick={() => setMobilePane('conversation')}
-            >
-              <MessageCircle data-icon="inline-start" />
-              {search.view === 'storage'
-                ? 'Storage'
-                : search.view === 'boxes' || preview.session.mainTab === 'box'
-                  ? 'Box'
-                  : preview.activityMode
-                    ? 'Activity'
-                    : 'Chat'}
-            </Button>
-            <Button
-              variant={mobilePane === 'workspace' ? 'secondary' : 'ghost'}
-              className="min-h-11"
-              aria-pressed={mobilePane === 'workspace'}
-              onClick={() => setMobilePane('workspace')}
-            >
-              <Globe2 data-icon="inline-start" />
-              Workspace
-            </Button>
-          </div>
-        </nav>
-      )}
       <AgentCreateDialog />
       <CommandDialog
         open={searchOpen}

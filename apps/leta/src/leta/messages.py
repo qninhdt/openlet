@@ -1,5 +1,5 @@
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from hashlib import md5
 from typing import Literal, cast
@@ -35,6 +35,7 @@ class Message(Input):
     schedule_title: str | None = None
     content: str = Field(max_length=32000)
     file_refs: list[JSON] = Field(default_factory=list[JSON], max_length=20)
+    sources: list[JSON] = Field(default_factory=list[JSON], max_length=20)
     silent: bool = False
     input_type: Literal["message", "reaction"] = "message"
     input_payload: dict[str, JSON] | None = None
@@ -217,7 +218,7 @@ async def admit_in(
     assert counter is not None
     await conn.execute(
         """INSERT INTO agent_messages(id,recipient_agent_id,seq,source_kind,source_id,conversation_id,
-        in_reply_to_message_id,in_reply_to_role,scheduled_at,schedule_title,content,silent,input_type,input_payload,file_refs,task_label) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s)""",
+        in_reply_to_message_id,in_reply_to_role,scheduled_at,schedule_title,content,silent,input_type,input_payload,file_refs,sources,task_label) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s::jsonb,%s)""",
         (
             message.id,
             message.recipient_agent_id,
@@ -236,6 +237,7 @@ async def admit_in(
             if message.input_payload is not None
             else None,
             json.dumps(message.file_refs),
+            json.dumps(message.sources),
             message.task_label,
         ),
     )
@@ -280,7 +282,7 @@ async def pending(
                     ELSE m.content END AS content,
                 a.name AS source_name,a.handle AS source_handle,
                 h.title AS request_title,h.type AS request_type,h.payload AS request_payload,
-                m.schedule_title,m.file_refs
+                m.schedule_title,m.file_refs,m.sources
                 FROM agent_messages m
                 LEFT JOIN agents a ON m.source_kind='agent' AND a.id=m.source_id
                 LEFT JOIN hitl_requests h ON m.source_kind='hitl' AND h.id=m.source_id
@@ -414,6 +416,27 @@ def input_batch(rows: list[Row], *, root: bool) -> str:
                     f"From {header}\nPreview: {body}\n[truncated; use inbox_read before acting]"
                 )
             else:
+                sources = cast(list[dict[str, JSON]], row.get("sources") or [])
+                if sources:
+                    from .file_refs import token
+
+                    lines = [
+                        f"[{index}] "
+                        + (
+                            f"{source['title']} — {source['url']}"
+                            if source["kind"] == "web"
+                            else token(
+                                str(source["label"]),
+                                str(source["storage_id"]),
+                                str(source["node_id"]),
+                                folder=source["kind"] == "folder",
+                            )
+                        )
+                        + (f", page {source['page']}" if "page" in source else "")
+                        + (f", line {source['line']}" if "line" in source else "")
+                        for index, source in enumerate(sources, 1)
+                    ]
+                    body += "\nSources:\n" + "\n".join(lines)
                 items.append(f"From {header}\nFull message:\n{body}")
     return "\n\n---\n\n".join(items)
 
@@ -500,6 +523,8 @@ def input_data(rows: list[Row], *, root: bool) -> dict[str, JSON]:
                 "presented": True,
             }
         )
+        if not preview and row.get("sources"):
+            item["sources"] = cast(JSON, row["sources"])
         if row.get("input_type") == "reaction":
             item["presented"] = latest_reaction[reaction_key(row)] == row["seq"]
         if kind == "hitl":
@@ -539,6 +564,7 @@ class Outgoing:
     id: UUID
     content: str
     file_refs: list[JSON]
+    sources: list[JSON] = field(default_factory=list[JSON])
 
 
 async def deliver_user(
@@ -566,8 +592,8 @@ async def deliver_user(
                 )
         async with conn.cursor() as cur:
             await cur.executemany(
-                """INSERT INTO user_messages(id,leta_id,recipient_user_id,conversation_id,in_reply_to_message_id,content,file_refs,message_group_id)
-                VALUES(%s,%s,%s,%s,%s,%s,%s::jsonb,%s) ON CONFLICT(id) DO NOTHING""",
+                """INSERT INTO user_messages(id,leta_id,recipient_user_id,conversation_id,in_reply_to_message_id,content,file_refs,sources,message_group_id)
+                VALUES(%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s) ON CONFLICT(id) DO NOTHING""",
                 [
                     (
                         message.id,
@@ -577,6 +603,7 @@ async def deliver_user(
                         reply if index == 0 else None,
                         message.content,
                         json.dumps(message.file_refs),
+                        json.dumps(message.sources),
                         first if len(messages) > 1 else None,
                     )
                     for index, message in enumerate(messages)

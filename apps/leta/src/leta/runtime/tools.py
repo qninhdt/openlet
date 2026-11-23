@@ -13,11 +13,11 @@ from langchain.tools import ToolRuntime, tool
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.tools import BaseTool
 from langfuse import propagate_attributes
-from mirage import ContentType, FileStat, Session
+from mirage import ContentType, FileStat, FileType, Session
 from openlet_api.platform.v1 import internal_pb2 as platform
 from openlet_api.platform.v1 import platform_pb2 as platform_api
 from openlet_sdk.config import JSON
-from pydantic import Field, model_validator
+from pydantic import AfterValidator, Field, model_validator
 
 from .. import (
     box_views,
@@ -116,16 +116,49 @@ async def inbox_address(ctx: Context, address: str) -> tuple[str, UUID]:
     raise ValueError("Use a user:<handle> or agent:<handle> address")
 
 
+class WebSource(Input):
+    url: Annotated[str, AfterValidator(public_url)]
+    title: str = Field(min_length=1, max_length=300)
+
+
+class StorageSource(Input):
+    path: str = Field(min_length=1, max_length=4096)
+    page: int | None = Field(default=None, ge=1)
+    line: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def location(self) -> "StorageSource":
+        if self.page is not None and self.line is not None:
+            raise ValueError("Use either a page or a line for the source")
+        return self
+
+
 class InboxMessage(Input):
     content: str = Field(default="", max_length=32000)
     attachments: list[Annotated[str, Field(min_length=1, max_length=4096)]] = Field(
         default_factory=list, max_length=20
+    )
+    sources: list[WebSource | StorageSource] = Field(
+        default_factory=list[WebSource | StorageSource], max_length=20
     )
 
     @model_validator(mode="after")
     def nonempty(self) -> "InboxMessage":
         if not self.content.strip() and not self.attachments:
             raise ValueError("A message requires content or attachments")
+        if self.sources:
+            markers = set(
+                re.findall(r"(?<!\\)\[([1-9][0-9]*)\](?![(:\[])", self.content)
+            )
+            missing = [
+                f"[{index}]"
+                for index in range(1, len(self.sources) + 1)
+                if str(index) not in markers
+            ]
+            if missing:
+                raise ValueError(
+                    f"Add the matching source markers: {', '.join(missing)}"
+                )
         return self
 
 
@@ -142,21 +175,58 @@ async def prepare_outgoing(
     s, agent = ctx.services, ctx.agent
     content = message.content
     attachment_content = ""
-    if message.attachments or file_refs.PATH_PATTERN.search(content):
-        vfs = (await session(runtime)).vfs
+    sources: list[JSON] = []
+    recipient = Actor("user", target) if human else Actor("agent", ctx.leta_id)
+    checked_storage: set[UUID] = set()
+    has_attachments = bool(
+        message.attachments or file_refs.PATH_PATTERN.search(content)
+    )
+    vfs = (
+        (await session(runtime)).vfs
+        if has_attachments
+        or any(isinstance(source, StorageSource) for source in message.sources)
+        else None
+    )
 
-        async def stat(path: str) -> FileStat:
-            return await vfs.stat(file_path(path))
+    async def stat(path: str) -> FileStat:
+        assert vfs is not None
+        return await vfs.stat(file_path(path))
 
-        content, attachment_content = await file_refs.resolve(
-            content, message.attachments, stat
-        )
     try:
+        for source in message.sources:
+            if isinstance(source, WebSource):
+                sources.append(
+                    {"kind": "web", "url": source.url, "title": source.title}
+                )
+                continue
+            metadata = await stat(source.path)
+            storage, node = file_refs.stored_target(metadata, source.path)
+            if human and storage not in checked_storage:
+                await s.auth.require(recipient, "storage", storage, "read")
+                checked_storage.add(storage)
+            folder = metadata.type == FileType.DIRECTORY
+            if folder and (source.page is not None or source.line is not None):
+                raise ValueError("A folder source cannot have a page or line")
+            citation: dict[str, JSON] = {
+                "kind": "folder" if folder else "file",
+                "storage_id": str(storage),
+                "node_id": str(node),
+                "label": metadata.name,
+            }
+            if source.page is not None:
+                citation["page"] = source.page
+            if source.line is not None:
+                citation["line"] = source.line
+            sources.append(citation)
+        if has_attachments:
+            content, attachment_content = await file_refs.resolve(
+                content, message.attachments, stat
+            )
         refs: list[JSON] = await file_refs.validate(
             s,
             cast(UUID, agent["workspace_id"]),
             Actor("agent", ctx.leta_id),
-            Actor("user", target) if human else Actor("agent", ctx.leta_id),
+            recipient,
             content + "\n" + attachment_content,
             copy_request=id if human else None,
             copy_folders=copy_folders,
@@ -175,7 +245,7 @@ async def prepare_outgoing(
         ):
             raise
         raise ValueError(
-            error.details() or "Could not attach files or folders"
+            error.details() or "Could not resolve files or folders"
         ) from error
     replacements = {
         f"{storage}/{node}": ref
@@ -197,7 +267,7 @@ async def prepare_outgoing(
         replacements[f"{storage}/{node}"]
         for _, storage, node in file_refs.references(attachment_content)
     ]
-    return inbox_messages.Outgoing(id, content, refs)
+    return inbox_messages.Outgoing(id, content, refs, sources)
 
 
 @tool(response_format="content_and_artifact")
@@ -209,7 +279,7 @@ async def inbox_send(
     task_label: Annotated[str | None, Field(max_length=255)] = None,
     copy_folders: bool = False,
 ) -> tuple[JSON, dict[str, JSON]]:
-    """Send messages in order to user:<handle> or agent:<handle>. Each message can attach file or folder paths. Use :file[label]{path=path} for inline links. in_reply_to quotes a received message in the first message. Use task_label for assignments. Set copy_folders only when authorized to share the entire contents of an otherwise inaccessible folder."""
+    """Send messages to user:<handle> or agent:<handle>. Cite sources with [1], [2], ... mapped to that message's sources in order. Attach file or folder paths or use :file[label]{path=path} for inline links. in_reply_to quotes a received message in the first message. Use task_label for assignments. Set copy_folders only when authorized to share an inaccessible folder's entire contents."""
     from ..worker import deliver
 
     ctx = runtime.context
@@ -304,6 +374,7 @@ async def inbox_send(
                     conversation_id=conversation,
                     content=message.content,
                     file_refs=message.file_refs,
+                    sources=message.sources,
                     task_label=task_label if index == 0 else None,
                     in_reply_to_message_id=reply if index == 0 else None,
                 )
@@ -315,7 +386,11 @@ async def inbox_send(
         {"sent": len(outgoing)},
         {
             "messages": [
-                {"content": message.content, "file_refs": message.file_refs}
+                {
+                    "content": message.content,
+                    "file_refs": message.file_refs,
+                    "sources": message.sources,
+                }
                 for message in outgoing
             ],
             "recipient": {"kind": kind, "id": str(target)},

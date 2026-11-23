@@ -99,12 +99,12 @@ async def mark_chat_read(db: Pool, root: UUID, user: UUID, through: UUID) -> Non
 
 
 CHAT = """WITH chat AS (
-            SELECT id,content,file_refs,created_at,source_id AS user_id,'user'::text AS role,
+            SELECT id,content,file_refs,sources,created_at,source_id AS user_id,'user'::text AS role,
                 conversation_id,read_at,in_reply_to_message_id AS in_reply_to,
                 coalesce(in_reply_to_role,'user') AS in_reply_to_role,NULL::uuid AS message_group_id
             FROM agent_messages WHERE recipient_agent_id=%s AND source_kind='user' AND source_id=%s AND input_type='message'
             UNION ALL
-            SELECT id,content,file_refs,created_at,recipient_user_id,'assistant',conversation_id,
+            SELECT id,content,file_refs,sources,created_at,recipient_user_id,'assistant',conversation_id,
                 NULL::timestamptz,in_reply_to_message_id,'user',message_group_id
             FROM user_messages WHERE leta_id=%s AND recipient_user_id=%s
             ) """
@@ -291,7 +291,7 @@ async def activity_entry(db: Pool, agent: UUID, entry: UUID) -> dict[str, JSON]:
 INBOX = """WITH inbox AS (
     SELECT m.id,m.conversation_id,m.source_kind,m.source_id,m.content,m.created_at,m.read_at,
         'in'::text AS direction,coalesce(a.name,h.title,sc.title) AS source_name,
-        h.type AS request_type,h.payload AS request_payload,m.schedule_title,m.scheduled_at,m.input_type,m.silent,m.input_payload,m.file_refs
+        h.type AS request_type,h.payload AS request_payload,m.schedule_title,m.scheduled_at,m.input_type,m.silent,m.input_payload,m.file_refs,m.sources
     FROM agent_messages m
     LEFT JOIN agents a ON m.source_kind='agent' AND a.id=m.source_id
     LEFT JOIN hitl_requests h ON m.source_kind='hitl' AND h.id=m.source_id
@@ -299,11 +299,11 @@ INBOX = """WITH inbox AS (
     WHERE m.recipient_agent_id=%s
     UNION ALL
     SELECT id,conversation_id,'user',recipient_user_id,content,created_at,NULL::timestamptz,
-        'out',NULL,NULL,NULL::jsonb,NULL,NULL::timestamptz,'message',false,NULL::jsonb,file_refs FROM user_messages WHERE leta_id=%s
+        'out',NULL,NULL,NULL::jsonb,NULL,NULL::timestamptz,'message',false,NULL::jsonb,file_refs,sources FROM user_messages WHERE leta_id=%s
     UNION ALL
     SELECT m.id,m.conversation_id,'agent',target.id,
         m.content,m.created_at,NULL::timestamptz,'out',target.name,
-        NULL,NULL::jsonb,NULL,NULL::timestamptz,m.input_type,m.silent,m.input_payload,m.file_refs
+        NULL,NULL::jsonb,NULL,NULL::timestamptz,m.input_type,m.silent,m.input_payload,m.file_refs,m.sources
     FROM agent_messages m
     JOIN agents sender ON m.source_kind='agent' AND m.source_id=sender.id
     JOIN agents target ON target.id=m.recipient_agent_id

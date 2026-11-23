@@ -96,6 +96,7 @@ export function StorageViewer({ node }: { node: StorageNode }) {
 export function FileViewer({
   node: initialNode,
   focusLine,
+  focusPage,
   onClose,
   onDownload,
   textAccess,
@@ -104,6 +105,7 @@ export function FileViewer({
 }: {
   node: StorageNode;
   focusLine?: { line: number; request: string };
+  focusPage?: { page: number; request: string };
   onClose: () => void;
   onDownload: () => void;
   textAccess: TextFileAccess;
@@ -407,7 +409,12 @@ export function FileViewer({
         ) : spreadsheet && current.bytes ? (
           <Spreadsheet bytes={current.bytes} />
         ) : node.mime === 'application/pdf' ? (
-          <iframe title={node.name} src={current.url} className="size-full border-0" />
+          <iframe
+            key={focusPage?.request}
+            title={node.name}
+            src={focusPage ? `${current.url.split('#')[0]}#page=${focusPage.page}` : current.url}
+            className="size-full border-0"
+          />
         ) : node.mime.startsWith('audio/') ? (
           <div className="storage-media flex h-full items-center justify-center p-6">
             <audio controls src={current.url} className="w-full max-w-120" />

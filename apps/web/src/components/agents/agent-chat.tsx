@@ -1,6 +1,6 @@
 import { fileText } from '@/lib/file-refs';
 import { AgentMessageScroller } from './agent-scroll';
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import {
   AssistantRuntimeProvider,
   useExternalStoreRuntime,
@@ -107,7 +107,9 @@ function ChatBubble() {
                           <span className="line-clamp-2">{fileText(message.reply.content)}</span>
                         </button>
                       )}
-                      {message.content && <AgentMarkdown text={message.content} />}
+                      {message.content && (
+                        <AgentMarkdown text={message.content} sources={message.sources} />
+                      )}
                     </BubbleContent>
                   </Bubble>
                 )}
@@ -159,6 +161,43 @@ function ChatBubble() {
   );
 }
 const convertMessage = (message: ThreadMessageLike) => message;
+
+function EarlierMessages() {
+  const { live } = useAgentPreview();
+  const { hasNextPage, isFetching, isFetchingNextPage, isFetchNextPageError, fetchNextPage } =
+    live.chat;
+  const marker = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const element = marker.current;
+    if (!element || !hasNextPage || isFetching || isFetchNextPageError) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) void fetchNextPage({ cancelRefetch: false });
+      },
+      {
+        root: element.closest('[data-slot="message-scroller-viewport"]'),
+        rootMargin: '96px 0px 0px',
+      },
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [hasNextPage, isFetching, isFetchNextPageError, fetchNextPage]);
+  if (!hasNextPage) return null;
+  return (
+    <div ref={marker} className="min-h-px">
+      {isFetchingNextPage && (
+        <span role="status" className="sr-only">
+          Loading earlier messages
+        </span>
+      )}
+      {isFetchNextPageError && (
+        <p className="text-center text-xs text-muted-foreground">
+          Could not load earlier messages.
+        </p>
+      )}
+    </div>
+  );
+}
 
 export function AgentChat() {
   const [dropping, setDropping] = useState(false);
@@ -272,16 +311,7 @@ export function AgentChat() {
         )}
         <AgentMessageScroller positionKey={`${p.resource.id}:chat:${p.linkedMessage ?? ''}`}>
           <MessageScrollerContent className={cn(transcriptStyles, 'gap-2')}>
-            {!p.linkedMessage && p.live.enabled && p.live.chat.hasNextPage && (
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={p.live.chat.isFetchingNextPage}
-                onClick={() => void p.live.chat.fetchNextPage()}
-              >
-                Load earlier messages
-              </Button>
-            )}
+            {!p.linkedMessage && p.live.enabled && <EarlierMessages />}
             {p.linkedMessage && p.messageContext.isPending && (
               <p role="status" className="py-6 text-center text-sm text-muted-foreground">
                 Loading message context…

@@ -25,18 +25,23 @@ def token(label: str, storage: str, node: str, *, folder: bool = False) -> str:
     return f":{'folder' if folder else 'file'}[{label}]{{name={storage}/{node}}}"
 
 
+def stored_target(metadata: FileStat, path: str) -> tuple[UUID, UUID]:
+    storage, node = metadata.extra.get("storage_id"), metadata.extra.get("node_id")
+    if (
+        metadata.type not in (FileType.FILE, FileType.DIRECTORY)
+        or not isinstance(storage, str)
+        or not isinstance(node, str)
+    ):
+        raise ValueError(f"Choose a stored file or folder: {path}")
+    return UUID(storage), UUID(node)
+
+
 async def resolve(
     content: str, attachments: list[str], stat: Callable[[str], Awaitable[FileStat]]
 ) -> tuple[str, str]:
     async def reference(path: str, label: str | None = None) -> str:
         metadata = await stat(path)
-        storage, node = metadata.extra.get("storage_id"), metadata.extra.get("node_id")
-        if (
-            metadata.type not in (FileType.FILE, FileType.DIRECTORY)
-            or not storage
-            or not node
-        ):
-            raise ValueError(f"Cannot attach {path}: choose a stored file or folder")
+        storage, node = stored_target(metadata, path)
         return token(
             label if label is not None else metadata.name,
             str(storage),

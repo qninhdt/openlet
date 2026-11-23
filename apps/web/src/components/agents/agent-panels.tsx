@@ -255,6 +255,7 @@ function AgentCreateForm() {
 
 function FilePreview({ id }: { id: string }) {
   const p = useAgentPreview();
+  const focus = p.fileFocus?.id === id ? p.fileFocus : undefined;
   const { getFileSession, setFileSession } = p;
   const getTextSession = useCallback(() => getFileSession(id), [getFileSession, id]);
   const setTextSession = useCallback(
@@ -273,7 +274,8 @@ function FilePreview({ id }: { id: string }) {
         embedded
         active={p.panelOpen && p.session.panelTab === id}
         node={p.fileNodes[id]}
-        focusLine={p.fileLineTarget?.id === id ? p.fileLineTarget : undefined}
+        focusLine={focus && 'line' in focus ? focus : undefined}
+        focusPage={focus && 'page' in focus ? focus : undefined}
         onClose={() => p.closeFile(id)}
         onDownload={() => void p.downloadFile(id)}
         textAccess={{
