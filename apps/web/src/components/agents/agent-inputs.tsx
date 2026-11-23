@@ -49,7 +49,7 @@ function PersonInput({ item }: { item: InputItem }) {
               : 'text-sm leading-relaxed'
           }
         >
-          <AgentMarkdown text={item.content} />
+          <AgentMarkdown text={item.content} sources={item.sources} />
           {!item.preview && <MessageFiles references={item.file_refs} />}
           <MessageReactions reactions={item.reactions} actorId={p.actorId} inline />
         </div>

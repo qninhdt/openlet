@@ -107,7 +107,9 @@ function ChatBubble() {
                           <span className="line-clamp-2">{fileText(message.reply.content)}</span>
                         </button>
                       )}
-                      {message.content && <AgentMarkdown text={message.content} />}
+                      {message.content && (
+                        <AgentMarkdown text={message.content} sources={message.sources} />
+                      )}
                     </BubbleContent>
                   </Bubble>
                 )}

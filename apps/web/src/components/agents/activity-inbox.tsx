@@ -224,7 +224,7 @@ function LiveInbox() {
                     <InputMessage item={{ ...item, source_name: item.source_name ?? undefined }} />
                   ) : (
                     <>
-                      <AgentMarkdown text={item.content} />
+                      <AgentMarkdown text={item.content} sources={item.sources} />
                       <MessageFiles references={item.file_refs} />
                       <MessageReactions reactions={item.reactions} actorId={p.actorId} inline />
                     </>

@@ -1,6 +1,6 @@
 import type { ActivityEntry, HumanRequest, InputItem, Json } from './agent-api.js';
 import { scheduleTiming } from './schedule-presentation.js';
-import type { FileRef } from './file-refs.js';
+import type { FileRef, MessageSource } from './file-refs.js';
 
 // Tool presentation contract for versioned runtime snapshots.
 export type ToolItem = {
@@ -24,7 +24,7 @@ export type ToolResult = {
   exitCode?: number;
   file?: FileRef;
   items?: ToolItem[];
-  messages?: { content: string; fileRefs: FileRef[] }[];
+  messages?: { content: string; fileRefs: FileRef[]; sources?: MessageSource[] }[];
   title?: string;
   content?: string;
   timing?: string;
@@ -199,6 +199,9 @@ export function activityToolResult(entry: ActivityEntry): ToolResult | string {
       result.recipient = { kind: recipient.kind, id: recipient.id };
     result.messages = rows(data.messages).map((message) => ({
       content: string(message.content),
+      ...(Array.isArray(message.sources) && message.sources.length
+        ? { sources: message.sources as MessageSource[] }
+        : {}),
       fileRefs: rows(message.file_refs).flatMap((ref) => {
         const reference = file(ref);
         return reference

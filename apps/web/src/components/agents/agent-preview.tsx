@@ -171,11 +171,9 @@ function usePreviewState() {
   );
   const [optimistic, setOptimistic] = useState<Record<string, ChatMessage[]>>({});
   const [fileNodes, setFileNodes] = useState<Record<string, StorageNode>>({});
-  const [fileLineTarget, setFileLineTarget] = useState<{
-    id: string;
-    line: number;
-    request: string;
-  }>();
+  const [fileFocus, setFileFocus] = useState<
+    { id: string; request: string } & ({ line: number } | { page: number })
+  >();
   const fileSessions = useFileSessions();
   const getFileSession = useCallback(
     (id: string) => fileSessions.get(`${fileNodes[id]?.storage}/${id}`) ?? null,
@@ -242,7 +240,7 @@ function usePreviewState() {
     await queryClient.invalidateQueries({ queryKey: ['storage-folder'] });
     return node;
   }
-  async function openFileReference(ref: FileRef, line?: number) {
+  async function openFileReference(ref: FileRef, line?: number, page?: number) {
     try {
       const node = await filesApi.stat(ref.storage_id, ref.node_id);
       if (!node) throw new Error('This attachment is no longer available.');
@@ -251,7 +249,7 @@ function usePreviewState() {
         return;
       }
       setFileNodes((current) => ({ ...current, [node.id]: node }));
-      openFile(node, line);
+      openFile(node, line, page);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not open attachment.');
     }
@@ -411,9 +409,13 @@ function usePreviewState() {
   function savePins(next: string[]) {
     void organization.save({ ...organization.layout, pins: next }).catch(() => {});
   }
-  function openFile(file: Pick<StorageNode, 'id'>, line?: number) {
-    setFileLineTarget(
-      line && line > 0 ? { id: file.id, line, request: crypto.randomUUID() } : undefined,
+  function openFile(file: Pick<StorageNode, 'id'>, line?: number, page?: number) {
+    setFileFocus(
+      line
+        ? { id: file.id, line, request: crypto.randomUUID() }
+        : page
+          ? { id: file.id, page, request: crypto.randomUUID() }
+          : undefined,
     );
     updateSession({
       files: session.files.includes(file.id) ? session.files : [...session.files, file.id],
@@ -724,7 +726,7 @@ function usePreviewState() {
     },
     mainTabFor: (id: string) => sessions[id]?.mainTab ?? 'agent',
     fileNodes,
-    fileLineTarget,
+    fileFocus,
     drafts,
     setDraft,
     composers,

@@ -368,7 +368,7 @@ const InboxTool: ToolCallMessagePartComponent = (props) => {
                 <div key={index} className="flex max-w-full flex-col gap-1">
                   {message.content && (
                     <div className="rounded-lg bg-muted px-3 py-2">
-                      <AgentMarkdown text={message.content} />
+                      <AgentMarkdown text={message.content} sources={message.sources} />
                     </div>
                   )}
                   <MessageFiles references={message.fileRefs} />

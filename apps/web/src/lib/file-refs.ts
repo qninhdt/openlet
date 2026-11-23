@@ -10,6 +10,10 @@ export type FileRef = {
   size?: number;
   version?: number;
 };
+export type MessageSource =
+  | { kind: 'web'; url: string; title: string }
+  | (FileRef & { kind: 'file' | 'folder'; page?: number; line?: number });
+
 export const fileTokenPattern = () =>
   /:(?:file|folder)\[((?:\\.|[^\]\\\n]){1,1024})\]\{name=([\w:-]+)\/([\w:-]+)\}/g;
 export function fileReferences(content: string): FileRef[] {
