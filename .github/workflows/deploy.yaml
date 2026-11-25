@@ -1,0 +1,225 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Target to deploy or rollback
+        type: choice
+        default: all
+        options:
+          - all
+          - vps
+          - web
+      sha:
+        description: Git commit SHA or ref (leave as main for latest; for rollback, optional release SHA or previous)
+        type: string
+        default: main
+      mode:
+        description: Deploy new build or rollback VPS to a previous release without rebuilding
+        type: choice
+        default: deploy
+        options:
+          - deploy
+          - rollback
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-openlet
+  cancel-in-progress: false
+
+jobs:
+  rollback-vps:
+    if: inputs.mode == 'rollback' && (inputs.target == 'all' || inputs.target == 'vps')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: openlet
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Activate previous or target release on VPS
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ inputs.sha }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          if [[ "$TARGET_SHA" == "main" || "$TARGET_SHA" == "previous" || -z "$TARGET_SHA" ]]; then
+            target_cmd='readlink -f /opt/openlet/previous'
+          else
+            target_cmd="printf '%s' '/opt/openlet/releases/${TARGET_SHA}'"
+          fi
+          # shellcheck disable=SC2029
+          printf '%s' "$GH_TOKEN" | ssh "$DEPLOY_USER@$DEPLOY_HOST" \
+            "release=\$($target_cmd) && test -f \"\$release/image-lock.yaml\" && cd \"\$release\" && sudo -n env UV=\"\$HOME/.local/bin/uv\" COMPOSE_PROJECT_NAME=openlet COMPOSE_PROFILES=leta,observability OPENLET_STATE_DIR=/opt/openlet OPENLET_BACKUPS=/opt/openlet/backups scripts/deploy.sh /opt/openlet/openlet.yaml /opt/openlet/.env \"\$release/image-lock.yaml\" '$GITHUB_ACTOR'"
+      - name: Verify public API via Cloudflare Tunnel
+        run: |
+          for attempt in {1..12}; do
+            status=$(curl --max-time 10 -sS -o /dev/null -w '%{http_code}' https://openlet-api.qninhdt.com/v1/workspaces) || status=000
+            if [[ $status == 401 ]]; then exit 0; fi
+            sleep 5
+          done
+          exit 1
+
+  deploy-vps:
+    if: inputs.mode == 'deploy' && (inputs.target == 'all' || inputs.target == 'vps')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: openlet
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.sha }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Build 4 backend images with GHCR registry cache
+        id: bake-opts
+        run: |
+          repo="ghcr.io/${GITHUB_REPOSITORY,,}-cache"
+          src="https://github.com/${GITHUB_REPOSITORY}"
+          {
+            echo "set<<EOF"
+            for pair in "platform:platform" "letfs:letfs" "ingest-cpu:letfs-ingest" "leta-api:leta"; do
+              target="${pair%%:*}"
+              cache_tag="${pair##*:}"
+              echo "${target}.labels.org.opencontainers.image.source=${src}"
+              echo "${target}.cache-from=type=registry,ref=${repo}:${cache_tag}"
+              echo "${target}.cache-to=type=registry,ref=${repo}:${cache_tag},mode=max,compression=zstd,ignore-error=true"
+            done
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+      - uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7.5.0
+        env:
+          OPENLET_CONFIG: ${{ github.workspace }}/infra/config/openlet.example.yaml
+          OPENLET_GENERATED: ${{ github.workspace }}/.local/bake-generated
+        with:
+          source: infra
+          files: compose.yaml
+          load: true
+          allow: fs.read=${{ github.workspace }}
+          targets: |
+            platform
+            letfs
+            ingest-cpu
+            leta-api
+          set: ${{ steps.bake-opts.outputs.set }}
+      - name: Push images and deploy to VPS
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          commit_sha=$(git rev-parse HEAD)
+          repo="ghcr.io/${GITHUB_REPOSITORY,,}"
+          tag="sha-${commit_sha::12}"
+          printf 'services:\n' > image-lock.yaml
+          for image in platform letfs letfs-ingest leta; do
+            ref="${repo}-${image}:${tag}"
+            docker tag "openlet/${image}:local" "$ref"
+            push_log=$(docker push "$ref")
+            digest=$(awk -v t="${tag}:" '$1 == t && $2 == "digest:" {print $3}' <<< "$push_log")
+            [[ $digest =~ ^sha256:[0-9a-f]{64}$ ]]
+            pinned="${ref%:*}@${digest}"
+            case "$image" in
+              platform)
+                printf '  platform: {image: "%s"}\n  platform-migrate: {image: "%s"}\n' "$pinned" "$pinned" >> image-lock.yaml
+                ;;
+              letfs)
+                printf '  letfs: {image: "%s"}\n  letfs-migrate: {image: "%s"}\n' "$pinned" "$pinned" >> image-lock.yaml
+                ;;
+              letfs-ingest)
+                printf '  ingest-cpu: {image: "%s"}\n  ingest-io: {image: "%s"}\n' "$pinned" "$pinned" >> image-lock.yaml
+                ;;
+              leta)
+                printf '  leta-api: {image: "%s"}\n  leta-worker: {image: "%s"}\n  leta-migrate: {image: "%s"}\n' "$pinned" "$pinned" "$pinned" >> image-lock.yaml
+                ;;
+            esac
+          done
+          mkdir -p .local
+          tar -czf .local/release.tgz \
+            image-lock.yaml \
+            infra \
+            scripts \
+            packages/contracts/authz \
+            packages/contracts/generated \
+            packages/contracts/file-types.json \
+            packages/sdk-python/pyproject.toml \
+            packages/sdk-python/src \
+            packages/env/pyproject.toml \
+            apps/letfs-ingest/pyproject.toml \
+            apps/leta/pyproject.toml \
+            pyproject.toml \
+            uv.lock \
+            .python-version
+          umask 077
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          release="/opt/openlet/releases/$commit_sha"
+          # shellcheck disable=SC2029
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$release'"
+          scp .local/release.tgz "$DEPLOY_USER@$DEPLOY_HOST:$release/release.tgz"
+          # shellcheck disable=SC2029
+          printf '%s' "$GH_TOKEN" | ssh "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd '$release' && tar -xzf release.tgz && sudo -n env UV=\"\$HOME/.local/bin/uv\" COMPOSE_PROJECT_NAME=openlet COMPOSE_PROFILES=leta,observability OPENLET_STATE_DIR=/opt/openlet OPENLET_BACKUPS=/opt/openlet/backups scripts/deploy.sh /opt/openlet/openlet.yaml /opt/openlet/.env '$release/image-lock.yaml' '$GITHUB_ACTOR'"
+      - name: Verify public API via Cloudflare Tunnel
+        run: |
+          for attempt in {1..12}; do
+            status=$(curl --max-time 10 -sS -o /dev/null -w '%{http_code}' https://openlet-api.qninhdt.com/v1/workspaces) || status=000
+            if [[ $status == 401 ]]; then exit 0; fi
+            sleep 5
+          done
+          exit 1
+
+  deploy-web:
+    needs: [deploy-vps]
+    if: >-
+      always() &&
+      inputs.mode == 'deploy' &&
+      (inputs.target == 'all' || inputs.target == 'web') &&
+      (inputs.target == 'web' || needs.deploy-vps.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: openlet
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.sha }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26.13.0'
+      - name: Build frontend
+        env:
+          VITE_CLERK_PUBLISHABLE_KEY: ${{ vars.VITE_CLERK_PUBLISHABLE_KEY }}
+        run: |
+          test -n "$VITE_CLERK_PUBLISHABLE_KEY"
+          npm install --global pnpm@12.18.0
+          pnpm install --frozen-lockfile
+          node --test apps/web/worker.test.mjs
+          pnpm build
+      - name: Deploy Cloudflare Worker
+        working-directory: apps/web
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --yes wrangler@4.164.0 deploy --message "$(git rev-parse HEAD)"
+      - name: Verify public frontend
+        run: curl --retry 6 --retry-all-errors --max-time 15 -fsS https://openlet.qninhdt.com/ -o /dev/null
