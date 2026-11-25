@@ -33,12 +33,12 @@ from temporalio.client import WorkflowUpdateFailedError
 from temporalio.service import RPCError, RPCStatusCode
 
 from . import (
+    activity,
     box_views,
     boxes,
     conversations,
     events,
     file_refs,
-    history,
     hitl,
     messages,
     reactions,
@@ -733,7 +733,7 @@ async def activity_history(
     query: str = "",
 ) -> JSON:
     await child(s, leta_id, agent_id)
-    return await history.search(s.db, agent_id, before, query)
+    return await activity.search(s.db, agent_id, before, query)
 
 
 @app.get(
@@ -749,7 +749,7 @@ async def activity_entry(
     limit: Annotated[int, Query(ge=1, le=2000)] = 200,
 ) -> JSON:
     await child(s, leta_id, agent_id)
-    return await history.read(s.db, agent_id, entry_id, start_line, limit)
+    return await activity.read(s.db, agent_id, entry_id, start_line, limit)
 
 
 @app.get(

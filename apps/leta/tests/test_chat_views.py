@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from leta import api, events, history, messages, reactions, sidebar, views
+from leta import activity, api, events, messages, reactions, sidebar, views
 from leta.auth import Actor, Authorization
 from leta.config import Services
 from leta.db import Pool
@@ -367,10 +367,11 @@ async def test_activity_suffix_pagination_does_not_skip_bursts(
             break
         after = int(str(page["next_cursor"]))
     assert seqs == list(range(1, 47))
-    text, snapshot = await history.search_tool(db, root, 4, "note")
+    text, snapshot = await activity.search_tool(db, root, 4, "note")
     entries = cast(list[dict[str, object]], snapshot["entries"])
     assert [entry["seq"] for entry in entries] == [3, 2, 1]
     assert entries[0]["text_preview"] == "note" and "Entry 3" in text
+    assert snapshot["next_cursor"] is None
 
 
 async def test_public_profile_and_all_inspection_routes_are_owner_only(
@@ -1469,3 +1470,273 @@ async def test_chat_context_and_processing_stay_in_the_requesters_conversation(
             }
     finally:
         api.app.dependency_overrides.clear()
+
+
+async def test_two_way_conversation_history_is_chronological_and_read_only(
+    database: tuple[Pool, UUID, UUID, UUID, UUID],
+) -> None:
+    db, root, _, user, other = database
+    auth = cast(Authorization, UseAuth())
+    conv = messages.conversation(root, "user", user)
+    msg1, msg2, reply1 = uuid4(), uuid4(), uuid4()
+    await messages.admit(
+        db,
+        auth,
+        [
+            messages.Message(
+                id=msg1,
+                recipient_agent_id=root,
+                source_kind="user",
+                source_id=user,
+                conversation_id=conv,
+                content="Gửi anh báo cáo Q4 nhé.",
+            )
+        ],
+    )
+    await messages.deliver_user(
+        db,
+        root,
+        user,
+        conv,
+        msg1,
+        [
+            messages.Outgoing(
+                reply1,
+                "Dạ đây là file báo cáo Q4 ạ.",
+                [
+                    {
+                        "storage_id": str(uuid4()),
+                        "node_id": str(uuid4()),
+                        "label": "bao-cao-q4.pdf",
+                    }
+                ],
+            )
+        ],
+    )
+    await messages.admit(
+        db,
+        auth,
+        [
+            messages.Message(
+                id=msg2,
+                recipient_agent_id=root,
+                source_kind="user",
+                source_id=user,
+                conversation_id=conv,
+                in_reply_to_message_id=reply1,
+                in_reply_to_role="assistant",
+                content="Ok em, chuẩn rồi.",
+            )
+        ],
+    )
+    await reactions.react(
+        db,
+        auth,
+        root,
+        msg1,
+        "incoming",
+        Actor("agent", root),
+        reactions.React(request_id=uuid4(), emoji="👀"),
+    )
+    await reactions.react(
+        db,
+        auth,
+        root,
+        reply1,
+        "outgoing",
+        Actor("user", user),
+        reactions.React(request_id=uuid4(), emoji="👍"),
+    )
+
+    page1, older = await messages.conversation_history(
+        db, root, root, user, "user", peer_label="Ethan#ethan", limit=2
+    )
+    assert older is not None
+    assert [r["content"] for r in page1] == [
+        "Dạ đây là file báo cáo Q4 ạ.",
+        "Ok em, chuẩn rồi.",
+    ]
+    assert cast(dict[str, object], page1[0]["reply"])["seq"] == 1
+    assert cast(list[dict[str, object]], page1[0]["reactions"])[0]["emoji"] == "👍"
+    assert (
+        cast(dict[str, object], page1[1]["reply"])["content"]
+        == "Dạ đây là file báo cáo Q4 ạ."
+    )
+
+    page2, end = await messages.conversation_history(
+        db, root, root, user, "user", peer_label="Ethan#ethan", cursor=older, limit=2
+    )
+    assert end is None and len(page2) == 1
+    assert (
+        page2[0]["seq"] == 1
+        and cast(list[dict[str, object]], page2[0]["reactions"])[0]["emoji"] == "👀"
+    )
+
+    filtered, filtered_cursor = await messages.conversation_history(
+        db,
+        root,
+        root,
+        user,
+        "user",
+        peer_label="Ethan#ethan",
+        query="bao-cao-q4",
+        limit=20,
+    )
+    assert filtered_cursor is None and len(filtered) == 1
+    assert filtered[0]["id"] == reply1
+
+    async with db.connection() as conn:
+        unread = await (
+            await conn.execute(
+                "SELECT count(*) AS n FROM agent_messages WHERE recipient_agent_id=%s AND input_type='message' AND read_at IS NULL AND processing_run_id IS NULL",
+                (root,),
+            )
+        ).fetchone()
+    assert unread and unread["n"] == 2
+
+    # Agent <-> agent two-way history + incoming reactions on both directions
+    box_id, leti = uuid4(), uuid4()
+    async with db.connection() as conn, conn.transaction():
+        await conn.execute(
+            "INSERT INTO boxes(id,leta_id,name,leader_agent_id,home_node_id,state,handle) VALUES(%s,%s,'team',%s,%s,'active','team')",
+            (box_id, root, leti, uuid4()),
+        )
+        await conn.execute(
+            "INSERT INTO agents(id,leta_id,box_id,name,title,handle,system_prompt) VALUES(%s,%s,%s,'Leti','Analyst','leti-the-analyst','Work.')",
+            (leti, root, box_id),
+        )
+    pair_conv = messages.agent_conversation(root, leti)
+    a_out, a_in = uuid4(), uuid4()
+    await messages.admit(
+        db,
+        auth,
+        [
+            messages.Message(
+                id=a_out,
+                recipient_agent_id=leti,
+                source_kind="agent",
+                source_id=root,
+                conversation_id=pair_conv,
+                content="Check revenue.",
+            )
+        ],
+    )
+    await messages.admit(
+        db,
+        auth,
+        [
+            messages.Message(
+                id=a_in,
+                recipient_agent_id=root,
+                source_kind="agent",
+                source_id=leti,
+                conversation_id=pair_conv,
+                in_reply_to_message_id=a_out,
+                content="Revenue verified: $1.2M.",
+            )
+        ],
+    )
+    await reactions.react(
+        db,
+        auth,
+        root,
+        a_out,
+        "incoming",
+        Actor("agent", leti),
+        reactions.React(request_id=uuid4(), emoji="✅"),
+    )
+    await reactions.react(
+        db,
+        auth,
+        root,
+        a_in,
+        "incoming",
+        Actor("agent", root),
+        reactions.React(request_id=uuid4(), emoji="🎉"),
+    )
+    agent_thread, agent_cursor = await messages.conversation_history(
+        db, root, root, leti, "agent", peer_label="Leti#leti-the-analyst", limit=10
+    )
+    assert agent_cursor is None
+    assert [r["direction"] for r in agent_thread] == ["out", "in"]
+    assert (
+        cast(list[dict[str, object]], agent_thread[0]["reactions"])[0]["emoji"] == "✅"
+    )
+    assert (
+        cast(list[dict[str, object]], agent_thread[1]["reactions"])[0]["emoji"] == "🎉"
+    )
+    assert (
+        cast(dict[str, object], agent_thread[1]["reply"])["content"] == "Check revenue."
+    )
+    other_rows, _ = await messages.conversation_history(
+        db, root, root, other, "user", peer_label="Other#other"
+    )
+    assert other_rows == []
+
+
+async def test_activity_search_and_read_filters_reasoning_and_tool_pairing(
+    database: tuple[Pool, UUID, UUID, UUID, UUID],
+) -> None:
+    db, root, _, _, _ = database
+    run = uuid4()
+    async with db.connection() as conn:
+        await conn.execute(
+            "INSERT INTO runs(id,agent_id,status) VALUES(%s,%s,'running')", (run, root)
+        )
+        rows = [
+            (1, "final_note", {"text": "", "reasoning": "Internal milestone note"}),
+            (
+                2,
+                "tool_call",
+                {"tool_call_id": "t1", "name": "execute", "args": {"command": "ls"}},
+            ),
+            (
+                3,
+                "tool_result",
+                {
+                    "tool_call_id": "t1",
+                    "name": "execute",
+                    "status": "error",
+                    "text": "Boom",
+                },
+            ),
+            (
+                4,
+                "tool_call",
+                {
+                    "tool_call_id": "t2",
+                    "name": "activity_search",
+                    "args": {"query": "ls"},
+                },
+            ),
+        ]
+        for seq, kind, payload in rows:
+            await conn.execute(
+                "INSERT INTO history(id,agent_id,run_id,seq,kind,payload) VALUES(%s,%s,%s,%s,%s,%s::jsonb)",
+                (uuid4(), root, run, seq, kind, json.dumps(payload)),
+            )
+
+    notes_text, notes_data = await activity.search_tool(db, root, kind="final_note")
+    assert "Internal milestone note" in notes_text
+    assert [e["seq"] for e in cast(list[dict[str, object]], notes_data["entries"])] == [
+        1
+    ]
+
+    exec_text, exec_data = await activity.search_tool(db, root, tool="execute")
+    assert [e["seq"] for e in cast(list[dict[str, object]], exec_data["entries"])] == [
+        3,
+        2,
+    ]
+    assert "Entry 3 | tool_result | execute | error" in exec_text
+
+    all_text, all_data = await activity.search_tool(db, root, query="   ")
+    assert "activity_search" not in all_text
+    assert [e["seq"] for e in cast(list[dict[str, object]], all_data["entries"])] == [
+        3,
+        2,
+        1,
+    ]
+
+    read_text, read_data = await activity.read_entry(db, root, 3)
+    assert "Call entry: 2 | execute(" in read_text
+    assert read_data["paired_entry"] == 2 and read_data["status"] == "error"

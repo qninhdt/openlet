@@ -1,6 +1,7 @@
+import base64
 import json
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from hashlib import md5
 from typing import Literal, cast
 from uuid import UUID
@@ -14,6 +15,7 @@ from .agents import Input, gate, get_agent, json_row, stable
 from .auth import Actor, Authorization
 from .config import PlatformInternalServiceAsyncStub
 from .db import Connection, Pool, Row
+from .file_refs import plaintext, token
 from .hitl import render as render_hitl
 
 inbox_count = metrics.get_meter("openlet.leta").create_counter(
@@ -351,6 +353,72 @@ def reaction_key(row: Row) -> tuple[str, str, str, str]:
     )
 
 
+def _format_attachments(attached: list[dict[str, JSON]]) -> str:
+    return "Attached files:\n" + "\n".join(
+        token(
+            str(ref["label"]),
+            str(ref["storage_id"]),
+            str(ref["node_id"]),
+            folder=ref.get("kind") == "folder",
+        )
+        for ref in attached
+    )
+
+
+def _format_sources(sources: list[dict[str, JSON]]) -> str:
+    lines = [
+        f"[{index}] "
+        + (
+            f"{source['title']} — {source['url']}"
+            if source["kind"] == "web"
+            else token(
+                str(source["label"]),
+                str(source["storage_id"]),
+                str(source["node_id"]),
+                folder=source["kind"] == "folder",
+            )
+        )
+        + (f", page {source['page']}" if "page" in source else "")
+        + (f", line {source['line']}" if "line" in source else "")
+        for index, source in enumerate(sources, 1)
+    ]
+    return "Sources:\n" + "\n".join(lines)
+
+
+def _reply_snippet(text: str, limit: int = 160) -> str:
+    compact = " ".join(plaintext(text).split())
+    return compact[: limit - 1] + "…" if len(compact) > limit else compact
+
+
+def encode_history_cursor(
+    created_at: datetime, message_id: UUID, direction: str
+) -> str:
+    payload = json.dumps(
+        {"t": created_at.isoformat(), "id": str(message_id), "d": direction},
+        separators=(",", ":"),
+    ).encode()
+    return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+
+def decode_history_cursor(cursor: str) -> tuple[datetime, UUID, str]:
+    padded = cursor + "=" * (-len(cursor) % 4)
+    try:
+        loaded: object = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
+        if not isinstance(loaded, dict):
+            raise ValueError
+        data = cast(dict[str, JSON], loaded)
+        direction = data.get("d")
+        if direction not in ("in", "out"):
+            raise ValueError
+        return (
+            datetime.fromisoformat(str(data["t"])),
+            UUID(str(data["id"])),
+            str(direction),
+        )
+    except Exception:
+        raise ValueError("Invalid conversation history cursor") from None
+
+
 def input_batch(rows: list[Row], *, root: bool) -> str:
     latest_reaction = {
         reaction_key(row): row["seq"]
@@ -401,14 +469,7 @@ def input_batch(rows: list[Row], *, root: bool) -> str:
                 if isinstance(ref, dict)
             ]
             if attached:
-                from .file_refs import token
-
-                body += "\nAttached files:\n" + "\n".join(
-                    token(
-                        str(ref["label"]), str(ref["storage_id"]), str(ref["node_id"])
-                    )
-                    for ref in attached
-                )
+                body += "\n" + _format_attachments(attached)
             header = f"{sender} | message={row['seq']}"
             if is_preview(row, root=root):
                 body = " ".join(body.split())[: PREVIEW_CHARS - 1] + "…"
@@ -418,25 +479,7 @@ def input_batch(rows: list[Row], *, root: bool) -> str:
             else:
                 sources = cast(list[dict[str, JSON]], row.get("sources") or [])
                 if sources:
-                    from .file_refs import token
-
-                    lines = [
-                        f"[{index}] "
-                        + (
-                            f"{source['title']} — {source['url']}"
-                            if source["kind"] == "web"
-                            else token(
-                                str(source["label"]),
-                                str(source["storage_id"]),
-                                str(source["node_id"]),
-                                folder=source["kind"] == "folder",
-                            )
-                        )
-                        + (f", page {source['page']}" if "page" in source else "")
-                        + (f", line {source['line']}" if "line" in source else "")
-                        for index, source in enumerate(sources, 1)
-                    ]
-                    body += "\nSources:\n" + "\n".join(lines)
+                    body += "\n" + _format_sources(sources)
                 items.append(f"From {header}\nFull message:\n{body}")
     return "\n\n---\n\n".join(items)
 
@@ -457,7 +500,12 @@ async def incoming(db: Pool, agent: UUID, seq: int) -> Row:
 
 
 async def read(
-    db: Pool, agent: UUID, source: UUID, kind: str, after: int = 0, unread: bool = True
+    db: Pool,
+    agent: UUID,
+    source: UUID,
+    kind: str,
+    after: int = 0,
+    limit: int = 20,
 ) -> list[Row]:
     async with db.connection() as conn, conn.transaction():
         rows = await (
@@ -466,9 +514,9 @@ async def read(
                 FROM agent_messages m
                 LEFT JOIN agents a ON m.source_kind='agent' AND a.id=m.source_id
                 WHERE m.recipient_agent_id=%s AND m.source_id=%s AND m.source_kind=%s
-                AND m.seq>%s AND (NOT %s OR m.read_at IS NULL)
-                ORDER BY m.seq LIMIT 20 FOR UPDATE OF m""",
-                (agent, source, kind, after, unread),
+                AND m.seq>%s AND m.read_at IS NULL
+                ORDER BY m.seq LIMIT %s FOR UPDATE OF m""",
+                (agent, source, kind, after, limit),
             )
         ).fetchall()
         await conn.execute(
@@ -476,6 +524,241 @@ async def read(
             ([r["id"] for r in rows],),
         )
     return rows
+
+
+async def conversation_history(
+    db: Pool,
+    agent: UUID,
+    root: UUID,
+    target: UUID,
+    kind: Literal["user", "agent"],
+    *,
+    peer_label: str,
+    cursor: str = "",
+    query: str = "",
+    limit: int = 20,
+) -> tuple[list[Row], str | None]:
+    before, cursor_id, direction = (
+        decode_history_cursor(cursor) if cursor else (None, None, "in")
+    )
+    terms = query.strip().split()
+    if kind == "user":
+        cte = """WITH thread AS (
+            SELECT id, seq, content, file_refs, sources, created_at,
+                'in'::text AS direction,
+                in_reply_to_message_id AS in_reply_to,
+                coalesce(in_reply_to_role, 'user') AS in_reply_to_role
+            FROM agent_messages
+            WHERE recipient_agent_id=%s AND source_kind='user' AND source_id=%s AND input_type='message'
+            UNION ALL
+            SELECT id, NULL::bigint AS seq, content, file_refs, sources, created_at,
+                'out'::text AS direction,
+                in_reply_to_message_id AS in_reply_to,
+                'user'::text AS in_reply_to_role
+            FROM user_messages
+            WHERE leta_id=%s AND recipient_user_id=%s
+        )
+        SELECT c.*,
+            CASE WHEN q.id IS NULL THEN NULL ELSE jsonb_build_object(
+                'id', q.id, 'seq', q.seq, 'direction', q.direction, 'content', q.content
+            ) END AS reply
+        FROM thread c
+        LEFT JOIN thread q ON q.id=c.in_reply_to
+            AND q.direction=CASE WHEN c.in_reply_to_role='assistant' THEN 'out' ELSE 'in' END"""
+        scope_params: tuple[object, ...] = (agent, target, agent, target)
+    else:
+        cte = """WITH thread AS (
+            SELECT id, seq, content, file_refs, sources, created_at,
+                'in'::text AS direction,
+                in_reply_to_message_id AS in_reply_to
+            FROM agent_messages
+            WHERE recipient_agent_id=%s AND source_kind='agent' AND source_id=%s AND input_type='message'
+            UNION ALL
+            SELECT id, NULL::bigint AS seq, content, file_refs, sources, created_at,
+                'out'::text AS direction,
+                in_reply_to_message_id AS in_reply_to
+            FROM agent_messages
+            WHERE recipient_agent_id=%s AND source_kind='agent' AND source_id=%s AND input_type='message'
+        )
+        SELECT c.*,
+            CASE WHEN q.id IS NULL THEN NULL ELSE jsonb_build_object(
+                'id', q.id, 'seq', q.seq, 'direction', q.direction, 'content', q.content
+            ) END AS reply
+        FROM thread c
+        LEFT JOIN thread q ON q.id=c.in_reply_to"""
+        scope_params = (agent, target, target, agent)
+    sql_query = (
+        cte
+        + """
+        WHERE (%s::timestamptz IS NULL OR (c.created_at, c.id, c.direction) < (%s, %s, %s))
+          AND NOT EXISTS (
+              SELECT 1 FROM unnest(%s::text[]) AS t(term)
+              WHERE strpos(lower(c.content || ' ' || coalesce(c.file_refs::text, '')), lower(t.term)) = 0
+          )
+        ORDER BY c.created_at DESC, c.id DESC, c.direction DESC
+        LIMIT %s"""
+    )
+    async with db.connection() as conn:
+        rows = await (
+            await conn.execute(
+                sql_query,
+                (*scope_params, before, before, cursor_id, direction, terms, limit + 1),
+            )
+        ).fetchall()
+        has_more = len(rows) > limit
+        page_rows = rows[:limit]
+        next_cursor = (
+            encode_history_cursor(
+                cast(datetime, page_rows[-1]["created_at"]),
+                cast(UUID, page_rows[-1]["id"]),
+                str(page_rows[-1]["direction"]),
+            )
+            if has_more
+            else None
+        )
+        reaction_rows = (
+            await (
+                await conn.execute(
+                    """SELECT r.message_id, r.message_kind, r.actor_kind, r.actor_id, r.emoji,
+                        a.name AS agent_name
+                    FROM message_reactions r
+                    LEFT JOIN agents a ON r.actor_kind='agent' AND a.id=r.actor_id
+                    WHERE r.leta_id=%s AND r.message_id=ANY(%s)
+                    ORDER BY r.updated_at, r.actor_id""",
+                    (root, [row["id"] for row in page_rows]),
+                )
+            ).fetchall()
+            if page_rows
+            else []
+        )
+    ordered = list(reversed(page_rows))
+    for row in ordered:
+        expected_kind = (
+            "outgoing" if kind == "user" and row["direction"] == "out" else "incoming"
+        )
+        row["reactions"] = [
+            {
+                "actor_kind": str(r["actor_kind"]),
+                "actor_id": str(r["actor_id"]),
+                "actor_name": (
+                    "You"
+                    if r["actor_kind"] == "agent" and r["actor_id"] == agent
+                    else str(r["agent_name"] or peer_label)
+                    if r["actor_kind"] == "agent"
+                    else peer_label
+                ),
+                "emoji": str(r["emoji"]),
+            }
+            for r in reaction_rows
+            if r["message_id"] == row["id"] and r["message_kind"] == expected_kind
+        ]
+        reply = cast(dict[str, JSON] | None, row.get("reply"))
+        if reply:
+            reply["content"] = _reply_snippet(str(reply.get("content") or ""))
+    return ordered, next_cursor
+
+
+def format_conversation_history(
+    rows: list[Row],
+    *,
+    conversation_address: str,
+    peer_label: str,
+    query: str = "",
+    next_cursor: str | None = None,
+) -> str:
+    if not rows:
+        return "No matching messages in this conversation."
+    header = (
+        f"Conversation with {conversation_address} ({peer_label}) "
+        "| mode=history (read-only) | oldest -> newest"
+    )
+    if cleaned := query.strip():
+        header += f' | query="{cleaned}"'
+    blocks: list[str] = [header]
+    for row in rows:
+        created = cast(datetime, row["created_at"]).astimezone(timezone.utc)
+        ts = created.strftime("%Y-%m-%d %H:%M UTC")
+        if row["direction"] == "out":
+            speaker = "You"
+        else:
+            speaker = f"{peer_label} (message={row['seq']})"
+        lines = [f"[{ts}] {speaker}:"]
+        if reply := cast(dict[str, JSON] | None, row.get("reply")):
+            reply_author = "You" if reply.get("direction") == "out" else peer_label
+            reply_msg = f" (message={reply['seq']})" if reply.get("seq") else ""
+            lines.append(f'Replying to {reply_author}{reply_msg}: "{reply["content"]}"')
+        content = str(row["content"])
+        if content:
+            lines.append(content)
+        attached = [
+            ref
+            for ref in cast(list[JSON], row.get("file_refs") or [])
+            if isinstance(ref, dict)
+        ]
+        if attached:
+            lines.append(_format_attachments(attached))
+        sources = cast(list[dict[str, JSON]], row.get("sources") or [])
+        if sources:
+            lines.append(_format_sources(sources))
+        if reactions := cast(list[dict[str, JSON]], row.get("reactions") or []):
+            badges = ", ".join(f"{r['emoji']} {r['actor_name']}" for r in reactions)
+            lines.append(f"Reactions: {badges}")
+        blocks.append("\n".join(lines))
+    if next_cursor:
+        blocks.append(f"Older cursor: {next_cursor}")
+    else:
+        blocks.append("(start of conversation)")
+    return "\n\n".join(blocks)
+
+
+def conversation_history_data(
+    rows: list[Row],
+    *,
+    conversation_address: str,
+    query: str,
+    next_cursor: str | None,
+    peer_kind: str,
+    peer_id: UUID,
+    peer_label: str,
+    agent_id: UUID,
+) -> dict[str, JSON]:
+    items: list[JSON] = []
+    for row in rows:
+        out = row["direction"] == "out"
+        reply = cast(dict[str, JSON] | None, row.get("reply"))
+        item: dict[str, JSON] = {
+            "id": str(row["id"]),
+            "seq": cast(JSON, row["seq"]),
+            "direction": str(row["direction"]),
+            "sender_kind": "agent" if out else peer_kind,
+            "sender_id": str(agent_id if out else peer_id),
+            "sender_name": "You" if out else peer_label,
+            "content": str(row["content"]),
+            "created_at": cast(datetime, row["created_at"]).isoformat(),
+            "file_refs": cast(JSON, row.get("file_refs") or []),
+            "sources": cast(JSON, row.get("sources") or []),
+            "reactions": [
+                {
+                    "actor_kind": str(r["actor_kind"]),
+                    "actor_id": str(r["actor_id"]),
+                    "emoji": str(r["emoji"]),
+                }
+                for r in cast(list[dict[str, JSON]], row.get("reactions") or [])
+            ],
+        }
+        if reply:
+            item["reply"] = {
+                "seq": reply.get("seq"),
+                "direction": str(reply.get("direction")),
+                "content": str(reply.get("content") or ""),
+            }
+        items.append(item)
+    return {
+        "conversation": conversation_address,
+        "query": query,
+        "next_cursor": next_cursor,
+        "items": items,
+    }
 
 
 def input_data(rows: list[Row], *, root: bool) -> dict[str, JSON]:
@@ -538,6 +821,7 @@ async def list_inbox(
     agent: UUID,
     after: int = 0,
     unread: bool = True,
+    limit: int = 20,
 ) -> list[Row]:
     async with db.connection() as conn:
         rows = await (
@@ -551,8 +835,8 @@ async def list_inbox(
             ) n LEFT JOIN agents a ON n.source_kind='agent' AND a.id=n.source_id
             LEFT JOIN hitl_requests h ON n.source_kind='hitl' AND h.id=n.source_id
             LEFT JOIN schedules sc ON n.source_kind='schedule' AND sc.id=n.source_id
-            ORDER BY n.seq LIMIT 20""",
-                (agent, after, unread),
+            ORDER BY n.seq LIMIT %s""",
+                (agent, after, unread, limit),
             )
         ).fetchall()
     await mark_presented(db, agent, rows, root=True)

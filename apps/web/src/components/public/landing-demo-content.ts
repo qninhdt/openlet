@@ -141,7 +141,7 @@ Choose the channels whenever you’re ready. Nothing has been published.`,
         duration: 650,
         name: 'inbox_send',
         args: {
-          to: 'Scout',
+          conversation: 'Scout',
           messages: [
             {
               content:
@@ -305,7 +305,7 @@ I saved the findings with the ${file('team-research', 'interview notes')} and ke
         at: 8200,
         name: 'inbox_send',
         args: {
-          to: 'Atlas',
+          conversation: 'Atlas',
           messages: [
             {
               content:
@@ -377,7 +377,7 @@ The full ${file('team-announcement', 'announcement and newsletter')} is ready to
         at: 8200,
         name: 'inbox_send',
         args: {
-          to: 'Atlas',
+          conversation: 'Atlas',
           messages: [
             {
               content:

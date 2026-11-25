@@ -20,11 +20,11 @@ from openlet_sdk.config import JSON
 from pydantic import AfterValidator, Field, model_validator
 
 from .. import (
+    activity,
     box_views,
     boxes,
     conversations,
     file_refs,
-    history,
     hitl,
     reactions,
     schedules,
@@ -87,6 +87,11 @@ async def session(runtime: ToolRuntime[Context, State]) -> Session:
 
 
 async def user_id(ctx: Context, handle: str) -> UUID:
+    id, _ = await _user_peer(ctx, handle)
+    return id
+
+
+async def _user_peer(ctx: Context, handle: str) -> tuple[UUID, str]:
     try:
         user = await ctx.services.internal.GetUserByHandle(
             platform.UserHandleRequest(handle=handle), timeout=15
@@ -95,25 +100,46 @@ async def user_id(ctx: Context, handle: str) -> UUID:
         if error.code() == grpc.StatusCode.NOT_FOUND:
             raise LookupError("user handle not found") from None
         raise
-    return UUID(user.id)
+    display = str(getattr(user, "display_name", "") or "").strip()
+    resolved_handle = str(getattr(user, "handle", "") or handle)
+    label = (
+        f"{display}#{resolved_handle}"
+        if display and display != resolved_handle
+        else resolved_handle
+    )
+    return UUID(user.id), label
+
+
+async def _agent_peer(ctx: Context, handle: str) -> Row:
+    async with ctx.services.db.connection() as conn:
+        agent = await (
+            await conn.execute(
+                "SELECT id,leta_id,box_id,name,handle FROM agents WHERE leta_id=%s AND handle=%s",
+                (ctx.leta_id, handle),
+            )
+        ).fetchone()
+    if agent is None:
+        raise LookupError("agent handle not found")
+    return agent
+
+
+async def inbox_peer(ctx: Context, address: str) -> tuple[str, UUID, str]:
+    kind, _, handle = address.partition(":")
+    if kind == "user" and handle:
+        id, label = await _user_peer(ctx, handle)
+        return kind, id, label
+    if kind == "agent" and handle:
+        agent = await _agent_peer(ctx, handle)
+        name = str(agent.get("name") or handle)
+        resolved_handle = str(agent.get("handle") or handle)
+        label = f"{name}#{resolved_handle}" if name != resolved_handle else name
+        return kind, cast(UUID, agent["id"]), label
+    raise ValueError("Use a user:<handle> or agent:<handle> address")
 
 
 async def inbox_address(ctx: Context, address: str) -> tuple[str, UUID]:
-    kind, _, handle = address.partition(":")
-    if kind == "user" and handle:
-        return kind, await user_id(ctx, handle)
-    if kind == "agent" and handle:
-        async with ctx.services.db.connection() as conn:
-            agent = await (
-                await conn.execute(
-                    "SELECT id FROM agents WHERE leta_id=%s AND handle=%s",
-                    (ctx.leta_id, handle),
-                )
-            ).fetchone()
-        if agent is None:
-            raise LookupError("agent handle not found")
-        return kind, cast(UUID, agent["id"])
-    raise ValueError("Use a user:<handle> or agent:<handle> address")
+    kind, target, _ = await inbox_peer(ctx, address)
+    return kind, target
 
 
 class WebSource(Input):
@@ -274,12 +300,12 @@ async def prepare_outgoing(
 async def inbox_send(
     runtime: ToolRuntime[Context, State],
     messages: Annotated[list[InboxMessage], Field(min_length=1, max_length=5)],
-    to: str | None = None,
+    conversation: str | None = None,
     in_reply_to: Annotated[int | None, Field(ge=1)] = None,
     task_label: Annotated[str | None, Field(max_length=255)] = None,
     copy_folders: bool = False,
 ) -> tuple[JSON, dict[str, JSON]]:
-    """Send messages to user:<handle> or agent:<handle>. Cite sources with [1], [2], ... mapped to that message's sources in order. Attach file or folder paths or use :file[label]{path=path} for inline links. in_reply_to quotes a received message in the first message. Use task_label for assignments. Set copy_folders only when authorized to share an inaccessible folder's entire contents."""
+    """Send messages to conversation user:<handle> or agent:<handle>. Cite sources with [1], [2], ... mapped to that message's sources in order. Attach file or folder paths or use :file[label]{path=path} for inline links. in_reply_to quotes a received message in the first message. Use task_label for assignments. Set copy_folders only when authorized to share an inaccessible folder's entire contents."""
     from ..worker import deliver
 
     ctx = runtime.context
@@ -294,16 +320,16 @@ async def inbox_send(
         or original["input_type"] != "message"
     ):
         raise ValueError("System events are not reply destinations")
-    if to is not None:
-        kind, target = await inbox_address(ctx, to)
+    if conversation is not None:
+        kind, target = await inbox_address(ctx, conversation)
     elif original:
         kind, target = str(original["source_kind"]), cast(UUID, original["source_id"])
     else:
-        raise ValueError("Provide to or in_reply_to")
+        raise ValueError("Provide conversation or in_reply_to")
     if original and (
         kind != original["source_kind"] or target != original["source_id"]
     ):
-        raise ValueError("to does not match the sender of in_reply_to")
+        raise ValueError("conversation does not match the sender of in_reply_to")
     human = kind == "user"
     if human and ctx.id != ctx.leta_id:
         raise ValueError("Only Leta can message users")
@@ -358,7 +384,7 @@ async def inbox_send(
 
         await events.changed(s.redis, ctx.leta_id, "messages", outgoing[0].id, target)
     else:
-        conversation = (
+        conversation_id = (
             cast(UUID, original["conversation_id"])
             if original
             else inbox_messages.agent_conversation(ctx.id, target)
@@ -371,7 +397,7 @@ async def inbox_send(
                     recipient_agent_id=target,
                     source_kind="agent",
                     source_id=ctx.id,
-                    conversation_id=conversation,
+                    conversation_id=conversation_id,
                     content=message.content,
                     file_refs=message.file_refs,
                     sources=message.sources,
@@ -401,14 +427,14 @@ async def inbox_send(
 @tool(response_format="content_and_artifact")
 async def inbox_react(
     runtime: ToolRuntime[Context, State],
-    source: str,
+    conversation: str,
     message: Annotated[int, Field(ge=1)],
     emoji: str,
     action: Literal["add", "remove"] = "add",
 ) -> tuple[JSON, dict[str, JSON]]:
-    """React to a received user or teammate message using its sender address and inbox message number. One emoji per agent per message; add replaces your previous emoji, remove clears it. Feedback is silent and does not wake another agent."""
+    """React to a received user or teammate message using its conversation address and inbox message number. One emoji per agent per message; add replaces your previous emoji, remove clears it. Feedback is silent and does not wake another agent."""
     ctx = runtime.context
-    kind, sender = await inbox_address(ctx, source)
+    kind, sender = await inbox_address(ctx, conversation)
     original = await inbox_messages.incoming(ctx.services.db, ctx.id, message)
     if original["source_kind"] != kind or original["source_id"] != sender:
         raise LookupError("Message number does not belong to that conversation")
@@ -440,18 +466,20 @@ async def inbox_list(
     runtime: ToolRuntime[Context, State],
     cursor: str = "",
     unread_only: bool = True,
+    limit: Annotated[int, Field(ge=1, le=50)] = 20,
 ) -> tuple[JSON, dict[str, JSON]]:
     """List inbox notifications grouped by conversation, including silent feedback that does not wake you."""
     ctx = runtime.context
+    cursor_id = int(cursor.strip() or 0)
     rows = await inbox_messages.list_inbox(
-        ctx.services.db, ctx.id, int(cursor or 0), unread_only
+        ctx.services.db, ctx.id, cursor_id, unread_only, limit
     )
     await inbox_messages.name_users(ctx.services.internal, rows)
     result = (
         inbox_messages.input_batch(rows, root=True)
         or "No messages matching this inbox filter."
     )
-    if len(rows) == 20:
+    if len(rows) == limit:
         result += f"\nNext cursor: {rows[-1]['seq']}"
     return result, {"ui": inbox_messages.input_data(rows, root=True)}
 
@@ -459,36 +487,95 @@ async def inbox_list(
 @tool(response_format="content_and_artifact")
 async def inbox_read(
     runtime: ToolRuntime[Context, State],
-    source: str,
+    conversation: str,
+    mode: Literal["unread", "history"] = "unread",
+    query: str = "",
     cursor: str = "",
-    unread_only: bool = True,
+    limit: Annotated[int, Field(ge=1, le=50)] = 20,
 ) -> tuple[str, dict[str, JSON]]:
-    """Read up to 20 messages from the conversation with user:<handle> or agent:<handle>. By default, read only unread messages. Use the returned cursor for the next page."""
+    """Read messages in conversation user:<handle> or agent:<handle>. Use mode='unread' (default) to receive unread incoming messages for action. Use mode='history' to review two-way conversation messages read-only in chronological order, optionally filtering by query and paging older messages with cursor."""
     ctx = runtime.context
-    kind, sender = await inbox_address(ctx, source)
-    rows = await inbox_messages.read(
-        ctx.services.db, ctx.id, sender, kind, int(cursor or 0), unread_only
-    )
-    await inbox_messages.name_users(ctx.services.internal, rows)
-    if rows:
-        async with ctx.services.db.connection() as conn:
-            await conn.execute(
-                "UPDATE agent_messages SET processing_run_id=coalesce(processing_run_id,%s) WHERE id=ANY(%s)",
-                (ctx.run_id, [row["id"] for row in rows]),
-            )
-        if kind == "user":
-            from .. import events
+    cursor_value = cursor.strip()
+    kind, sender, peer_label = await inbox_peer(ctx, conversation)
+    if mode == "unread":
+        if query.strip():
+            raise ValueError("query is only supported with mode='history'")
+        rows = await inbox_messages.read(
+            ctx.services.db, ctx.id, sender, kind, int(cursor_value or 0), limit
+        )
+        await inbox_messages.name_users(ctx.services.internal, rows)
+        if rows:
+            async with ctx.services.db.connection() as conn:
+                await conn.execute(
+                    "UPDATE agent_messages SET processing_run_id=coalesce(processing_run_id,%s) WHERE id=ANY(%s)",
+                    (ctx.run_id, [row["id"] for row in rows]),
+                )
+            if kind == "user":
+                from .. import events
 
-            await events.changed(
-                ctx.services.redis, ctx.leta_id, "messages", ctx.id, sender
+                await events.changed(
+                    ctx.services.redis, ctx.leta_id, "messages", ctx.id, sender
+                )
+        text = (
+            inbox_messages.input_batch(rows, root=False)
+            or "No unread messages matching this conversation."
+        )
+        if len(rows) == limit:
+            text += f"\nNext cursor: {rows[-1]['seq']}"
+        return text, {"ui": inbox_messages.input_data(rows, root=False)}
+    if kind == "user" and ctx.id != ctx.leta_id:
+        raise ValueError("Only Leta can read user conversations")
+    if kind == "agent":
+        async with ctx.services.db.connection() as conn:
+            peer_agent = await (
+                await conn.execute(
+                    "SELECT id,leta_id,box_id FROM agents WHERE id=%s", (sender,)
+                )
+            ).fetchone()
+            allowed = peer_agent is not None and (
+                await inbox_messages.can_contact(conn, ctx.agent, peer_agent)
+                or bool(
+                    await (
+                        await conn.execute(
+                            """SELECT 1 FROM agent_messages WHERE input_type='message' AND source_kind='agent' AND (
+                                (recipient_agent_id=%s AND source_id=%s) OR (recipient_agent_id=%s AND source_id=%s)
+                            ) LIMIT 1""",
+                            (ctx.id, sender, sender, ctx.id),
+                        )
+                    ).fetchone()
+                )
             )
-    text = (
-        inbox_messages.input_batch(rows, root=False)
-        or "No messages matching this conversation and filter."
+            if not allowed:
+                raise ValueError("conversation is outside your communication graph")
+    rows, next_cursor = await inbox_messages.conversation_history(
+        ctx.services.db,
+        ctx.id,
+        ctx.leta_id,
+        sender,
+        cast(Literal["user", "agent"], kind),
+        peer_label=peer_label,
+        cursor=cursor_value,
+        query=query,
+        limit=limit,
     )
-    if len(rows) == 20:
-        text += f"\nNext cursor: {rows[-1]['seq']}"
-    return text, {"ui": inbox_messages.input_data(rows, root=False)}
+    text = inbox_messages.format_conversation_history(
+        rows,
+        conversation_address=conversation,
+        peer_label=peer_label,
+        query=query,
+        next_cursor=next_cursor,
+    )
+    data = inbox_messages.conversation_history_data(
+        rows,
+        conversation_address=conversation,
+        query=query,
+        next_cursor=next_cursor,
+        peer_kind=kind,
+        peer_id=sender,
+        peer_label=peer_label,
+        agent_id=ctx.id,
+    )
+    return text, {"ui": {"version": 1, "kind": "inbox_history", "data": data}}
 
 
 @tool(response_format="content_and_artifact")
@@ -1231,33 +1318,40 @@ async def leti_schedule_list(
 
 
 @tool(response_format="content_and_artifact")
-async def history_search(
-    runtime: ToolRuntime[Context, State], query: str = "", cursor: str = ""
+async def activity_search(
+    runtime: ToolRuntime[Context, State],
+    query: str = "",
+    kind: activity.ActivityKind | None = None,
+    tool: str = "",
+    cursor: str = "",
 ) -> tuple[JSON, dict[str, JSON]]:
-    """Search activity using a few distinctive literal keywords; all terms must match. History lookup calls/results are excluded. Omit query for recent previews."""
+    """Search or browse your execution activity log (notes, tool calls, tool results, compaction summaries). Use distinctive literal keywords when passing query, filter by kind or tool name, or omit filters for recent entries."""
     ctx = runtime.context
-    text, data = await history.search_tool(
-        ctx.services.db, ctx.id, int(cursor) if cursor else None, query
+    before = int(cursor.strip()) if cursor.strip() else None
+    text, data = await activity.search_tool(
+        ctx.services.db,
+        ctx.id,
+        before,
+        query,
+        kind=kind,
+        tool=tool,
     )
-    return presented("history_search", text, data)
+    return presented("activity_search", text, data)
 
 
 @tool(response_format="content_and_artifact")
-async def history_read(
+async def activity_read(
     runtime: ToolRuntime[Context, State],
     entry: Annotated[int, Field(ge=1)],
     start_line: Annotated[int, Field(ge=1)] = 1,
     limit: Annotated[int | None, Field(ge=1, le=2000)] = None,
 ) -> tuple[JSON, dict[str, JSON]]:
-    """Read an activity entry by its number from history_search; follow continuations when needed."""
+    """Read one activity entry in full by its Entry number from activity_search, with paired call/result context and line continuations."""
     ctx = runtime.context
-    text = await history.read_text(ctx.services.db, ctx.id, entry, start_line, limit)
-
-    return presented(
-        "history_read",
-        text,
-        {"content": text, "entry": entry, "start_line": start_line},
+    text, data = await activity.read_entry(
+        ctx.services.db, ctx.id, entry, start_line, limit
     )
+    return presented("activity_read", text, data)
 
 
 @tool(response_format="content_and_artifact")
@@ -1576,8 +1670,8 @@ def tools(*, leta: bool, web: bool = False) -> list[BaseTool]:
         schedule_get,
         schedule_update,
         schedule_delete,
-        history_search,
-        history_read,
+        activity_search,
+        activity_read,
         file_list,
         file_read,
         file_write,

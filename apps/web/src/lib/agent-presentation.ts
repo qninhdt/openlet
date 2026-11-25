@@ -7,6 +7,8 @@ export type ToolItem = {
   title: string;
   detail: string;
   file?: FileRef;
+  fileRefs?: FileRef[];
+  sources?: MessageSource[];
   kind?: 'folder' | 'file';
   meta?: string;
   status?: string;
@@ -73,6 +75,21 @@ function file(value: Record<string, Json>): FileRef | undefined {
     node_id: value.node_id,
     label: string(value.path ?? value.name),
   };
+}
+function fileRefsOf(value: Json | undefined): FileRef[] {
+  return rows(value).flatMap((ref) => {
+    const reference = file(ref);
+    return reference
+      ? [
+          {
+            ...reference,
+            label: string(ref.label ?? ref.name),
+            mime: string(ref.mime),
+            ...(ref.kind === 'folder' ? { kind: 'folder' as const } : {}),
+          },
+        ]
+      : [];
+  });
 }
 
 // Adapts versioned snapshots, never clipped model-facing English/JSON previews.
@@ -148,12 +165,51 @@ export function activityToolResult(entry: ActivityEntry): ToolResult | string {
         file: file(hit),
       })),
     );
-  if (name === 'history_search')
+  if (name === 'activity_search')
     result.items = items.map((item) => ({
-      title: `#${item.seq} · ${string(item.kind).replaceAll('_', ' ')}`,
+      title: [
+        `#${item.seq}`,
+        string(item.kind).replaceAll('_', ' '),
+        string(item.tool),
+        string(item.status),
+      ]
+        .filter(Boolean)
+        .join(' · '),
       detail: string(item.text_preview),
       meta: string(item.created_at),
     }));
+  if (name === 'activity_read') {
+    result.title = [
+      `Entry #${string(data.entry)}`,
+      string(data.kind).replaceAll('_', ' '),
+      string(data.tool),
+      string(data.status),
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    result.summary = data.paired_entry ? `Paired with entry #${string(data.paired_entry)}` : '';
+    result.lineRange = data.start_line ? `From line ${string(data.start_line)}` : '';
+    result.content = string(data.content) || payload.text || '';
+  }
+  if (ui?.kind === 'inbox_history')
+    result.items = items.map((item) => {
+      const reply = object(item.reply);
+      const reactionBadges = rows(item.reactions)
+        .map((r) => string(r.emoji))
+        .filter(Boolean)
+        .join(' ');
+      const fileRefs = fileRefsOf(item.file_refs);
+      return {
+        title: reply.content ? `Replying to “${string(reply.content)}”` : '',
+        sender: string(item.sender_name),
+        detail: string(item.content),
+        meta: [string(item.created_at), reactionBadges].filter(Boolean).join(' · '),
+        ...(fileRefs.length ? { fileRefs } : {}),
+        ...(Array.isArray(item.sources) && item.sources.length
+          ? { sources: item.sources as MessageSource[] }
+          : {}),
+      };
+    });
   if (name === 'get_context') {
     const workspace = object(data.workspace);
     result.title = string(workspace.name);
@@ -202,19 +258,7 @@ export function activityToolResult(entry: ActivityEntry): ToolResult | string {
       ...(Array.isArray(message.sources) && message.sources.length
         ? { sources: message.sources as MessageSource[] }
         : {}),
-      fileRefs: rows(message.file_refs).flatMap((ref) => {
-        const reference = file(ref);
-        return reference
-          ? [
-              {
-                ...reference,
-                label: string(ref.label ?? ref.name),
-                mime: string(ref.mime),
-                ...(ref.kind === 'folder' ? { kind: 'folder' as const } : {}),
-              },
-            ]
-          : [];
-      }),
+      fileRefs: fileRefsOf(message.file_refs),
     }));
   }
   if (name === 'inbox_react')

@@ -328,10 +328,11 @@ const ReactionTool: ToolCallMessagePartComponent = (props) => {
 const InboxTool: ToolCallMessagePartComponent = (props) => {
   const p = useAgentPreview();
   const result = resultOf(props);
-  const [recipientKind, recipientHandle] = String(props.args.to ?? '').split(':', 2);
+  const [recipientKind, recipientHandle] = String(props.args.conversation ?? '').split(':', 2);
   const send = props.toolName === 'inbox_send';
   const outgoing = result.messages ?? [];
   const list = props.toolName === 'inbox_list';
+  const history = props.args.mode === 'history';
   return (
     <ToolStep
       props={props}
@@ -342,7 +343,9 @@ const InboxTool: ToolCallMessagePartComponent = (props) => {
             : 'Sent a message'
           : list
             ? 'Checked inbox conversations'
-            : 'Read inbox messages'
+            : history
+              ? 'Read conversation history'
+              : 'Read inbox messages'
       }
       icon={send ? <Send /> : <Inbox />}
     >
@@ -406,9 +409,9 @@ const InboxTool: ToolCallMessagePartComponent = (props) => {
             </div>
           )}
         </ActionCard>
-      ) : (
+      ) : result.items?.length ? (
         <div className="flex w-fit max-w-[min(100%,520px)] flex-col gap-3">
-          {result.items?.map((item, index) => (
+          {result.items.map((item, index) => (
             <div key={index} className="flex items-start gap-2">
               <AgentAvatar name={item.sender ?? 'Agent'} className="mt-1 size-7 shrink-0" />
               <div className="min-w-0">
@@ -416,14 +419,19 @@ const InboxTool: ToolCallMessagePartComponent = (props) => {
                   <span className="font-medium text-foreground">{item.sender}</span>
                   <span>{item.meta}</span>
                 </div>
-                <div className="rounded-2xl rounded-tl-sm bg-muted px-3 py-2">
-                  <p className="mb-1 text-caption font-medium">{item.title}</p>
-                  <AgentMarkdown text={item.detail ?? ''} />
+                <div className="flex flex-col gap-1">
+                  <div className="rounded-2xl rounded-tl-sm bg-muted px-3 py-2">
+                    {item.title && <p className="mb-1 text-caption font-medium">{item.title}</p>}
+                    {item.detail && <AgentMarkdown text={item.detail} sources={item.sources} />}
+                  </div>
+                  <MessageFiles references={item.fileRefs} />
                 </div>
               </div>
             </div>
           ))}
         </div>
+      ) : (
+        <EmptyResult icon={<Inbox />}>No matching messages.</EmptyResult>
       )}
     </ToolStep>
   );
@@ -581,19 +589,19 @@ function ScheduleTarget({ target }: { target: string }) {
   );
 }
 
-const HistoryTool: ToolCallMessagePartComponent = (props) => {
+const ActivityTool: ToolCallMessagePartComponent = (props) => {
   const result = resultOf(props);
-  const search = props.toolName === 'history_search';
+  const search = props.toolName === 'activity_search';
+  const filters = [props.args.kind, props.args.tool].filter(Boolean).map(String).join(' · ');
+  const label = search
+    ? props.args.query
+      ? `Searched activity for “${String(props.args.query)}”`
+      : filters
+        ? `Browsed ${filters} activity`
+        : 'Checked recent activity'
+    : `Read activity entry ${String(props.args.entry ?? '')}`;
   return (
-    <ToolStep
-      props={props}
-      label={
-        search
-          ? `Searched history for “${String(props.args.query ?? '')}”`
-          : `Read history entry ${String(props.args.entry ?? '')}`
-      }
-      icon={<History />}
-    >
+    <ToolStep props={props} label={label} icon={<History />}>
       <div className="w-fit max-w-[min(100%,520px)]">
         {search ? (
           result.items?.length ? (
@@ -952,8 +960,8 @@ const renderers = {
     schedule_update: ScheduleTool,
     schedule_delete: ScheduleTool,
     schedule_list: ScheduleTool,
-    history_search: HistoryTool,
-    history_read: HistoryTool,
+    activity_search: ActivityTool,
+    activity_read: ActivityTool,
     get_context: ContextTool,
     agent_status: AgentStatusTool,
     box_create: BoxTool,

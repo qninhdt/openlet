@@ -56,10 +56,40 @@ test('activity adapters render structured snapshots and tool errors', () => {
     items: [{ file: { storage_id: 'storage', node_id: 'node' } }, { file: undefined }],
   });
   expect(
-    adapt('history_search', {
-      entries: [{ seq: 4, kind: 'final_note', text_preview: 'Actual note' }],
+    adapt('activity_search', {
+      entries: [
+        { seq: 4, kind: 'final_note', tool: null, status: null, text_preview: 'Actual note' },
+        {
+          seq: 5,
+          kind: 'tool_result',
+          tool: 'execute',
+          status: 'error',
+          text_preview: 'Timeout',
+        },
+      ],
     }),
-  ).toMatchObject({ items: [{ title: '#4 · final note', detail: 'Actual note' }] });
+  ).toMatchObject({
+    items: [
+      { title: '#4 · final note', detail: 'Actual note' },
+      { title: '#5 · tool result · execute · error', detail: 'Timeout' },
+    ],
+  });
+  expect(
+    adapt('activity_read', {
+      entry: 5,
+      kind: 'tool_result',
+      tool: 'execute',
+      status: 'error',
+      paired_entry: 4,
+      start_line: 1,
+      content: 'Output:\nTimeout',
+    }),
+  ).toMatchObject({
+    title: 'Entry #5 · tool result · execute · error',
+    summary: 'Paired with entry #4',
+    lineRange: 'From line 1',
+    content: 'Output:\nTimeout',
+  });
   expect(
     adapt('box_get', {
       name: 'review',
@@ -113,6 +143,35 @@ test('activity adapters render structured snapshots and tool errors', () => {
       payload: { name: 'inbox_read', ui: { version: 1, kind: 'messages', items } },
     }),
   ).toMatchObject({ inputItems: items });
+  expect(
+    adapt('inbox_history', {
+      conversation: 'user:ethan',
+      items: [
+        {
+          id: 'm1',
+          direction: 'in',
+          sender_name: 'Ethan Brooks#ethan',
+          content: 'Please review Q4',
+          created_at: '2026-11-25T09:41:00+00:00',
+          file_refs: [{ storage_id: 's1', node_id: 'n1', label: 'q4.pdf' }],
+          sources: [{ kind: 'web', title: 'Spec', url: 'https://example.com' }],
+          reactions: [{ actor_kind: 'agent', actor_id: 'root', emoji: '👍' }],
+          reply: { seq: 1, direction: 'out', content: 'Draft ready' },
+        },
+      ],
+    }),
+  ).toMatchObject({
+    items: [
+      {
+        title: 'Replying to “Draft ready”',
+        sender: 'Ethan Brooks#ethan',
+        detail: 'Please review Q4',
+        meta: '2026-11-25T09:41:00+00:00 · 👍',
+        fileRefs: [{ storage_id: 's1', node_id: 'n1', label: 'q4.pdf' }],
+        sources: [{ kind: 'web', title: 'Spec', url: 'https://example.com' }],
+      },
+    ],
+  });
   expect(adapt('inbox_react', { emoji: '👍', content: 'Approved' })).toMatchObject({
     reaction: { emoji: '👍', content: 'Approved' },
   });

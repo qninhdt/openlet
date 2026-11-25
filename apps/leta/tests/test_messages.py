@@ -221,3 +221,89 @@ def test_file_only_messages_remain_visible_to_the_receiving_agent() -> None:
         root=False,
     )
     assert f":file[report.txt]{{name={storage}/{node}}}" in body
+
+
+def test_conversation_history_formatting_and_cursor_roundtrip() -> None:
+    import pytest
+    from leta.messages import (
+        conversation_history_data,
+        decode_history_cursor,
+        encode_history_cursor,
+        format_conversation_history,
+    )
+
+    ts = datetime(2026, 11, 25, 9, 41, tzinfo=timezone.utc)
+    msg_id = uuid4()
+    token = encode_history_cursor(ts, msg_id, "out")
+    assert decode_history_cursor(token) == (ts, msg_id, "out")
+    with pytest.raises(ValueError, match="Invalid conversation history cursor"):
+        decode_history_cursor("not-valid-base64")
+
+    peer_id, root_id, storage, node = (uuid4() for _ in range(4))
+    rows: list[Row] = [
+        {
+            "id": uuid4(),
+            "seq": 23,
+            "direction": "in",
+            "content": "Check Q4 report",
+            "created_at": ts,
+            "file_refs": [],
+            "sources": [],
+            "reactions": [],
+            "reply": None,
+        },
+        {
+            "id": uuid4(),
+            "seq": None,
+            "direction": "out",
+            "content": "Done [1]",
+            "created_at": datetime(2026, 11, 25, 9, 42, tzinfo=timezone.utc),
+            "file_refs": [
+                {"storage_id": str(storage), "node_id": str(node), "label": "q4.pdf"}
+            ],
+            "sources": [{"kind": "web", "title": "Spec", "url": "https://example.com"}],
+            "reactions": [
+                {
+                    "actor_kind": "user",
+                    "actor_id": str(peer_id),
+                    "actor_name": "Ethan Brooks#ethan",
+                    "emoji": "👍",
+                }
+            ],
+            "reply": {"seq": 23, "direction": "in", "content": "Check Q4 report"},
+        },
+    ]
+    text = format_conversation_history(
+        rows,
+        conversation_address="user:ethan",
+        peer_label="Ethan Brooks#ethan",
+        query="Q4",
+        next_cursor=token,
+    )
+    assert 'query="Q4"' in text and "oldest -> newest" in text
+    assert text.index("Ethan Brooks#ethan (message=23):") < text.index(
+        "[2026-11-25 09:42 UTC] You:"
+    )
+    assert 'Replying to Ethan Brooks#ethan (message=23): "Check Q4 report"' in text
+    assert f":file[q4.pdf]{{name={storage}/{node}}}" in text
+    assert "[1] Spec — https://example.com" in text
+    assert "Reactions: 👍 Ethan Brooks#ethan" in text
+    assert text.endswith(f"Older cursor: {token}")
+    assert (
+        format_conversation_history(
+            [], conversation_address="user:ethan", peer_label="Ethan Brooks#ethan"
+        )
+        == "No matching messages in this conversation."
+    )
+    snapshot = conversation_history_data(
+        rows,
+        conversation_address="user:ethan",
+        query="Q4",
+        next_cursor=token,
+        peer_kind="user",
+        peer_id=peer_id,
+        peer_label="Ethan Brooks#ethan",
+        agent_id=root_id,
+    )
+    assert snapshot["conversation"] == "user:ethan" and snapshot["next_cursor"] == token
+    assert isinstance(snapshot["items"], list) and len(snapshot["items"]) == 2

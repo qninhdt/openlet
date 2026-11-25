@@ -12,9 +12,9 @@ from pydantic import TypeAdapter
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
+from .activity import search
 from .agents import json_row
 from .db import Pool
-from .history import search
 
 type Event = dict[str, JSON]
 type Records = list[tuple[bytes, dict[bytes, bytes]]]

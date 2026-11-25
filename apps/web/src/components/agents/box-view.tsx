@@ -68,7 +68,8 @@ const actions: Record<string, string> = {
   execute: 'Running a command',
   inbox_send: 'Sending a message',
   inbox_read: 'Reading inbox',
-  history_search: 'Searching history',
+  activity_search: 'Searching activity',
+  activity_read: 'Reading activity',
 };
 function agentActivityLabel(agent: BoxAgent) {
   return agent.status === 'working' && agent.activity_kind === 'tool_call' && agent.tool_name

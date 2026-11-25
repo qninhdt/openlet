@@ -49,7 +49,25 @@ def test_native_tools_expose_only_agent_arguments() -> None:
         )
     assert "target_box" in fields["schedule_create"]
     assert fields["hitl_request"] == {"user_handle", "role", "reason"}
-    assert fields["inbox_react"] == {"source", "message", "emoji", "action"}
+    assert fields["inbox_react"] == {"conversation", "message", "emoji", "action"}
+    assert fields["inbox_read"] == {
+        "conversation",
+        "mode",
+        "query",
+        "cursor",
+        "limit",
+    }
+    assert fields["inbox_send"] == {
+        "messages",
+        "conversation",
+        "in_reply_to",
+        "task_label",
+        "copy_folders",
+    }
+    assert fields["inbox_list"] == {"cursor", "unread_only", "limit"}
+    assert fields["activity_search"] == {"query", "kind", "tool", "cursor"}
+    assert fields["activity_read"] == {"entry", "start_line", "limit"}
+    assert not {"history_search", "history_read"} & set(root)
     assert not any("emote" in name for name in root)
     schedule = leti["schedule_create"].tool_call_schema
     assert isinstance(schedule, type) and issubclass(schedule, BaseModel)
@@ -163,7 +181,7 @@ async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None
                                 "id": "wrong-recipient",
                                 "name": "inbox_send",
                                 "args": {
-                                    "to": "reviewer",
+                                    "conversation": "reviewer",
                                     "messages": [{"content": "Review the quote."}],
                                 },
                             },
@@ -631,7 +649,7 @@ async def test_inbox_send_paths_and_explicit_attachments(
     builder.add_edge("tools", END)
     graph = builder.compile()  # pyright: ignore[reportUnknownMemberType]  # Native overload leaves checkpoint generics unspecified.
     arguments: dict[str, object] = {
-        "to": "agent:vega-the-analyst" if case == "teammate" else "user:emma"
+        "conversation": "agent:vega-the-analyst" if case == "teammate" else "user:emma"
     }
     body: dict[str, object] = {}
     if case in ("mention", "mixed"):
@@ -703,3 +721,106 @@ async def test_inbox_send_paths_and_explicit_attachments(
         if case == "several":
             assert outgoing[0].content == "First"
             assert outgoing[0].id < outgoing[1].id
+
+
+async def test_inbox_read_mode_validation_and_history_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from leta import messages
+    from leta.runtime.tools import inbox_read
+
+    root, leti, user = (uuid4() for _ in range(3))
+
+    services = cast(
+        Services,
+        SimpleNamespace(
+            db=cast(Pool, SimpleNamespace()),
+            internal=SimpleNamespace(
+                GetUserByHandle=AsyncMock(
+                    return_value=SimpleNamespace(
+                        id=str(user), display_name="Emma", handle="emma"
+                    )
+                )
+            ),
+        ),
+    )
+    history_stub = AsyncMock(return_value=([], None))
+    monkeypatch.setattr(messages, "conversation_history", history_stub)
+
+    root_builder = StateGraph(State, context_schema=Context)
+    root_builder.add_node(  # pyright: ignore[reportUnknownMemberType]
+        "tools", ToolNode([inbox_read], awrap_tool_call=ToolEffects().awrap_tool_call)
+    )
+    root_builder.add_edge(START, "tools")
+    root_builder.add_edge("tools", END)
+    graph = root_builder.compile()  # pyright: ignore[reportUnknownMemberType]
+
+    res = await graph.ainvoke(  # pyright: ignore[reportUnknownMemberType]
+        {
+            "messages": [
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "bad-query",
+                            "name": "inbox_read",
+                            "args": {
+                                "conversation": "user:emma",
+                                "mode": "unread",
+                                "query": "Q4",
+                            },
+                        },
+                        {
+                            "id": "ok-history",
+                            "name": "inbox_read",
+                            "args": {
+                                "conversation": "user:emma",
+                                "mode": "history",
+                                "query": "Q4",
+                            },
+                        },
+                    ],
+                )
+            ]
+        },
+        context=Context(
+            services=services,
+            agent={"id": root, "leta_id": root, "box_id": None},
+            run_id=uuid4(),
+            filesystem=cast(Filesystem, SimpleNamespace()),
+        ),
+    )
+    replies = {m.tool_call_id: m for m in res["messages"] if isinstance(m, ToolMessage)}
+    assert replies["bad-query"].status == "error"
+    assert "mode='history'" in replies["bad-query"].text
+    assert replies["ok-history"].status == "success"
+    assert replies["ok-history"].text == "No matching messages in this conversation."
+    history_stub.assert_awaited_once()
+
+    leti_res = await graph.ainvoke(  # pyright: ignore[reportUnknownMemberType]
+        {
+            "messages": [
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "id": "leti-user-history",
+                            "name": "inbox_read",
+                            "args": {"conversation": "user:emma", "mode": "history"},
+                        }
+                    ],
+                )
+            ]
+        },
+        context=Context(
+            services=services,
+            agent={"id": leti, "leta_id": root, "box_id": uuid4()},
+            run_id=uuid4(),
+            filesystem=cast(Filesystem, SimpleNamespace()),
+        ),
+    )
+    leti_reply = leti_res["messages"][-1]
+    assert isinstance(leti_reply, ToolMessage) and leti_reply.status == "error"
+    assert "Only Leta" in leti_reply.text
