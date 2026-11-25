@@ -3,17 +3,22 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
+	"github.com/qdrant/go-client/qdrant"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"google.golang.org/grpc"
 )
 
 func TestQueryEmbeddingUsesFloatSpaceAndNativeCost(t *testing.T) {
@@ -66,5 +71,97 @@ func TestQueryEmbeddingUsesFloatSpaceAndNativeCost(t *testing.T) {
 	}
 	if attrs["langfuse.observation.output"] != `{"count":1,"dimensions":3}` {
 		t.Fatalf("unexpected output: %v", attrs)
+	}
+}
+
+type fakeQdrantPoints struct {
+	qdrant.UnimplementedPointsServer
+	singleCalls atomic.Int32
+	batchCalls  atomic.Int32
+	batchSizes  []int
+}
+
+func (f *fakeQdrantPoints) Query(_ context.Context, r *qdrant.QueryPoints) (*qdrant.QueryResponse, error) {
+	f.singleCalls.Add(1)
+	return &qdrant.QueryResponse{
+		Result: []*qdrant.ScoredPoint{{
+			Id:    qdrant.NewIDNum(1),
+			Score: 0.7,
+			Payload: map[string]*qdrant.Value{
+				"blob_id":       qdrant.NewValueString("single-blob"),
+				"artifact_path": qdrant.NewValueString("01-part.md"),
+				"text":          qdrant.NewValueString("hit"),
+			},
+		}},
+	}, nil
+}
+
+func (f *fakeQdrantPoints) QueryBatch(_ context.Context, r *qdrant.QueryBatchPoints) (*qdrant.QueryBatchResponse, error) {
+	f.batchCalls.Add(1)
+	f.batchSizes = f.batchSizes[:0]
+	results := make([]*qdrant.BatchResult, len(r.QueryPoints))
+	for i, q := range r.QueryPoints {
+		kw := q.Prefetch[0].Filter.Must[1].GetField().GetMatch().GetKeywords().GetStrings()
+		f.batchSizes = append(f.batchSizes, len(kw))
+		results[i] = &qdrant.BatchResult{
+			Result: []*qdrant.ScoredPoint{{
+				Id:    qdrant.NewIDNum(uint64(i + 1)),
+				Score: float32(i+1) * 0.25,
+				Payload: map[string]*qdrant.Value{
+					"blob_id":       qdrant.NewValueString(kw[0]),
+					"artifact_path": qdrant.NewValueString("01-part.md"),
+					"text":          qdrant.NewValueString("chunk-" + strconv.Itoa(i)),
+				},
+			}},
+		}
+	}
+	return &qdrant.QueryBatchResponse{Result: results}, nil
+}
+
+func TestQueryQdrantHybridChunksLargeBlobScopesViaQueryBatch(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stub := &fakeQdrantPoints{}
+	srv := grpc.NewServer()
+	qdrant.RegisterPointsServer(srv, stub)
+	go srv.Serve(lis)
+	defer srv.Stop()
+
+	_, portStr, _ := net.SplitHostPort(lis.Addr().String())
+	port, _ := strconv.Atoi(portStr)
+	client, err := qdrant.NewClient(&qdrant.Config{
+		Host:                   "127.0.0.1",
+		Port:                   port,
+		SkipCompatibilityCheck: true,
+		PoolSize:               1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	s := Server{Qdrant: client, Collection: "chunks"}
+	ctx := context.Background()
+
+	single, err := s.queryQdrantHybrid(ctx, "ws-1", []string{"b1"}, []float32{0.1, 0.2}, "q", 5, 2)
+	if err != nil || len(single) != 1 || stub.singleCalls.Load() != 1 {
+		t.Fatalf("small scope expected single Query: len=%d err=%v single=%d", len(single), err, stub.singleCalls.Load())
+	}
+
+	many := make([]string, 2500)
+	for i := range many {
+		many[i] = uuid.NewString()
+	}
+	batched, err := s.queryQdrantHybrid(ctx, "ws-1", many, []float32{0.1, 0.2}, "q", 10, 1)
+	if err != nil {
+		t.Fatalf("large scope batch query: %v", err)
+	}
+	if stub.batchCalls.Load() != 1 || len(stub.batchSizes) != 2 || stub.batchSizes[0] != 2000 || stub.batchSizes[1] != 500 {
+		t.Fatalf("expected 2000+500 QueryBatch split, got calls=%d sizes=%v", stub.batchCalls.Load(), stub.batchSizes)
+	}
+	if len(batched) != 1 || batched[0].Payload["text"].GetStringValue() != "chunk-1" {
+		t.Fatalf("expected merged top-1 highest score point from batch 1, got %+v", batched)
 	}
 }

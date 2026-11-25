@@ -19,8 +19,13 @@ message Storage { string id = 1; string workspace_id = 2; string name = 3; Stora
 message WorkspaceStorage { string workspace_id = 1; int64 quota_bytes = 2; int64 used_bytes = 3; }
 message AccessGrant { ActorRef actor = 1; StorageRole role = 2; }
 message StorageAccess { StorageOwnership ownership = 1; repeated AccessGrant grants = 2; StorageVisibility visibility = 3; }
-message NodeLocator { oneof locator { option (buf.validate.oneof).required = true; string node_id = 1 [(buf.validate.field).string.uuid = true]; string path = 2; } optional string root_node_id = 3 [(buf.validate.field).string.uuid = true]; optional string cwd_node_id = 4 [(buf.validate.field).string.uuid = true]; }
-message FileMetadata { optional string title = 1; optional string description = 2; optional string semantic_type = 3; optional string context = 4; }
+message NodeLocator { oneof locator { option (buf.validate.oneof).required = true; string node_id = 1 [(buf.validate.field).string.uuid = true]; string path = 2; } optional string root_node_id = 3 [(buf.validate.field).string.uuid = true]; optional string cwd_node_id = 4 [(buf.validate.field).string.uuid = true]; optional string artifact_path = 5; }
+message FileMetadata {
+ optional string title = 1;
+ optional string description = 2;
+ reserved 3, 4;
+ reserved "semantic_type", "context";
+}
 message ProcessingSummary { string stage = 1; optional string error_code = 2; }
 message FileHeader { FileType type = 1; int64 version = 2; int64 size_bytes = 3; string media_type = 4; FileMetadata metadata = 5; ProcessingSummary processing = 6; }
 message Node { string id = 1; string storage_id = 2; optional string parent_id = 3; string name = 4; NodeKind kind = 5; google.protobuf.Timestamp created_at = 6; google.protobuf.Timestamp updated_at = 7; bool readonly = 8; FileHeader file = 9; }
@@ -70,10 +75,11 @@ message DownloadArchiveRequest { string workspace_id = 1 [(buf.validate.field).s
 message SearchFilesRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; NodeLocator root = 3 [(buf.validate.field).required = true]; string query = 4 [(buf.validate.field).string.min_len = 1]; int32 page_size = 5 [(buf.validate.field).int32 = {gte: 0, lte: 100}]; string page_token = 6; bool case_sensitive = 7; }
 message SearchFilesResponse { repeated Node hits = 1; string next_page_token = 2; }
 message TextSearchRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; NodeLocator root = 3 [(buf.validate.field).required = true]; string query = 4 [(buf.validate.field).string.min_len = 1]; int32 page_size = 5 [(buf.validate.field).int32 = {gte: 0, lte: 100}]; string page_token = 6; bool case_sensitive = 7; bool lines_mode = 8; }
-message TextHit { Node node = 1; string snippet = 2; uint32 line_number = 3; string path = 4; }
+message TextHit { Node node = 1; string snippet = 2; uint32 line_number = 3; string path = 4; string artifact_path = 5; }
 message TextSearchResponse { repeated TextHit hits = 1; string next_page_token = 2; }
-message SemanticSearchRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; NodeLocator root = 3 [(buf.validate.field).required = true]; string query = 4 [(buf.validate.field).string.min_len = 1]; uint32 top_k = 5 [(buf.validate.field).uint32 = {gte: 1,lte: 100}]; }
-message SemanticHit { Node node = 1; string snippet = 2; double score = 3; string path = 4; }
+message SemanticScope { oneof locator { option (buf.validate.oneof).required = true; string node_id = 1 [(buf.validate.field).string.uuid = true]; string path = 2 [(buf.validate.field).string.min_len = 1]; } }
+message SemanticSearchRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; SemanticScope root = 3 [(buf.validate.field).required = true]; string query = 4 [(buf.validate.field).string.min_len = 1]; reserved 5; reserved "top_k"; }
+message SemanticHit { reserved 1, 2; reserved "node", "snippet"; double score = 3; string path = 4; string file_id = 5; string text = 6; string artifact_path = 7; }
 message SemanticSearchResponse { repeated SemanticHit hits = 1; }
 message TrashNodeRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; NodeLocator target = 3 [(buf.validate.field).required = true]; string request_id = 4 [(buf.validate.field).string.uuid = true]; }
 message TrashEntry { string id = 1; Node node = 2; optional string original_parent_id = 3; ActorRef trashed_by = 4; google.protobuf.Timestamp trashed_at = 5; }

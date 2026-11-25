@@ -23,12 +23,10 @@ const (
 	LetFSInternalService_ProvisionWorkspaceStorage_FullMethodName = "/openlet.letfs.v1.LetFSInternalService/ProvisionWorkspaceStorage"
 	LetFSInternalService_CreateStorage_FullMethodName             = "/openlet.letfs.v1.LetFSInternalService/CreateStorage"
 	LetFSInternalService_DeleteStorage_FullMethodName             = "/openlet.letfs.v1.LetFSInternalService/DeleteStorage"
-	LetFSInternalService_GetProcessingInput_FullMethodName        = "/openlet.letfs.v1.LetFSInternalService/GetProcessingInput"
-	LetFSInternalService_PrepareArtifactUploads_FullMethodName    = "/openlet.letfs.v1.LetFSInternalService/PrepareArtifactUploads"
-	LetFSInternalService_CommitParse_FullMethodName               = "/openlet.letfs.v1.LetFSInternalService/CommitParse"
-	LetFSInternalService_CommitEnrichment_FullMethodName          = "/openlet.letfs.v1.LetFSInternalService/CommitEnrichment"
-	LetFSInternalService_CompleteIndex_FullMethodName             = "/openlet.letfs.v1.LetFSInternalService/CompleteIndex"
-	LetFSInternalService_FailProcessing_FullMethodName            = "/openlet.letfs.v1.LetFSInternalService/FailProcessing"
+	LetFSInternalService_GetBlobArtifacts_FullMethodName          = "/openlet.letfs.v1.LetFSInternalService/GetBlobArtifacts"
+	LetFSInternalService_SaveParsedArtifacts_FullMethodName       = "/openlet.letfs.v1.LetFSInternalService/SaveParsedArtifacts"
+	LetFSInternalService_SaveEnrichedArtifacts_FullMethodName     = "/openlet.letfs.v1.LetFSInternalService/SaveEnrichedArtifacts"
+	LetFSInternalService_CompleteBlobIndex_FullMethodName         = "/openlet.letfs.v1.LetFSInternalService/CompleteBlobIndex"
 )
 
 // LetFSInternalServiceClient is the client API for LetFSInternalService service.
@@ -38,12 +36,10 @@ type LetFSInternalServiceClient interface {
 	ProvisionWorkspaceStorage(ctx context.Context, in *ProvisionWorkspaceStorageRequest, opts ...grpc.CallOption) (*WorkspaceStorage, error)
 	CreateStorage(ctx context.Context, in *CreateStorageRequest, opts ...grpc.CallOption) (*Storage, error)
 	DeleteStorage(ctx context.Context, in *StorageRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
-	GetProcessingInput(ctx context.Context, in *ProcessingRequest, opts ...grpc.CallOption) (*ProcessingInput, error)
-	PrepareArtifactUploads(ctx context.Context, in *PrepareArtifactUploadsRequest, opts ...grpc.CallOption) (*PrepareArtifactUploadsResponse, error)
-	CommitParse(ctx context.Context, in *CommitParseRequest, opts ...grpc.CallOption) (*ProcessingOutcome, error)
-	CommitEnrichment(ctx context.Context, in *CommitEnrichmentRequest, opts ...grpc.CallOption) (*ProcessingOutcome, error)
-	CompleteIndex(ctx context.Context, in *ProcessingRequest, opts ...grpc.CallOption) (*ProcessingOutcome, error)
-	FailProcessing(ctx context.Context, in *FailProcessingRequest, opts ...grpc.CallOption) (*ProcessingOutcome, error)
+	GetBlobArtifacts(ctx context.Context, in *BlobRequest, opts ...grpc.CallOption) (*GetBlobArtifactsResponse, error)
+	SaveParsedArtifacts(ctx context.Context, in *SaveParsedArtifactsRequest, opts ...grpc.CallOption) (*BlobProcessingOutcome, error)
+	SaveEnrichedArtifacts(ctx context.Context, in *SaveEnrichedArtifactsRequest, opts ...grpc.CallOption) (*BlobProcessingOutcome, error)
+	CompleteBlobIndex(ctx context.Context, in *BlobRequest, opts ...grpc.CallOption) (*BlobProcessingOutcome, error)
 }
 
 type letFSInternalServiceClient struct {
@@ -84,60 +80,40 @@ func (c *letFSInternalServiceClient) DeleteStorage(ctx context.Context, in *Stor
 	return out, nil
 }
 
-func (c *letFSInternalServiceClient) GetProcessingInput(ctx context.Context, in *ProcessingRequest, opts ...grpc.CallOption) (*ProcessingInput, error) {
+func (c *letFSInternalServiceClient) GetBlobArtifacts(ctx context.Context, in *BlobRequest, opts ...grpc.CallOption) (*GetBlobArtifactsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ProcessingInput)
-	err := c.cc.Invoke(ctx, LetFSInternalService_GetProcessingInput_FullMethodName, in, out, cOpts...)
+	out := new(GetBlobArtifactsResponse)
+	err := c.cc.Invoke(ctx, LetFSInternalService_GetBlobArtifacts_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *letFSInternalServiceClient) PrepareArtifactUploads(ctx context.Context, in *PrepareArtifactUploadsRequest, opts ...grpc.CallOption) (*PrepareArtifactUploadsResponse, error) {
+func (c *letFSInternalServiceClient) SaveParsedArtifacts(ctx context.Context, in *SaveParsedArtifactsRequest, opts ...grpc.CallOption) (*BlobProcessingOutcome, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(PrepareArtifactUploadsResponse)
-	err := c.cc.Invoke(ctx, LetFSInternalService_PrepareArtifactUploads_FullMethodName, in, out, cOpts...)
+	out := new(BlobProcessingOutcome)
+	err := c.cc.Invoke(ctx, LetFSInternalService_SaveParsedArtifacts_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *letFSInternalServiceClient) CommitParse(ctx context.Context, in *CommitParseRequest, opts ...grpc.CallOption) (*ProcessingOutcome, error) {
+func (c *letFSInternalServiceClient) SaveEnrichedArtifacts(ctx context.Context, in *SaveEnrichedArtifactsRequest, opts ...grpc.CallOption) (*BlobProcessingOutcome, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ProcessingOutcome)
-	err := c.cc.Invoke(ctx, LetFSInternalService_CommitParse_FullMethodName, in, out, cOpts...)
+	out := new(BlobProcessingOutcome)
+	err := c.cc.Invoke(ctx, LetFSInternalService_SaveEnrichedArtifacts_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *letFSInternalServiceClient) CommitEnrichment(ctx context.Context, in *CommitEnrichmentRequest, opts ...grpc.CallOption) (*ProcessingOutcome, error) {
+func (c *letFSInternalServiceClient) CompleteBlobIndex(ctx context.Context, in *BlobRequest, opts ...grpc.CallOption) (*BlobProcessingOutcome, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ProcessingOutcome)
-	err := c.cc.Invoke(ctx, LetFSInternalService_CommitEnrichment_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *letFSInternalServiceClient) CompleteIndex(ctx context.Context, in *ProcessingRequest, opts ...grpc.CallOption) (*ProcessingOutcome, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ProcessingOutcome)
-	err := c.cc.Invoke(ctx, LetFSInternalService_CompleteIndex_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *letFSInternalServiceClient) FailProcessing(ctx context.Context, in *FailProcessingRequest, opts ...grpc.CallOption) (*ProcessingOutcome, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ProcessingOutcome)
-	err := c.cc.Invoke(ctx, LetFSInternalService_FailProcessing_FullMethodName, in, out, cOpts...)
+	out := new(BlobProcessingOutcome)
+	err := c.cc.Invoke(ctx, LetFSInternalService_CompleteBlobIndex_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -151,12 +127,10 @@ type LetFSInternalServiceServer interface {
 	ProvisionWorkspaceStorage(context.Context, *ProvisionWorkspaceStorageRequest) (*WorkspaceStorage, error)
 	CreateStorage(context.Context, *CreateStorageRequest) (*Storage, error)
 	DeleteStorage(context.Context, *StorageRequest) (*emptypb.Empty, error)
-	GetProcessingInput(context.Context, *ProcessingRequest) (*ProcessingInput, error)
-	PrepareArtifactUploads(context.Context, *PrepareArtifactUploadsRequest) (*PrepareArtifactUploadsResponse, error)
-	CommitParse(context.Context, *CommitParseRequest) (*ProcessingOutcome, error)
-	CommitEnrichment(context.Context, *CommitEnrichmentRequest) (*ProcessingOutcome, error)
-	CompleteIndex(context.Context, *ProcessingRequest) (*ProcessingOutcome, error)
-	FailProcessing(context.Context, *FailProcessingRequest) (*ProcessingOutcome, error)
+	GetBlobArtifacts(context.Context, *BlobRequest) (*GetBlobArtifactsResponse, error)
+	SaveParsedArtifacts(context.Context, *SaveParsedArtifactsRequest) (*BlobProcessingOutcome, error)
+	SaveEnrichedArtifacts(context.Context, *SaveEnrichedArtifactsRequest) (*BlobProcessingOutcome, error)
+	CompleteBlobIndex(context.Context, *BlobRequest) (*BlobProcessingOutcome, error)
 }
 
 // UnimplementedLetFSInternalServiceServer should be embedded to have
@@ -175,23 +149,17 @@ func (UnimplementedLetFSInternalServiceServer) CreateStorage(context.Context, *C
 func (UnimplementedLetFSInternalServiceServer) DeleteStorage(context.Context, *StorageRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteStorage not implemented")
 }
-func (UnimplementedLetFSInternalServiceServer) GetProcessingInput(context.Context, *ProcessingRequest) (*ProcessingInput, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetProcessingInput not implemented")
+func (UnimplementedLetFSInternalServiceServer) GetBlobArtifacts(context.Context, *BlobRequest) (*GetBlobArtifactsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetBlobArtifacts not implemented")
 }
-func (UnimplementedLetFSInternalServiceServer) PrepareArtifactUploads(context.Context, *PrepareArtifactUploadsRequest) (*PrepareArtifactUploadsResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method PrepareArtifactUploads not implemented")
+func (UnimplementedLetFSInternalServiceServer) SaveParsedArtifacts(context.Context, *SaveParsedArtifactsRequest) (*BlobProcessingOutcome, error) {
+	return nil, status.Error(codes.Unimplemented, "method SaveParsedArtifacts not implemented")
 }
-func (UnimplementedLetFSInternalServiceServer) CommitParse(context.Context, *CommitParseRequest) (*ProcessingOutcome, error) {
-	return nil, status.Error(codes.Unimplemented, "method CommitParse not implemented")
+func (UnimplementedLetFSInternalServiceServer) SaveEnrichedArtifacts(context.Context, *SaveEnrichedArtifactsRequest) (*BlobProcessingOutcome, error) {
+	return nil, status.Error(codes.Unimplemented, "method SaveEnrichedArtifacts not implemented")
 }
-func (UnimplementedLetFSInternalServiceServer) CommitEnrichment(context.Context, *CommitEnrichmentRequest) (*ProcessingOutcome, error) {
-	return nil, status.Error(codes.Unimplemented, "method CommitEnrichment not implemented")
-}
-func (UnimplementedLetFSInternalServiceServer) CompleteIndex(context.Context, *ProcessingRequest) (*ProcessingOutcome, error) {
-	return nil, status.Error(codes.Unimplemented, "method CompleteIndex not implemented")
-}
-func (UnimplementedLetFSInternalServiceServer) FailProcessing(context.Context, *FailProcessingRequest) (*ProcessingOutcome, error) {
-	return nil, status.Error(codes.Unimplemented, "method FailProcessing not implemented")
+func (UnimplementedLetFSInternalServiceServer) CompleteBlobIndex(context.Context, *BlobRequest) (*BlobProcessingOutcome, error) {
+	return nil, status.Error(codes.Unimplemented, "method CompleteBlobIndex not implemented")
 }
 func (UnimplementedLetFSInternalServiceServer) testEmbeddedByValue() {}
 
@@ -267,110 +235,74 @@ func _LetFSInternalService_DeleteStorage_Handler(srv interface{}, ctx context.Co
 	return interceptor(ctx, in, info, handler)
 }
 
-func _LetFSInternalService_GetProcessingInput_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ProcessingRequest)
+func _LetFSInternalService_GetBlobArtifacts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BlobRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(LetFSInternalServiceServer).GetProcessingInput(ctx, in)
+		return srv.(LetFSInternalServiceServer).GetBlobArtifacts(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: LetFSInternalService_GetProcessingInput_FullMethodName,
+		FullMethod: LetFSInternalService_GetBlobArtifacts_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(LetFSInternalServiceServer).GetProcessingInput(ctx, req.(*ProcessingRequest))
+		return srv.(LetFSInternalServiceServer).GetBlobArtifacts(ctx, req.(*BlobRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _LetFSInternalService_PrepareArtifactUploads_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(PrepareArtifactUploadsRequest)
+func _LetFSInternalService_SaveParsedArtifacts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SaveParsedArtifactsRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(LetFSInternalServiceServer).PrepareArtifactUploads(ctx, in)
+		return srv.(LetFSInternalServiceServer).SaveParsedArtifacts(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: LetFSInternalService_PrepareArtifactUploads_FullMethodName,
+		FullMethod: LetFSInternalService_SaveParsedArtifacts_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(LetFSInternalServiceServer).PrepareArtifactUploads(ctx, req.(*PrepareArtifactUploadsRequest))
+		return srv.(LetFSInternalServiceServer).SaveParsedArtifacts(ctx, req.(*SaveParsedArtifactsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _LetFSInternalService_CommitParse_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(CommitParseRequest)
+func _LetFSInternalService_SaveEnrichedArtifacts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SaveEnrichedArtifactsRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(LetFSInternalServiceServer).CommitParse(ctx, in)
+		return srv.(LetFSInternalServiceServer).SaveEnrichedArtifacts(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: LetFSInternalService_CommitParse_FullMethodName,
+		FullMethod: LetFSInternalService_SaveEnrichedArtifacts_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(LetFSInternalServiceServer).CommitParse(ctx, req.(*CommitParseRequest))
+		return srv.(LetFSInternalServiceServer).SaveEnrichedArtifacts(ctx, req.(*SaveEnrichedArtifactsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _LetFSInternalService_CommitEnrichment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(CommitEnrichmentRequest)
+func _LetFSInternalService_CompleteBlobIndex_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BlobRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(LetFSInternalServiceServer).CommitEnrichment(ctx, in)
+		return srv.(LetFSInternalServiceServer).CompleteBlobIndex(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: LetFSInternalService_CommitEnrichment_FullMethodName,
+		FullMethod: LetFSInternalService_CompleteBlobIndex_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(LetFSInternalServiceServer).CommitEnrichment(ctx, req.(*CommitEnrichmentRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _LetFSInternalService_CompleteIndex_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ProcessingRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(LetFSInternalServiceServer).CompleteIndex(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: LetFSInternalService_CompleteIndex_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(LetFSInternalServiceServer).CompleteIndex(ctx, req.(*ProcessingRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _LetFSInternalService_FailProcessing_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(FailProcessingRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(LetFSInternalServiceServer).FailProcessing(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: LetFSInternalService_FailProcessing_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(LetFSInternalServiceServer).FailProcessing(ctx, req.(*FailProcessingRequest))
+		return srv.(LetFSInternalServiceServer).CompleteBlobIndex(ctx, req.(*BlobRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -395,28 +327,20 @@ var LetFSInternalService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _LetFSInternalService_DeleteStorage_Handler,
 		},
 		{
-			MethodName: "GetProcessingInput",
-			Handler:    _LetFSInternalService_GetProcessingInput_Handler,
+			MethodName: "GetBlobArtifacts",
+			Handler:    _LetFSInternalService_GetBlobArtifacts_Handler,
 		},
 		{
-			MethodName: "PrepareArtifactUploads",
-			Handler:    _LetFSInternalService_PrepareArtifactUploads_Handler,
+			MethodName: "SaveParsedArtifacts",
+			Handler:    _LetFSInternalService_SaveParsedArtifacts_Handler,
 		},
 		{
-			MethodName: "CommitParse",
-			Handler:    _LetFSInternalService_CommitParse_Handler,
+			MethodName: "SaveEnrichedArtifacts",
+			Handler:    _LetFSInternalService_SaveEnrichedArtifacts_Handler,
 		},
 		{
-			MethodName: "CommitEnrichment",
-			Handler:    _LetFSInternalService_CommitEnrichment_Handler,
-		},
-		{
-			MethodName: "CompleteIndex",
-			Handler:    _LetFSInternalService_CompleteIndex_Handler,
-		},
-		{
-			MethodName: "FailProcessing",
-			Handler:    _LetFSInternalService_FailProcessing_Handler,
+			MethodName: "CompleteBlobIndex",
+			Handler:    _LetFSInternalService_CompleteBlobIndex_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

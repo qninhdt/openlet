@@ -175,28 +175,27 @@ func (x *CreateStorageRequest) GetAllowIndexing() bool {
 	return false
 }
 
-type ProcessingRequest struct {
+type BlobRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	FileId        string                 `protobuf:"bytes,1,opt,name=file_id,json=fileId,proto3" json:"file_id,omitempty"`
-	Version       int64                  `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
+	BlobId        string                 `protobuf:"bytes,1,opt,name=blob_id,json=blobId,proto3" json:"blob_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ProcessingRequest) Reset() {
-	*x = ProcessingRequest{}
+func (x *BlobRequest) Reset() {
+	*x = BlobRequest{}
 	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ProcessingRequest) String() string {
+func (x *BlobRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ProcessingRequest) ProtoMessage() {}
+func (*BlobRequest) ProtoMessage() {}
 
-func (x *ProcessingRequest) ProtoReflect() protoreflect.Message {
+func (x *BlobRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -208,26 +207,19 @@ func (x *ProcessingRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ProcessingRequest.ProtoReflect.Descriptor instead.
-func (*ProcessingRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use BlobRequest.ProtoReflect.Descriptor instead.
+func (*BlobRequest) Descriptor() ([]byte, []int) {
 	return file_openlet_api_letfs_v1_internal_proto_rawDescGZIP(), []int{2}
 }
 
-func (x *ProcessingRequest) GetFileId() string {
+func (x *BlobRequest) GetBlobId() string {
 	if x != nil {
-		return x.FileId
+		return x.BlobId
 	}
 	return ""
 }
 
-func (x *ProcessingRequest) GetVersion() int64 {
-	if x != nil {
-		return x.Version
-	}
-	return 0
-}
-
-type ProcessingOutcome struct {
+type BlobProcessingOutcome struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Obsolete      bool                   `protobuf:"varint,1,opt,name=obsolete,proto3" json:"obsolete,omitempty"`
 	Stage         string                 `protobuf:"bytes,2,opt,name=stage,proto3" json:"stage,omitempty"`
@@ -235,20 +227,20 @@ type ProcessingOutcome struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ProcessingOutcome) Reset() {
-	*x = ProcessingOutcome{}
+func (x *BlobProcessingOutcome) Reset() {
+	*x = BlobProcessingOutcome{}
 	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ProcessingOutcome) String() string {
+func (x *BlobProcessingOutcome) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ProcessingOutcome) ProtoMessage() {}
+func (*BlobProcessingOutcome) ProtoMessage() {}
 
-func (x *ProcessingOutcome) ProtoReflect() protoreflect.Message {
+func (x *BlobProcessingOutcome) ProtoReflect() protoreflect.Message {
 	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -260,49 +252,58 @@ func (x *ProcessingOutcome) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ProcessingOutcome.ProtoReflect.Descriptor instead.
-func (*ProcessingOutcome) Descriptor() ([]byte, []int) {
+// Deprecated: Use BlobProcessingOutcome.ProtoReflect.Descriptor instead.
+func (*BlobProcessingOutcome) Descriptor() ([]byte, []int) {
 	return file_openlet_api_letfs_v1_internal_proto_rawDescGZIP(), []int{3}
 }
 
-func (x *ProcessingOutcome) GetObsolete() bool {
+func (x *BlobProcessingOutcome) GetObsolete() bool {
 	if x != nil {
 		return x.Obsolete
 	}
 	return false
 }
 
-func (x *ProcessingOutcome) GetStage() string {
+func (x *BlobProcessingOutcome) GetStage() string {
 	if x != nil {
 		return x.Stage
 	}
 	return ""
 }
 
-type ProcessingArtifact struct {
+type BlobArtifact struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Node          *Node                  `protobuf:"bytes,1,opt,name=node,proto3" json:"node,omitempty"`
-	Path          string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
-	TextContent   *string                `protobuf:"bytes,3,opt,name=text_content,json=textContent,proto3,oneof" json:"text_content,omitempty"`
-	DownloadUrl   string                 `protobuf:"bytes,4,opt,name=download_url,json=downloadUrl,proto3" json:"download_url,omitempty"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	BlobId        string                 `protobuf:"bytes,2,opt,name=blob_id,json=blobId,proto3" json:"blob_id,omitempty"`
+	Path          string                 `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`
+	ParentPath    string                 `protobuf:"bytes,4,opt,name=parent_path,json=parentPath,proto3" json:"parent_path,omitempty"`
+	Kind          NodeKind               `protobuf:"varint,5,opt,name=kind,proto3,enum=openlet.letfs.v1.NodeKind" json:"kind,omitempty"`
+	MediaType     string                 `protobuf:"bytes,6,opt,name=media_type,json=mediaType,proto3" json:"media_type,omitempty"`
+	SizeBytes     int64                  `protobuf:"varint,7,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
+	Checksum      *string                `protobuf:"bytes,8,opt,name=checksum,proto3,oneof" json:"checksum,omitempty"`
+	ObjectKey     *string                `protobuf:"bytes,9,opt,name=object_key,json=objectKey,proto3,oneof" json:"object_key,omitempty"`
+	TextContent   *string                `protobuf:"bytes,10,opt,name=text_content,json=textContent,proto3,oneof" json:"text_content,omitempty"`
+	Title         string                 `protobuf:"bytes,11,opt,name=title,proto3" json:"title,omitempty"`
+	Description   string                 `protobuf:"bytes,12,opt,name=description,proto3" json:"description,omitempty"`
+	Indexable     bool                   `protobuf:"varint,13,opt,name=indexable,proto3" json:"indexable,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ProcessingArtifact) Reset() {
-	*x = ProcessingArtifact{}
+func (x *BlobArtifact) Reset() {
+	*x = BlobArtifact{}
 	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ProcessingArtifact) String() string {
+func (x *BlobArtifact) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ProcessingArtifact) ProtoMessage() {}
+func (*BlobArtifact) ProtoMessage() {}
 
-func (x *ProcessingArtifact) ProtoReflect() protoreflect.Message {
+func (x *BlobArtifact) ProtoReflect() protoreflect.Message {
 	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -314,654 +315,135 @@ func (x *ProcessingArtifact) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ProcessingArtifact.ProtoReflect.Descriptor instead.
-func (*ProcessingArtifact) Descriptor() ([]byte, []int) {
+// Deprecated: Use BlobArtifact.ProtoReflect.Descriptor instead.
+func (*BlobArtifact) Descriptor() ([]byte, []int) {
 	return file_openlet_api_letfs_v1_internal_proto_rawDescGZIP(), []int{4}
 }
 
-func (x *ProcessingArtifact) GetNode() *Node {
+func (x *BlobArtifact) GetId() string {
 	if x != nil {
-		return x.Node
+		return x.Id
 	}
-	return nil
+	return ""
 }
 
-func (x *ProcessingArtifact) GetPath() string {
+func (x *BlobArtifact) GetBlobId() string {
+	if x != nil {
+		return x.BlobId
+	}
+	return ""
+}
+
+func (x *BlobArtifact) GetPath() string {
 	if x != nil {
 		return x.Path
 	}
 	return ""
 }
 
-func (x *ProcessingArtifact) GetTextContent() string {
-	if x != nil && x.TextContent != nil {
-		return *x.TextContent
+func (x *BlobArtifact) GetParentPath() string {
+	if x != nil {
+		return x.ParentPath
 	}
 	return ""
 }
 
-func (x *ProcessingArtifact) GetDownloadUrl() string {
+func (x *BlobArtifact) GetKind() NodeKind {
 	if x != nil {
-		return x.DownloadUrl
+		return x.Kind
 	}
-	return ""
+	return NodeKind_NODE_KIND_UNSPECIFIED
 }
 
-type ProcessingInput struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	Outcome        *ProcessingOutcome     `protobuf:"bytes,1,opt,name=outcome,proto3" json:"outcome,omitempty"`
-	WorkspaceId    string                 `protobuf:"bytes,2,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
-	StorageId      string                 `protobuf:"bytes,3,opt,name=storage_id,json=storageId,proto3" json:"storage_id,omitempty"`
-	SourceName     string                 `protobuf:"bytes,4,opt,name=source_name,json=sourceName,proto3" json:"source_name,omitempty"`
-	MediaType      string                 `protobuf:"bytes,5,opt,name=media_type,json=mediaType,proto3" json:"media_type,omitempty"`
-	DownloadUrl    string                 `protobuf:"bytes,6,opt,name=download_url,json=downloadUrl,proto3" json:"download_url,omitempty"`
-	AllowIndexing  bool                   `protobuf:"varint,7,opt,name=allow_indexing,json=allowIndexing,proto3" json:"allow_indexing,omitempty"`
-	Artifacts      []*ProcessingArtifact  `protobuf:"bytes,8,rep,name=artifacts,proto3" json:"artifacts,omitempty"`
-	SourceMetadata *FileMetadata          `protobuf:"bytes,9,opt,name=source_metadata,json=sourceMetadata,proto3" json:"source_metadata,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
-}
-
-func (x *ProcessingInput) Reset() {
-	*x = ProcessingInput{}
-	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[5]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ProcessingInput) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ProcessingInput) ProtoMessage() {}
-
-func (x *ProcessingInput) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[5]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ProcessingInput.ProtoReflect.Descriptor instead.
-func (*ProcessingInput) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_internal_proto_rawDescGZIP(), []int{5}
-}
-
-func (x *ProcessingInput) GetOutcome() *ProcessingOutcome {
-	if x != nil {
-		return x.Outcome
-	}
-	return nil
-}
-
-func (x *ProcessingInput) GetWorkspaceId() string {
-	if x != nil {
-		return x.WorkspaceId
-	}
-	return ""
-}
-
-func (x *ProcessingInput) GetStorageId() string {
-	if x != nil {
-		return x.StorageId
-	}
-	return ""
-}
-
-func (x *ProcessingInput) GetSourceName() string {
-	if x != nil {
-		return x.SourceName
-	}
-	return ""
-}
-
-func (x *ProcessingInput) GetMediaType() string {
+func (x *BlobArtifact) GetMediaType() string {
 	if x != nil {
 		return x.MediaType
 	}
 	return ""
 }
 
-func (x *ProcessingInput) GetDownloadUrl() string {
-	if x != nil {
-		return x.DownloadUrl
-	}
-	return ""
-}
-
-func (x *ProcessingInput) GetAllowIndexing() bool {
-	if x != nil {
-		return x.AllowIndexing
-	}
-	return false
-}
-
-func (x *ProcessingInput) GetArtifacts() []*ProcessingArtifact {
-	if x != nil {
-		return x.Artifacts
-	}
-	return nil
-}
-
-func (x *ProcessingInput) GetSourceMetadata() *FileMetadata {
-	if x != nil {
-		return x.SourceMetadata
-	}
-	return nil
-}
-
-type ArtifactUploadSpec struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
-	SizeBytes     int64                  `protobuf:"varint,2,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
-	MediaType     string                 `protobuf:"bytes,3,opt,name=media_type,json=mediaType,proto3" json:"media_type,omitempty"`
-	Checksum      string                 `protobuf:"bytes,4,opt,name=checksum,proto3" json:"checksum,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *ArtifactUploadSpec) Reset() {
-	*x = ArtifactUploadSpec{}
-	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[6]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ArtifactUploadSpec) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ArtifactUploadSpec) ProtoMessage() {}
-
-func (x *ArtifactUploadSpec) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[6]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ArtifactUploadSpec.ProtoReflect.Descriptor instead.
-func (*ArtifactUploadSpec) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_internal_proto_rawDescGZIP(), []int{6}
-}
-
-func (x *ArtifactUploadSpec) GetPath() string {
-	if x != nil {
-		return x.Path
-	}
-	return ""
-}
-
-func (x *ArtifactUploadSpec) GetSizeBytes() int64 {
+func (x *BlobArtifact) GetSizeBytes() int64 {
 	if x != nil {
 		return x.SizeBytes
 	}
 	return 0
 }
 
-func (x *ArtifactUploadSpec) GetMediaType() string {
-	if x != nil {
-		return x.MediaType
+func (x *BlobArtifact) GetChecksum() string {
+	if x != nil && x.Checksum != nil {
+		return *x.Checksum
 	}
 	return ""
 }
 
-func (x *ArtifactUploadSpec) GetChecksum() string {
-	if x != nil {
-		return x.Checksum
+func (x *BlobArtifact) GetObjectKey() string {
+	if x != nil && x.ObjectKey != nil {
+		return *x.ObjectKey
 	}
 	return ""
 }
 
-type PrepareArtifactUploadsRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	FileId        string                 `protobuf:"bytes,1,opt,name=file_id,json=fileId,proto3" json:"file_id,omitempty"`
-	Version       int64                  `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
-	Outputs       []*ArtifactUploadSpec  `protobuf:"bytes,3,rep,name=outputs,proto3" json:"outputs,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *PrepareArtifactUploadsRequest) Reset() {
-	*x = PrepareArtifactUploadsRequest{}
-	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[7]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *PrepareArtifactUploadsRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*PrepareArtifactUploadsRequest) ProtoMessage() {}
-
-func (x *PrepareArtifactUploadsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[7]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use PrepareArtifactUploadsRequest.ProtoReflect.Descriptor instead.
-func (*PrepareArtifactUploadsRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_internal_proto_rawDescGZIP(), []int{7}
-}
-
-func (x *PrepareArtifactUploadsRequest) GetFileId() string {
-	if x != nil {
-		return x.FileId
-	}
-	return ""
-}
-
-func (x *PrepareArtifactUploadsRequest) GetVersion() int64 {
-	if x != nil {
-		return x.Version
-	}
-	return 0
-}
-
-func (x *PrepareArtifactUploadsRequest) GetOutputs() []*ArtifactUploadSpec {
-	if x != nil {
-		return x.Outputs
-	}
-	return nil
-}
-
-type ArtifactUpload struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
-	UploadId      string                 `protobuf:"bytes,2,opt,name=upload_id,json=uploadId,proto3" json:"upload_id,omitempty"`
-	PutUrl        string                 `protobuf:"bytes,3,opt,name=put_url,json=putUrl,proto3" json:"put_url,omitempty"`
-	Headers       map[string]string      `protobuf:"bytes,4,rep,name=headers,proto3" json:"headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *ArtifactUpload) Reset() {
-	*x = ArtifactUpload{}
-	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[8]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ArtifactUpload) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ArtifactUpload) ProtoMessage() {}
-
-func (x *ArtifactUpload) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[8]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ArtifactUpload.ProtoReflect.Descriptor instead.
-func (*ArtifactUpload) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_internal_proto_rawDescGZIP(), []int{8}
-}
-
-func (x *ArtifactUpload) GetPath() string {
-	if x != nil {
-		return x.Path
-	}
-	return ""
-}
-
-func (x *ArtifactUpload) GetUploadId() string {
-	if x != nil {
-		return x.UploadId
-	}
-	return ""
-}
-
-func (x *ArtifactUpload) GetPutUrl() string {
-	if x != nil {
-		return x.PutUrl
-	}
-	return ""
-}
-
-func (x *ArtifactUpload) GetHeaders() map[string]string {
-	if x != nil {
-		return x.Headers
-	}
-	return nil
-}
-
-type PrepareArtifactUploadsResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Outcome       *ProcessingOutcome     `protobuf:"bytes,1,opt,name=outcome,proto3" json:"outcome,omitempty"`
-	Uploads       []*ArtifactUpload      `protobuf:"bytes,2,rep,name=uploads,proto3" json:"uploads,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *PrepareArtifactUploadsResponse) Reset() {
-	*x = PrepareArtifactUploadsResponse{}
-	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[9]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *PrepareArtifactUploadsResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*PrepareArtifactUploadsResponse) ProtoMessage() {}
-
-func (x *PrepareArtifactUploadsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[9]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use PrepareArtifactUploadsResponse.ProtoReflect.Descriptor instead.
-func (*PrepareArtifactUploadsResponse) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_internal_proto_rawDescGZIP(), []int{9}
-}
-
-func (x *PrepareArtifactUploadsResponse) GetOutcome() *ProcessingOutcome {
-	if x != nil {
-		return x.Outcome
-	}
-	return nil
-}
-
-func (x *PrepareArtifactUploadsResponse) GetUploads() []*ArtifactUpload {
-	if x != nil {
-		return x.Uploads
-	}
-	return nil
-}
-
-type Artifact struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	Path  string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
-	// Types that are valid to be assigned to Content:
-	//
-	//	*Artifact_Directory
-	//	*Artifact_Text
-	//	*Artifact_UploadId
-	Content       isArtifact_Content `protobuf_oneof:"content"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *Artifact) Reset() {
-	*x = Artifact{}
-	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[10]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *Artifact) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*Artifact) ProtoMessage() {}
-
-func (x *Artifact) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[10]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use Artifact.ProtoReflect.Descriptor instead.
-func (*Artifact) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_internal_proto_rawDescGZIP(), []int{10}
-}
-
-func (x *Artifact) GetPath() string {
-	if x != nil {
-		return x.Path
-	}
-	return ""
-}
-
-func (x *Artifact) GetContent() isArtifact_Content {
-	if x != nil {
-		return x.Content
-	}
-	return nil
-}
-
-func (x *Artifact) GetDirectory() *emptypb.Empty {
-	if x != nil {
-		if x, ok := x.Content.(*Artifact_Directory); ok {
-			return x.Directory
-		}
-	}
-	return nil
-}
-
-func (x *Artifact) GetText() *TextContent {
-	if x != nil {
-		if x, ok := x.Content.(*Artifact_Text); ok {
-			return x.Text
-		}
-	}
-	return nil
-}
-
-func (x *Artifact) GetUploadId() string {
-	if x != nil {
-		if x, ok := x.Content.(*Artifact_UploadId); ok {
-			return x.UploadId
-		}
-	}
-	return ""
-}
-
-type isArtifact_Content interface {
-	isArtifact_Content()
-}
-
-type Artifact_Directory struct {
-	Directory *emptypb.Empty `protobuf:"bytes,2,opt,name=directory,proto3,oneof"`
-}
-
-type Artifact_Text struct {
-	Text *TextContent `protobuf:"bytes,3,opt,name=text,proto3,oneof"`
-}
-
-type Artifact_UploadId struct {
-	UploadId string `protobuf:"bytes,4,opt,name=upload_id,json=uploadId,proto3,oneof"`
-}
-
-func (*Artifact_Directory) isArtifact_Content() {}
-
-func (*Artifact_Text) isArtifact_Content() {}
-
-func (*Artifact_UploadId) isArtifact_Content() {}
-
-type CommitParseRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	FileId        string                 `protobuf:"bytes,1,opt,name=file_id,json=fileId,proto3" json:"file_id,omitempty"`
-	Version       int64                  `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
-	Artifacts     []*Artifact            `protobuf:"bytes,3,rep,name=artifacts,proto3" json:"artifacts,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *CommitParseRequest) Reset() {
-	*x = CommitParseRequest{}
-	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[11]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *CommitParseRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*CommitParseRequest) ProtoMessage() {}
-
-func (x *CommitParseRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[11]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use CommitParseRequest.ProtoReflect.Descriptor instead.
-func (*CommitParseRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_internal_proto_rawDescGZIP(), []int{11}
-}
-
-func (x *CommitParseRequest) GetFileId() string {
-	if x != nil {
-		return x.FileId
-	}
-	return ""
-}
-
-func (x *CommitParseRequest) GetVersion() int64 {
-	if x != nil {
-		return x.Version
-	}
-	return 0
-}
-
-func (x *CommitParseRequest) GetArtifacts() []*Artifact {
-	if x != nil {
-		return x.Artifacts
-	}
-	return nil
-}
-
-type EnrichedArtifact struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
-	TextContent   *string                `protobuf:"bytes,2,opt,name=text_content,json=textContent,proto3,oneof" json:"text_content,omitempty"`
-	Metadata      *FileMetadata          `protobuf:"bytes,3,opt,name=metadata,proto3" json:"metadata,omitempty"`
-	Name          *string                `protobuf:"bytes,4,opt,name=name,proto3,oneof" json:"name,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *EnrichedArtifact) Reset() {
-	*x = EnrichedArtifact{}
-	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[12]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *EnrichedArtifact) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*EnrichedArtifact) ProtoMessage() {}
-
-func (x *EnrichedArtifact) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[12]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use EnrichedArtifact.ProtoReflect.Descriptor instead.
-func (*EnrichedArtifact) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_internal_proto_rawDescGZIP(), []int{12}
-}
-
-func (x *EnrichedArtifact) GetNodeId() string {
-	if x != nil {
-		return x.NodeId
-	}
-	return ""
-}
-
-func (x *EnrichedArtifact) GetTextContent() string {
+func (x *BlobArtifact) GetTextContent() string {
 	if x != nil && x.TextContent != nil {
 		return *x.TextContent
 	}
 	return ""
 }
 
-func (x *EnrichedArtifact) GetMetadata() *FileMetadata {
+func (x *BlobArtifact) GetTitle() string {
 	if x != nil {
-		return x.Metadata
-	}
-	return nil
-}
-
-func (x *EnrichedArtifact) GetName() string {
-	if x != nil && x.Name != nil {
-		return *x.Name
+		return x.Title
 	}
 	return ""
 }
 
-type CommitEnrichmentRequest struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	FileId         string                 `protobuf:"bytes,1,opt,name=file_id,json=fileId,proto3" json:"file_id,omitempty"`
-	Version        int64                  `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
-	Artifacts      []*EnrichedArtifact    `protobuf:"bytes,3,rep,name=artifacts,proto3" json:"artifacts,omitempty"`
-	SourceMetadata *FileMetadata          `protobuf:"bytes,4,opt,name=source_metadata,json=sourceMetadata,proto3" json:"source_metadata,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+func (x *BlobArtifact) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
 }
 
-func (x *CommitEnrichmentRequest) Reset() {
-	*x = CommitEnrichmentRequest{}
-	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[13]
+func (x *BlobArtifact) GetIndexable() bool {
+	if x != nil {
+		return x.Indexable
+	}
+	return false
+}
+
+type GetBlobArtifactsResponse struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Outcome           *BlobProcessingOutcome `protobuf:"bytes,1,opt,name=outcome,proto3" json:"outcome,omitempty"`
+	WorkspaceId       string                 `protobuf:"bytes,2,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
+	BlobId            string                 `protobuf:"bytes,3,opt,name=blob_id,json=blobId,proto3" json:"blob_id,omitempty"`
+	ObjectKey         string                 `protobuf:"bytes,4,opt,name=object_key,json=objectKey,proto3" json:"object_key,omitempty"`
+	SourceDownloadUrl string                 `protobuf:"bytes,5,opt,name=source_download_url,json=sourceDownloadUrl,proto3" json:"source_download_url,omitempty"`
+	MediaType         string                 `protobuf:"bytes,6,opt,name=media_type,json=mediaType,proto3" json:"media_type,omitempty"`
+	SourceName        string                 `protobuf:"bytes,7,opt,name=source_name,json=sourceName,proto3" json:"source_name,omitempty"`
+	SizeBytes         int64                  `protobuf:"varint,8,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
+	Checksum          string                 `protobuf:"bytes,9,opt,name=checksum,proto3" json:"checksum,omitempty"`
+	Title             string                 `protobuf:"bytes,10,opt,name=title,proto3" json:"title,omitempty"`
+	Description       string                 `protobuf:"bytes,11,opt,name=description,proto3" json:"description,omitempty"`
+	Artifacts         []*BlobArtifact        `protobuf:"bytes,12,rep,name=artifacts,proto3" json:"artifacts,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *GetBlobArtifactsResponse) Reset() {
+	*x = GetBlobArtifactsResponse{}
+	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *CommitEnrichmentRequest) String() string {
+func (x *GetBlobArtifactsResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*CommitEnrichmentRequest) ProtoMessage() {}
+func (*GetBlobArtifactsResponse) ProtoMessage() {}
 
-func (x *CommitEnrichmentRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[13]
+func (x *GetBlobArtifactsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -972,64 +454,126 @@ func (x *CommitEnrichmentRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use CommitEnrichmentRequest.ProtoReflect.Descriptor instead.
-func (*CommitEnrichmentRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_internal_proto_rawDescGZIP(), []int{13}
+// Deprecated: Use GetBlobArtifactsResponse.ProtoReflect.Descriptor instead.
+func (*GetBlobArtifactsResponse) Descriptor() ([]byte, []int) {
+	return file_openlet_api_letfs_v1_internal_proto_rawDescGZIP(), []int{5}
 }
 
-func (x *CommitEnrichmentRequest) GetFileId() string {
+func (x *GetBlobArtifactsResponse) GetOutcome() *BlobProcessingOutcome {
 	if x != nil {
-		return x.FileId
+		return x.Outcome
+	}
+	return nil
+}
+
+func (x *GetBlobArtifactsResponse) GetWorkspaceId() string {
+	if x != nil {
+		return x.WorkspaceId
 	}
 	return ""
 }
 
-func (x *CommitEnrichmentRequest) GetVersion() int64 {
+func (x *GetBlobArtifactsResponse) GetBlobId() string {
 	if x != nil {
-		return x.Version
+		return x.BlobId
+	}
+	return ""
+}
+
+func (x *GetBlobArtifactsResponse) GetObjectKey() string {
+	if x != nil {
+		return x.ObjectKey
+	}
+	return ""
+}
+
+func (x *GetBlobArtifactsResponse) GetSourceDownloadUrl() string {
+	if x != nil {
+		return x.SourceDownloadUrl
+	}
+	return ""
+}
+
+func (x *GetBlobArtifactsResponse) GetMediaType() string {
+	if x != nil {
+		return x.MediaType
+	}
+	return ""
+}
+
+func (x *GetBlobArtifactsResponse) GetSourceName() string {
+	if x != nil {
+		return x.SourceName
+	}
+	return ""
+}
+
+func (x *GetBlobArtifactsResponse) GetSizeBytes() int64 {
+	if x != nil {
+		return x.SizeBytes
 	}
 	return 0
 }
 
-func (x *CommitEnrichmentRequest) GetArtifacts() []*EnrichedArtifact {
+func (x *GetBlobArtifactsResponse) GetChecksum() string {
+	if x != nil {
+		return x.Checksum
+	}
+	return ""
+}
+
+func (x *GetBlobArtifactsResponse) GetTitle() string {
+	if x != nil {
+		return x.Title
+	}
+	return ""
+}
+
+func (x *GetBlobArtifactsResponse) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *GetBlobArtifactsResponse) GetArtifacts() []*BlobArtifact {
 	if x != nil {
 		return x.Artifacts
 	}
 	return nil
 }
 
-func (x *CommitEnrichmentRequest) GetSourceMetadata() *FileMetadata {
-	if x != nil {
-		return x.SourceMetadata
-	}
-	return nil
-}
-
-type FailProcessingRequest struct {
+type ParsedArtifactInput struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	FileId        string                 `protobuf:"bytes,1,opt,name=file_id,json=fileId,proto3" json:"file_id,omitempty"`
-	Version       int64                  `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
-	ErrorCode     string                 `protobuf:"bytes,3,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
-	Attempt       int64                  `protobuf:"varint,4,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	Kind          NodeKind               `protobuf:"varint,2,opt,name=kind,proto3,enum=openlet.letfs.v1.NodeKind" json:"kind,omitempty"`
+	MediaType     string                 `protobuf:"bytes,3,opt,name=media_type,json=mediaType,proto3" json:"media_type,omitempty"`
+	SizeBytes     int64                  `protobuf:"varint,4,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
+	Checksum      *string                `protobuf:"bytes,5,opt,name=checksum,proto3,oneof" json:"checksum,omitempty"`
+	ObjectKey     *string                `protobuf:"bytes,6,opt,name=object_key,json=objectKey,proto3,oneof" json:"object_key,omitempty"`
+	TextContent   *string                `protobuf:"bytes,7,opt,name=text_content,json=textContent,proto3,oneof" json:"text_content,omitempty"`
+	Title         *string                `protobuf:"bytes,8,opt,name=title,proto3,oneof" json:"title,omitempty"`
+	Description   *string                `protobuf:"bytes,9,opt,name=description,proto3,oneof" json:"description,omitempty"`
+	Indexable     bool                   `protobuf:"varint,10,opt,name=indexable,proto3" json:"indexable,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *FailProcessingRequest) Reset() {
-	*x = FailProcessingRequest{}
-	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[14]
+func (x *ParsedArtifactInput) Reset() {
+	*x = ParsedArtifactInput{}
+	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *FailProcessingRequest) String() string {
+func (x *ParsedArtifactInput) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*FailProcessingRequest) ProtoMessage() {}
+func (*ParsedArtifactInput) ProtoMessage() {}
 
-func (x *FailProcessingRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[14]
+func (x *ParsedArtifactInput) ProtoReflect() protoreflect.Message {
+	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1040,37 +584,275 @@ func (x *FailProcessingRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use FailProcessingRequest.ProtoReflect.Descriptor instead.
-func (*FailProcessingRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_letfs_v1_internal_proto_rawDescGZIP(), []int{14}
+// Deprecated: Use ParsedArtifactInput.ProtoReflect.Descriptor instead.
+func (*ParsedArtifactInput) Descriptor() ([]byte, []int) {
+	return file_openlet_api_letfs_v1_internal_proto_rawDescGZIP(), []int{6}
 }
 
-func (x *FailProcessingRequest) GetFileId() string {
+func (x *ParsedArtifactInput) GetPath() string {
 	if x != nil {
-		return x.FileId
+		return x.Path
 	}
 	return ""
 }
 
-func (x *FailProcessingRequest) GetVersion() int64 {
+func (x *ParsedArtifactInput) GetKind() NodeKind {
 	if x != nil {
-		return x.Version
+		return x.Kind
 	}
-	return 0
+	return NodeKind_NODE_KIND_UNSPECIFIED
 }
 
-func (x *FailProcessingRequest) GetErrorCode() string {
+func (x *ParsedArtifactInput) GetMediaType() string {
 	if x != nil {
-		return x.ErrorCode
+		return x.MediaType
 	}
 	return ""
 }
 
-func (x *FailProcessingRequest) GetAttempt() int64 {
+func (x *ParsedArtifactInput) GetSizeBytes() int64 {
 	if x != nil {
-		return x.Attempt
+		return x.SizeBytes
 	}
 	return 0
+}
+
+func (x *ParsedArtifactInput) GetChecksum() string {
+	if x != nil && x.Checksum != nil {
+		return *x.Checksum
+	}
+	return ""
+}
+
+func (x *ParsedArtifactInput) GetObjectKey() string {
+	if x != nil && x.ObjectKey != nil {
+		return *x.ObjectKey
+	}
+	return ""
+}
+
+func (x *ParsedArtifactInput) GetTextContent() string {
+	if x != nil && x.TextContent != nil {
+		return *x.TextContent
+	}
+	return ""
+}
+
+func (x *ParsedArtifactInput) GetTitle() string {
+	if x != nil && x.Title != nil {
+		return *x.Title
+	}
+	return ""
+}
+
+func (x *ParsedArtifactInput) GetDescription() string {
+	if x != nil && x.Description != nil {
+		return *x.Description
+	}
+	return ""
+}
+
+func (x *ParsedArtifactInput) GetIndexable() bool {
+	if x != nil {
+		return x.Indexable
+	}
+	return false
+}
+
+type SaveParsedArtifactsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	BlobId        string                 `protobuf:"bytes,1,opt,name=blob_id,json=blobId,proto3" json:"blob_id,omitempty"`
+	Artifacts     []*ParsedArtifactInput `protobuf:"bytes,2,rep,name=artifacts,proto3" json:"artifacts,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SaveParsedArtifactsRequest) Reset() {
+	*x = SaveParsedArtifactsRequest{}
+	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SaveParsedArtifactsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SaveParsedArtifactsRequest) ProtoMessage() {}
+
+func (x *SaveParsedArtifactsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SaveParsedArtifactsRequest.ProtoReflect.Descriptor instead.
+func (*SaveParsedArtifactsRequest) Descriptor() ([]byte, []int) {
+	return file_openlet_api_letfs_v1_internal_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *SaveParsedArtifactsRequest) GetBlobId() string {
+	if x != nil {
+		return x.BlobId
+	}
+	return ""
+}
+
+func (x *SaveParsedArtifactsRequest) GetArtifacts() []*ParsedArtifactInput {
+	if x != nil {
+		return x.Artifacts
+	}
+	return nil
+}
+
+type EnrichedArtifactInput struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ArtifactId    string                 `protobuf:"bytes,1,opt,name=artifact_id,json=artifactId,proto3" json:"artifact_id,omitempty"`
+	Path          *string                `protobuf:"bytes,2,opt,name=path,proto3,oneof" json:"path,omitempty"`
+	TextContent   *string                `protobuf:"bytes,3,opt,name=text_content,json=textContent,proto3,oneof" json:"text_content,omitempty"`
+	Title         *string                `protobuf:"bytes,4,opt,name=title,proto3,oneof" json:"title,omitempty"`
+	Description   *string                `protobuf:"bytes,5,opt,name=description,proto3,oneof" json:"description,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EnrichedArtifactInput) Reset() {
+	*x = EnrichedArtifactInput{}
+	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EnrichedArtifactInput) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EnrichedArtifactInput) ProtoMessage() {}
+
+func (x *EnrichedArtifactInput) ProtoReflect() protoreflect.Message {
+	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EnrichedArtifactInput.ProtoReflect.Descriptor instead.
+func (*EnrichedArtifactInput) Descriptor() ([]byte, []int) {
+	return file_openlet_api_letfs_v1_internal_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *EnrichedArtifactInput) GetArtifactId() string {
+	if x != nil {
+		return x.ArtifactId
+	}
+	return ""
+}
+
+func (x *EnrichedArtifactInput) GetPath() string {
+	if x != nil && x.Path != nil {
+		return *x.Path
+	}
+	return ""
+}
+
+func (x *EnrichedArtifactInput) GetTextContent() string {
+	if x != nil && x.TextContent != nil {
+		return *x.TextContent
+	}
+	return ""
+}
+
+func (x *EnrichedArtifactInput) GetTitle() string {
+	if x != nil && x.Title != nil {
+		return *x.Title
+	}
+	return ""
+}
+
+func (x *EnrichedArtifactInput) GetDescription() string {
+	if x != nil && x.Description != nil {
+		return *x.Description
+	}
+	return ""
+}
+
+type SaveEnrichedArtifactsRequest struct {
+	state           protoimpl.MessageState   `protogen:"open.v1"`
+	BlobId          string                   `protobuf:"bytes,1,opt,name=blob_id,json=blobId,proto3" json:"blob_id,omitempty"`
+	BlobTitle       *string                  `protobuf:"bytes,2,opt,name=blob_title,json=blobTitle,proto3,oneof" json:"blob_title,omitempty"`
+	BlobDescription *string                  `protobuf:"bytes,3,opt,name=blob_description,json=blobDescription,proto3,oneof" json:"blob_description,omitempty"`
+	Artifacts       []*EnrichedArtifactInput `protobuf:"bytes,4,rep,name=artifacts,proto3" json:"artifacts,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *SaveEnrichedArtifactsRequest) Reset() {
+	*x = SaveEnrichedArtifactsRequest{}
+	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SaveEnrichedArtifactsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SaveEnrichedArtifactsRequest) ProtoMessage() {}
+
+func (x *SaveEnrichedArtifactsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_openlet_api_letfs_v1_internal_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SaveEnrichedArtifactsRequest.ProtoReflect.Descriptor instead.
+func (*SaveEnrichedArtifactsRequest) Descriptor() ([]byte, []int) {
+	return file_openlet_api_letfs_v1_internal_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *SaveEnrichedArtifactsRequest) GetBlobId() string {
+	if x != nil {
+		return x.BlobId
+	}
+	return ""
+}
+
+func (x *SaveEnrichedArtifactsRequest) GetBlobTitle() string {
+	if x != nil && x.BlobTitle != nil {
+		return *x.BlobTitle
+	}
+	return ""
+}
+
+func (x *SaveEnrichedArtifactsRequest) GetBlobDescription() string {
+	if x != nil && x.BlobDescription != nil {
+		return *x.BlobDescription
+	}
+	return ""
+}
+
+func (x *SaveEnrichedArtifactsRequest) GetArtifacts() []*EnrichedArtifactInput {
+	if x != nil {
+		return x.Artifacts
+	}
+	return nil
 }
 
 var File_openlet_api_letfs_v1_internal_proto protoreflect.FileDescriptor
@@ -1095,92 +877,103 @@ const file_openlet_api_letfs_v1_internal_proto_rawDesc = "" +
 	"\xbaH\a\x82\x01\x04\x18\x01\x18\x02R\n" +
 	"visibility\x12(\n" +
 	"\x10allow_blob_files\x18\a \x01(\bR\x0eallowBlobFiles\x12%\n" +
-	"\x0eallow_indexing\x18\b \x01(\bR\rallowIndexing\"Y\n" +
-	"\x11ProcessingRequest\x12!\n" +
-	"\afile_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x06fileId\x12!\n" +
-	"\aversion\x18\x02 \x01(\x03B\a\xbaH\x04\"\x02 \x00R\aversion\"E\n" +
-	"\x11ProcessingOutcome\x12\x1a\n" +
+	"\x0eallow_indexing\x18\b \x01(\bR\rallowIndexing\"0\n" +
+	"\vBlobRequest\x12!\n" +
+	"\ablob_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x06blobId\"I\n" +
+	"\x15BlobProcessingOutcome\x12\x1a\n" +
 	"\bobsolete\x18\x01 \x01(\bR\bobsolete\x12\x14\n" +
-	"\x05stage\x18\x02 \x01(\tR\x05stage\"\xb0\x01\n" +
-	"\x12ProcessingArtifact\x12*\n" +
-	"\x04node\x18\x01 \x01(\v2\x16.openlet.letfs.v1.NodeR\x04node\x12\x12\n" +
-	"\x04path\x18\x02 \x01(\tR\x04path\x12&\n" +
-	"\ftext_content\x18\x03 \x01(\tH\x00R\vtextContent\x88\x01\x01\x12!\n" +
-	"\fdownload_url\x18\x04 \x01(\tR\vdownloadUrlB\x0f\n" +
-	"\r_text_content\"\xa9\x03\n" +
-	"\x0fProcessingInput\x12=\n" +
-	"\aoutcome\x18\x01 \x01(\v2#.openlet.letfs.v1.ProcessingOutcomeR\aoutcome\x12!\n" +
-	"\fworkspace_id\x18\x02 \x01(\tR\vworkspaceId\x12\x1d\n" +
+	"\x05stage\x18\x02 \x01(\tR\x05stage\"\xca\x03\n" +
+	"\fBlobArtifact\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x17\n" +
+	"\ablob_id\x18\x02 \x01(\tR\x06blobId\x12\x12\n" +
+	"\x04path\x18\x03 \x01(\tR\x04path\x12\x1f\n" +
+	"\vparent_path\x18\x04 \x01(\tR\n" +
+	"parentPath\x12.\n" +
+	"\x04kind\x18\x05 \x01(\x0e2\x1a.openlet.letfs.v1.NodeKindR\x04kind\x12\x1d\n" +
 	"\n" +
-	"storage_id\x18\x03 \x01(\tR\tstorageId\x12\x1f\n" +
-	"\vsource_name\x18\x04 \x01(\tR\n" +
+	"media_type\x18\x06 \x01(\tR\tmediaType\x12\x1d\n" +
+	"\n" +
+	"size_bytes\x18\a \x01(\x03R\tsizeBytes\x12\x1f\n" +
+	"\bchecksum\x18\b \x01(\tH\x00R\bchecksum\x88\x01\x01\x12\"\n" +
+	"\n" +
+	"object_key\x18\t \x01(\tH\x01R\tobjectKey\x88\x01\x01\x12&\n" +
+	"\ftext_content\x18\n" +
+	" \x01(\tH\x02R\vtextContent\x88\x01\x01\x12\x14\n" +
+	"\x05title\x18\v \x01(\tR\x05title\x12 \n" +
+	"\vdescription\x18\f \x01(\tR\vdescription\x12\x1c\n" +
+	"\tindexable\x18\r \x01(\bR\tindexableB\v\n" +
+	"\t_checksumB\r\n" +
+	"\v_object_keyB\x0f\n" +
+	"\r_text_content\"\xd9\x03\n" +
+	"\x18GetBlobArtifactsResponse\x12A\n" +
+	"\aoutcome\x18\x01 \x01(\v2'.openlet.letfs.v1.BlobProcessingOutcomeR\aoutcome\x12!\n" +
+	"\fworkspace_id\x18\x02 \x01(\tR\vworkspaceId\x12\x17\n" +
+	"\ablob_id\x18\x03 \x01(\tR\x06blobId\x12\x1d\n" +
+	"\n" +
+	"object_key\x18\x04 \x01(\tR\tobjectKey\x12.\n" +
+	"\x13source_download_url\x18\x05 \x01(\tR\x11sourceDownloadUrl\x12\x1d\n" +
+	"\n" +
+	"media_type\x18\x06 \x01(\tR\tmediaType\x12\x1f\n" +
+	"\vsource_name\x18\a \x01(\tR\n" +
 	"sourceName\x12\x1d\n" +
 	"\n" +
-	"media_type\x18\x05 \x01(\tR\tmediaType\x12!\n" +
-	"\fdownload_url\x18\x06 \x01(\tR\vdownloadUrl\x12%\n" +
-	"\x0eallow_indexing\x18\a \x01(\bR\rallowIndexing\x12B\n" +
-	"\tartifacts\x18\b \x03(\v2$.openlet.letfs.v1.ProcessingArtifactR\tartifacts\x12G\n" +
-	"\x0fsource_metadata\x18\t \x01(\v2\x1e.openlet.letfs.v1.FileMetadataR\x0esourceMetadata\"\x94\x01\n" +
-	"\x12ArtifactUploadSpec\x12\x1b\n" +
-	"\x04path\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x04path\x12&\n" +
+	"size_bytes\x18\b \x01(\x03R\tsizeBytes\x12\x1a\n" +
+	"\bchecksum\x18\t \x01(\tR\bchecksum\x12\x14\n" +
+	"\x05title\x18\n" +
+	" \x01(\tR\x05title\x12 \n" +
+	"\vdescription\x18\v \x01(\tR\vdescription\x12<\n" +
+	"\tartifacts\x18\f \x03(\v2\x1e.openlet.letfs.v1.BlobArtifactR\tartifacts\"\xc9\x03\n" +
+	"\x13ParsedArtifactInput\x12\x1b\n" +
+	"\x04path\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x04path\x12:\n" +
+	"\x04kind\x18\x02 \x01(\x0e2\x1a.openlet.letfs.v1.NodeKindB\n" +
+	"\xbaH\a\x82\x01\x04\x10\x01 \x00R\x04kind\x12\x1d\n" +
 	"\n" +
-	"size_bytes\x18\x02 \x01(\x03B\a\xbaH\x04\"\x02(\x00R\tsizeBytes\x12\x1d\n" +
+	"media_type\x18\x03 \x01(\tR\tmediaType\x12&\n" +
 	"\n" +
-	"media_type\x18\x03 \x01(\tR\tmediaType\x12\x1a\n" +
-	"\bchecksum\x18\x04 \x01(\tR\bchecksum\"\xa5\x01\n" +
-	"\x1dPrepareArtifactUploadsRequest\x12!\n" +
-	"\afile_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x06fileId\x12!\n" +
-	"\aversion\x18\x02 \x01(\x03B\a\xbaH\x04\"\x02 \x00R\aversion\x12>\n" +
-	"\aoutputs\x18\x03 \x03(\v2$.openlet.letfs.v1.ArtifactUploadSpecR\aoutputs\"\xdf\x01\n" +
-	"\x0eArtifactUpload\x12\x12\n" +
-	"\x04path\x18\x01 \x01(\tR\x04path\x12\x1b\n" +
-	"\tupload_id\x18\x02 \x01(\tR\buploadId\x12\x17\n" +
-	"\aput_url\x18\x03 \x01(\tR\x06putUrl\x12G\n" +
-	"\aheaders\x18\x04 \x03(\v2-.openlet.letfs.v1.ArtifactUpload.HeadersEntryR\aheaders\x1a:\n" +
-	"\fHeadersEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x9b\x01\n" +
-	"\x1ePrepareArtifactUploadsResponse\x12=\n" +
-	"\aoutcome\x18\x01 \x01(\v2#.openlet.letfs.v1.ProcessingOutcomeR\aoutcome\x12:\n" +
-	"\auploads\x18\x02 \x03(\v2 .openlet.letfs.v1.ArtifactUploadR\auploads\"\xc8\x01\n" +
-	"\bArtifact\x12\x1b\n" +
-	"\x04path\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x04path\x126\n" +
-	"\tdirectory\x18\x02 \x01(\v2\x16.google.protobuf.EmptyH\x00R\tdirectory\x123\n" +
-	"\x04text\x18\x03 \x01(\v2\x1d.openlet.letfs.v1.TextContentH\x00R\x04text\x12'\n" +
-	"\tupload_id\x18\x04 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01H\x00R\buploadIdB\t\n" +
-	"\acontent\"\x94\x01\n" +
-	"\x12CommitParseRequest\x12!\n" +
-	"\afile_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x06fileId\x12!\n" +
-	"\aversion\x18\x02 \x01(\x03B\a\xbaH\x04\"\x02 \x00R\aversion\x128\n" +
-	"\tartifacts\x18\x03 \x03(\v2\x1a.openlet.letfs.v1.ArtifactR\tartifacts\"\xec\x01\n" +
-	"\x10EnrichedArtifact\x12!\n" +
-	"\anode_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x06nodeId\x12&\n" +
-	"\ftext_content\x18\x02 \x01(\tH\x00R\vtextContent\x88\x01\x01\x12:\n" +
-	"\bmetadata\x18\x03 \x01(\v2\x1e.openlet.letfs.v1.FileMetadataR\bmetadata\x127\n" +
-	"\x04name\x18\x04 \x01(\tB\x1e\xbaH\x1br\x19\x10\x01(\xff\x012\v^[^/\\x00]+$Z\x01.Z\x02..H\x01R\x04name\x88\x01\x01B\x0f\n" +
-	"\r_text_contentB\a\n" +
-	"\x05_name\"\xea\x01\n" +
-	"\x17CommitEnrichmentRequest\x12!\n" +
-	"\afile_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x06fileId\x12!\n" +
-	"\aversion\x18\x02 \x01(\x03B\a\xbaH\x04\"\x02 \x00R\aversion\x12@\n" +
-	"\tartifacts\x18\x03 \x03(\v2\".openlet.letfs.v1.EnrichedArtifactR\tartifacts\x12G\n" +
-	"\x0fsource_metadata\x18\x04 \x01(\v2\x1e.openlet.letfs.v1.FileMetadataR\x0esourceMetadata\"\xa8\x01\n" +
-	"\x15FailProcessingRequest\x12!\n" +
-	"\afile_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x06fileId\x12!\n" +
-	"\aversion\x18\x02 \x01(\x03B\a\xbaH\x04\"\x02 \x00R\aversion\x12&\n" +
+	"size_bytes\x18\x04 \x01(\x03B\a\xbaH\x04\"\x02(\x00R\tsizeBytes\x12\x1f\n" +
+	"\bchecksum\x18\x05 \x01(\tH\x00R\bchecksum\x88\x01\x01\x12\"\n" +
 	"\n" +
-	"error_code\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\terrorCode\x12!\n" +
-	"\aattempt\x18\x04 \x01(\x03B\a\xbaH\x04\"\x02(\x00R\aattempt2\xfe\x06\n" +
+	"object_key\x18\x06 \x01(\tH\x01R\tobjectKey\x88\x01\x01\x12&\n" +
+	"\ftext_content\x18\a \x01(\tH\x02R\vtextContent\x88\x01\x01\x12\x19\n" +
+	"\x05title\x18\b \x01(\tH\x03R\x05title\x88\x01\x01\x12%\n" +
+	"\vdescription\x18\t \x01(\tH\x04R\vdescription\x88\x01\x01\x12\x1c\n" +
+	"\tindexable\x18\n" +
+	" \x01(\bR\tindexableB\v\n" +
+	"\t_checksumB\r\n" +
+	"\v_object_keyB\x0f\n" +
+	"\r_text_contentB\b\n" +
+	"\x06_titleB\x0e\n" +
+	"\f_description\"\x84\x01\n" +
+	"\x1aSaveParsedArtifactsRequest\x12!\n" +
+	"\ablob_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x06blobId\x12C\n" +
+	"\tartifacts\x18\x02 \x03(\v2%.openlet.letfs.v1.ParsedArtifactInputR\tartifacts\"\x82\x02\n" +
+	"\x15EnrichedArtifactInput\x12)\n" +
+	"\vartifact_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\n" +
+	"artifactId\x12 \n" +
+	"\x04path\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01H\x00R\x04path\x88\x01\x01\x12&\n" +
+	"\ftext_content\x18\x03 \x01(\tH\x01R\vtextContent\x88\x01\x01\x12\x19\n" +
+	"\x05title\x18\x04 \x01(\tH\x02R\x05title\x88\x01\x01\x12%\n" +
+	"\vdescription\x18\x05 \x01(\tH\x03R\vdescription\x88\x01\x01B\a\n" +
+	"\x05_pathB\x0f\n" +
+	"\r_text_contentB\b\n" +
+	"\x06_titleB\x0e\n" +
+	"\f_description\"\x80\x02\n" +
+	"\x1cSaveEnrichedArtifactsRequest\x12!\n" +
+	"\ablob_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x06blobId\x12\"\n" +
+	"\n" +
+	"blob_title\x18\x02 \x01(\tH\x00R\tblobTitle\x88\x01\x01\x12.\n" +
+	"\x10blob_description\x18\x03 \x01(\tH\x01R\x0fblobDescription\x88\x01\x01\x12E\n" +
+	"\tartifacts\x18\x04 \x03(\v2'.openlet.letfs.v1.EnrichedArtifactInputR\tartifactsB\r\n" +
+	"\v_blob_titleB\x13\n" +
+	"\x11_blob_description2\xc6\x05\n" +
 	"\x14LetFSInternalService\x12s\n" +
 	"\x19ProvisionWorkspaceStorage\x122.openlet.letfs.v1.ProvisionWorkspaceStorageRequest\x1a\".openlet.letfs.v1.WorkspaceStorage\x12R\n" +
 	"\rCreateStorage\x12&.openlet.letfs.v1.CreateStorageRequest\x1a\x19.openlet.letfs.v1.Storage\x12I\n" +
-	"\rDeleteStorage\x12 .openlet.letfs.v1.StorageRequest\x1a\x16.google.protobuf.Empty\x12\\\n" +
-	"\x12GetProcessingInput\x12#.openlet.letfs.v1.ProcessingRequest\x1a!.openlet.letfs.v1.ProcessingInput\x12{\n" +
-	"\x16PrepareArtifactUploads\x12/.openlet.letfs.v1.PrepareArtifactUploadsRequest\x1a0.openlet.letfs.v1.PrepareArtifactUploadsResponse\x12X\n" +
-	"\vCommitParse\x12$.openlet.letfs.v1.CommitParseRequest\x1a#.openlet.letfs.v1.ProcessingOutcome\x12b\n" +
-	"\x10CommitEnrichment\x12).openlet.letfs.v1.CommitEnrichmentRequest\x1a#.openlet.letfs.v1.ProcessingOutcome\x12Y\n" +
-	"\rCompleteIndex\x12#.openlet.letfs.v1.ProcessingRequest\x1a#.openlet.letfs.v1.ProcessingOutcome\x12^\n" +
-	"\x0eFailProcessing\x12'.openlet.letfs.v1.FailProcessingRequest\x1a#.openlet.letfs.v1.ProcessingOutcomeBMZKgithub.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/letfs/v1;letfsv1b\x06proto3"
+	"\rDeleteStorage\x12 .openlet.letfs.v1.StorageRequest\x1a\x16.google.protobuf.Empty\x12]\n" +
+	"\x10GetBlobArtifacts\x12\x1d.openlet.letfs.v1.BlobRequest\x1a*.openlet.letfs.v1.GetBlobArtifactsResponse\x12l\n" +
+	"\x13SaveParsedArtifacts\x12,.openlet.letfs.v1.SaveParsedArtifactsRequest\x1a'.openlet.letfs.v1.BlobProcessingOutcome\x12p\n" +
+	"\x15SaveEnrichedArtifacts\x12..openlet.letfs.v1.SaveEnrichedArtifactsRequest\x1a'.openlet.letfs.v1.BlobProcessingOutcome\x12[\n" +
+	"\x11CompleteBlobIndex\x12\x1d.openlet.letfs.v1.BlobRequest\x1a'.openlet.letfs.v1.BlobProcessingOutcomeBMZKgithub.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/letfs/v1;letfsv1b\x06proto3"
 
 var (
 	file_openlet_api_letfs_v1_internal_proto_rawDescOnce sync.Once
@@ -1194,74 +987,54 @@ func file_openlet_api_letfs_v1_internal_proto_rawDescGZIP() []byte {
 	return file_openlet_api_letfs_v1_internal_proto_rawDescData
 }
 
-var file_openlet_api_letfs_v1_internal_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
+var file_openlet_api_letfs_v1_internal_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_openlet_api_letfs_v1_internal_proto_goTypes = []any{
 	(*ProvisionWorkspaceStorageRequest)(nil), // 0: openlet.letfs.v1.ProvisionWorkspaceStorageRequest
 	(*CreateStorageRequest)(nil),             // 1: openlet.letfs.v1.CreateStorageRequest
-	(*ProcessingRequest)(nil),                // 2: openlet.letfs.v1.ProcessingRequest
-	(*ProcessingOutcome)(nil),                // 3: openlet.letfs.v1.ProcessingOutcome
-	(*ProcessingArtifact)(nil),               // 4: openlet.letfs.v1.ProcessingArtifact
-	(*ProcessingInput)(nil),                  // 5: openlet.letfs.v1.ProcessingInput
-	(*ArtifactUploadSpec)(nil),               // 6: openlet.letfs.v1.ArtifactUploadSpec
-	(*PrepareArtifactUploadsRequest)(nil),    // 7: openlet.letfs.v1.PrepareArtifactUploadsRequest
-	(*ArtifactUpload)(nil),                   // 8: openlet.letfs.v1.ArtifactUpload
-	(*PrepareArtifactUploadsResponse)(nil),   // 9: openlet.letfs.v1.PrepareArtifactUploadsResponse
-	(*Artifact)(nil),                         // 10: openlet.letfs.v1.Artifact
-	(*CommitParseRequest)(nil),               // 11: openlet.letfs.v1.CommitParseRequest
-	(*EnrichedArtifact)(nil),                 // 12: openlet.letfs.v1.EnrichedArtifact
-	(*CommitEnrichmentRequest)(nil),          // 13: openlet.letfs.v1.CommitEnrichmentRequest
-	(*FailProcessingRequest)(nil),            // 14: openlet.letfs.v1.FailProcessingRequest
-	nil,                                      // 15: openlet.letfs.v1.ArtifactUpload.HeadersEntry
-	(*StorageOwnership)(nil),                 // 16: openlet.letfs.v1.StorageOwnership
-	(StorageVisibility)(0),                   // 17: openlet.letfs.v1.StorageVisibility
-	(*Node)(nil),                             // 18: openlet.letfs.v1.Node
-	(*FileMetadata)(nil),                     // 19: openlet.letfs.v1.FileMetadata
-	(*emptypb.Empty)(nil),                    // 20: google.protobuf.Empty
-	(*TextContent)(nil),                      // 21: openlet.letfs.v1.TextContent
-	(*StorageRequest)(nil),                   // 22: openlet.letfs.v1.StorageRequest
-	(*WorkspaceStorage)(nil),                 // 23: openlet.letfs.v1.WorkspaceStorage
-	(*Storage)(nil),                          // 24: openlet.letfs.v1.Storage
+	(*BlobRequest)(nil),                      // 2: openlet.letfs.v1.BlobRequest
+	(*BlobProcessingOutcome)(nil),            // 3: openlet.letfs.v1.BlobProcessingOutcome
+	(*BlobArtifact)(nil),                     // 4: openlet.letfs.v1.BlobArtifact
+	(*GetBlobArtifactsResponse)(nil),         // 5: openlet.letfs.v1.GetBlobArtifactsResponse
+	(*ParsedArtifactInput)(nil),              // 6: openlet.letfs.v1.ParsedArtifactInput
+	(*SaveParsedArtifactsRequest)(nil),       // 7: openlet.letfs.v1.SaveParsedArtifactsRequest
+	(*EnrichedArtifactInput)(nil),            // 8: openlet.letfs.v1.EnrichedArtifactInput
+	(*SaveEnrichedArtifactsRequest)(nil),     // 9: openlet.letfs.v1.SaveEnrichedArtifactsRequest
+	(*StorageOwnership)(nil),                 // 10: openlet.letfs.v1.StorageOwnership
+	(StorageVisibility)(0),                   // 11: openlet.letfs.v1.StorageVisibility
+	(NodeKind)(0),                            // 12: openlet.letfs.v1.NodeKind
+	(*StorageRequest)(nil),                   // 13: openlet.letfs.v1.StorageRequest
+	(*WorkspaceStorage)(nil),                 // 14: openlet.letfs.v1.WorkspaceStorage
+	(*Storage)(nil),                          // 15: openlet.letfs.v1.Storage
+	(*emptypb.Empty)(nil),                    // 16: google.protobuf.Empty
 }
 var file_openlet_api_letfs_v1_internal_proto_depIdxs = []int32{
-	16, // 0: openlet.letfs.v1.CreateStorageRequest.owner:type_name -> openlet.letfs.v1.StorageOwnership
-	17, // 1: openlet.letfs.v1.CreateStorageRequest.visibility:type_name -> openlet.letfs.v1.StorageVisibility
-	18, // 2: openlet.letfs.v1.ProcessingArtifact.node:type_name -> openlet.letfs.v1.Node
-	3,  // 3: openlet.letfs.v1.ProcessingInput.outcome:type_name -> openlet.letfs.v1.ProcessingOutcome
-	4,  // 4: openlet.letfs.v1.ProcessingInput.artifacts:type_name -> openlet.letfs.v1.ProcessingArtifact
-	19, // 5: openlet.letfs.v1.ProcessingInput.source_metadata:type_name -> openlet.letfs.v1.FileMetadata
-	6,  // 6: openlet.letfs.v1.PrepareArtifactUploadsRequest.outputs:type_name -> openlet.letfs.v1.ArtifactUploadSpec
-	15, // 7: openlet.letfs.v1.ArtifactUpload.headers:type_name -> openlet.letfs.v1.ArtifactUpload.HeadersEntry
-	3,  // 8: openlet.letfs.v1.PrepareArtifactUploadsResponse.outcome:type_name -> openlet.letfs.v1.ProcessingOutcome
-	8,  // 9: openlet.letfs.v1.PrepareArtifactUploadsResponse.uploads:type_name -> openlet.letfs.v1.ArtifactUpload
-	20, // 10: openlet.letfs.v1.Artifact.directory:type_name -> google.protobuf.Empty
-	21, // 11: openlet.letfs.v1.Artifact.text:type_name -> openlet.letfs.v1.TextContent
-	10, // 12: openlet.letfs.v1.CommitParseRequest.artifacts:type_name -> openlet.letfs.v1.Artifact
-	19, // 13: openlet.letfs.v1.EnrichedArtifact.metadata:type_name -> openlet.letfs.v1.FileMetadata
-	12, // 14: openlet.letfs.v1.CommitEnrichmentRequest.artifacts:type_name -> openlet.letfs.v1.EnrichedArtifact
-	19, // 15: openlet.letfs.v1.CommitEnrichmentRequest.source_metadata:type_name -> openlet.letfs.v1.FileMetadata
-	0,  // 16: openlet.letfs.v1.LetFSInternalService.ProvisionWorkspaceStorage:input_type -> openlet.letfs.v1.ProvisionWorkspaceStorageRequest
-	1,  // 17: openlet.letfs.v1.LetFSInternalService.CreateStorage:input_type -> openlet.letfs.v1.CreateStorageRequest
-	22, // 18: openlet.letfs.v1.LetFSInternalService.DeleteStorage:input_type -> openlet.letfs.v1.StorageRequest
-	2,  // 19: openlet.letfs.v1.LetFSInternalService.GetProcessingInput:input_type -> openlet.letfs.v1.ProcessingRequest
-	7,  // 20: openlet.letfs.v1.LetFSInternalService.PrepareArtifactUploads:input_type -> openlet.letfs.v1.PrepareArtifactUploadsRequest
-	11, // 21: openlet.letfs.v1.LetFSInternalService.CommitParse:input_type -> openlet.letfs.v1.CommitParseRequest
-	13, // 22: openlet.letfs.v1.LetFSInternalService.CommitEnrichment:input_type -> openlet.letfs.v1.CommitEnrichmentRequest
-	2,  // 23: openlet.letfs.v1.LetFSInternalService.CompleteIndex:input_type -> openlet.letfs.v1.ProcessingRequest
-	14, // 24: openlet.letfs.v1.LetFSInternalService.FailProcessing:input_type -> openlet.letfs.v1.FailProcessingRequest
-	23, // 25: openlet.letfs.v1.LetFSInternalService.ProvisionWorkspaceStorage:output_type -> openlet.letfs.v1.WorkspaceStorage
-	24, // 26: openlet.letfs.v1.LetFSInternalService.CreateStorage:output_type -> openlet.letfs.v1.Storage
-	20, // 27: openlet.letfs.v1.LetFSInternalService.DeleteStorage:output_type -> google.protobuf.Empty
-	5,  // 28: openlet.letfs.v1.LetFSInternalService.GetProcessingInput:output_type -> openlet.letfs.v1.ProcessingInput
-	9,  // 29: openlet.letfs.v1.LetFSInternalService.PrepareArtifactUploads:output_type -> openlet.letfs.v1.PrepareArtifactUploadsResponse
-	3,  // 30: openlet.letfs.v1.LetFSInternalService.CommitParse:output_type -> openlet.letfs.v1.ProcessingOutcome
-	3,  // 31: openlet.letfs.v1.LetFSInternalService.CommitEnrichment:output_type -> openlet.letfs.v1.ProcessingOutcome
-	3,  // 32: openlet.letfs.v1.LetFSInternalService.CompleteIndex:output_type -> openlet.letfs.v1.ProcessingOutcome
-	3,  // 33: openlet.letfs.v1.LetFSInternalService.FailProcessing:output_type -> openlet.letfs.v1.ProcessingOutcome
-	25, // [25:34] is the sub-list for method output_type
-	16, // [16:25] is the sub-list for method input_type
-	16, // [16:16] is the sub-list for extension type_name
-	16, // [16:16] is the sub-list for extension extendee
-	0,  // [0:16] is the sub-list for field type_name
+	10, // 0: openlet.letfs.v1.CreateStorageRequest.owner:type_name -> openlet.letfs.v1.StorageOwnership
+	11, // 1: openlet.letfs.v1.CreateStorageRequest.visibility:type_name -> openlet.letfs.v1.StorageVisibility
+	12, // 2: openlet.letfs.v1.BlobArtifact.kind:type_name -> openlet.letfs.v1.NodeKind
+	3,  // 3: openlet.letfs.v1.GetBlobArtifactsResponse.outcome:type_name -> openlet.letfs.v1.BlobProcessingOutcome
+	4,  // 4: openlet.letfs.v1.GetBlobArtifactsResponse.artifacts:type_name -> openlet.letfs.v1.BlobArtifact
+	12, // 5: openlet.letfs.v1.ParsedArtifactInput.kind:type_name -> openlet.letfs.v1.NodeKind
+	6,  // 6: openlet.letfs.v1.SaveParsedArtifactsRequest.artifacts:type_name -> openlet.letfs.v1.ParsedArtifactInput
+	8,  // 7: openlet.letfs.v1.SaveEnrichedArtifactsRequest.artifacts:type_name -> openlet.letfs.v1.EnrichedArtifactInput
+	0,  // 8: openlet.letfs.v1.LetFSInternalService.ProvisionWorkspaceStorage:input_type -> openlet.letfs.v1.ProvisionWorkspaceStorageRequest
+	1,  // 9: openlet.letfs.v1.LetFSInternalService.CreateStorage:input_type -> openlet.letfs.v1.CreateStorageRequest
+	13, // 10: openlet.letfs.v1.LetFSInternalService.DeleteStorage:input_type -> openlet.letfs.v1.StorageRequest
+	2,  // 11: openlet.letfs.v1.LetFSInternalService.GetBlobArtifacts:input_type -> openlet.letfs.v1.BlobRequest
+	7,  // 12: openlet.letfs.v1.LetFSInternalService.SaveParsedArtifacts:input_type -> openlet.letfs.v1.SaveParsedArtifactsRequest
+	9,  // 13: openlet.letfs.v1.LetFSInternalService.SaveEnrichedArtifacts:input_type -> openlet.letfs.v1.SaveEnrichedArtifactsRequest
+	2,  // 14: openlet.letfs.v1.LetFSInternalService.CompleteBlobIndex:input_type -> openlet.letfs.v1.BlobRequest
+	14, // 15: openlet.letfs.v1.LetFSInternalService.ProvisionWorkspaceStorage:output_type -> openlet.letfs.v1.WorkspaceStorage
+	15, // 16: openlet.letfs.v1.LetFSInternalService.CreateStorage:output_type -> openlet.letfs.v1.Storage
+	16, // 17: openlet.letfs.v1.LetFSInternalService.DeleteStorage:output_type -> google.protobuf.Empty
+	5,  // 18: openlet.letfs.v1.LetFSInternalService.GetBlobArtifacts:output_type -> openlet.letfs.v1.GetBlobArtifactsResponse
+	3,  // 19: openlet.letfs.v1.LetFSInternalService.SaveParsedArtifacts:output_type -> openlet.letfs.v1.BlobProcessingOutcome
+	3,  // 20: openlet.letfs.v1.LetFSInternalService.SaveEnrichedArtifacts:output_type -> openlet.letfs.v1.BlobProcessingOutcome
+	3,  // 21: openlet.letfs.v1.LetFSInternalService.CompleteBlobIndex:output_type -> openlet.letfs.v1.BlobProcessingOutcome
+	15, // [15:22] is the sub-list for method output_type
+	8,  // [8:15] is the sub-list for method input_type
+	8,  // [8:8] is the sub-list for extension type_name
+	8,  // [8:8] is the sub-list for extension extendee
+	0,  // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_openlet_api_letfs_v1_internal_proto_init() }
@@ -1271,19 +1044,16 @@ func file_openlet_api_letfs_v1_internal_proto_init() {
 	}
 	file_openlet_api_letfs_v1_letfs_proto_init()
 	file_openlet_api_letfs_v1_internal_proto_msgTypes[4].OneofWrappers = []any{}
-	file_openlet_api_letfs_v1_internal_proto_msgTypes[10].OneofWrappers = []any{
-		(*Artifact_Directory)(nil),
-		(*Artifact_Text)(nil),
-		(*Artifact_UploadId)(nil),
-	}
-	file_openlet_api_letfs_v1_internal_proto_msgTypes[12].OneofWrappers = []any{}
+	file_openlet_api_letfs_v1_internal_proto_msgTypes[6].OneofWrappers = []any{}
+	file_openlet_api_letfs_v1_internal_proto_msgTypes[8].OneofWrappers = []any{}
+	file_openlet_api_letfs_v1_internal_proto_msgTypes[9].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_openlet_api_letfs_v1_internal_proto_rawDesc), len(file_openlet_api_letfs_v1_internal_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   16,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

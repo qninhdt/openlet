@@ -40,6 +40,11 @@ class ProcessingSettings(TypedDict):
     enrich_index_timeout_seconds: int
 
 
+class SemanticSearchSettings(TypedDict):
+    candidate_limit: int
+    result_limit: int
+
+
 class LetFSSettings(TypedDict):
     grpc_listen: str
     grpc_target: str
@@ -51,6 +56,7 @@ class LetFSSettings(TypedDict):
     upload_url_ttl_seconds: int
     download_url_ttl_seconds: int
     idempotency_retention_seconds: int
+    semantic_search: SemanticSearchSettings
     processing: ProcessingSettings
     maintenance: MaintenanceSettings
 

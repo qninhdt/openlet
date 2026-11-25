@@ -107,6 +107,9 @@ func run() error {
 	if settings.GRPCListen == "" || settings.MaxTextBytes < 1 || settings.MaxBlobBytes < 1 || settings.MultipartPartBytes < 5*1024*1024 || settings.MultipartThresholdBytes < settings.MultipartPartBytes || settings.UploadURLTTLSeconds < 1 || settings.DownloadURLTTLSeconds < 1 || settings.IdempotencyRetentionSeconds < 1 || settings.Processing.MaxArtifacts < 1 || settings.Processing.MaxManifestTextBytes < 1 || settings.Processing.ParseTimeoutSeconds < 1 || settings.Processing.EnrichIndexTimeoutSeconds < 1 || settings.Maintenance.IntervalSeconds < 1 || settings.Maintenance.ObjectGCGraceSeconds <= settings.UploadURLTTLSeconds || g.MaxReceiveBytes < 1 || runtime.ShutdownTimeoutSeconds < 1 {
 		return fmt.Errorf("invalid letfs/runtime settings")
 	}
+	if settings.SemanticSearch.ResultLimit == 0 || settings.SemanticSearch.CandidateLimit < settings.SemanticSearch.ResultLimit {
+		return fmt.Errorf("semantic_search requires candidate_limit >= result_limit > 0")
+	}
 	var level slog.Level
 	if err = level.UnmarshalText([]byte(runtime.LogLevel)); err != nil {
 		return err

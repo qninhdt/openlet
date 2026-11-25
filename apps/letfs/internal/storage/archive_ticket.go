@@ -27,9 +27,13 @@ func (s *Server) CreateArchiveDownload(ctx context.Context, r *pb.DownloadArchiv
 	if err != nil {
 		return nil, err
 	}
-	for _, target := range r.Targets {
-		if _, err = oneResolved(ctx, s.DB, r.WorkspaceId, r.StorageId, target, false, false); err != nil {
-			return nil, err
+	resolvedTargets, err := resolve(ctx, s.DB, r.WorkspaceId, r.StorageId, r.Targets, false, false)
+	if err != nil {
+		return nil, err
+	}
+	for _, t := range resolvedTargets {
+		if t.Node == nil {
+			return nil, notFound()
 		}
 	}
 	raw, err := proto.Marshal(r)

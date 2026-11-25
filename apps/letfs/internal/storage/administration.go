@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"io"
+	"sync"
 
 	az "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/google/uuid"
@@ -114,8 +115,44 @@ func (s *Server) DeleteStorage(ctx context.Context, r *pb.StorageRequest) (*empt
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
+	var blobIDs []string
+	rows, err := tx.Query(ctx, `SELECT DISTINCT f.blob_id::text FROM files f JOIN nodes n ON n.id=f.node_id WHERE n.storage_id=$1 AND f.blob_id IS NOT NULL`, id)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var bid string
+		if err = rows.Scan(&bid); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		blobIDs = append(blobIDs, bid)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	var pending []pendingS3Object
+	uRows, err := tx.Query(ctx, `SELECT object_key,multipart_id FROM uploads WHERE storage_id=$1 AND result IS NULL`, id)
+	if err != nil {
+		return nil, err
+	}
+	for uRows.Next() {
+		var u pendingS3Object
+		if err = uRows.Scan(&u.key, &u.multipart); err != nil {
+			uRows.Close()
+			return nil, err
+		}
+		pending = append(pending, u)
+	}
+	err = uRows.Err()
+	uRows.Close()
+	if err != nil {
+		return nil, err
+	}
 	var bytes int64
-	err = tx.QueryRow(ctx, `WITH sizes AS MATERIALIZED(SELECT f.node_id,f.size_bytes FROM files f JOIN nodes n ON n.id=f.node_id WHERE n.storage_id=$1),doomed AS (DELETE FROM nodes n USING sizes f WHERE f.node_id=n.id RETURNING f.size_bytes), cleared AS (DELETE FROM nodes WHERE storage_id=$1 AND kind='directory') SELECT coalesce(sum(size_bytes),0) FROM doomed`, id).Scan(&bytes)
+	err = tx.QueryRow(ctx, `SELECT coalesce(sum(f.size_bytes),0) FROM files f JOIN nodes n ON n.id=f.node_id WHERE n.storage_id=$1`, id).Scan(&bytes)
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +162,22 @@ func (s *Server) DeleteStorage(ctx context.Context, r *pb.StorageRequest) (*empt
 	if err = s.quota(ctx, tx, r.WorkspaceId, -bytes); err != nil {
 		return nil, err
 	}
-	return &emptypb.Empty{}, tx.Commit(ctx)
+	orphaned, err := markOrphanBlobs(ctx, tx, blobIDs)
+	if err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	for _, u := range pending {
+		_ = s.abortAndDeleteS3Object(ctx, u.key, u.multipart)
+	}
+	for _, bid := range orphaned {
+		if err = s.dispatchCleanupBlob(ctx, bid); err != nil {
+			return nil, err
+		}
+	}
+	return &emptypb.Empty{}, nil
 }
 func (s *Server) GetWorkspaceStorage(ctx context.Context, r *pb.WorkspaceStorageRequest) (*pb.WorkspaceStorage, error) {
 	if _, err := s.check(ctx, "workspace", r.WorkspaceId, "view"); err != nil {
@@ -210,9 +262,8 @@ func (s *Server) ListStorages(ctx context.Context, r *pb.ListStoragesRequest) (*
 	return s.listStorages(ctx, r, a)
 }
 func (s *Server) listStorages(ctx context.Context, r *pb.ListStoragesRequest, a sdk.Actor) (*pb.ListStoragesResponse, error) {
-	var err error
 	if r.PageToken != "" {
-		if _, err = uuid.Parse(r.PageToken); err != nil {
+		if _, err := uuid.Parse(r.PageToken); err != nil {
 			return nil, invalid("invalid storage cursor")
 		}
 	}
@@ -220,43 +271,91 @@ func (s *Server) listStorages(ctx context.Context, r *pb.ListStoragesRequest, a 
 	if r.Visibility != nil {
 		visibility = visibilityName(*r.Visibility)
 	}
-	rows, err := s.DB.Query(ctx, `SELECT `+storageColumns+` FROM storages WHERE workspace_id=$1 AND ($2::text IS NULL OR visibility=$2) AND ($3::uuid IS NULL OR id>$3) ORDER BY id LIMIT $4`, r.WorkspaceId, visibility, nilString(r.PageToken), pageSize(r.PageSize)+1)
-	if err != nil {
-		return nil, err
-	}
-	candidates := []*pb.Storage{}
-	for rows.Next() {
-		v, err := scanStorage(rows)
+	limit := pageSize(r.PageSize)
+	batchSize := max(limit*2, 50)
+	cursor := r.PageToken
+	out := new(pb.ListStoragesResponse)
+	for len(out.Storages) <= limit {
+		rows, err := s.DB.Query(ctx, `SELECT `+storageColumns+` FROM storages WHERE workspace_id=$1 AND ($2::text IS NULL OR visibility=$2) AND ($3::uuid IS NULL OR id>$3) ORDER BY id LIMIT $4`,
+			r.WorkspaceId, visibility, nilString(cursor), batchSize)
 		if err != nil {
-			rows.Close()
 			return nil, err
 		}
-		candidates = append(candidates, v)
-	}
-	rows.Close()
-	if err = rows.Err(); err != nil {
-		return nil, err
-	}
-	out := new(pb.ListStoragesResponse)
-	if len(candidates) > pageSize(r.PageSize) {
-		candidates = candidates[:pageSize(r.PageSize)]
-		out.NextPageToken = candidates[len(candidates)-1].Id
-	}
-	if err = s.capabilities(ctx, a, candidates); err != nil {
-		return nil, err
-	}
-	for _, v := range candidates {
-		if v.Capabilities.Read && (!r.OwnedOnly || v.Capabilities.ManageAccess) {
-			if a.Type == "agent" {
-				v.Ownership, err = s.mountOwner(ctx, v.Id)
-				if err != nil {
-					return nil, err
+		var candidates []*pb.Storage
+		for rows.Next() {
+			v, err := scanStorage(rows)
+			if err != nil {
+				rows.Close()
+				return nil, err
+			}
+			candidates = append(candidates, v)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
+		if len(candidates) == 0 {
+			break
+		}
+		if err = s.capabilities(ctx, a, candidates); err != nil {
+			return nil, err
+		}
+		for _, v := range candidates {
+			if v.Capabilities.Read && (!r.OwnedOnly || v.Capabilities.ManageAccess) {
+				out.Storages = append(out.Storages, v)
+				if len(out.Storages) > limit {
+					break
 				}
 			}
-			out.Storages = append(out.Storages, v)
+		}
+		if len(candidates) < batchSize {
+			break
+		}
+		cursor = candidates[len(candidates)-1].Id
+	}
+	if len(out.Storages) > limit {
+		out.Storages = out.Storages[:limit]
+		out.NextPageToken = out.Storages[limit-1].Id
+	}
+	if a.Type == "agent" && len(out.Storages) > 0 {
+		if err := s.populateMountOwners(ctx, out.Storages); err != nil {
+			return nil, err
 		}
 	}
 	return out, nil
+}
+
+func (s *Server) populateMountOwners(ctx context.Context, storages []*pb.Storage) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	sem := make(chan struct{}, 8)
+	var wg sync.WaitGroup
+	var firstErr error
+	var errOnce sync.Once
+	for _, st := range storages {
+		wg.Add(1)
+		go func(v *pb.Storage) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				return
+			}
+			owner, err := s.mountOwner(ctx, v.Id)
+			if err != nil {
+				errOnce.Do(func() {
+					firstErr = err
+					cancel()
+				})
+				return
+			}
+			v.Ownership = owner
+		}(st)
+	}
+	wg.Wait()
+	return firstErr
 }
 
 func (s *Server) mountOwner(ctx context.Context, id string) (*pb.StorageOwnership, error) {
@@ -287,7 +386,7 @@ func (s *Server) mountOwner(ctx context.Context, id string) (*pb.StorageOwnershi
 			case "workspace":
 				return &pb.StorageOwnership{Owner: &pb.StorageOwnership_WorkspaceId{WorkspaceId: subject.ObjectId}}, nil
 			case "agent":
-				return nil, nil
+				return &pb.StorageOwnership{Owner: &pb.StorageOwnership_AgentId{AgentId: subject.ObjectId}}, nil
 			}
 		}
 	}
