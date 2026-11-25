@@ -118,7 +118,7 @@ async def driver() -> AsyncIterator[LetFS]:
                 fs.SemanticSearchRequest, fs.SemanticSearchResponse
             ],
         ) -> fs.SemanticSearchResponse:
-            assert request.root.root_node_id == root
+            assert request.root.path == "/reports"
             assert any(
                 key == "baggage"
                 and isinstance(value, str)
@@ -127,7 +127,12 @@ async def driver() -> AsyncIterator[LetFS]:
             )
             return fs.SemanticSearchResponse(
                 hits=[
-                    fs.SemanticHit(node=nodes[file], snippet="hello", path="report.txt")
+                    fs.SemanticHit(
+                        file_id=file,
+                        text="hello",
+                        path="/reports/report.pdf",
+                        artifact_path="01-intro.md",
+                    )
                 ]
             )
 
@@ -176,7 +181,9 @@ async def test_search_returns_openable_paths_under_mount(driver: LetFS) -> None:
         "path": "/home/reports",
         "hits": [
             {
-                "path": "/home/reports/report.txt",
+                "path": "/home/reports/report.pdf/01-intro.md",
+                "file_path": "/home/reports/report.pdf",
+                "artifact_path": "01-intro.md",
                 "text": "hello",
                 "storage_id": str(driver.storage),
                 "node_id": hit["node_id"],

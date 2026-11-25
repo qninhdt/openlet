@@ -8,7 +8,7 @@ import type { storageApi } from '@/lib/storage-api';
 import type { StorageNode } from '@/lib/storage-preview';
 
 const stages: Record<string, string> = {
-  pending: 'Extracting file content…',
+  queued: 'Queued for processing…',
   parsed: 'Enriching extracted content…',
   enriched: 'Indexing file content…',
   ready: 'File processing complete',

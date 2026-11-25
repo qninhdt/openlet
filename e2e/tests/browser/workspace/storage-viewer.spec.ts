@@ -26,7 +26,7 @@ test('file viewers use one toolbar, keep browser breadcrumbs and expose processi
             version: '1',
             processing:
               id === image
-                ? { stage: 'pending', ...(!retries ? { errorCode: 'PARSE_FAILED' } : {}) }
+                ? { stage: 'queued', ...(!retries ? { errorCode: 'PARSE_FAILED' } : {}) }
                 : { stage: 'ready' },
           },
         }
@@ -83,7 +83,7 @@ test('file viewers use one toolbar, keep browser breadcrumbs and expose processi
   await expect(page.getByRole('tooltip')).toContainText('PARSE_FAILED');
   await dot.click();
   await page.getByRole('button', { name: 'Retry processing' }).click();
-  await expect(viewer.getByRole('button', { name: 'Extracting file content…' })).toBeVisible();
+  await expect(viewer.getByRole('button', { name: 'Queued for processing…' })).toBeVisible();
   expect(retries).toBe(1);
   await page.keyboard.press('Escape');
   await expect(viewer).toBeVisible();

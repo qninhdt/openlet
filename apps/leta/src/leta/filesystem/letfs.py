@@ -768,9 +768,10 @@ class LetFS(BaseVFS):
                 fs.SemanticSearchRequest(
                     workspace_id=str(self.workspace),
                     storage_id=str(self.storage),
-                    root=self.locator(path),
+                    root=fs.SemanticScope(
+                        path=posixpath.normpath(posixpath.join("/", path.vfs_path))
+                    ),
                     query=query,
-                    top_k=10,
                 ),
                 metadata=[*self.actor.metadata, *carrier.items()],
                 timeout=60,
@@ -781,11 +782,16 @@ class LetFS(BaseVFS):
             "hits": [
                 {
                     "path": mounted_path(
-                        path, posixpath.join("/", path.vfs_path, hit.path)
+                        path,
+                        posixpath.join(hit.path, hit.artifact_path)
+                        if hit.artifact_path
+                        else hit.path,
                     ).virtual,
-                    "text": hit.snippet,
+                    "file_path": mounted_path(path, hit.path).virtual,
+                    "artifact_path": hit.artifact_path,
+                    "text": hit.text,
                     "storage_id": str(self.storage),
-                    "node_id": hit.node.id,
+                    "node_id": hit.file_id,
                 }
                 for hit in response.hits
             ],
