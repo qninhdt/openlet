@@ -267,6 +267,7 @@ class ComposeStack:
             self.wiremock_dir,
             mode=effective_mode,
             include_langfuse=uses_mock_langfuse(effective_mode, user_env),
+            repo_root=self.repo_root,
         )
         overlay_yaml = render_compose_overlay(
             mode=effective_mode,

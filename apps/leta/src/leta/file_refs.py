@@ -18,7 +18,9 @@ PATTERN = re.compile(
     r":(?:file|folder)\[((?:\\.|[^\]\\\n]){1,1024})\]\{name=([\w:-]+/[\w:-]+)\}"
 )
 PATH_PATTERN = re.compile(
-    r":file\[((?:\\.|[^\]\\\n]){1,1024})\]\{path=((?:\\.|[^}\\\n]){1,4096})\}"
+    r"(?<!!)\[((?:\\.|[^\]\\\n]){1,1024})\]\("
+    r"(?:<((?:/(?:shared|chat|user)|~)(?:/(?:\\.|[^>\\\n]){0,4096})?)>"
+    r"|((?:/(?:shared|chat|user)|~)(?:/(?:\\.|[^\s)\\\n]){0,4096})?))\)"
 )
 
 
@@ -54,7 +56,9 @@ async def resolve(
     parts: list[str] = []
     end = 0
     for match in PATH_PATTERN.finditer(content):
-        label, path = (re.sub(r"\\(.)", r"\1", value) for value in match.groups())
+        label = re.sub(r"\\(.)", r"\1", match.group(1))
+        raw_path = match.group(2) if match.group(2) is not None else match.group(3)
+        path = re.sub(r"\\(.)", r"\1", raw_path)
         parts.extend((content[end : match.start()], await reference(path, label)))
         end = match.end()
     parts.append(content[end:])

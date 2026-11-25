@@ -149,6 +149,14 @@ services:
     http_listen: 0.0.0.0:8000
     # web_search:
     #   api_key: ${TINYFISH_API_KEY}
+    tools:
+      hitl: true
+      multi_agent: true
+      schedule: true
+      web: true
+      execute: true
+      semantic_search: true
+      activity: true
     compaction:
       trigger_fraction: 0.8
       keep_tokens: 8192

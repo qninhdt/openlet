@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import os
 import re
 import secrets
@@ -275,8 +276,34 @@ def build_openlet_config(
     return cast(Config, merged)
 
 
+_LANGFUSE_REF_PATTERN = re.compile(r"@@@langfusePrompt:name=leta/([^|@]+)\|[^@]+@@@")
+_LETA_PROMPT_SPECS: tuple[tuple[str, dict[str, object]], ...] = (
+    ("leta", {"model": "openai/gpt-4.1-mini", "max_tokens": 8192}),
+    ("leti", {"model": "openai/gpt-4.1-mini", "max_tokens": 8192}),
+    ("compaction", {}),
+)
+
+
+def _expand_leta_prompt(prompts_dir: Path, name: str) -> str:
+    for suffix in (".j2", ".md"):
+        candidate = prompts_dir / f"{name}{suffix}"
+        if candidate.is_file():
+            raw = candidate.read_text(encoding="utf-8")
+            return _LANGFUSE_REF_PATTERN.sub(
+                lambda match: _expand_leta_prompt(prompts_dir, match.group(1)).rstrip(
+                    "\n"
+                ),
+                raw,
+            )
+    raise FileNotFoundError(f"Leta prompt source not found: {prompts_dir / name}")
+
+
 def stage_wiremock_stubs(
-    target_dir: Path, *, mode: EnvMode, include_langfuse: bool
+    target_dir: Path,
+    *,
+    mode: EnvMode,
+    include_langfuse: bool,
+    repo_root: Path | None = None,
 ) -> None:
     """Populate the project's WireMock mappings directory for mock or live mode."""
     if target_dir.exists():
@@ -284,11 +311,40 @@ def stage_wiremock_stubs(
     target_dir.mkdir(parents=True, exist_ok=True)
     target_dir.chmod(0o755)
     for stub in sorted(STUBS_PACKAGE_DIR.glob("*.json")):
-        if mode == "mock" or (
-            include_langfuse and stub.name.startswith(("langfuse-", "leta-prompt-"))
-        ):
+        if mode == "mock" or (include_langfuse and stub.name.startswith("langfuse-")):
             dest = target_dir / stub.name
             shutil.copy2(stub, dest)
+            dest.chmod(0o644)
+    if mode == "mock" or include_langfuse:
+        prompts_dir = find_repo_root(repo_root) / "apps/leta/prompts"
+        for role, prompt_config in _LETA_PROMPT_SPECS:
+            mapping = {
+                "request": {
+                    "method": "GET",
+                    "urlPathPattern": f"/api/public/v2/prompts/leta(/|%2[Ff]){role}",
+                },
+                "response": {
+                    "status": 200,
+                    "jsonBody": {
+                        "id": f"leta-{role}-fixture",
+                        "name": f"leta/{role}",
+                        "version": 1,
+                        "type": "text",
+                        "prompt": _expand_leta_prompt(prompts_dir, role),
+                        "labels": ["production"],
+                        "tags": [],
+                        "config": prompt_config,
+                        "createdAt": "2026-11-13T00:00:00Z",
+                        "updatedAt": "2026-11-13T00:00:00Z",
+                    },
+                    "headers": {"Content-Type": "application/json"},
+                },
+            }
+            dest = target_dir / f"leta-prompt-{role}.json"
+            dest.write_text(
+                json.dumps(mapping, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
             dest.chmod(0o644)
 
 

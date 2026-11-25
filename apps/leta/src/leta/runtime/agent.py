@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from contextlib import AsyncExitStack
 from datetime import datetime, timezone
@@ -8,6 +9,7 @@ from time import monotonic
 from typing import cast
 from uuid import UUID
 
+import jinja2
 from langchain.agents import create_agent  # pyright: ignore[reportUnknownVariableType]  # Native overload contains an unspecialized checkpoint generic.
 from langchain.agents.middleware import (
     AgentMiddleware,
@@ -60,12 +62,23 @@ from ..jobs.agent import RunInput, RunResult
 from ..messages import has_pending
 from .inbox import Inbox, State
 from .model import ChatModel
-from .tools import Context, tools
+from .tools import Context, ToolFlags, enabled_tools, tools
 
 meter = metrics.get_meter("openlet.leta")
 tool_duration = meter.create_histogram("openlet.leta.tool.duration", unit="s")
 state_duration = meter.create_histogram("openlet.leta.state.duration", unit="s")
 active = meter.create_up_down_counter("openlet.leta.runtime.active")
+
+_JINJA = jinja2.Environment(
+    trim_blocks=True,
+    lstrip_blocks=True,
+    autoescape=False,
+)
+
+
+def render_prompt(template: str, **variables: object) -> str:
+    rendered = _JINJA.from_string(template).render(**variables)
+    return re.sub(r"\n{3,}", "\n\n", rendered).strip()
 
 
 class InferenceCost(BaseCallbackHandler):
@@ -73,16 +86,73 @@ class InferenceCost(BaseCallbackHandler):
 
     def __init__(self, lf: Langfuse) -> None:
         self.lf = lf
+        self.input_tokens = 0
+        self.cached_input_tokens = 0
+        self.output_tokens = 0
+        self.reasoning_tokens = 0
+        self.cost_usd = 0.0
+        self.llm_calls = 0
 
     def on_llm_end(self, response: LLMResult, **kwargs: object) -> None:
         for group in response.generations:
             for generation in group:
-                if isinstance(generation, ChatGeneration):
-                    cost = response_cost(
-                        generation.message.response_metadata.get("response_cost")
-                    )
-                    if cost is not None:
-                        self.lf.update_current_generation(cost_details=cost)
+                if not isinstance(generation, ChatGeneration):
+                    continue
+                message = generation.message
+                self.llm_calls += 1
+                cost = response_cost(message.response_metadata.get("response_cost"))
+                if cost is not None:
+                    self.lf.update_current_generation(cost_details=cost)
+                    self.cost_usd += cost["total"]
+                if isinstance(message, AIMessage) and message.usage_metadata:
+                    usage = message.usage_metadata
+                    self.input_tokens += int(usage.get("input_tokens") or 0)
+                    self.output_tokens += int(usage.get("output_tokens") or 0)
+                    input_details = usage.get("input_token_details")
+                    if isinstance(input_details, dict):
+                        self.cached_input_tokens += int(
+                            input_details.get("cache_read") or 0
+                        )
+                    output_details = usage.get("output_token_details")
+                    if isinstance(output_details, dict):
+                        self.reasoning_tokens += int(
+                            output_details.get("reasoning") or 0
+                        )
+
+    def drain(self) -> tuple[int, int, int, int, float, int]:
+        delta = (
+            self.input_tokens,
+            self.cached_input_tokens,
+            self.output_tokens,
+            self.reasoning_tokens,
+            self.cost_usd,
+            self.llm_calls,
+        )
+        self.input_tokens = 0
+        self.cached_input_tokens = 0
+        self.output_tokens = 0
+        self.reasoning_tokens = 0
+        self.cost_usd = 0.0
+        self.llm_calls = 0
+        return delta
+
+
+async def flush_usage(s: Services, run_id: UUID, tracker: InferenceCost) -> None:
+    delta = tracker.drain()
+    if not any(delta):
+        return
+    async with s.db.connection() as conn:
+        await conn.execute(
+            """UPDATE runs SET
+                input_tokens = input_tokens + %s,
+                cached_input_tokens = cached_input_tokens + %s,
+                output_tokens = output_tokens + %s,
+                reasoning_tokens = reasoning_tokens + %s,
+                cost_usd = cost_usd + %s,
+                llm_calls = llm_calls + %s
+            WHERE id = %s""",
+            (*delta, run_id),
+        )
 
 
 class ToolEffects(AgentMiddleware[State, Context]):
@@ -156,6 +226,7 @@ class ExecutionModel(AgentMiddleware[State, Context]):
         compaction: TextPromptClient,
         catalog: list[BaseTool],
         box_context: str,
+        enabled: ToolFlags | None = None,
     ) -> None:
         self.s, self.defaults, self.prompt, self.compaction = (
             s,
@@ -163,7 +234,7 @@ class ExecutionModel(AgentMiddleware[State, Context]):
             prompt,
             compaction,
         )
-        self.catalog, self.box_context = catalog, box_context
+        self.catalog, self.box_context, self.enabled = catalog, box_context, enabled
         self.selection: tuple[str, ReasoningEffort, str, str, str, str] | None = None
         self.chat: ChatModel
         self.summary: SummarizationMiddleware[JSON, Context]
@@ -193,15 +264,24 @@ class ExecutionModel(AgentMiddleware[State, Context]):
         settings = self.s.config["services"]["leta"]["compaction"]
         if settings["summary_max_tokens"] > entry.max_output_tokens:
             raise ValueError("summary output budget exceeds gateway model limit")
-        self.summary_instruction = self.compaction.compile(
-            summary_max_tokens=settings["summary_max_tokens"]
+        self.summary_instruction = render_prompt(
+            self.compaction.prompt,
+            summary_max_tokens=settings["summary_max_tokens"],
         )
-        self.system = self.prompt.compile(
+        self.system = render_prompt(
+            self.prompt.prompt,
             agent_instructions=instructions,
             agent_name=name,
             agent_title=title,
             agent_handle=handle,
             box_context=self.box_context,
+            tools=(
+                self.enabled
+                if self.enabled is not None
+                else enabled_tools(
+                    self.s.config, has_web=getattr(self.s, "web", None) is not None
+                )
+            ),
         )
         gateway = self.s.config["models"]["gateway"]
         if self.selection is None or selection[:2] != self.selection[:2]:
@@ -719,7 +799,8 @@ async def run(s: Services, lf: Langfuse, input: RunInput) -> RunResult:
         )
         callback = CallbackHandler()
         callback.run_inline = True
-        config["callbacks"] = [InferenceCost(lf), callback]
+        cost_tracker = InferenceCost(lf)
+        config["callbacks"] = [cost_tracker, callback]
         config["run_name"] = trace_name
         active.add(1, {"agent_role": role})
         await events.publish(
@@ -733,7 +814,8 @@ async def run(s: Services, lf: Langfuse, input: RunInput) -> RunResult:
                 runId=str(ctx.run_id),
             ),
         )
-        catalog = tools(leta=agent["box_id"] is None, web=s.web is not None)
+        flags = enabled_tools(s.config, has_web=s.web is not None)
+        catalog = tools(leta=agent["box_id"] is None, enabled=flags)
         execution_model = ExecutionModel(
             s,
             InferenceSettings.model_validate(prompt.config),
@@ -741,6 +823,7 @@ async def run(s: Services, lf: Langfuse, input: RunInput) -> RunResult:
             compaction,
             catalog,
             await box_context(s, agent),
+            enabled=flags,
         )
         await execution_model.refresh(agent)
         # TODO: invalid-only tool calls can end a turn early; see https://github.com/langchain-ai/langchain/issues/33504.
@@ -794,39 +877,43 @@ async def run(s: Services, lf: Langfuse, input: RunInput) -> RunResult:
                 async def advance() -> None:
                     live = Live(s, ctx)
                     changed: list[BaseMessage] = []
-                    with propagate_attributes(prompt=prompt):
-                        async for item in graph.astream(  # pyright: ignore[reportUnknownMemberType]  # Upstream SDK has an untyped overload or kwargs.
-                            graph_input,
-                            config,
-                            context=ctx,
-                            stream_mode=["messages", "updates"],
-                            durability="sync",
-                        ):
-                            mode, value = cast(tuple[str, object], item)
-                            if mode == "messages":
-                                message, graph_metadata = cast(
-                                    tuple[BaseMessage, dict[str, object]], value
-                                )
-                                if (
-                                    isinstance(message, AIMessageChunk)
-                                    and graph_metadata.get("langgraph_node") == "model"
-                                ):
-                                    await live.chunk(message)
-                            elif mode == "updates":
-                                for node, update in cast(
-                                    dict[str, object], value
-                                ).items():
-                                    if node == "Inbox.before_model":
-                                        continue
-                                    if isinstance(update, dict):
-                                        changed.extend(
-                                            cast(
-                                                list[BaseMessage],
-                                                cast(dict[str, object], update).get(
-                                                    "messages", []
-                                                ),
+                    try:
+                        with propagate_attributes(prompt=prompt):
+                            async for item in graph.astream(  # pyright: ignore[reportUnknownMemberType]  # Upstream SDK has an untyped overload or kwargs.
+                                graph_input,
+                                config,
+                                context=ctx,
+                                stream_mode=["messages", "updates"],
+                                durability="sync",
+                            ):
+                                mode, value = cast(tuple[str, object], item)
+                                if mode == "messages":
+                                    message, graph_metadata = cast(
+                                        tuple[BaseMessage, dict[str, object]], value
+                                    )
+                                    if (
+                                        isinstance(message, AIMessageChunk)
+                                        and graph_metadata.get("langgraph_node")
+                                        == "model"
+                                    ):
+                                        await live.chunk(message)
+                                elif mode == "updates":
+                                    for node, update in cast(
+                                        dict[str, object], value
+                                    ).items():
+                                        if node == "Inbox.before_model":
+                                            continue
+                                        if isinstance(update, dict):
+                                            changed.extend(
+                                                cast(
+                                                    list[BaseMessage],
+                                                    cast(dict[str, object], update).get(
+                                                        "messages", []
+                                                    ),
+                                                )
                                             )
-                                        )
+                    finally:
+                        await flush_usage(s, ctx.run_id, cost_tracker)
                     await live.close()
                     started = monotonic()
                     await project(s, ctx, changed)

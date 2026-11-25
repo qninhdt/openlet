@@ -16,7 +16,7 @@ from langfuse import propagate_attributes
 from mirage import ContentType, FileStat, FileType, Session
 from openlet_api.platform.v1 import internal_pb2 as platform
 from openlet_api.platform.v1 import platform_pb2 as platform_api
-from openlet_sdk.config import JSON
+from openlet_sdk.config import JSON, Config
 from pydantic import AfterValidator, Field, model_validator
 
 from .. import (
@@ -305,7 +305,7 @@ async def inbox_send(
     task_label: Annotated[str | None, Field(max_length=255)] = None,
     copy_folders: bool = False,
 ) -> tuple[JSON, dict[str, JSON]]:
-    """Send messages to conversation user:<handle> or agent:<handle>. Cite sources with [1], [2], ... mapped to that message's sources in order. Attach file or folder paths or use :file[label]{path=path} for inline links. in_reply_to quotes a received message in the first message. Use task_label for assignments. Set copy_folders only when authorized to share an inaccessible folder's entire contents."""
+    """Send messages to conversation user:<handle> or agent:<handle>. Cite sources with [1], [2], ... mapped to that message's sources in order. Attach file or folder paths or use standard Markdown links ([label](/shared/...) or [label](</path with spaces>)) for inline workspace links. in_reply_to quotes a received message in the first message. Use task_label for assignments. Set copy_folders only when authorized to share an inaccessible folder's entire contents."""
     from ..worker import deliver
 
     ctx = runtime.context
@@ -1655,45 +1655,76 @@ async def webfetch(
     return presented("webfetch", {**metadata, "content": content}, metadata)
 
 
-def tools(*, leta: bool, web: bool = False) -> list[BaseTool]:
-    shared = [
+@dataclass(frozen=True)
+class ToolFlags:
+    hitl: bool = True
+    multi_agent: bool = True
+    schedule: bool = True
+    web: bool = False
+    execute: bool = True
+    semantic_search: bool = True
+    activity: bool = True
+
+
+def enabled_tools(config: Config, *, has_web: bool) -> ToolFlags:
+    raw = config["services"]["leta"].get("tools") or {}
+    return ToolFlags(
+        hitl=raw.get("hitl", True),
+        multi_agent=raw.get("multi_agent", True),
+        schedule=raw.get("schedule", True),
+        web=has_web and raw.get("web", True),
+        execute=raw.get("execute", True),
+        semantic_search=raw.get("semantic_search", True),
+        activity=raw.get("activity", True),
+    )
+
+
+def tools(
+    *, leta: bool, web: bool = False, enabled: ToolFlags | None = None
+) -> list[BaseTool]:
+    flags = enabled if enabled is not None else ToolFlags(web=web)
+    catalog: list[BaseTool] = [
         inbox_send,
         inbox_react,
         inbox_read,
         inbox_list,
         get_context,
         agent_status,
-        hitl_ask,
-        hitl_request,
-        hitl_get,
-        hitl_cancel,
-        schedule_get,
-        schedule_update,
-        schedule_delete,
-        activity_search,
-        activity_read,
         file_list,
         file_read,
         file_write,
         file_edit,
-        execute,
-        file_semantic_search,
     ]
-    if web:
-        shared.extend((websearch, webfetch))
-    if leta:
-        catalog = [
-            *shared,
-            leta_hitl_list,
-            leta_schedule_create,
-            leta_schedule_list,
-            box_create,
-            box_list,
-            box_get,
-            box_delete,
-        ]
-    else:
-        catalog = [*shared, leti_hitl_list, leti_schedule_create, leti_schedule_list]
+    if flags.hitl:
+        catalog.extend(
+            (
+                hitl_ask,
+                hitl_request,
+                hitl_get,
+                hitl_cancel,
+                leta_hitl_list if leta else leti_hitl_list,
+            )
+        )
+    if flags.schedule:
+        catalog.extend(
+            (
+                schedule_get,
+                schedule_update,
+                schedule_delete,
+                leta_schedule_create if leta else leti_schedule_create,
+                leta_schedule_list if leta else leti_schedule_list,
+            )
+        )
+    if flags.activity:
+        catalog.extend((activity_search, activity_read))
+    if flags.execute:
+        catalog.append(execute)
+    if flags.semantic_search:
+        catalog.append(file_semantic_search)
+    if flags.web:
+        catalog.extend((websearch, webfetch))
+    if leta and flags.multi_agent:
+        catalog.extend((box_create, box_list, box_get, box_delete))
     for item in catalog:
         item.handle_validation_error = str
     return catalog
