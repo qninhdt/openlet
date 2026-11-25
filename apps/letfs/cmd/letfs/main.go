@@ -41,6 +41,7 @@ import (
 
 type s3Settings struct {
 	ProcessingDownloadEndpoint string `yaml:"processing_download_endpoint"`
+	PublicEndpoint             string `yaml:"public_endpoint"`
 	Endpoint                   string `yaml:"endpoint"`
 	Region                     string `yaml:"region"`
 	Bucket                     string `yaml:"bucket"`
@@ -147,6 +148,16 @@ func run() error {
 		return fmt.Errorf("invalid S3 endpoint")
 	}
 	s3client := s3.New(s3.Options{TracerProvider: smithyoteltracing.Adapt(otel.GetTracerProvider()), MeterProvider: smithyotelmetrics.Adapt(otel.GetMeterProvider()), Region: object.Region, BaseEndpoint: &object.Endpoint, UsePathStyle: object.PathStyle, Credentials: credentials.NewStaticCredentialsProvider(key, secret, "")})
+	userPresign := s3.NewPresignClient(s3client)
+	if object.PublicEndpoint != "" {
+		publicURL, err := url.ParseRequestURI(object.PublicEndpoint)
+		if err != nil || (publicURL.Scheme != "http" && publicURL.Scheme != "https") || publicURL.Host == "" || publicURL.User != nil || publicURL.RawQuery != "" {
+			return fmt.Errorf("invalid S3 public endpoint")
+		}
+		userPresign = s3.NewPresignClient(s3.New(s3client.Options(), func(o *s3.Options) {
+			o.BaseEndpoint = &object.PublicEndpoint
+		}))
+	}
 	var processingPresign *s3.PresignClient
 	if object.ProcessingDownloadEndpoint != "" {
 		external, err := url.ParseRequestURI(object.ProcessingDownloadEndpoint)
@@ -193,7 +204,7 @@ func run() error {
 		return err
 	}
 	defer tc.Close()
-	app := &storage.Server{DB: db, Graph: az, S3: s3client, Presign: s3.NewPresignClient(s3client), ProcessingPresign: processingPresign, Bucket: object.Bucket, Temporal: tc, Queues: temporal.Queues, Settings: settings, FileTypes: fileTypes, Qdrant: qc, Collection: vector.Collection, Models: models, EmbeddingModel: embedding, EmbeddingDimensions: dimensions, RerankingModel: reranking}
+	app := &storage.Server{DB: db, Graph: az, S3: s3client, Presign: userPresign, ProcessingPresign: processingPresign, Bucket: object.Bucket, Temporal: tc, Queues: temporal.Queues, Settings: settings, FileTypes: fileTypes, Qdrant: qc, Collection: vector.Collection, Models: models, EmbeddingModel: embedding, EmbeddingDimensions: dimensions, RerankingModel: reranking}
 	w := worker.New(tc, temporal.Queues.LetFS, worker.Options{WorkerStopTimeout: time.Duration(runtime.ShutdownTimeoutSeconds) * time.Second})
 	storage.RegisterWorker(w, app)
 	if err = w.Start(); err != nil {
