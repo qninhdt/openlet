@@ -182,6 +182,23 @@ class ServiceConnections:
         scope.callback(self.s3.close)
 
 
+def _put_objects(services: ServiceConnections, objects: Mapping[str, Path]) -> None:
+    if not objects:
+        return
+
+    def _put(item: tuple[str, Path]) -> None:
+        key, path = item
+        _, media = classify_file(path.name)
+        with path.open("rb") as stream:
+            services.s3.put_object(
+                Bucket=services.bucket, Key=key, Body=stream, ContentType=media
+            )
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for _ in pool.map(_put, objects.items()):
+            pass
+
+
 @dataclass(slots=True)
 class _ColdBlob:
     blob_id: UUID
@@ -193,7 +210,6 @@ class _ColdBlob:
 @dataclass(slots=True)
 class _SeedBatch:
     services: ServiceConnections
-    prepare: bool
     specs: Sequence[WorkspaceSpec]
     users: dict[str, UUID]
     output: dict[str, SeededWorkspace] = field(
@@ -212,7 +228,6 @@ class _SeedBatch:
     relations: list[Relationship] = field(default_factory=list[Relationship])
     objects: dict[str, Path] = field(default_factory=dict[str, Path])
     points: list[models.PointStruct] = field(default_factory=list[models.PointStruct])
-    cold: list[_ColdBlob] = field(default_factory=list[_ColdBlob])
 
     def plan(self) -> None:
         for spec in self.specs:
@@ -527,34 +542,11 @@ class _SeedBatch:
         checksum: str,
         object_key: str,
     ) -> None:
-        config = self.services.config
-        saved = cache.read_cache(path, config)
+        saved = cache.read_cache(path, self.services.config)
         if saved is None:
-            if not self.prepare:
-                raise ValueError(
-                    f"missing or stale ingest cache for {path}. Run `openlet-env prepare-cache`."
-                )
-            parse = path.suffix.lower() in cache.PARSED
-            self.blobs.append(
-                (
-                    blob_id,
-                    workspace,
-                    object_key,
-                    size,
-                    media,
-                    checksum,
-                    path.name,
-                    "queued" if parse else "parsed",
-                    "",
-                    "",
-                )
+            raise ValueError(
+                f"missing or stale ingest cache for {path}. Run `openlet-env prepare-cache`."
             )
-            self.cold.append(
-                _ColdBlob(blob_id, path, cache.fingerprint(path, config), parse)
-            )
-            return
-        if self.prepare:
-            return
 
         file_meta = cast(dict[str, list[str]], saved.metadata.get("files", {}))
         root_meta = file_meta.get(".", ["", ""])
@@ -680,19 +672,7 @@ class _SeedBatch:
 
     def write(self) -> str:
         s = self.services
-
-        def _put(item: tuple[str, Path]) -> None:
-            key, path = item
-            _, media = classify_file(path.name)
-            with path.open("rb") as stream:
-                s.s3.put_object(
-                    Bucket=s.bucket, Key=key, Body=stream, ContentType=media
-                )
-
-        if self.objects:
-            with ThreadPoolExecutor(max_workers=8) as pool:
-                for _ in pool.map(_put, self.objects.items()):
-                    pass
+        _put_objects(s, self.objects)
 
         with s.letfs.transaction():
             node_storage = {row[0]: row[1] for row in self.nodes}
@@ -759,11 +739,9 @@ class _SeedBatch:
         for chunk in _batches(self.points, 128):
             s.qdrant.upsert(s.collection, list(chunk), wait=True)
 
-        if not self.prepare:
-            token = self._write_graph(RelationshipUpdate.Operation.OPERATION_TOUCH)
-            _copy_rows(s.platform, "workspaces", "id name state", self.workspaces)
-            return token
-        return ""
+        token = self._write_graph(RelationshipUpdate.Operation.OPERATION_TOUCH)
+        _copy_rows(s.platform, "workspaces", "id name state", self.workspaces)
+        return token
 
     def _write_graph(self, operation: RelationshipUpdate.Operation.ValueType) -> str:
         token = ""
@@ -782,20 +760,21 @@ class _SeedBatch:
 
     def cleanup(self) -> None:
         workspace_ids = [cast(UUID, row[0]) for row in self.workspaces]
-        if not self.prepare:
-            self._write_graph(RelationshipUpdate.Operation.OPERATION_DELETE)
+        self._write_graph(RelationshipUpdate.Operation.OPERATION_DELETE)
         for wid in workspace_ids:
             unseed_workspace(self.services, wid, delete_graph=False)
 
 
-async def _process_cold_blobs(batch: _SeedBatch) -> None:
-    if not batch.cold:
+async def _process_cold_blobs(
+    services: ServiceConnections, cold: Sequence[_ColdBlob]
+) -> None:
+    if not cold:
         return
-    config = batch.services.config
+    config = services.config
     temporal = config["dependencies"]["temporal"]
     settings = config["services"]["letfs"]["processing"]
     client = await Client.connect(
-        batch.services.endpoints.temporal_address,
+        services.endpoints.temporal_address,
         namespace=temporal["namespace"],
         tls=temporal["tls"],
     )
@@ -828,7 +807,7 @@ async def _process_cold_blobs(batch: _SeedBatch) -> None:
             await handle.cancel()
             raise
 
-    for group in _batches(batch.cold, 16):
+    for group in _batches(cold, 16):
         results = await asyncio.gather(
             *(process(blob) for blob in group), return_exceptions=True
         )
@@ -913,10 +892,9 @@ def seed_workspaces(
     namespace: str,
     profiles: Mapping[str, Mapping[str, str]],
     specs: Sequence[WorkspaceSpec],
-    prepare: bool = False,
     token_ttl_seconds: int = 86400,
-) -> SeedResult | dict[str, object]:
-    """Seed selected workspaces (or build `.letfs-cache` when prepare=True)."""
+) -> SeedResult:
+    """Seed selected workspaces from cached `.letfs-cache` artifacts."""
     needed = sorted(referenced_users(specs))
     subjects = {handle: f"user_{namespace[:12]}_{handle}" for handle in needed}
 
@@ -968,29 +946,16 @@ def seed_workspaces(
             token=auth.sign(subject, uid, ttl_seconds=token_ttl_seconds),
         )
 
-    batch = _SeedBatch(services=services, prepare=prepare, specs=specs, users=users)
+    batch = _SeedBatch(services=services, specs=specs, users=users)
     batch.plan()
-    if prepare and not batch.cold:
-        return {"prepared": [], "count": 0}
     try:
         zed_token = batch.write()
-        if prepare:
-            asyncio.run(_process_cold_blobs(batch))
-            for blob in batch.cold:
-                _capture_blob(services, blob)
     except BaseException:
         try:
             batch.cleanup()
         except Exception as exc:
             print(f"seed cleanup failed: {exc}", file=sys.stderr)
         raise
-
-    if prepare:
-        batch.cleanup()
-        return {
-            "prepared": [str(blob.path) for blob in batch.cold],
-            "count": len(batch.cold),
-        }
 
     return SeedResult(
         api_url=services.endpoints.api_url,
@@ -999,6 +964,94 @@ def seed_workspaces(
         users=accounts,
         workspaces=batch.output,
     )
+
+
+def prepare_workspace_cache(
+    services: ServiceConnections,
+    *,
+    specs: Sequence[WorkspaceSpec],
+) -> dict[str, object]:
+    """Run LetFS ingestion only for uncached files in `specs` and write `.letfs-cache/`."""
+    config = services.config
+    max_blob_bytes = config["services"]["letfs"]["max_blob_bytes"]
+    workspace = uuid4()
+
+    seen: set[Path] = set()
+    cold: list[_ColdBlob] = []
+    blob_rows: list[Row] = []
+    objects: dict[str, Path] = {}
+    total_size = 0
+
+    for spec in specs:
+        for storage_root in spec.storages.values():
+            for entry in iter_seed_files(storage_root):
+                if not entry.is_file() or entry.suffix.lower() not in cache.INDEXED:
+                    continue
+                resolved = entry.resolve()
+                if resolved in seen or cache.read_cache(entry, config) is not None:
+                    continue
+                seen.add(resolved)
+                if len(entry.name.encode("utf-8")) > 255:
+                    raise ValueError(f"file name exceeds 255 bytes: {entry}")
+                kind, media = classify_file(entry.name)
+                if kind == "unsupported":
+                    raise ValueError(f"unsupported file: {entry}")
+                size = entry.stat().st_size
+                if size > max_blob_bytes:
+                    raise ValueError(f"file exceeds configured size limit: {entry}")
+
+                blob_id = uuid4()
+                object_key = f"workspaces/{workspace}/blobs/{blob_id}/source"
+                parse = entry.suffix.lower() in cache.PARSED
+                objects[object_key] = entry
+                total_size += size
+                blob_rows.append(
+                    (
+                        blob_id,
+                        workspace,
+                        object_key,
+                        size,
+                        media,
+                        crc32c_base64(entry.read_bytes()),
+                        entry.name,
+                        "queued" if parse else "parsed",
+                        "",
+                        "",
+                    )
+                )
+                cold.append(
+                    _ColdBlob(blob_id, entry, cache.fingerprint(entry, config), parse)
+                )
+
+    if not cold:
+        return {"prepared": [], "count": 0}
+
+    quota = max(config["services"]["platform"]["default_quota_bytes"], total_size)
+    try:
+        _put_objects(services, objects)
+        with services.letfs.transaction():
+            _copy_rows(
+                services.letfs,
+                "workspace_storage",
+                "workspace_id quota_bytes used_bytes",
+                [(workspace, quota, total_size)],
+            )
+            _copy_rows(
+                services.letfs,
+                "blobs",
+                "id workspace_id object_key size_bytes media_type checksum source_name processing_stage title description",
+                blob_rows,
+            )
+        asyncio.run(_process_cold_blobs(services, cold))
+        for blob in cold:
+            _capture_blob(services, blob)
+    finally:
+        try:
+            unseed_workspace(services, workspace, delete_graph=False)
+        except Exception as exc:
+            print(f"prepare-cache cleanup failed: {exc}", file=sys.stderr)
+
+    return {"prepared": [str(blob.path) for blob in cold], "count": len(cold)}
 
 
 def unseed_workspace(
@@ -1102,10 +1155,6 @@ def unseed_workspace(
 
 def reset_all_data(services: ServiceConnections) -> None:
     """Wipe all workspaces, users, SpiceDB tuples, Qdrant vectors, and RustFS objects."""
-    ws_rows = services.platform.execute("SELECT id FROM workspaces").fetchall()
-    for (wid,) in ws_rows:
-        unseed_workspace(services, cast(UUID, wid), delete_graph=True)
-
     for resource_type in ("workspace", "storage", "agent", "conversation"):
         services.graph.DeleteRelationships(
             DeleteRelationshipsRequest(
@@ -1115,20 +1164,37 @@ def reset_all_data(services: ServiceConnections) -> None:
             timeout=30,
         )
 
-    services.platform.execute("DELETE FROM invitations")
-    services.platform.execute("DELETE FROM workspaces")
-    services.platform.execute("DELETE FROM users")
+    with services.platform.transaction():
+        services.platform.execute("DELETE FROM invitations")
+        services.platform.execute("DELETE FROM workspaces")
+        services.platform.execute("DELETE FROM users")
 
-    # Delete any residual S3 objects under workspaces/
+    if services.leta is not None:
+        with services.leta.transaction():
+            services.leta.execute("DELETE FROM agents")
+            services.leta.execute("DELETE FROM letas")
+
+    with services.letfs.transaction():
+        services.letfs.execute("DELETE FROM storages")
+        services.letfs.execute("DELETE FROM workspace_storage")
+
+    services.qdrant.delete(
+        services.collection,
+        models.FilterSelector(filter=models.Filter()),
+        wait=True,
+    )
+
     paginator = services.s3.get_paginator("list_objects_v2")
-    residual: list[str] = []
+    keys: list[str] = []
     for page in paginator.paginate(Bucket=services.bucket, Prefix="workspaces/"):
         for item in page.get("Contents", []):
             key = item.get("Key")
             if key:
-                residual.append(key)
-    for chunk in _batches(residual, 1000):
-        services.s3.delete_objects(
+                keys.append(key)
+    for chunk in _batches(keys, 1000):
+        resp = services.s3.delete_objects(
             Bucket=services.bucket,
             Delete={"Objects": [{"Key": key} for key in chunk]},
         )
+        if resp.get("Errors"):
+            raise RuntimeError(f"RustFS rejected object cleanup: {resp['Errors']}")

@@ -15,6 +15,7 @@ dependencies = [
   "numpy",
   "google-crc32c",
   "pyjwt[crypto]",
+  "python-dotenv",
 ]
 
 [project.scripts]

@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import base64
 import fcntl
 import json
 import os
-import struct
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
@@ -14,18 +12,12 @@ from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
-import google_crc32c
 import httpx
 import pytest
 from openlet_env import Environment
 
 DATASET_DIR = Path(__file__).resolve().parent / "dataset"
 SAMPLE_FILES_DIR = DATASET_DIR / "workspaces/acme-review/storages/shared"
-
-
-def crc32c_b64(data: bytes) -> str:
-    checksum = cast(int, google_crc32c.value(data))  # pyright: ignore[reportUnknownMemberType]
-    return base64.b64encode(struct.pack(">I", checksum)).decode("ascii")
 
 
 def poll[T](
@@ -162,7 +154,7 @@ def openlet_env(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Environmen
             meta_file.write_text(json.dumps(meta), encoding="utf-8")
         else:
             if keep and _is_gateway_healthy(env):
-                env._sync_wiremock_auth()  # pyright: ignore[reportPrivateUsage]
+                env.sync_wiremock_auth()
             else:
                 env.up(build=build)
             meta_file.write_text(
