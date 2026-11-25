@@ -64,8 +64,8 @@ rollback() {
 }
 
 healthcheck() {
-  local code attempt
-  for attempt in $(seq 1 15); do
+  local code _
+  for _ in $(seq 1 15); do
     code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:8080/v1/workspaces || true)
     if [[ "$code" == "401" ]]; then
       return 0
