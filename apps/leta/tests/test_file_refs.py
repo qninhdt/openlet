@@ -158,13 +158,21 @@ async def test_paths_resolve_without_turning_mentions_into_attachments() -> None
         )
     )
     content, attached = await file_refs.resolve(
-        r"Xem :file[Bản \[cuối\]]{path=~/thư mục/file\}.txt}",
+        r"Xem [Bản \[cuối\]](<~/thư mục/file (1).txt>) và [web](https://example.com) và ![img](/shared/pic.png)",
         [],
         stat,
     )
     assert file_refs.references(content) == [("Bản [cuối]", storage, node)]
+    assert "[web](https://example.com)" in content
+    assert "![img](/shared/pic.png)" in content
     assert attached == ""
-    stat.assert_awaited_once_with("~/thư mục/file}.txt")
+    stat.assert_awaited_once_with("~/thư mục/file (1).txt")
+    stat.reset_mock()
+    content, attached = await file_refs.resolve(
+        "Xem [Doc](/shared/5_Final Deliverables/report.pdf)", [], stat
+    )
+    assert file_refs.references(content) == [("Doc", storage, node)]
+    stat.assert_awaited_once_with("/shared/5_Final Deliverables/report.pdf")
     content, attached = await file_refs.resolve("", ["~/one.txt", "~/two.txt"], stat)
     assert content == ""
     assert file_refs.references(attached) == [("Bản [cuối].txt", storage, node)]

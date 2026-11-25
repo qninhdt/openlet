@@ -6,8 +6,9 @@ from typing import Any, cast
 
 import httpx
 import pytest
+from openlet_env.loader import crc32c_base64 as crc32c_b64
 
-from .conftest import SAMPLE_FILES_DIR, AccountFixture, crc32c_b64, new_uuid, poll
+from .conftest import SAMPLE_FILES_DIR, AccountFixture, new_uuid, poll
 
 
 @pytest.mark.parametrize(

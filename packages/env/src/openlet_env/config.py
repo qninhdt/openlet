@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import os
 import re
 import secrets
@@ -13,6 +14,7 @@ from pathlib import Path
 from typing import cast
 
 import yaml
+from dotenv import dotenv_values
 from openlet_sdk.config import Config
 
 from .models import EnvMode
@@ -37,6 +39,23 @@ INTERNAL_SECRET_KEYS: tuple[str, ...] = (
     "S3_SECRET_ACCESS_KEY",
     "CLERK_SECRET_KEY",
 )
+
+
+class _ComposeOverride(list[object]):
+    """Marker list serialized with Docker Compose's `!override` YAML tag."""
+
+
+class _ComposeDumper(yaml.SafeDumper):
+    pass
+
+
+def _represent_override(
+    dumper: yaml.SafeDumper, data: _ComposeOverride
+) -> yaml.SequenceNode:
+    return dumper.represent_sequence("!override", list(data))
+
+
+_ComposeDumper.add_representer(_ComposeOverride, _represent_override)
 
 
 def find_repo_root(start: Path | None = None) -> Path:
@@ -79,25 +98,10 @@ def deep_merge(
 
 
 def load_dotenv(path: Path) -> dict[str, str]:
-    """Parse a simple .env file without mutating os.environ."""
-    values: dict[str, str] = {}
+    """Parse a .env file without mutating os.environ."""
     if not path.is_file():
-        return values
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("export "):
-            line = line[7:].strip()
-        if "=" not in line:
-            continue
-        key, raw_value = line.split("=", 1)
-        key = key.strip()
-        value = raw_value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-            value = value[1:-1]
-        values[key] = value
-    return values
+        return {}
+    return {k: v for k, v in dotenv_values(path).items() if v is not None}
 
 
 def ensure_secrets(path: Path) -> dict[str, str]:
@@ -206,230 +210,100 @@ def build_openlet_config(
     rustfs_port: int,
     user_env: Mapping[str, str],
     override: Mapping[str, object] | None = None,
+    repo_root: Path | None = None,
 ) -> Config:
-    """Synthesize a self-contained non-production openlet.yaml mapping."""
-    mock_langfuse = uses_mock_langfuse(mode, user_env)
+    """Load `infra/config/openlet.example.yaml` as base and merge non-production overrides."""
+    example_path = find_repo_root(repo_root) / "infra/config/openlet.example.yaml"
+    raw_base: object = yaml.safe_load(example_path.read_text(encoding="utf-8"))
+    if not isinstance(raw_base, dict):
+        raise ValueError(f"expected YAML mapping in {example_path}")
+    base = cast(dict[str, object], raw_base)
+    base.pop("observability", None)
+
     langfuse_base = (
         "http://wiremock:8080"
-        if mock_langfuse
+        if uses_mock_langfuse(mode, user_env)
         else (
             user_env.get("LANGFUSE_BASE_URL", "").strip()
             or "https://cloud.langfuse.com"
         )
     )
-    leta_section: dict[str, object] = {
-        "http_listen": "0.0.0.0:8000",
-        "http_target": "leta-api:8000",
-        "compaction": {
-            "trigger_fraction": 0.8,
-            "keep_tokens": 8192,
-            "summary_max_tokens": 2048,
-        },
-        "database": {
-            "name": "leta",
-            "user": "leta",
-            "password": "${LETA_DB_PASSWORD}",
-        },
-    }
-    if mode == "live" and user_env.get("TINYFISH_API_KEY", "").strip():
-        leta_section["web_search"] = {"api_key": "${TINYFISH_API_KEY}"}
-
-    base: dict[str, object] = {
+    nonprod: dict[str, object] = {
         "runtime": {
             "environment": "test" if mode == "mock" else "development",
-            "log_level": "info",
             "shutdown_timeout_seconds": 15 if mode == "mock" else 60,
         },
-        "grpc": {"max_receive_bytes": 16777216},
-        "telemetry": {
-            "otlp_endpoint": None,
-            "trace_sample_ratio": 0.1,
-            "metrics_export_interval_seconds": 60,
-        },
-        "langfuse": {
-            "base_url": langfuse_base,
-            "public_key": "${LANGFUSE_PUBLIC_KEY}",
-            "secret_key": "${LANGFUSE_SECRET_KEY}",
-            "prompt_label": "production",
-        },
+        "telemetry": {"otlp_endpoint": None, "trace_sample_ratio": 0.1},
+        "langfuse": {"base_url": langfuse_base},
         "auth": {
             "clerk": {
                 "issuer": "http://wiremock:8080",
                 "jwks_url": "http://wiremock:8080/.well-known/jwks.json",
-                "audience": "openlet",
-                "user_id_metadata_key": "openlet_user_id",
                 "api_url": "http://wiremock:8080/v1",
-                "secret_key": "${CLERK_SECRET_KEY}",
             }
         },
         "dependencies": {
-            "postgres": {"host": "postgres", "port": 5432, "sslmode": "disable"},
-            "temporal": {
-                "address": "temporal:7233",
-                "namespace": "openlet",
-                "tls": False,
-                "queues": {
-                    "platform": "openlet-platform",
-                    "letfs": "openlet-letfs",
-                    "ingest_cpu": "openlet-ingest-cpu",
-                    "ingest_io": "openlet-ingest-io",
-                    "leta": "openlet-leta",
-                    "leta_runtime": "openlet-leta-runtime",
-                    "leta_bridge": "openlet-leta-bridge",
-                },
-            },
-            "redis": {
-                "address": "redis:6379",
-                "database": 0,
-                "password": "${REDIS_PASSWORD}",
-            },
-            "spicedb": {
-                "address": "spicedb:50051",
-                "tls": False,
-                "key": "${SPICEDB_KEY}",
-            },
             "s3": {
                 "endpoint": "http://rustfs:9000",
                 "public_endpoint": f"http://127.0.0.1:{rustfs_port}",
-                "region": "us-east-1",
-                "bucket": "openlet",
-                "path_style": True,
-                "access_key_id": "${S3_ACCESS_KEY_ID}",
-                "secret_access_key": "${S3_SECRET_ACCESS_KEY}",
-            },
-            "qdrant": {
-                "address": "qdrant:6334",
-                "tls": False,
-                "api_key": "${QDRANT_API_KEY}",
-                "collection": "files",
-            },
+            }
         },
         "models": {
-            "gateway": {
-                "base_url": "http://litellm:4000",
-                "api_key": "${LITELLM_MASTER_KEY}",
-                "timeout_seconds": 90,
-            },
-            "embedding": {
-                "model": "openai/text-embedding-3-large",
-                "dimensions": 1536,
-            },
             "reranking": {"model": "cohere/rerank-v3.5"} if mode == "mock" else None,
-            "enrichment": {
-                "output_mode": "tools",
-                "max_input_characters": 24000,
-                "max_image_pixels": 25000000,
-                "image_max_side": 1600,
-                "image_jpeg_quality": 85,
-            },
         },
         "services": {
-            "gateway": {
-                "http_listen": "0.0.0.0:8080",
-                "public_url": f"http://127.0.0.1:{gateway_port}",
-            },
-            "platform": {
-                "grpc_listen": "0.0.0.0:9090",
-                "grpc_target": "platform:9090",
-                "database": {
-                    "name": "platform",
-                    "user": "platform",
-                    "password": "${PLATFORM_DB_PASSWORD}",
-                },
-                "max_members": 100,
-                "default_quota_bytes": 10737418240,
-                "invitation_ttl_seconds": 604800,
-                "idempotency_retention_seconds": 86400,
-                "maintenance": {"interval_seconds": 300},
-            },
-            "letfs": {
-                "semantic_search": {"candidate_limit": 50, "result_limit": 10},
-                "grpc_listen": "0.0.0.0:9090",
-                "grpc_target": "letfs:9090",
-                "database": {
-                    "name": "letfs",
-                    "user": "letfs",
-                    "password": "${LETFS_DB_PASSWORD}",
-                },
-                "max_text_bytes": 1048576,
-                "max_blob_bytes": 104857600,
-                "multipart_threshold_bytes": (10485760 if mode == "mock" else 16777216),
-                "multipart_part_bytes": 8388608,
-                "upload_url_ttl_seconds": 900,
-                "download_url_ttl_seconds": 300,
-                "idempotency_retention_seconds": 86400,
-                "processing": {
-                    "max_artifacts": 512,
-                    "max_manifest_text_bytes": 8388608,
-                    "max_artifact_blob_bytes": 268435456,
-                    "parse_timeout_seconds": 600 if mode == "mock" else 1200,
-                    "enrich_index_timeout_seconds": 900,
-                },
-                "maintenance": {
-                    "interval_seconds": 300,
-                    "object_gc_grace_seconds": 86400,
-                },
-            },
-            "leta": leta_section,
-            "letfs_ingest": {
-                "cpu": {
-                    "activity_concurrency": 8,
-                    "office_concurrency": 2,
-                    "split_tokens": 4096,
-                    "datalab": {
-                        "concurrency": 2,
-                        "result_concurrency": 2,
-                        "requests_per_minute": 10,
-                        "max_response_bytes": 100663296,
-                    },
-                    "limits": {
-                        "max_pages": 50,
-                        "max_page_pixels": 25000000,
-                        "max_office_expanded_bytes": 536870912,
-                        "max_spreadsheet_cells": 1000000,
-                        "max_sheets": 100,
-                        "max_output_bytes": 268435456,
-                    },
-                },
-                "io": {
-                    "activity_concurrency": 12,
-                    "model_concurrency": 16,
-                    "embedding_batch_size": 256,
-                    "chunk_size_tokens": 512,
-                    "chunk_overlap_tokens": 64,
-                },
-            },
-        },
-        "deployment": {
-            "postgres": {
-                "admin_user": "openlet_admin",
-                "admin_password": "${POSTGRES_ADMIN_PASSWORD}",
-            },
-            "temporal": {
-                "database": {
-                    "name": "temporal",
-                    "user": "temporal",
-                    "password": "${TEMPORAL_DB_PASSWORD}",
-                },
-                "visibility_database": "temporal_visibility",
-                "namespace_retention_hours": 168,
-            },
-            "spicedb": {
-                "database": {
-                    "name": "spicedb",
-                    "user": "spicedb",
-                    "password": "${SPICEDB_DB_PASSWORD}",
+            "gateway": {"public_url": f"http://127.0.0.1:{gateway_port}"},
+            **(
+                {
+                    "letfs": {
+                        "multipart_threshold_bytes": 10485760,
+                        "processing": {"parse_timeout_seconds": 600},
+                    }
                 }
-            },
+                if mode == "mock"
+                else {}
+            ),
+            **(
+                {"leta": {"web_search": {"api_key": "${TINYFISH_API_KEY}"}}}
+                if mode == "live" and user_env.get("TINYFISH_API_KEY", "").strip()
+                else {}
+            ),
         },
     }
+    merged = deep_merge(base, nonprod)
     if override:
-        base = deep_merge(base, override)
-    return cast(Config, base)
+        merged = deep_merge(merged, override)
+    return cast(Config, merged)
+
+
+_LANGFUSE_REF_PATTERN = re.compile(r"@@@langfusePrompt:name=leta/([^|@]+)\|[^@]+@@@")
+_LETA_PROMPT_SPECS: tuple[tuple[str, dict[str, object]], ...] = (
+    ("leta", {"model": "openai/gpt-4.1-mini", "max_tokens": 8192}),
+    ("leti", {"model": "openai/gpt-4.1-mini", "max_tokens": 8192}),
+    ("compaction", {}),
+)
+
+
+def _expand_leta_prompt(prompts_dir: Path, name: str) -> str:
+    for suffix in (".j2", ".md"):
+        candidate = prompts_dir / f"{name}{suffix}"
+        if candidate.is_file():
+            raw = candidate.read_text(encoding="utf-8")
+            return _LANGFUSE_REF_PATTERN.sub(
+                lambda match: _expand_leta_prompt(prompts_dir, match.group(1)).rstrip(
+                    "\n"
+                ),
+                raw,
+            )
+    raise FileNotFoundError(f"Leta prompt source not found: {prompts_dir / name}")
 
 
 def stage_wiremock_stubs(
-    target_dir: Path, *, mode: EnvMode, include_langfuse: bool
+    target_dir: Path,
+    *,
+    mode: EnvMode,
+    include_langfuse: bool,
+    repo_root: Path | None = None,
 ) -> None:
     """Populate the project's WireMock mappings directory for mock or live mode."""
     if target_dir.exists():
@@ -437,11 +311,40 @@ def stage_wiremock_stubs(
     target_dir.mkdir(parents=True, exist_ok=True)
     target_dir.chmod(0o755)
     for stub in sorted(STUBS_PACKAGE_DIR.glob("*.json")):
-        if mode == "mock" or (
-            include_langfuse and stub.name.startswith(("langfuse-", "leta-prompt-"))
-        ):
+        if mode == "mock" or (include_langfuse and stub.name.startswith("langfuse-")):
             dest = target_dir / stub.name
             shutil.copy2(stub, dest)
+            dest.chmod(0o644)
+    if mode == "mock" or include_langfuse:
+        prompts_dir = find_repo_root(repo_root) / "apps/leta/prompts"
+        for role, prompt_config in _LETA_PROMPT_SPECS:
+            mapping = {
+                "request": {
+                    "method": "GET",
+                    "urlPathPattern": f"/api/public/v2/prompts/leta(/|%2[Ff]){role}",
+                },
+                "response": {
+                    "status": 200,
+                    "jsonBody": {
+                        "id": f"leta-{role}-fixture",
+                        "name": f"leta/{role}",
+                        "version": 1,
+                        "type": "text",
+                        "prompt": _expand_leta_prompt(prompts_dir, role),
+                        "labels": ["production"],
+                        "tags": [],
+                        "config": prompt_config,
+                        "createdAt": "2026-11-13T00:00:00Z",
+                        "updatedAt": "2026-11-13T00:00:00Z",
+                    },
+                    "headers": {"Content-Type": "application/json"},
+                },
+            }
+            dest = target_dir / f"leta-prompt-{role}.json"
+            dest.write_text(
+                json.dumps(mapping, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
             dest.chmod(0o644)
 
 
@@ -456,7 +359,7 @@ def render_compose_overlay(
     wiremock_dir: Path,
     shared_uv_cache: Path,
 ) -> str:
-    """Render compose.env.yaml as YAML text (with Compose `!override` where needed)."""
+    """Render compose.env.yaml as YAML text (with Compose `!override` tags)."""
     shared_uv_cache.mkdir(parents=True, exist_ok=True)
     services: dict[str, dict[str, object]] = {
         "postgres": {"ports": ["127.0.0.1::5432"]},
@@ -525,13 +428,20 @@ def render_compose_overlay(
         "litellm": {
             "healthcheck": {"interval": "2s", "timeout": "5s", "retries": 45},
             **(
-                {"depends_on": {"wiremock": {"condition": "service_healthy"}}}
+                {
+                    "depends_on": {"wiremock": {"condition": "service_healthy"}},
+                    "volumes": _ComposeOverride(
+                        [
+                            f"{STUBS_PACKAGE_DIR / 'litellm.yaml'}:/etc/litellm/config.yaml:ro"
+                        ]
+                    ),
+                }
                 if mode == "mock"
                 else {}
             ),
         },
         "envoy": {
-            "ports": [f"127.0.0.1:{gateway_port}:8080"],
+            "ports": _ComposeOverride([f"127.0.0.1:{gateway_port}:8080"]),
         },
     }
 
@@ -552,20 +462,7 @@ def render_compose_overlay(
         "services": services,
         "volumes": {"rustfs-data": {}},
     }
-    text = yaml.safe_dump(overlay, sort_keys=False).replace("$", "$$")
-
-    # Inject `!override` for envoy ports (replaces configure.py port list) and mock litellm config.
-    text = text.replace(
-        f"  envoy:\n    ports:\n    - 127.0.0.1:{gateway_port}:8080",
-        f"  envoy:\n    ports: !override\n    - 127.0.0.1:{gateway_port}:8080",
-    )
-    if mode == "mock":
-        mock_litellm = STUBS_PACKAGE_DIR / "litellm.yaml"
-        text = text.replace(
-            "  litellm:\n",
-            f"  litellm:\n    volumes: !override\n    - {mock_litellm}:/etc/litellm/config.yaml:ro\n",
-        )
-    return text
+    return yaml.dump(overlay, Dumper=_ComposeDumper, sort_keys=False).replace("$", "$$")
 
 
 def read_user_env(repo_root: Path, dotenv_path: Path | None = None) -> dict[str, str]:

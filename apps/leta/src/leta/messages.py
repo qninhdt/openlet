@@ -37,7 +37,7 @@ class Message(Input):
     schedule_title: str | None = None
     content: str = Field(max_length=32000)
     file_refs: list[JSON] = Field(default_factory=list[JSON], max_length=20)
-    sources: list[JSON] = Field(default_factory=list[JSON], max_length=20)
+    sources: list[JSON] = Field(default_factory=list[JSON], max_length=64)
     silent: bool = False
     input_type: Literal["message", "reaction"] = "message"
     input_payload: dict[str, JSON] | None = None

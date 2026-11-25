@@ -764,7 +764,7 @@ async def main() -> None:
                         activities.apply_native_schedule,
                         activities.load_schedule_occurrence,
                     ],
-                    max_concurrent_activities=8,
+                    max_concurrent_activities=32,
                     graceful_shutdown_timeout=graceful,
                 )
             )
@@ -773,7 +773,7 @@ async def main() -> None:
                     services.temporal,
                     task_queue=queues["leta_runtime"],
                     activities=[activities.run_agent],
-                    max_concurrent_activities=4,
+                    max_concurrent_activities=32,
                     graceful_shutdown_timeout=graceful,
                 )
             )
@@ -788,7 +788,7 @@ async def main() -> None:
                         activities.cleanup_leta,
                         activities.delete_workspace_agents,
                     ],
-                    max_concurrent_activities=8,
+                    max_concurrent_activities=32,
                     graceful_shutdown_timeout=graceful,
                 )
             )

@@ -547,3 +547,113 @@ def test_compaction_config_requires_positive_tail_and_summary_budgets() -> None:
     settings["summary_max_tokens"] = 0
     with pytest.raises(ValueError, match="summary_max_tokens"):
         validate(config)
+
+
+def test_jinja_prompt_rendering_respects_tool_flags_and_escapes_instructions() -> None:
+    import re
+    from pathlib import Path
+
+    from leta.runtime.agent import render_prompt
+    from leta.runtime.tools import ToolFlags
+
+    prompts_dir = Path(__file__).resolve().parents[1] / "prompts"
+    common = (prompts_dir / "common.j2").read_text(encoding="utf-8").rstrip("\n")
+    leta_raw = (prompts_dir / "leta.j2").read_text(encoding="utf-8")
+    expanded = re.sub(r"@@@langfusePrompt:name=leta/common\|[^@]+@@@", common, leta_raw)
+
+    full = render_prompt(
+        expanded,
+        agent_name="Nova",
+        agent_title="Analyst",
+        agent_handle="nova-the-analyst",
+        agent_instructions="Literal {{ not_evaluated }} {% raw %}",
+        box_context="",
+        tools=ToolFlags(web=True),
+    )
+    assert "## Sandbox" in full
+    assert "## Scheduler" in full
+    assert "## Multi-Agent System - Leta" in full
+    assert "activity_search" in full
+    assert "web destinations" in full
+    assert "Literal {{ not_evaluated }} {% raw %}" in full
+
+    minimal = render_prompt(
+        expanded,
+        agent_name="Nova",
+        agent_title="Analyst",
+        agent_handle="nova-the-analyst",
+        agent_instructions="",
+        box_context="",
+        tools=ToolFlags(
+            hitl=False,
+            multi_agent=False,
+            schedule=False,
+            web=False,
+            execute=False,
+            semantic_search=False,
+            activity=False,
+        ),
+    )
+    assert "## Sandbox" not in minimal
+    assert "## Scheduler" not in minimal
+    assert "## Multi-Agent System" not in minimal
+    assert "activity_search" not in minimal
+    assert "web destinations" not in minimal
+    assert "Request storage access" not in minimal
+    assert "\n\n\n" not in minimal
+
+
+def test_inference_cost_accumulates_and_drains_usage() -> None:
+    from types import SimpleNamespace
+    from typing import cast
+    from unittest.mock import MagicMock
+
+    from langchain_core.messages import AIMessage
+    from langchain_core.outputs import ChatGeneration, LLMResult
+    from langfuse import Langfuse
+    from leta.runtime.agent import InferenceCost
+
+    lf = cast(Langfuse, SimpleNamespace(update_current_generation=MagicMock()))
+    tracker = InferenceCost(lf)
+    tracker.on_llm_end(
+        LLMResult(
+            generations=[
+                [
+                    ChatGeneration(
+                        message=AIMessage(
+                            content="ok",
+                            response_metadata={"response_cost": 0.0125},
+                            usage_metadata={
+                                "input_tokens": 1000,
+                                "output_tokens": 250,
+                                "total_tokens": 1250,
+                                "input_token_details": {"cache_read": 400},
+                                "output_token_details": {"reasoning": 100},
+                            },
+                        )
+                    )
+                ]
+            ]
+        )
+    )
+    tracker.on_llm_end(
+        LLMResult(
+            generations=[
+                [
+                    ChatGeneration(
+                        message=AIMessage(
+                            content="done",
+                            response_metadata={},
+                            usage_metadata={
+                                "input_tokens": 500,
+                                "output_tokens": 50,
+                                "total_tokens": 550,
+                            },
+                        )
+                    )
+                ]
+            ]
+        )
+    )
+    assert tracker.drain() == (1500, 400, 300, 100, 0.0125, 2)
+    assert tracker.drain() == (0, 0, 0, 0, 0.0, 0)

@@ -1,0 +1,65 @@
+[project]
+name = "openlet-evals"
+version = "0.1.0"
+description = "Standalone evaluation framework for Openlet capabilities (retrieval, agent tasks)."
+requires-python = ">=3.14,<3.15"
+dependencies = [
+  "deepeval==4.3.5",
+  "httpx>=0.28.1",
+  "jinja2>=3.1.0",
+  "numpy>=2.2.0",
+  "openai>=1.70.0",
+  "openlet-env",
+  "pydantic>=2.10.0",
+  "python-dotenv>=1.0.0",
+  "pyyaml>=6.0.2",
+  "qdrant-client>=1.16.0",
+]
+
+[project.scripts]
+openlet-eval = "openlet_evals.cli:main"
+
+[dependency-groups]
+dev = [
+  "pyright>=1.1.414",
+  "pytest>=8.3.0",
+  "pytest-asyncio>=0.25.0",
+  "ruff>=0.9.0",
+  "types-pyyaml>=6.0.12",
+]
+
+[build-system]
+requires = ["hatchling==1.33.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/openlet_evals"]
+
+[tool.uv.sources]
+openlet-env = { path = "../packages/env", editable = true }
+openlet-sdk = { path = "../packages/sdk-python", editable = true }
+
+[tool.ruff]
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "ANN"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+filterwarnings = [
+  "ignore::DeprecationWarning:deepeval.*",
+  "ignore::SyntaxWarning:deepeval.*",
+]
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.14"
+typeCheckingMode = "strict"
+extraPaths = ["src", "../packages/env/src", "../packages/sdk-python/src"]
+reportMissingParameterType = "error"
+reportMissingTypeArgument = "error"
+reportUnnecessaryTypeIgnoreComment = "error"

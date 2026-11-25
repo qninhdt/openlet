@@ -74,6 +74,62 @@ def test_native_tools_expose_only_agent_arguments() -> None:
     assert "target_box" not in schedule.model_fields
 
 
+def test_tool_flags_filter_groups_and_keep_core() -> None:
+    from leta.runtime.tools import ToolFlags, enabled_tools
+    from openlet_sdk.config import Config
+
+    cfg = cast(
+        Config,
+        {
+            "services": {
+                "leta": {
+                    "tools": {
+                        "hitl": False,
+                        "multi_agent": False,
+                        "schedule": False,
+                        "web": True,
+                        "execute": False,
+                        "semantic_search": False,
+                        "activity": False,
+                    }
+                }
+            }
+        },
+    )
+    flags = enabled_tools(cfg, has_web=False)
+    assert flags == ToolFlags(
+        hitl=False,
+        multi_agent=False,
+        schedule=False,
+        web=False,
+        execute=False,
+        semantic_search=False,
+        activity=False,
+    )
+    assert enabled_tools(cfg, has_web=True).web is True
+    names = {tool.name for tool in tools(leta=True, enabled=flags)}
+    assert names == {
+        "inbox_send",
+        "inbox_react",
+        "inbox_read",
+        "inbox_list",
+        "get_context",
+        "agent_status",
+        "file_list",
+        "file_read",
+        "file_write",
+        "file_edit",
+    }
+    with_web = {tool.name for tool in tools(leta=True, enabled=ToolFlags(web=True))}
+    assert {
+        "websearch",
+        "webfetch",
+        "execute",
+        "file_semantic_search",
+        "box_create",
+    } <= with_web
+
+
 async def test_native_toolnode_injects_runtime_and_validates_arguments() -> None:
     builder = StateGraph(State, context_schema=Context)
     builder.add_node(  # pyright: ignore[reportUnknownMemberType]  # Native overload leaves cache-policy generics unspecified.
@@ -653,7 +709,7 @@ async def test_inbox_send_paths_and_explicit_attachments(
     }
     body: dict[str, object] = {}
     if case in ("mention", "mixed"):
-        body["content"] = "Xem :file[Bản mới]{path=~/one.txt}"
+        body["content"] = "Xem [Bản mới](~/one.txt)"
     if case in ("files-only", "mixed", "teammate"):
         body["attachments"] = ["~/one.txt", "two.png", "/home/one.txt"]
     if case in ("missing", "directory", "virtual-directory", "several"):
@@ -703,7 +759,7 @@ async def test_inbox_send_paths_and_explicit_attachments(
     assert isinstance(entry["file_refs"], list)
     assert isinstance(entry["content"], str)
     assert len(entry["file_refs"]) == expected_files
-    assert "{path=" not in entry["content"]
+    assert "(~/one.txt)" not in entry["content"]
     if case == "mention":
         assert f"{{name={storage}/{one}}}" in entry["content"]
     if case == "directory":

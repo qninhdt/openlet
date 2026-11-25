@@ -20,6 +20,9 @@ model_list:
       access_groups: [leta]
       supported_reasoning_efforts: [low, medium, high]
       supports_response_schema: false
+      input_cost_per_token: 0.000002
+      cache_read_input_token_cost: 0.0000001
+      output_cost_per_token: 0.00001
   - model_name: openai/gpt-6-luna
     litellm_params:
       model: gpt-6-luna
@@ -28,10 +31,13 @@ model_list:
       allowed_openai_params: [reasoning_effort]
     model_info:
       max_input_tokens: 131072
-      base_model: gpt-6.2-sol
+      base_model: gpt-6-luna
       access_groups: [leta]
       supported_reasoning_efforts: [low, medium, high, xhigh, max]
       supports_response_schema: false
+      input_cost_per_token: 0.0000001
+      cache_read_input_token_cost: 0.00000001
+      output_cost_per_token: 0.0000005
   - model_name: deepseek/deepseek-v4.1-flash
     litellm_params:
       model: deepseek-v4.1-flash
@@ -44,12 +50,17 @@ model_list:
       supported_reasoning_efforts: [low, medium, high]
       access_groups: [leta]
       supports_response_schema: false
+      input_cost_per_token: 0.0000003
+      cache_read_input_token_cost: 0.000000006
+      output_cost_per_token: 0.0000012
   - model_name: openai/text-embedding-3-large
     litellm_params:
       model: openai/text-embedding-3-large
       litellm_credential_name: vilao
     model_info:
       mode: embedding
+      input_cost_per_token: 0.00000013
+      output_cost_per_token: 0.0
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

@@ -1,0 +1,13 @@
+name: retrieval-baseline
+dataset_file: datasets/letfs/retrieval.json
+datasets_dir: datasets
+mode: hybrid
+top_k: 5
+prefetch_limit: 50
+embedding_model: text-embedding-3-large
+embedding_dimensions: 1536
+use_judge: true
+judge_model: gpt-6-luna
+judge_reasoning_effort: max
+judge_threshold: 0.7
+concurrency: 20

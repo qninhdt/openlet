@@ -207,12 +207,23 @@ class WebSearchSettings(TypedDict):
     api_key: str
 
 
+class LetaToolsSettings(TypedDict):
+    hitl: NotRequired[bool]
+    multi_agent: NotRequired[bool]
+    schedule: NotRequired[bool]
+    web: NotRequired[bool]
+    execute: NotRequired[bool]
+    semantic_search: NotRequired[bool]
+    activity: NotRequired[bool]
+
+
 class LetaSettings(TypedDict):
     http_listen: str
     http_target: str
     database: DatabaseSettings
     compaction: CompactionSettings
     web_search: NotRequired[WebSearchSettings]
+    tools: NotRequired[LetaToolsSettings]
 
 
 class Services(TypedDict):

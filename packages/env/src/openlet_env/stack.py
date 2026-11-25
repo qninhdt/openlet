@@ -10,8 +10,10 @@ import shutil
 import subprocess
 import sys
 from collections.abc import Mapping
+from dataclasses import asdict
 from pathlib import Path
 from typing import Protocol, cast
+from uuid import uuid4
 
 import boto3
 import yaml
@@ -21,6 +23,7 @@ from openlet_sdk.config import Config
 from .config import (
     build_openlet_config,
     build_runtime_env,
+    deep_merge,
     ensure_secrets,
     find_repo_root,
     pick_free_port,
@@ -86,19 +89,8 @@ class ComposeStack:
 
     def save_state(self, state: EnvState) -> None:
         self.directory.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "project": state.project,
-            "mode": state.mode,
-            "namespace": state.namespace,
-            "profiles": list(state.profiles),
-            "gateway_port": state.gateway_port,
-            "rustfs_port": state.rustfs_port,
-            "wiremock_port": state.wiremock_port,
-            "seeded_workspaces": state.seeded_workspaces,
-            "accounts": state.accounts,
-        }
         self.state_path.write_text(
-            json.dumps(payload, indent=2) + "\n", encoding="utf-8"
+            json.dumps(asdict(state), indent=2) + "\n", encoding="utf-8"
         )
         self.state_path.chmod(0o600)
 
@@ -170,8 +162,6 @@ class ComposeStack:
         wait_timeout: int = 180,
     ) -> tuple[EnvState, bool]:
         """Prepare config + overlays and boot the Compose stack. Returns (state, fell_back_to_mock)."""
-        from uuid import uuid4
-
         if not self.state_path.exists():
             existing = subprocess.run(
                 [
@@ -239,8 +229,6 @@ class ComposeStack:
                 raise ValueError(f"override YAML must be a mapping: {override_path}")
             merged_override = cast(dict[str, object], raw_override)
         if config_overrides is not None:
-            from .config import deep_merge
-
             merged_override = (
                 deep_merge(merged_override, config_overrides)
                 if merged_override is not None
@@ -253,10 +241,14 @@ class ComposeStack:
             rustfs_port=state.rustfs_port,
             user_env=user_env,
             override=merged_override,
+            repo_root=self.repo_root,
         )
-        self.config_path.write_text(
-            yaml.safe_dump(openlet_cfg, sort_keys=False), encoding="utf-8"
+        prev_config = (
+            self.config_path.read_text("utf-8") if self.config_path.is_file() else None
         )
+        new_config = yaml.safe_dump(openlet_cfg, sort_keys=False)
+        config_changed = prev_config is not None and prev_config != new_config
+        self.config_path.write_text(new_config, encoding="utf-8")
         # Containers run as non-root UIDs and need read access to the mounted file.
         self.config_path.chmod(0o644)
 
@@ -278,6 +270,7 @@ class ComposeStack:
             self.wiremock_dir,
             mode=effective_mode,
             include_langfuse=uses_mock_langfuse(effective_mode, user_env),
+            repo_root=self.repo_root,
         )
         overlay_yaml = render_compose_overlay(
             mode=effective_mode,
@@ -301,6 +294,7 @@ class ComposeStack:
             "--wait-timeout",
             str(wait_timeout),
             "--remove-orphans",
+            *(["--force-recreate"] if config_changed else []),
             *(["--build"] if build else []),
             profiles=profiles,
         )

@@ -12,11 +12,13 @@ from typing import cast
 from uuid import uuid4
 
 import httpx
+import psycopg
 
 from .auth import LocalAuth
 from .dataset import ensure_dataset, read_seed_specs
 from .loader import (
     ServiceConnections,
+    prepare_workspace_cache,
     reset_all_data,
     seed_workspaces,
     unseed_workspace,
@@ -104,11 +106,11 @@ class Environment:
         self._endpoints = self.stack.endpoints()
         self._auth = LocalAuth.load_or_create(self.stack.directory)
         self._wiremock = WireMockClient(self._endpoints.wiremock_url)
-        self._sync_wiremock_auth()
+        self.sync_wiremock_auth()
         self._write_dev_accounts()
         return self._endpoints
 
-    def _sync_wiremock_auth(self) -> None:
+    def sync_wiremock_auth(self) -> None:
         self.wiremock.register_jwks(self.auth.jwks())
         claim_key = self.stack.load_config()["auth"]["clerk"].get(
             "user_id_metadata_key", "openlet_user_id"
@@ -175,11 +177,20 @@ class Environment:
             )
         )
         profiles, specs = read_seed_specs(target_dir, workspaces)
-        self._sync_wiremock_auth()
+        self.sync_wiremock_auth()
 
         if idempotent:
+            existing_ids = self._existing_workspace_ids(
+                [
+                    wid
+                    for spec in specs
+                    if (wid := self.state.seeded_workspaces.get(spec.handle))
+                ]
+            )
             missing_specs = [
-                spec for spec in specs if not self._workspace_exists(spec.handle)
+                spec
+                for spec in specs
+                if self.state.seeded_workspaces.get(spec.handle) not in existing_ids
             ]
             if not missing_specs:
                 self._write_dev_accounts()
@@ -194,18 +205,14 @@ class Environment:
 
         with ExitStack() as scope:
             services = self._connect(scope)
-            result = cast(
-                SeedResult,
-                seed_workspaces(
-                    services,
-                    auth=self.auth,
-                    wiremock=self.wiremock,
-                    namespace=self.state.namespace,
-                    profiles=profiles,
-                    specs=specs,
-                    prepare=False,
-                    token_ttl_seconds=DEV_TOKEN_TTL_SECONDS,
-                ),
+            result = seed_workspaces(
+                services,
+                auth=self.auth,
+                wiremock=self.wiremock,
+                namespace=self.state.namespace,
+                profiles=profiles,
+                specs=specs,
+                token_ttl_seconds=DEV_TOKEN_TTL_SECONDS,
             )
 
         state = self.state
@@ -223,16 +230,29 @@ class Environment:
         self._write_dev_accounts()
         return result
 
-    def _workspace_exists(self, handle: str) -> bool:
-        wid = self.state.seeded_workspaces.get(handle)
-        if not wid:
-            return False
-        with ExitStack() as scope:
-            services = self._connect(scope)
-            row = services.platform.execute(
-                "SELECT 1 FROM workspaces WHERE id = %s", (wid,)
-            ).fetchone()
-            return row is not None
+    def _existing_workspace_ids(self, workspace_ids: Sequence[str]) -> set[str]:
+        if not workspace_ids:
+            return set()
+        cfg = self.stack.load_config()
+        env = self.stack.load_runtime_env(self.state)
+        pg = cfg["dependencies"]["postgres"]
+        db = cfg["services"]["platform"]["database"]
+        password = env[db["password"][2:-1]]
+        with psycopg.connect(
+            host="127.0.0.1",
+            port=self.endpoints.postgres_port,
+            dbname=db["name"],
+            user=db["user"],
+            password=password,
+            sslmode=pg["sslmode"],
+            autocommit=True,
+            connect_timeout=10,
+        ) as conn:
+            rows = conn.execute(
+                "SELECT id::text FROM workspaces WHERE id = ANY(%s::uuid[])",
+                (list(workspace_ids),),
+            ).fetchall()
+        return {str(row[0]) for row in rows}
 
     def _persisted_accounts(self) -> dict[str, Account]:
         out: dict[str, Account] = {}
@@ -256,22 +276,10 @@ class Environment:
         self, *, dataset_dir: Path, workspaces: Sequence[str] = ()
     ) -> dict[str, object]:
         """Run LetFS ingestion for uncached files in dataset_dir and save `.letfs-cache/`."""
-        profiles, specs = read_seed_specs(dataset_dir, workspaces)
-        self._sync_wiremock_auth()
+        _, specs = read_seed_specs(dataset_dir, workspaces)
         with ExitStack() as scope:
             services = self._connect(scope)
-            return cast(
-                dict[str, object],
-                seed_workspaces(
-                    services,
-                    auth=self.auth,
-                    wiremock=self.wiremock,
-                    namespace=self.state.namespace,
-                    profiles=profiles,
-                    specs=specs,
-                    prepare=True,
-                ),
-            )
+            return prepare_workspace_cache(services, specs=specs)
 
     def unseed(self, workspace_id: str) -> None:
         """Delete one workspace (by UUID or seeded handle) across all stores."""

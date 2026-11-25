@@ -1,0 +1,22 @@
+name: agent-baseline
+dataset_file: datasets/leta/retrieval.json
+datasets_dir: datasets
+env_project: eval-agent
+model: openai/gpt-6-luna
+reasoning_effort: max
+gateway_timeout_seconds: 300
+sample_timeout_seconds: 1800
+trials: 1
+concurrency: 16
+tools:
+  hitl: false
+  multi_agent: false
+  schedule: false
+  web: false
+  execute: true
+  semantic_search: true
+  activity: true
+judge_model: gpt-6-luna
+judge_reasoning_effort: max
+judge_concurrency: 16
+use_cache: false

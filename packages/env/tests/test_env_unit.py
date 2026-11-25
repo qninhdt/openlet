@@ -53,6 +53,27 @@ def test_build_openlet_config_sets_public_endpoint_and_override() -> None:
     assert cfg["dependencies"]["s3"].get("public_endpoint") == "http://127.0.0.1:9123"
     assert cfg["services"]["platform"]["max_members"] == 12
     assert cfg["auth"]["clerk"]["issuer"] == "http://wiremock:8080"
+    assert "observability" not in cfg
+    assert cfg["models"].get("reranking") == {"model": "cohere/rerank-v3.5"}
+
+
+def test_render_compose_overlay_emits_override_tags(tmp_path: Path) -> None:
+    overlay = config.render_compose_overlay(
+        mode="mock",
+        profiles=("leta",),
+        runtime_env={
+            "S3_ACCESS_KEY_ID": "openlet-abc",
+            "S3_SECRET_ACCESS_KEY": "sec$ret",
+        },
+        gateway_port=18080,
+        rustfs_port=19000,
+        wiremock_port=18081,
+        wiremock_dir=tmp_path / "wiremock",
+        shared_uv_cache=tmp_path / "uv-cache",
+    )
+    assert "ports: !override\n    - 127.0.0.1:18080:8080" in overlay
+    assert "volumes: !override\n" in overlay
+    assert "sec$$ret" in overlay
 
 
 def test_local_auth_roundtrip_jwt_with_jwks(tmp_path: Path) -> None:
@@ -170,3 +191,16 @@ def test_read_seed_specs_and_referenced_users(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="invalid seed handle"):
         dataset.validate_slug("Bad_Handle")
+
+
+def test_stage_wiremock_stubs_synthesizes_leta_prompts(tmp_path: Path) -> None:
+    config.stage_wiremock_stubs(tmp_path, mode="live", include_langfuse=True)
+    for role in ("leta", "leti", "compaction"):
+        stub_path = tmp_path / f"leta-prompt-{role}.json"
+        assert stub_path.is_file()
+        data = json.loads(stub_path.read_text(encoding="utf-8"))
+        prompt = data["response"]["jsonBody"]["prompt"]
+        assert "@@@langfusePrompt:" not in prompt
+        if role != "compaction":
+            assert "{% if tools.execute %}" in prompt
+            assert "## Filesystem" in prompt
