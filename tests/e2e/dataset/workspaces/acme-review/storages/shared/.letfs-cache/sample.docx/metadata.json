@@ -1,0 +1,49 @@
+{
+  "input": {
+    "format": 7,
+    "source": "sample.docx",
+    "sha256": "23abc0502ae1473a93e3e8adc8e457c418df256511c5d832ebcfa477ddd6911b",
+    "embedding": {
+      "model": "openai/text-embedding-3-large",
+      "dimensions": 1536
+    },
+    "enrichment": {
+      "output_mode": "tools",
+      "max_input_characters": 24000,
+      "max_image_pixels": 25000000,
+      "image_max_side": 1600,
+      "image_jpeg_quality": 85
+    },
+    "prompt_label": "production",
+    "split_tokens": 4096,
+    "limits": {
+      "max_pages": 50,
+      "max_page_pixels": 25000000,
+      "max_office_expanded_bytes": 536870912,
+      "max_spreadsheet_cells": 1000000,
+      "max_sheets": 100,
+      "max_output_bytes": 268435456
+    },
+    "chunk_size_tokens": 512,
+    "chunk_overlap_tokens": 64
+  },
+  "files": {
+    ".": [
+      "Acme Policy Brief",
+      "Internal quarterly operating policy brief."
+    ],
+    "README.md": [
+      "Acme Policy Brief",
+      "Internal quarterly operating policy brief."
+    ]
+  },
+  "points": [
+    {
+      "path": "README.md",
+      "text": "# Acme Policy Brief\n\nStandard quarterly approval policy for team budgets.\n",
+      "kind": "chunk",
+      "title": "Acme Policy Brief",
+      "chunk_index": 0
+    }
+  ]
+}

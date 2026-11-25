@@ -5,12 +5,14 @@ OPENLET_GENERATED ?= $(CURDIR)/.local/generated
 OPENLET_BACKUPS ?= $(CURDIR)/.local/backups
 ENV_FILE ?= $(CURDIR)/.env
 COMPOSE_PROJECT_NAME ?= openlet
-export OPENLET_CONFIG OPENLET_GENERATED OPENLET_BACKUPS COMPOSE_PROJECT_NAME
-export COMPOSE_FILE := $(CURDIR)/infra/compose.yaml:$(OPENLET_GENERATED)/compose.runtime.yaml
+DEV_PROJECT ?= dev
+DEV_WORKSPACE ?= amensa-portfolio-review
+DEV_MODE ?= live
 GO_PACKAGES := ./apps/platform/... ./apps/letfs/... ./packages/sdk-go/...
-PYTHON_PATHS := scripts apps/leta apps/letfs-ingest packages/sdk-python/src/openlet_sdk packages/sdk-python/tests
+PYTHON_PATHS := scripts apps/leta apps/letfs-ingest packages/sdk-python/src/openlet_sdk packages/sdk-python/tests packages/env tests/e2e
 
-.PHONY: tools generate check check-go check-python check-js format test test-go test-python integration e2e configure images up down logs backup restore deploy
+.PHONY: tools generate check check-go check-python check-js format test test-go test-python integration \
+        e2e e2e-fast e2e-web dev dev-web dev-rebuild dev-reset dev-down dev-logs images backup deploy
 
 tools:
 	go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
@@ -56,39 +58,45 @@ test-go:
 	go test $(GO_PACKAGES)
 
 test-python:
-	uv run --no-env-file --locked --all-packages --extra cpu pytest apps/leta/tests apps/letfs-ingest/tests packages/sdk-python/tests -q
+	uv run --no-env-file --locked --all-packages --extra cpu pytest apps/leta/tests apps/letfs-ingest/tests packages/sdk-python/tests packages/env/tests -q
 
 integration:
 	@test -n "$$OPENLET_TEST_DATABASE_URL" || { echo 'Set OPENLET_TEST_DATABASE_URL to an isolated, backed-up test database DSN.' >&2; exit 1; }
 	go test -tags=integration ./apps/letfs/internal/storage -run TestStorageSQLInvariants -count=1
 
-e2e:
-	scripts/e2e.sh api
-
-configure:
-	mkdir -p "$(OPENLET_BACKUPS)"
-	chmod 700 "$(OPENLET_BACKUPS)"
-	uv run --env-file "$(ENV_FILE)" --locked python scripts/configure.py --output "$(OPENLET_GENERATED)"
-
 images:
-	docker compose build platform letfs ingest-cpu ingest-io
-	@if [[ ",$$COMPOSE_PROFILES," == *,leta,* ]]; then docker compose build leta-api; fi
+	cd infra && OPENLET_CONFIG="$(CURDIR)/infra/config/openlet.example.yaml" OPENLET_GENERATED="$(CURDIR)/.local/bake-generated" \
+		docker buildx bake --allow=fs.read=.. --load -f compose.yaml platform letfs ingest-cpu leta-api
 
-up: configure images
-	mapfile -t writers < <(docker compose config --services | grep -E '^(envoy|platform|letfs|ingest-cpu|ingest-io|leta-api|leta-worker|temporal|spicedb)$$'); docker compose stop "$${writers[@]}"
-	docker compose up --detach --wait --wait-timeout 180
+dev:
+	uv run --no-env-file --locked openlet-env up --project "$(DEV_PROJECT)" --mode "$(DEV_MODE)" --gateway-port 8080 --seed-workspace "$(DEV_WORKSPACE)" --idempotent-seed
 
-down:
-	docker compose down
+dev-rebuild:
+	uv run --no-env-file --locked openlet-env up --project "$(DEV_PROJECT)" --mode "$(DEV_MODE)" --gateway-port 8080 --build --seed-workspace "$(DEV_WORKSPACE)" --idempotent-seed
 
-logs:
-	docker compose logs --follow --tail 100
+dev-reset:
+	uv run --no-env-file --locked openlet-env reset --project "$(DEV_PROJECT)" --seed-workspace "$(DEV_WORKSPACE)"
+
+dev-down:
+	uv run --no-env-file --locked openlet-env down --project "$(DEV_PROJECT)"
+
+dev-logs:
+	uv run --no-env-file --locked openlet-env logs --project "$(DEV_PROJECT)" --follow
+
+dev-web:
+	VITE_DEV_AUTH=1 OPENLET_DEV_PROJECT="$(DEV_PROJECT)" pnpm --filter @openlet/web dev
+
+e2e:
+	uv run --no-env-file --locked pytest -n 4 tests/e2e
+
+e2e-fast:
+	OPENLET_E2E_KEEP=1 uv run --no-env-file --locked pytest -n 4 tests/e2e
+
+e2e-web:
+	pnpm --filter @openlet/web test:e2e
 
 backup:
 	scripts/backup.sh "$(OUTPUT)"
-
-restore:
-	scripts/restore.sh "$(INPUT)"
 
 deploy:
 	scripts/deploy.sh "$(OPENLET_CONFIG)" "$(ENV_FILE)" "$(IMAGE_LOCK)"

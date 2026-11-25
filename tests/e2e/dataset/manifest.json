@@ -1,0 +1,14 @@
+{
+  "users": {
+    "alice-chen": {
+      "first_name": "Alice",
+      "last_name": "Chen",
+      "email": "alice-chen@acme.test"
+    },
+    "bob-tran": {
+      "first_name": "Bob",
+      "last_name": "Tran",
+      "email": "bob-tran@acme.test"
+    }
+  }
+}

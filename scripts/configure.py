@@ -1,5 +1,7 @@
 """Render private native infrastructure outputs from OPENLET_CONFIG."""
 
+from __future__ import annotations
+
 import argparse
 import json
 import math
@@ -11,7 +13,7 @@ from typing import TypedDict, cast
 from urllib.parse import quote, urlparse
 
 import yaml
-from openlet_sdk.config import TelemetrySettings, load, secret
+from openlet_sdk.config import Config, TelemetrySettings, load, secret
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -42,6 +44,26 @@ def render(name: str, values: Mapping[str, object]) -> dict[str, object]:
     for key, value in values.items():
         text = text.replace(f"@{key}@", json.dumps(value))
     return cast(dict[str, object], yaml.safe_load(text))
+
+
+def _load_config(config_path: Path | None) -> Config:
+    if config_path is None:
+        return load()
+    with config_path.open() as stream:
+        value: object = yaml.safe_load(stream)
+    if not isinstance(value, dict):
+        raise ValueError("configuration must be a YAML mapping")
+    return cast(Config, value)
+
+
+def _resolve_secret(value: str, env: Mapping[str, str]) -> str:
+    if not (value.startswith("${") and value.endswith("}")):
+        raise ValueError("secret must reference a whole ${ENV_VARIABLE} scalar")
+    key = value[2:-1]
+    result = env.get(key)
+    if not result:
+        raise ValueError(f"empty required environment variable {key}")
+    return result
 
 
 def configure_tracing(
@@ -160,9 +182,24 @@ def configure_tracing(
 
 
 def configure(
-    output: Path, test: bool = False, dynamic_gateway_port: bool = False
+    output: Path,
+    *,
+    config_path: Path | None = None,
+    env: Mapping[str, str] | None = None,
+    dynamic_gateway_port: bool = False,
 ) -> None:
-    c = load()
+    environ = os.environ if env is None else env
+    c = _load_config(config_path)
+
+    def resolve(value: str) -> str:
+        return secret(value) if env is None else _resolve_secret(value, environ)
+
+    profiles = {
+        item.strip()
+        for item in environ.get("COMPOSE_PROFILES", "").split(",")
+        if item.strip()
+    }
+
     dep, svc, deploy = c["dependencies"], c["services"], c["deployment"]
     pg, temporal = dep["postgres"], deploy["temporal"]
     if pg["sslmode"] != "disable":
@@ -217,7 +254,7 @@ def configure(
                 },
             },
         }
-    leta_enabled = "leta" in os.environ.get("COMPOSE_PROFILES", "").split(",")
+    leta_enabled = "leta" in profiles
     if leta_enabled:
         lh, lp = svc["leta"]["http_target"].rsplit(":", 1)
         envoy["static_resources"]["clusters"].append(
@@ -280,20 +317,20 @@ def configure(
             DATABASE=temporal["database"]["name"],
             VISIBILITY_DATABASE=temporal["visibility_database"],
             USER=temporal["database"]["user"],
-            PASSWORD=secret(temporal["database"]["password"]),
+            PASSWORD=resolve(temporal["database"]["password"]),
         ),
     )
     db = deploy["spicedb"]["database"]
-    uri = f"postgres://{quote(db['user'], safe='')}:{quote(secret(db['password']), safe='')}@{pg['host']}:{pg['port']}/{db['name']}?sslmode={pg['sslmode']}"
+    uri = f"postgres://{quote(db['user'], safe='')}:{quote(resolve(db['password']), safe='')}@{pg['host']}:{pg['port']}/{db['name']}?sslmode={pg['sslmode']}"
     graph_env = {
         "SPICEDB_DATASTORE_CONN_URI": uri,
-        "SPICEDB_GRPC_PRESHARED_KEY": secret(dep["spicedb"]["key"]),
+        "SPICEDB_GRPC_PRESHARED_KEY": resolve(dep["spicedb"]["key"]),
     }
     sql_env = {
         "SQL_HOST": pg["host"],
         "SQL_PORT": str(pg["port"]),
         "SQL_USER": temporal["database"]["user"],
-        "SQL_PASSWORD": secret(temporal["database"]["password"]),
+        "SQL_PASSWORD": resolve(temporal["database"]["password"]),
         "SQL_PLUGIN": "postgres12",
     }
     runtime: dict[str, dict[str, dict[str, object]]] = {
@@ -301,7 +338,7 @@ def configure(
             "postgres": {
                 "environment": {
                     "POSTGRES_USER": deploy["postgres"]["admin_user"],
-                    "POSTGRES_PASSWORD": secret(deploy["postgres"]["admin_password"]),
+                    "POSTGRES_PASSWORD": resolve(deploy["postgres"]["admin_password"]),
                 }
             },
             "spicedb": {"environment": graph_env},
@@ -315,7 +352,7 @@ def configure(
             },
             "qdrant": {
                 "environment": {
-                    "QDRANT__SERVICE__API_KEY": secret(dep["qdrant"]["api_key"])
+                    "QDRANT__SERVICE__API_KEY": resolve(dep["qdrant"]["api_key"])
                 }
             },
         }
@@ -324,16 +361,16 @@ def configure(
     def environment(references: Iterable[str]) -> dict[str, str]:
         return {
             "OPENLET_CONFIG": "/etc/openlet/openlet.yaml",
-            "COMPOSE_PROFILES": os.environ.get("COMPOSE_PROFILES", ""),
+            "COMPOSE_PROFILES": environ.get("COMPOSE_PROFILES", ""),
             **(
-                {"OTEL_RESOURCE_ATTRIBUTES": os.environ["OTEL_RESOURCE_ATTRIBUTES"]}
-                if os.environ.get("OTEL_RESOURCE_ATTRIBUTES")
+                {"OTEL_RESOURCE_ATTRIBUTES": environ["OTEL_RESOURCE_ATTRIBUTES"]}
+                if environ.get("OTEL_RESOURCE_ATTRIBUTES")
                 else {}
             ),
-            **{value[2:-1]: secret(value) for value in references},
+            **{value[2:-1]: resolve(value) for value in references},
         }
 
-    refs = {
+    refs: dict[str, list[str]] = {
         "platform": [
             svc["platform"]["database"]["password"],
             dep["spicedb"]["key"],
@@ -350,7 +387,8 @@ def configure(
         "ingest-cpu": [
             dep["s3"]["access_key_id"],
             dep["s3"]["secret_access_key"],
-            *(["${DATALAB_API_KEY}"] if os.environ.get("DATALAB_API_KEY") else []),
+            *(["${DATALAB_API_KEY}"] if environ.get("DATALAB_API_KEY") else []),
+            *(["${DATALAB_HOST}"] if environ.get("DATALAB_HOST") else []),
         ],
         "ingest-io": [
             dep["s3"]["access_key_id"],
@@ -390,13 +428,13 @@ def configure(
         refs["leta-worker"] = refs["leta-api"]
         refs["leta-migrate"] = [svc["leta"]["database"]["password"]]
         runtime["services"]["redis"] = {
-            "environment": {"REDIS_PASSWORD": secret(dep["redis"]["password"])}
+            "environment": {"REDIS_PASSWORD": resolve(dep["redis"]["password"])}
         }
     if "langfuse" in c:
         refs["ingest-io"].extend(
             [c["langfuse"]["public_key"], c["langfuse"]["secret_key"]]
         )
-    if "observability" in os.environ.get("COMPOSE_PROFILES", "").split(","):
+    if "observability" in profiles:
         cloud = c.get("observability")
         lf = c.get("langfuse")
         if cloud is None or lf is None:
@@ -413,27 +451,27 @@ def configure(
                 "GRAFANA_TRACES_USER": cloud["traces"]["user"],
                 "GRAFANA_LOGS_ENDPOINT": cloud["logs"]["endpoint"],
                 "GRAFANA_LOGS_USER": cloud["logs"]["user"],
-                "GRAFANA_CLOUD_TOKEN": secret(cloud["token"]),
-                "LANGFUSE_PUBLIC_KEY": secret(lf["public_key"]),
-                "LANGFUSE_SECRET_KEY": secret(lf["secret_key"]),
-                "LITELLM_MASTER_KEY": secret(c["models"]["gateway"]["api_key"]),
+                "GRAFANA_CLOUD_TOKEN": resolve(cloud["token"]),
+                "LANGFUSE_PUBLIC_KEY": resolve(lf["public_key"]),
+                "LANGFUSE_SECRET_KEY": resolve(lf["secret_key"]),
+                "LITELLM_MASTER_KEY": resolve(c["models"]["gateway"]["api_key"]),
                 "LANGFUSE_OTLP_ENDPOINT": lf["base_url"].rstrip("/")
                 + "/api/public/otel",
-                "QDRANT_API_KEY": secret(dep["qdrant"]["api_key"]),
+                "QDRANT_API_KEY": resolve(dep["qdrant"]["api_key"]),
                 "QDRANT_METRICS_ADDRESS": dep["qdrant"]["address"].rsplit(":", 1)[0]
                 + ":6333",
                 "REDIS_ADDRESS": dep["redis"]["address"],
-                "REDIS_PASSWORD": secret(dep["redis"]["password"])
-                if "leta" in os.environ.get("COMPOSE_PROFILES", "").split(",")
+                "REDIS_PASSWORD": resolve(dep["redis"]["password"])
+                if leta_enabled
                 else "",
-                "POSTGRES_METRICS_DSN": f"postgresql://{quote(cloud['postgres_user'], safe='')}:{quote(secret(cloud['postgres_password']), safe='')}@{pg['host']}:{pg['port']}/postgres?sslmode={pg['sslmode']}",
+                "POSTGRES_METRICS_DSN": f"postgresql://{quote(cloud['postgres_user'], safe='')}:{quote(resolve(cloud['postgres_password']), safe='')}@{pg['host']}:{pg['port']}/postgres?sslmode={pg['sslmode']}",
             }
         }
     runtime["services"]["litellm"] = {
         "environment": {
-            "LITELLM_MASTER_KEY": secret(c["models"]["gateway"]["api_key"]),
-            "OPENAI_API_KEY": os.environ["OPENAI_API_KEY"],
-            "OPENAI_BASE_URL": os.environ["OPENAI_BASE_URL"],
+            "LITELLM_MASTER_KEY": resolve(c["models"]["gateway"]["api_key"]),
+            "OPENAI_API_KEY": environ["OPENAI_API_KEY"],
+            "OPENAI_BASE_URL": environ["OPENAI_BASE_URL"],
         }
     }
     for service, references in refs.items():
@@ -449,20 +487,12 @@ def configure(
                 + '/ready",timeout=3)',
             ]
         }
-    runtime["services"]["database-backup"] = {
-        "environment": {
-            "PGHOST": pg["host"],
-            "PGPORT": str(pg["port"]),
-            "PGUSER": deploy["postgres"]["admin_user"],
-            "PGPASSWORD": secret(deploy["postgres"]["admin_password"]),
-        }
-    }
     for owner, database, listen in [
         ("platform", svc["platform"]["database"], svc["platform"]["grpc_listen"]),
         ("letfs", svc["letfs"]["database"], svc["letfs"]["grpc_listen"]),
         *([("leta", svc["leta"]["database"], None)] if leta_enabled else []),
     ]:
-        dsn = f"postgres://{quote(database['user'], safe='')}:{quote(secret(database['password']), safe='')}@{pg['host']}:{pg['port']}/{database['name']}?sslmode={pg['sslmode']}"
+        dsn = f"postgres://{quote(database['user'], safe='')}:{quote(resolve(database['password']), safe='')}@{pg['host']}:{pg['port']}/{database['name']}?sslmode={pg['sslmode']}"
         runtime["services"][f"{owner}-migrate"] = {
             "environment": {
                 "GOOSE_DRIVER": "postgres",
@@ -482,15 +512,20 @@ def configure(
                 f"-addr=127.0.0.1:{listen.rsplit(':', 1)[1]}",
             ]
         }
-    runtime["services"]["envoy"] = {
+    envoy_runtime: dict[str, object] = {
         "ports": [f"127.0.0.1:{'' if dynamic_gateway_port else port}:{port}"],
         "environment": {
-            "OTEL_RESOURCE_ATTRIBUTES": os.environ.get("OTEL_RESOURCE_ATTRIBUTES", "")
+            "OTEL_RESOURCE_ATTRIBUTES": environ.get("OTEL_RESOURCE_ATTRIBUTES", "")
         },
         "healthcheck": {
             "test": ["CMD", "bash", "-c", f"exec 3<>/dev/tcp/127.0.0.1/{port}"]
         },
     }
+    if leta_enabled:
+        envoy_runtime["depends_on"] = {
+            "leta-api": {"condition": "service_healthy"},
+        }
+    runtime["services"]["envoy"] = envoy_runtime
     os.umask(0o077)
     output.mkdir(parents=True, exist_ok=True)
     output.chmod(0o700)
@@ -506,24 +541,6 @@ def configure(
         ("temporal", native),
         ("compose.runtime", runtime),
     ]
-    if test:
-        outputs.append(
-            (
-                "compose.test.runtime",
-                {
-                    "services": {
-                        "s3": {
-                            "environment": {
-                                "RUSTFS_ACCESS_KEY": secret(dep["s3"]["access_key_id"]),
-                                "RUSTFS_SECRET_KEY": secret(
-                                    dep["s3"]["secret_access_key"]
-                                ),
-                            }
-                        }
-                    }
-                },
-            )
-        )
     for name, data in outputs:
         content = yaml.safe_dump(data, sort_keys=False)
         if name.startswith("compose."):
@@ -537,9 +554,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=ROOT / ".local/generated")
     parser.add_argument(
-        "--test",
-        action="store_true",
-        help="Render native S3 credentials for the test Compose stack",
+        "--config",
+        type=Path,
+        default=None,
+        help="Path to openlet.yaml (defaults to OPENLET_CONFIG)",
     )
     args = parser.parse_args()
-    configure(args.output, test=args.test)
+    configure(args.output, config_path=args.config)

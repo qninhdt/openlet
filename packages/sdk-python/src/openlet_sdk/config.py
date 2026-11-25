@@ -162,6 +162,7 @@ class QdrantSettings(TypedDict):
 
 class S3Settings(TypedDict):
     endpoint: str
+    public_endpoint: NotRequired[str]
     processing_download_endpoint: NotRequired[str]
     region: str
     bucket: str

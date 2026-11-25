@@ -4,7 +4,26 @@ from typing import Literal, cast
 
 type FileKind = Literal["text", "blob", "unsupported"]
 
-_data = Path(__file__).resolve().parents[3] / "contracts" / "file-types.json"
+
+def _locate_file_types() -> Path:
+    here = Path(__file__).resolve()
+    candidates = [
+        *(
+            parent / "contracts" / "file-types.json"
+            for parent in here.parents
+            if parent.name == "packages"
+        ),
+        Path.cwd() / "packages" / "contracts" / "file-types.json",
+        Path("/app/packages/contracts/file-types.json"),
+        Path("/packages/contracts/file-types.json"),
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError("Could not locate packages/contracts/file-types.json")
+
+
+_data = _locate_file_types()
 _types = cast(dict[str, dict[str, str]], json.loads(_data.read_text(encoding="utf-8")))
 
 

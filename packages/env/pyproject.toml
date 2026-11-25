@@ -1,0 +1,31 @@
+[project]
+name = "openlet-env"
+version = "0.1.0"
+description = "General-purpose non-production Openlet environment manager for local development, E2E testing, and evaluation."
+requires-python = ">=3.14,<3.15"
+dependencies = [
+  "openlet-sdk",
+  "pyyaml",
+  "psycopg[binary]",
+  "temporalio",
+  "authzed",
+  "boto3",
+  "qdrant-client",
+  "httpx",
+  "numpy",
+  "google-crc32c",
+  "pyjwt[crypto]",
+]
+
+[project.scripts]
+openlet-env = "openlet_env.cli:main"
+
+[build-system]
+requires = ["hatchling==1.33.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/openlet_env"]
+
+[tool.uv.sources]
+openlet-sdk = { workspace = true }

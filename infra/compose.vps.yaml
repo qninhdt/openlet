@@ -1,15 +1,15 @@
 services:
   platform: {restart: unless-stopped, mem_limit: 192m}
   letfs: {restart: unless-stopped, mem_limit: 256m}
-  ingest-cpu: {restart: unless-stopped, mem_limit: 2g, cpus: 2}
+  ingest-cpu: {restart: unless-stopped, mem_limit: 1g, cpus: 2}
   ingest-io: {restart: unless-stopped, mem_limit: 512m}
   leta-api: {restart: unless-stopped, mem_limit: 512m}
   leta-worker: {restart: unless-stopped, mem_limit: 512m}
-  postgres: {restart: unless-stopped, mem_limit: 512m}
+  postgres: {restart: unless-stopped, mem_limit: 768m}
   spicedb: {restart: unless-stopped, mem_limit: 384m}
-  temporal: {restart: unless-stopped, mem_limit: 768m}
+  temporal: {restart: unless-stopped, mem_limit: 640m}
   qdrant: {restart: unless-stopped, mem_limit: 512m}
-  litellm: {restart: unless-stopped, mem_limit: 768m}
+  litellm: {restart: unless-stopped, mem_limit: 512m}
   redis: {restart: unless-stopped, mem_limit: 128m}
   alloy: {restart: unless-stopped, mem_limit: 256m}
   envoy: {restart: unless-stopped, mem_limit: 128m}

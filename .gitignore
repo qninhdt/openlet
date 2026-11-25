@@ -15,5 +15,5 @@ node_modules/
 .codegraph
 archive
 .vscode
-plans
+/plans/
 .impeccable

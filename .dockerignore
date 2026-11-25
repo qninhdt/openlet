@@ -1,6 +1,13 @@
 .git
 .codegraph
+.github
+.impeccable
+.vscode
 archive
+datasets
+docs
+plans
+tests
 .local
 .env
 .env.*
@@ -11,5 +18,5 @@ archive
 **/node_modules
 **/bin
 **/target
-plans
-docs
+apps/web/dist
+*.md

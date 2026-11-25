@@ -7,6 +7,7 @@ x-tools: &tools
     - ../uv.lock:/work/uv.lock:ro
     - ../apps/letfs-ingest/pyproject.toml:/work/apps/letfs-ingest/pyproject.toml:ro
     - ../apps/leta/pyproject.toml:/work/apps/leta/pyproject.toml:ro
+    - ../packages/env/pyproject.toml:/work/packages/env/pyproject.toml:ro
     - ../packages/sdk-python:/work/packages/sdk-python:ro
     - ../packages/contracts/authz:/work/packages/contracts/authz:ro
     - ${OPENLET_CONFIG:?required}:/etc/openlet/openlet.yaml:ro
@@ -34,9 +35,9 @@ services:
     stop_grace_period: 30s
     healthcheck:
       test: [CMD, python, -c, 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:4000/health/liveliness", timeout=3)']
-      interval: 3s
+      interval: 15s
       timeout: 5s
-      retries: 30
+      retries: 20
 
   redis:
     logging: *logging
@@ -99,7 +100,7 @@ services:
     profiles: [observability]
     image: grafana/alloy:v1.22.0@sha256:9acc2529bc1edb7f5b2bd801dd8334ebc80c158e3a9e5526ecd7c9a273d43189
     command: [run, --storage.path=/var/lib/alloy, --server.http.listen-addr=0.0.0.0:12345, /etc/alloy/alloy.alloy]
-    mem_limit: 512m
+    mem_limit: 256m
     volumes:
       - ${OPENLET_GENERATED}/alloy.alloy:/etc/alloy/alloy.alloy:ro
       - alloy-data:/var/lib/alloy
@@ -122,21 +123,10 @@ services:
       timeout: 3s
       retries: 30
 
-  database-backup:
-    logging: *logging
-    image: postgres:18-alpine@sha256:9ba53c7d41ea093baf5c1ba635ba5434c4f979880527d49bb7d9237d3193085b
-    entrypoint: [/bin/sh, -ec]
-    command: ['umask 077; pg_dumpall -U "$$PGUSER" > /backups/pre-migration-$$(date -u +%Y%m%dT%H%M%SZ).sql']
-    volumes: ['${OPENLET_BACKUPS:?required}:/backups']
-    depends_on:
-      postgres: {condition: service_healthy}
-
   databases:
     logging: *logging
     <<: *tools
     command: [uv, run, --no-env-file, --locked, --no-dev, --package, openlet-tooling, python, scripts/bootstrap.py, databases]
-    depends_on:
-      database-backup: {condition: service_completed_successfully}
 
   platform-migrate:
     logging: *logging
@@ -254,8 +244,9 @@ services:
 
   ingest-cpu:
     logging: *logging
-    image: openlet/ingest-cpu:local
-    build: {context: .., dockerfile: apps/letfs-ingest/Dockerfile, target: cpu}
+    image: openlet/letfs-ingest:local
+    build: {context: .., dockerfile: apps/letfs-ingest/Dockerfile}
+    command: [cpu]
     init: true
     volumes: ['${OPENLET_CONFIG:?required}:/etc/openlet/openlet.yaml:ro']
     stop_grace_period: 190s
@@ -264,8 +255,9 @@ services:
 
   ingest-io:
     logging: *logging
-    image: openlet/ingest-io:local
-    build: {context: .., dockerfile: apps/letfs-ingest/Dockerfile, target: io}
+    image: openlet/letfs-ingest:local
+    build: {context: .., dockerfile: apps/letfs-ingest/Dockerfile}
+    command: [io]
     volumes: ['${OPENLET_CONFIG:?required}:/etc/openlet/openlet.yaml:ro']
     stop_grace_period: 190s
     depends_on:

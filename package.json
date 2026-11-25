@@ -7,10 +7,10 @@
     "build": "pnpm --filter @openlet/web build",
     "preview": "pnpm --filter @openlet/web preview",
     "lint": "pnpm --filter @openlet/web lint",
-    "test:web": "pnpm --filter @openlet/e2e test:web",
+    "test:web": "pnpm --filter @openlet/web test:e2e",
     "typecheck": "pnpm -r --if-present typecheck",
-    "format": "prettier --write \"e2e/**/*.{js,ts,mjs,cjs}\" \"apps/web/**/*.{js,ts,tsx,json,css,html,md}\" package.json",
-    "format:check": "prettier --check \"e2e/**/*.{js,ts,mjs,cjs}\" \"apps/web/**/*.{js,ts,tsx,json,css,html,md}\" package.json"
+    "format": "prettier --write \"apps/web/**/*.{js,ts,tsx,json,css,html,md}\" package.json",
+    "format:check": "prettier --check \"apps/web/**/*.{js,ts,tsx,json,css,html,md}\" package.json"
   },
   "devDependencies": {
     "prettier": "3.10.1"
