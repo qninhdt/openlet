@@ -11,20 +11,22 @@ dependencies = [
   "boto3",
   "qdrant-client",
   "httpx",
-  "numpy",
 ]
 
 [tool.uv.workspace]
-members = ["packages/sdk-python", "apps/letfs-ingest", "apps/leta"]
+members = ["packages/sdk-python", "packages/env", "apps/letfs-ingest", "apps/leta"]
 
 [dependency-groups]
 dev = [
     "boto3-stubs[s3]>=1.44.2",
     "grpcio-tools",
     "mypy-protobuf>=5.1.0",
+    "openlet-env",
+    "pyjwt[crypto]>=2.10.0",
     "pyright>=1.1.414",
     "pytest",
     "pytest-asyncio",
+    "pytest-xdist>=3.8.0",
     "ruff",
     "types-grpcio>=1.85.0.20261028",
     "types-lxml>=2026.2.16",
@@ -46,17 +48,27 @@ ignore = ["E501"]
 addopts = ["--import-mode=importlib"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-testpaths = ["apps/letfs-ingest/tests", "packages/sdk-python/tests"]
+testpaths = ["apps/letfs-ingest/tests", "packages/sdk-python/tests", "packages/env/tests"]
 
 [tool.pyright]
-include = ["apps/letfs-ingest", "apps/leta", "packages/sdk-python/src/openlet_sdk", "packages/sdk-python/tests", "scripts"]
+include = [
+    "apps/letfs-ingest",
+    "apps/leta",
+    "packages/sdk-python/src/openlet_sdk",
+    "packages/sdk-python/tests",
+    "packages/env/src",
+    "packages/env/tests",
+    "scripts",
+    "tests/e2e",
+]
 exclude = ["**/__pycache__", "archive", "packages/sdk-python/src/openlet_api", "packages/sdk-python/src/buf"]
 pythonVersion = "3.14"
 typeCheckingMode = "strict"
-extraPaths = ["packages/sdk-python/src", "apps/leta/src", "apps/letfs-ingest/src"]
+extraPaths = ["packages/sdk-python/src", "packages/env/src", "apps/leta/src", "apps/letfs-ingest/src"]
 reportMissingParameterType = "error"
 reportMissingTypeArgument = "error"
 reportUnnecessaryTypeIgnoreComment = "error"
 
 [tool.uv.sources]
 openlet-sdk = { workspace = true }
+openlet-env = { workspace = true }

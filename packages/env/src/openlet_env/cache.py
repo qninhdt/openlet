@@ -1,4 +1,6 @@
-"""Portable LetFS artifacts and vectors, keyed by source and artifact path."""
+"""Portable `.letfs-cache/` read/write with content-only fingerprinting."""
+
+from __future__ import annotations
 
 import hashlib
 import json
@@ -10,17 +12,18 @@ from typing import cast
 import numpy as np
 from openlet_sdk.config import Config
 
-from .api import JSON
+from .models import JSON, JSONObject
 
 CACHE_DIR = ".letfs-cache"
-PARSED = {".docx", ".pdf", ".pptx", ".xlsx"}
-INDEXED = PARSED | {".gif", ".jpeg", ".jpg", ".png", ".webp"}
+CACHE_FORMAT = 7
+PARSED = frozenset({".docx", ".pdf", ".pptx", ".xlsx"})
+INDEXED = PARSED | frozenset({".gif", ".jpeg", ".jpg", ".png", ".webp"})
 
 
-@dataclass
-class Cache:
+@dataclass(frozen=True, slots=True)
+class CachedIngest:
     folder: Path
-    metadata: JSON
+    metadata: JSONObject
     vectors: dict[bytes, list[float]]
 
 
@@ -28,31 +31,50 @@ def text_key(text: str) -> bytes:
     return hashlib.sha256(text.encode("utf-8")).digest()
 
 
-def fingerprint(path: Path, config: Config) -> JSON:
+def _normalize_input(raw: JSONObject) -> JSONObject:
+    """Normalize format 6 (legacy HF) and format 7 inputs to content-only keys."""
+    parser = cast(JSONObject, raw.get("parser", {}))
+    return {
+        "source": raw.get("source"),
+        "sha256": raw.get("sha256"),
+        "embedding": raw.get("embedding"),
+        "enrichment": raw.get("enrichment"),
+        "prompt_label": raw.get("prompt_label"),
+        "split_tokens": raw.get("split_tokens", parser.get("split_tokens")),
+        "limits": raw.get("limits", parser.get("limits")),
+        "chunk_size_tokens": raw.get("chunk_size_tokens"),
+        "chunk_overlap_tokens": raw.get("chunk_overlap_tokens"),
+    }
+
+
+def fingerprint(path: Path, config: Config) -> JSONObject:
+    """Content-only ingest fingerprint (excludes concurrency and rate-limit knobs)."""
     with path.open("rb") as source:
         digest = hashlib.file_digest(source, "sha256").hexdigest()
     ingest = config["services"]["letfs_ingest"]
     langfuse = config.get("langfuse")
     return {
-        "format": 6,
+        "format": CACHE_FORMAT,
         "source": path.name,
         "sha256": digest,
-        "embedding": config["models"]["embedding"],
-        "enrichment": config["models"]["enrichment"],
+        "embedding": cast(JSON, dict(config["models"]["embedding"])),
+        "enrichment": cast(JSON, dict(config["models"]["enrichment"])),
         "prompt_label": langfuse["prompt_label"] if langfuse else None,
-        "parser": ingest["cpu"],
+        "split_tokens": ingest["cpu"]["split_tokens"],
+        "limits": cast(JSON, dict(ingest["cpu"]["limits"])),
         "chunk_size_tokens": ingest["io"]["chunk_size_tokens"],
         "chunk_overlap_tokens": ingest["io"]["chunk_overlap_tokens"],
     }
 
 
-def read(path: Path, config: Config) -> Cache | None:
+def read_cache(path: Path, config: Config) -> CachedIngest | None:
     folder = path.parent / CACHE_DIR / path.name
     metadata_path = folder / "metadata.json"
     if not metadata_path.is_file():
         return None
-    metadata = cast(JSON, json.loads(metadata_path.read_text(encoding="utf-8")))
-    if metadata["input"] != fingerprint(path, config):
+    metadata = cast(JSONObject, json.loads(metadata_path.read_text(encoding="utf-8")))
+    saved_input = cast(JSONObject, metadata.get("input", {}))
+    if _normalize_input(saved_input) != _normalize_input(fingerprint(path, config)):
         return None
     with np.load(folder / "embeddings.npz", allow_pickle=False) as data:
         hashes, vectors = data["text_sha256"], data["vectors"]
@@ -68,13 +90,13 @@ def read(path: Path, config: Config) -> Cache | None:
         lookup = dict(zip(map(bytes, hashes), vectors.tolist(), strict=True))
         if len(lookup) != len(hashes):
             raise ValueError(f"duplicate embedding hashes in {folder}")
-        return Cache(folder, metadata, lookup)
+        return CachedIngest(folder=folder, metadata=metadata, vectors=lookup)
 
 
-def save(
+def save_cache(
     source: Path,
-    input_settings: JSON,
-    metadata: JSON,
+    input_settings: JSONObject,
+    metadata: JSONObject,
     vectors: dict[bytes, list[float]],
     artifacts: dict[str, bytes | None],
 ) -> None:
@@ -94,9 +116,11 @@ def save(
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(content)
         (output / "metadata.json").write_text(
-            json.dumps({"input": input_settings, **metadata}, indent=2) + "\n"
+            json.dumps({"input": input_settings, **metadata}, indent=2) + "\n",
+            encoding="utf-8",
         )
-        width = input_settings["embedding"]["dimensions"]
+        embedding = cast(dict[str, int], input_settings["embedding"])
+        width = int(embedding["dimensions"])
         np.savez(
             output / "embeddings.npz",
             text_sha256=np.asarray(

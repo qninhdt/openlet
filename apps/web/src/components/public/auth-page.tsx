@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { PublicBrand, PublicLayout, usePageTitle } from './public-layout';
 import { AppLoading } from './page-state';
 import { publishableKey, safeReturnTo } from '@/lib/auth-navigation';
+import { devAuthEnabled, fetchDevAccounts, writeDevAccount, type DevAccount } from '@/lib/dev-auth';
 
 function GoogleMark() {
   return (
@@ -41,9 +42,17 @@ export function LoginPage() {
           </div>
           <h1 className="text-2xl font-semibold tracking-[-0.035em]">Sign in to Openlet</h1>
           <p className="mt-3 text-sm leading-6 text-muted-foreground">
-            Continue with your Google account.
+            {devAuthEnabled
+              ? 'Choose a seeded local development account.'
+              : 'Continue with your Google account.'}
           </p>
-          {publishableKey ? <GoogleLogin returnTo={returnTo} /> : <UnavailableGoogleLogin />}
+          {devAuthEnabled ? (
+            <DevQuickLogin />
+          ) : publishableKey ? (
+            <GoogleLogin returnTo={returnTo} />
+          ) : (
+            <UnavailableGoogleLogin />
+          )}
           <p className="mt-6 text-xs leading-6 text-muted-foreground">
             By continuing, you agree to our{' '}
             <Link to="/terms" className="underline underline-offset-3">
@@ -65,6 +74,45 @@ export function LoginPage() {
         </section>
       </main>
     </PublicLayout>
+  );
+}
+function DevQuickLogin() {
+  const [accounts, setAccounts] = useState<DevAccount[] | null>(null);
+  useEffect(() => {
+    void fetchDevAccounts().then(setAccounts);
+  }, []);
+  if (accounts === null) {
+    return (
+      <div className="mt-7 flex justify-center">
+        <LoaderCircle className="size-5 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+  if (accounts.length === 0) {
+    return (
+      <p role="alert" className="mt-6 text-sm leading-6 text-muted-foreground">
+        No local dev accounts found. Start the local stack with{' '}
+        <code className="font-mono text-foreground">make dev</code> and reload.
+      </p>
+    );
+  }
+  return (
+    <div className="mt-7 flex flex-col gap-2.5">
+      {accounts.map((account) => (
+        <Button
+          key={account.handle}
+          variant="outline"
+          className="h-12 w-full justify-between rounded-lg px-4"
+          onClick={() => {
+            writeDevAccount(account);
+            window.location.replace('/app');
+          }}
+        >
+          <span className="font-medium">{account.name}</span>
+          <span className="text-xs text-muted-foreground">{account.handle}</span>
+        </Button>
+      ))}
+    </div>
   );
 }
 function UnavailableGoogleLogin() {
