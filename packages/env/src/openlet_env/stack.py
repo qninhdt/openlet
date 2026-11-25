@@ -243,9 +243,12 @@ class ComposeStack:
             override=merged_override,
             repo_root=self.repo_root,
         )
-        self.config_path.write_text(
-            yaml.safe_dump(openlet_cfg, sort_keys=False), encoding="utf-8"
+        prev_config = (
+            self.config_path.read_text("utf-8") if self.config_path.is_file() else None
         )
+        new_config = yaml.safe_dump(openlet_cfg, sort_keys=False)
+        config_changed = prev_config is not None and prev_config != new_config
+        self.config_path.write_text(new_config, encoding="utf-8")
         # Containers run as non-root UIDs and need read access to the mounted file.
         self.config_path.chmod(0o644)
 
@@ -291,6 +294,7 @@ class ComposeStack:
             "--wait-timeout",
             str(wait_timeout),
             "--remove-orphans",
+            *(["--force-recreate"] if config_changed else []),
             *(["--build"] if build else []),
             profiles=profiles,
         )

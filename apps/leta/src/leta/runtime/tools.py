@@ -165,7 +165,7 @@ class InboxMessage(Input):
         default_factory=list, max_length=20
     )
     sources: list[WebSource | StorageSource] = Field(
-        default_factory=list[WebSource | StorageSource], max_length=20
+        default_factory=list[WebSource | StorageSource], max_length=64
     )
 
     @model_validator(mode="after")
@@ -216,7 +216,10 @@ async def prepare_outgoing(
 
     async def stat(path: str) -> FileStat:
         assert vfs is not None
-        return await vfs.stat(file_path(path))
+        try:
+            return await vfs.stat(file_path(path))
+        except FileNotFoundError:
+            raise ValueError(f"File not found: {path}") from None
 
     try:
         for source in message.sources:
@@ -305,7 +308,7 @@ async def inbox_send(
     task_label: Annotated[str | None, Field(max_length=255)] = None,
     copy_folders: bool = False,
 ) -> tuple[JSON, dict[str, JSON]]:
-    """Send messages to conversation user:<handle> or agent:<handle>. Cite sources with [1], [2], ... mapped to that message's sources in order. Attach file or folder paths or use standard Markdown links ([label](/shared/...) or [label](</path with spaces>)) for inline workspace links. in_reply_to quotes a received message in the first message. Use task_label for assignments. Set copy_folders only when authorized to share an inaccessible folder's entire contents."""
+    """Send messages to conversation user:<handle> or agent:<handle>. Cite sources with [1], [2], ... mapped to that message's sources in order. Attach file or folder paths or use standard Markdown links ([label](/shared/...)) for inline workspace links. in_reply_to quotes a received message in the first message. Use task_label for assignments. Set copy_folders only when authorized to share an inaccessible folder's entire contents."""
     from ..worker import deliver
 
     ctx = runtime.context
