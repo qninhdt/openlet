@@ -128,7 +128,7 @@ def test_vision_resizes_image(config: Config) -> None:
 async def test_describe_batch_interleaves_artifacts_and_retries_with_instructor(
     monkeypatch: pytest.MonkeyPatch, config: Config
 ) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("LITELLM_MASTER_KEY", "test-key")
     captured_messages: list[Any] = []
     calls = 0
 
@@ -230,6 +230,7 @@ async def test_describe_batch_interleaves_artifacts_and_retries_with_instructor(
     def _propagate(**_kw: object) -> DummyObs:
         return DummyObs()
 
+    monkeypatch.setenv("LITELLM_MASTER_KEY", "test-key")
     monkeypatch.setattr("letfs_ingest.providers.get_client", _get_langfuse)
     monkeypatch.setattr("letfs_ingest.providers.litellm.acompletion", fake_acompletion)
     monkeypatch.setattr("letfs_ingest.providers.propagate_attributes", _propagate)
@@ -265,7 +266,7 @@ async def test_complete_retries_transient_errors(
 ) -> None:
     from litellm.exceptions import ServiceUnavailableError
 
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("LITELLM_MASTER_KEY", "test-key")
     attempts = 0
 
     class DummyObs:
