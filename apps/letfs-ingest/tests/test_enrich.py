@@ -1,225 +1,436 @@
-import asyncio
-import csv
-import io
-import json
+from io import BytesIO
+from typing import Any, cast
 
-import httpx
 import pytest
 from letfs_ingest.enrich import enrich
-from letfs_ingest.naming import artifact_paths, rewrite_artifact_links
-from letfs_ingest.providers import Metadata, Models, SemanticType
-from letfs_ingest.readme import own_body
+from letfs_ingest.naming import artifact_paths, rewrite_artifact_links, rich_csv_paths
+from letfs_ingest.providers import ArtifactEnrichment, EnrichItem, Models
+from letfs_ingest.storage import S3Store
 from openlet_api.letfs.v1 import internal_pb2 as internal
-from openlet_api.letfs.v1 import letfs_pb2 as pb
+from openlet_api.letfs.v1 import letfs_pb2 as letfs
+from openlet_sdk.config import Config
+from PIL import Image, ImageDraw
 
 
-def artifact(path: str, text: str | None = None) -> internal.ProcessingArtifact:
-    node = pb.Node(
-        id=path, kind=pb.NODE_KIND_DIRECTORY if text is None else pb.NODE_KIND_FILE
+def _png_bytes() -> bytes:
+    img = Image.new("RGB", (60, 60), "white")
+    draw = ImageDraw.Draw(img)
+    draw.rectangle([10, 10, 50, 50], fill="green")
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_names_preserve_numeric_prefix_and_deduplicate_siblings() -> None:
+    mapping = artifact_paths(
+        [
+            "README.md",
+            "01-part.md",
+            "02-part.md",
+            "images/01-img.png",
+            "images/02-img.png",
+        ],
+        {
+            "README.md": "ignored-readme",
+            "01-part.md": "Q1 Summary",
+            "02-part.md": "Q1 Summary",
+            "images/01-img.png": "Margin Chart",
+            "images/02-img.png": None,
+        },
     )
-    if text is not None:
-        node.file.media_type = "text/csv" if path.endswith(".csv") else "text/markdown"
-    return internal.ProcessingArtifact(path=path, node=node, text_content=text)
-
-
-def test_names_reserve_siblings_and_keep_structure() -> None:
-    items = [
-        artifact("README.md", ""),
-        artifact("1-part"),
-        artifact("1-part/README.md", ""),
-        artifact("1-part/1-body.md", ""),
-        artifact("table-1.csv", ""),
-        artifact("table-2.csv", ""),
-        artifact("table-3.csv", ""),
-    ]
-    titles = ["Root", "unused", "Revenue", "Details", "Sales", "Sales", "Sales-2"]
-    metadata = {
-        item.path: Metadata(
-            title=title,
-            description="Evidence",
-            semantic_type=SemanticType.TEXT_CONTENT,
-            context="Report",
-        )
-        for item, title in zip(items, titles, strict=True)
-    }
-    paths = artifact_paths(items, metadata)
-    assert paths == {
+    assert mapping == {
         "README.md": "README.md",
-        "1-part": "1-revenue",
-        "1-part/README.md": "1-revenue/README.md",
-        "1-part/1-body.md": "1-revenue/1-details.md",
-        "table-1.csv": "sales.csv",
-        "table-2.csv": "sales-3.csv",
-        "table-3.csv": "sales-2.csv",
+        "01-part.md": "01-q1-summary.md",
+        "02-part.md": "02-q1-summary.md",
+        "images/01-img.png": "images/01-margin-chart.png",
+        "images/02-img.png": "images/02-img.png",
     }
-    assert artifact_paths(list(reversed(items)), metadata) == paths
-    body = '[data](../table-1.csv?download=1#rows "Table") ![pic](<../table-2.csv>) [external](https://example.com/table-1.csv) [other](missing.md)'
-    rewritten = rewrite_artifact_links(body, "1-part/1-body.md", paths)
-    assert (
-        rewritten
-        == '[data](../sales.csv?download=1#rows "Table") ![pic](<../sales-3.csv>) [external](https://example.com/table-1.csv) [other](missing.md)'
+
+
+def test_link_rewrite_preserves_code_and_plain_csv_but_updates_rich_cells() -> None:
+    mapping = {
+        "01-part.md": "01-summary.md",
+        "images/01-img.png": "images/01-chart.png",
+        "tables/01-table.csv": "tables/01-sales.csv",
+    }
+    md_text = (
+        "# Heading\n\n"
+        "See ![chart](images/01-img.png) and [table](tables/01-table.csv) and `images/01-img.png`.\n\n"
+        "```md\n[keep](images/01-img.png)\n```\n"
     )
-    metadata["table-1.csv"].title = "財" * 200
-    assert len(artifact_paths(items, metadata)["table-1.csv"].encode()) <= 255
-    metadata["table-1.csv"].title = "!!!"
-    assert artifact_paths(items, metadata)["table-1.csv"] == "artifact.csv"
+    assert rich_csv_paths({"01-part.md": md_text}) == {"tables/01-table.csv"}
+    rewritten_md = rewrite_artifact_links(
+        md_text, "01-summary.md", "text/markdown", mapping
+    )
+    assert "![chart](images/01-chart.png)" in rewritten_md
+    assert "[table](tables/01-sales.csv)" in rewritten_md
+    assert "`images/01-img.png`" in rewritten_md
+    assert "[keep](images/01-img.png)" in rewritten_md
 
+    csv_body = 'metric,link\n"Margin Trend","[view](../images/01-img.png)"\n'
+    rewritten_rich = rewrite_artifact_links(
+        csv_body,
+        "tables/01-sales.csv",
+        "text/csv",
+        mapping,
+        is_rich_csv=True,
+    )
+    assert "[view](../images/01-chart.png)" in rewritten_rich
 
-@pytest.mark.asyncio
-async def test_enrichment_renames_tree_and_rewrites_all_markdown_without_extra_model_calls(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr("letfs_ingest.enrich.activity.heartbeat", lambda: None)
-    items = [
-        artifact("README.md", "[Part](1-part/README.md)"),
-        artifact("1-part"),
-        artifact("1-part/README.md", "[Body](1-body.md)"),
-        artifact("1-part/1-body.md", "[Table](../table-1.csv)"),
-        artifact("table-1.csv", "region,sales\nEU,42"),
-    ]
-    calls: list[str] = []
-    titles = {
-        "README.md": "Report",
-        "1-part/README.md": "Revenue",
-        "1-part/1-body.md": "Evidence",
-        "table-1.csv": "Sales",
-    }
-
-    class TestModels(Models):
-        def __init__(self) -> None:
-            self.slots = asyncio.Semaphore(2)
-
-        async def describe(
-            self,
-            name: str,
-            text: str,
-            media: str,
-            children: str,
-            image: bytes | None = None,
-        ) -> Metadata:
-            calls.append(name)
-            return Metadata(
-                title=titles[name],
-                description="Useful evidence",
-                semantic_type=SemanticType.TEXT_CONTENT,
-                context="Annual report",
-            )
-
-    source = internal.ProcessingInput(source_name="original.pdf", artifacts=items)
-    async with httpx.AsyncClient() as http:
-        result = await enrich(
-            source,
-            {"file_id": "source", "version": 7},
-            TestModels(),
-            http,
-            10000,
+    plain_csv = 'note\n"[literal](../images/01-img.png)"\n'
+    assert (
+        rewrite_artifact_links(
+            plain_csv, "tables/01-sales.csv", "text/csv", mapping, is_rich_csv=False
         )
-    assert len(calls) == 4 and calls[-2:] == ["1-part/README.md", "README.md"]
-    updates = {item.node_id: item for item in result.artifacts}
-    assert updates["1-part"].name == "1-revenue" and not updates["1-part"].HasField(
-        "metadata"
-    )
-    assert updates["1-part/1-body.md"].name == "1-evidence.md"
-    assert updates["table-1.csv"].name == "sales.csv"
-    assert not updates["README.md"].HasField("name")
-    assert own_body(updates["README.md"].text_content) == "[Part](1-revenue/README.md)"
-    assert own_body(updates["1-part/README.md"].text_content) == "[Body](1-evidence.md)"
-    assert updates["1-part/1-body.md"].text_content == "[Table](../sales.csv)"
-    header = json.loads(updates["README.md"].text_content.partition("\n---\n")[0][4:])
-    assert set(header["children"]) == {"1-revenue/README.md", "sales.csv"}
-    assert (
-        result.source_metadata.title == "Report"
-        and source.source_name == "original.pdf"
+        == plain_csv
     )
 
 
-def test_link_rewrite_preserves_literal_code_and_plain_csv_but_updates_rich_cells() -> (
-    None
-):
-    from letfs_ingest.naming import table_metadata
-
-    paths = {
-        "README.md": "README.md",
-        "image-1.png": "diagram.png",
-        "table-1.csv": "data.csv",
-    }
-    code = "```python\n'[x](image-1.png)'\n```"
-    plain = '<!-- artifact-table {"rich": false} -->\n\n```csv\n"[literal](image-1.png)",1\n```'
-    rich = '<!-- artifact-table {"rich": true} -->\n\n```csv\n"![Image](image-1.png)","multiline\nvalue"\n```'
-    inline = "Use `[literal](image-1.png)` as code. [actual](image-1.png)"
-    body = code + "\n\n" + plain + "\n\n" + rich + "\n\n" + inline
-    rewritten = rewrite_artifact_links(body, "README.md", paths)
-    assert code in rewritten and plain in rewritten
-    assert (
-        "`[literal](image-1.png)`" in rewritten and "[actual](diagram.png)" in rewritten
-    )
-    assert '![Image](diagram.png),"multiline\nvalue"' in rewritten
-    assert table_metadata(code) == []
-    csv_body = '"![Image](image-1.png)","multiline\nvalue"\r\n'
-    changed = rewrite_artifact_links(csv_body, "table-1.csv", paths, csv_cells=True)
-    assert list(csv.reader(io.StringIO(changed, newline=""))) == [
-        ["![Image](diagram.png)", "multiline\nvalue"]
-    ]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("inline_parent", [False, True])
-async def test_enrichment_updates_external_rich_csv_links(
-    monkeypatch: pytest.MonkeyPatch,
-    inline_parent: bool,
+async def test_enrichment_batches_all_artifacts_and_rewrites_links(
+    config: Config, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("letfs_ingest.enrich.activity.heartbeat", lambda: None)
-    nested = '<!-- artifact-table {"rich": true, "parts": ["table-1.csv"]} -->\n\n[Table](table-1.csv)'
-    buffer = io.StringIO(newline="")
-    csv.writer(buffer).writerow([nested])
-    parent = buffer.getvalue()
-    root = (
-        '<!-- artifact-table {"rich": true} -->\n\n```csv\n' + parent + "```"
-        if inline_parent
-        else '<!-- artifact-table {"rich": true, "parts": ["table-2.csv"]} -->\n\n[Table](table-2.csv)'
+    saved: list[internal.SaveEnrichedArtifactsRequest] = []
+    batched_items: list[list[EnrichItem]] = []
+
+    class FakeS3:
+        async def get_bytes(self, key: str, limit: int) -> bytes:
+            assert key == "workspaces/ws-1/blobs/blob-1/artifacts/img"
+            return _png_bytes()
+
+    class FakeStub:
+        async def SaveEnrichedArtifacts(
+            self, req: internal.SaveEnrichedArtifactsRequest
+        ) -> internal.BlobProcessingOutcome:
+            saved.append(req)
+            return internal.BlobProcessingOutcome(obsolete=False, stage="enriched")
+
+    class FakeModels:
+        async def describe_batch(
+            self, items: list[EnrichItem]
+        ) -> dict[str, ArtifactEnrichment]:
+            batched_items.append(items)
+            return {
+                "README.md": ArtifactEnrichment(
+                    id="README.md",
+                    title="Quarterly Report",
+                    description="Q1 financials",
+                ),
+                "01-part.md": ArtifactEnrichment(
+                    id="01-part.md",
+                    title="Executive Summary",
+                    description="Key highlights",
+                    slug="executive-summary",
+                ),
+                "images/01-img.png": ArtifactEnrichment(
+                    id="images/01-img.png",
+                    title="Revenue Chart",
+                    description="Quarterly bar chart",
+                    slug="revenue-chart",
+                ),
+            }
+
+    info = internal.GetBlobArtifactsResponse(
+        outcome=internal.BlobProcessingOutcome(stage="parsed"),
+        workspace_id="ws-1",
+        blob_id="blob-1",
+        media_type="application/pdf",
+        artifacts=[
+            internal.BlobArtifact(
+                id="id-readme",
+                blob_id="blob-1",
+                path="README.md",
+                kind=letfs.NODE_KIND_FILE,
+                media_type="text/markdown",
+                text_content="See [Summary](01-part.md)",
+            ),
+            internal.BlobArtifact(
+                id="id-part1",
+                blob_id="blob-1",
+                path="01-part.md",
+                kind=letfs.NODE_KIND_FILE,
+                media_type="text/markdown",
+                text_content="# Intro\n\n![Chart](images/01-img.png)",
+                indexable=True,
+            ),
+            internal.BlobArtifact(
+                id="id-img1",
+                blob_id="blob-1",
+                path="images/01-img.png",
+                kind=letfs.NODE_KIND_FILE,
+                media_type="image/png",
+                object_key="workspaces/ws-1/blobs/blob-1/artifacts/img",
+                indexable=True,
+            ),
+        ],
     )
-    items = [
-        artifact("README.md", root),
-        artifact("table-2.csv", parent),
-        artifact("table-1.csv", '"[Details](part-002.md)",123\n'),
-        artifact("part-002.md", "Evidence"),
-    ]
+    await enrich(
+        info,
+        cast(Any, FakeStub()),
+        cast(S3Store, FakeS3()),
+        cast(Models, FakeModels()),
+        config,
+    )
 
-    class TestModels(Models):
-        def __init__(self) -> None:
-            self.slots = asyncio.Semaphore(2)
+    assert len(batched_items) == 1
+    assert len(batched_items[0]) == 3
+    assert len(saved) == 1
+    req = saved[0]
+    assert req.blob_title == "Quarterly Report"
+    assert req.blob_description == "Q1 financials"
+    by_id = {a.artifact_id: a for a in req.artifacts}
+    readme_out = by_id["id-readme"].text_content
+    assert readme_out.startswith("# Quarterly Report\n\n> Q1 financials\n\n")
+    assert not readme_out.startswith("---\n")
+    assert (
+        "- [Revenue Chart](images/01-revenue-chart.png) - Quarterly bar chart"
+        in readme_out
+    )
+    assert (
+        "- [Executive Summary](01-executive-summary.md) - Key highlights" in readme_out
+    )
+    assert readme_out.endswith("\n---\n\nSee [Summary](01-executive-summary.md)\n")
+    assert by_id["id-part1"].path == "01-executive-summary.md"
+    assert (
+        by_id["id-part1"].text_content
+        == "# Intro\n\n![Chart](images/01-revenue-chart.png)"
+    )
+    assert by_id["id-img1"].path == "images/01-revenue-chart.png"
 
-        async def describe(
-            self,
-            name: str,
-            text: str,
-            media: str,
-            children: str,
-            image: bytes | None = None,
-        ) -> Metadata:
-            return Metadata(
-                title={
-                    "README.md": "Report",
-                    "table-1.csv": "Data",
-                    "table-2.csv": "Outer",
-                    "part-002.md": "Evidence",
-                }[name],
-                description="Useful",
-                semantic_type=SemanticType.TEXT_CONTENT,
-                context="Report",
+    # Multi-part TOC README replaces # Document Sections with # Title / > Description / ## Sections and inline descriptions.
+    toc_info = internal.GetBlobArtifactsResponse(
+        outcome=internal.BlobProcessingOutcome(stage="parsed"),
+        workspace_id="ws-1",
+        blob_id="blob-2",
+        media_type="application/pdf",
+        artifacts=[
+            internal.BlobArtifact(
+                id="id-readme",
+                blob_id="blob-2",
+                path="README.md",
+                kind=letfs.NODE_KIND_FILE,
+                media_type="text/markdown",
+                text_content="# Document Sections\n\n- [Repeated Doc Title](01-part.md)\n",
+            ),
+            internal.BlobArtifact(
+                id="id-part1",
+                blob_id="blob-2",
+                path="01-part.md",
+                kind=letfs.NODE_KIND_FILE,
+                media_type="text/markdown",
+                text_content="# Intro\n\nBody",
+                indexable=True,
+            ),
+            internal.BlobArtifact(
+                id="id-img1",
+                blob_id="blob-2",
+                path="images/01-img.png",
+                kind=letfs.NODE_KIND_FILE,
+                media_type="image/png",
+                object_key="workspaces/ws-1/blobs/blob-1/artifacts/img",
+                indexable=True,
+            ),
+        ],
+    )
+    saved.clear()
+    await enrich(
+        toc_info,
+        cast(Any, FakeStub()),
+        cast(S3Store, FakeS3()),
+        cast(Models, FakeModels()),
+        config,
+    )
+    toc_readme = {a.artifact_id: a for a in saved[0].artifacts}[
+        "id-readme"
+    ].text_content
+    assert toc_readme == (
+        "# Quarterly Report\n\n"
+        "> Q1 financials\n\n"
+        "## Sections\n\n"
+        "- [Executive Summary](01-executive-summary.md) - Key highlights\n\n"
+        "## Images\n\n"
+        "- [Revenue Chart](images/01-revenue-chart.png) - Quarterly bar chart\n"
+    )
+
+    # Workbook README keeps sheet grouping, preserves table dims, and turns image bullets into linked descriptions.
+    wb_info = internal.GetBlobArtifactsResponse(
+        outcome=internal.BlobProcessingOutcome(stage="parsed"),
+        workspace_id="ws-1",
+        blob_id="blob-3",
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        artifacts=[
+            internal.BlobArtifact(
+                id="id-readme",
+                blob_id="blob-3",
+                path="README.md",
+                kind=letfs.NODE_KIND_FILE,
+                media_type="text/markdown",
+                text_content=(
+                    "# Workbook Index\n\n"
+                    "## Sheet: Summary\n\n"
+                    "- [Raw Table (10x4)](tables/01-table.csv)\n"
+                    "- ![Sheet image 1](images/01-img.png)\n"
+                ),
+            ),
+            internal.BlobArtifact(
+                id="id-tbl",
+                blob_id="blob-3",
+                path="tables/01-table.csv",
+                kind=letfs.NODE_KIND_FILE,
+                media_type="text/csv",
+                text_content="A,B\n1,2\n",
+                indexable=True,
+            ),
+            internal.BlobArtifact(
+                id="id-img1",
+                blob_id="blob-3",
+                path="images/01-img.png",
+                kind=letfs.NODE_KIND_FILE,
+                media_type="image/png",
+                object_key="workspaces/ws-1/blobs/blob-1/artifacts/img",
+                indexable=True,
+            ),
+        ],
+    )
+
+    class FakeWorkbookModels(FakeModels):
+        async def describe_batch(
+            self, items: list[EnrichItem]
+        ) -> dict[str, ArtifactEnrichment]:
+            return {
+                "README.md": ArtifactEnrichment(
+                    id="README.md",
+                    title="Q1 Financial Model",
+                    description="Workbook summarizing Q1 revenue and charts.",
+                ),
+                "tables/01-table.csv": ArtifactEnrichment(
+                    id="tables/01-table.csv",
+                    title="Quarterly Revenue",
+                    description="Revenue by region for Q1.",
+                    slug="quarterly-revenue",
+                ),
+                "images/01-img.png": ArtifactEnrichment(
+                    id="images/01-img.png",
+                    title="Revenue Chart",
+                    description="Quarterly bar chart",
+                    slug="revenue-chart",
+                ),
+            }
+
+    saved.clear()
+    await enrich(
+        wb_info,
+        cast(Any, FakeStub()),
+        cast(S3Store, FakeS3()),
+        cast(Models, FakeWorkbookModels()),
+        config,
+    )
+    wb_readme = {a.artifact_id: a for a in saved[0].artifacts}["id-readme"].text_content
+    assert wb_readme == (
+        "# Q1 Financial Model\n\n"
+        "> Workbook summarizing Q1 revenue and charts.\n\n"
+        "## Sheet: Summary\n\n"
+        "- [Quarterly Revenue (10x4)](tables/01-quarterly-revenue.csv) - Revenue by region for Q1.\n"
+        "- [Revenue Chart](images/01-revenue-chart.png) - Quarterly bar chart\n"
+    )
+
+    # Single-file README (no children) still renders # Title / > Description / --- before body.
+    single_info = internal.GetBlobArtifactsResponse(
+        outcome=internal.BlobProcessingOutcome(stage="parsed"),
+        workspace_id="ws-1",
+        blob_id="blob-4",
+        media_type="application/pdf",
+        artifacts=[
+            internal.BlobArtifact(
+                id="id-readme",
+                blob_id="blob-4",
+                path="README.md",
+                kind=letfs.NODE_KIND_FILE,
+                media_type="text/markdown",
+                text_content="Memo body text.\n",
+                indexable=True,
+            ),
+        ],
+    )
+
+    class FakeSingleModels(FakeModels):
+        async def describe_batch(
+            self, items: list[EnrichItem]
+        ) -> dict[str, ArtifactEnrichment]:
+            return {
+                "README.md": ArtifactEnrichment(
+                    id="README.md",
+                    title="Project Mandate",
+                    description="Client memo outlining scope.",
+                ),
+            }
+
+    saved.clear()
+    await enrich(
+        single_info,
+        cast(Any, FakeStub()),
+        cast(S3Store, FakeS3()),
+        cast(Models, FakeSingleModels()),
+        config,
+    )
+    single_readme = {a.artifact_id: a for a in saved[0].artifacts}[
+        "id-readme"
+    ].text_content
+    assert single_readme == (
+        "# Project Mandate\n\n"
+        "> Client memo outlining scope.\n\n"
+        "---\n\n"
+        "Memo body text.\n"
+    )
+
+
+async def test_standalone_image_enriches_directly_on_blob(config: Config) -> None:
+    saved: list[internal.SaveEnrichedArtifactsRequest] = []
+
+    class FakeS3:
+        async def get_bytes(self, key: str, limit: int) -> bytes:
+            assert key == "workspaces/ws-1/blobs/blob-img/source"
+            return _png_bytes()
+
+    class FakeStub:
+        async def SaveEnrichedArtifacts(
+            self, req: internal.SaveEnrichedArtifactsRequest
+        ) -> internal.BlobProcessingOutcome:
+            saved.append(req)
+            return internal.BlobProcessingOutcome(obsolete=False, stage="enriched")
+
+    class FakeModels:
+        async def describe_batch(
+            self, items: list[EnrichItem]
+        ) -> dict[str, ArtifactEnrichment]:
+            assert (
+                len(items) == 1
+                and items[0].id == "."
+                and items[0].image_b64 is not None
             )
+            return {
+                ".": ArtifactEnrichment(
+                    id=".",
+                    title="System Diagram",
+                    description="Microservice architecture flow.",
+                )
+            }
 
-    async with httpx.AsyncClient() as http:
-        result = await enrich(
-            internal.ProcessingInput(artifacts=items),
-            {"file_id": "source", "version": 1},
-            TestModels(),
-            http,
-            10000,
-        )
-    updates = {item.node_id: item for item in result.artifacts}
-    assert list(csv.reader(io.StringIO(updates["table-1.csv"].text_content))) == [
-        ["[Details](evidence.md)", "123"]
-    ]
-    outer = updates["README.md" if inline_parent else "table-2.csv"].text_content
-    assert "data.csv" in outer and "[Table](table-1.csv)" not in outer
+    info = internal.GetBlobArtifactsResponse(
+        outcome=internal.BlobProcessingOutcome(stage="parsed"),
+        workspace_id="ws-1",
+        blob_id="blob-img",
+        object_key="workspaces/ws-1/blobs/blob-img/source",
+        media_type="image/png",
+        artifacts=[],
+    )
+    await enrich(
+        info,
+        cast(Any, FakeStub()),
+        cast(S3Store, FakeS3()),
+        cast(Models, FakeModels()),
+        config,
+    )
+    assert len(saved) == 1
+    assert saved[0].blob_title == "System Diagram"
+    assert saved[0].blob_description == "Microservice architecture flow."
+    assert len(saved[0].artifacts) == 0

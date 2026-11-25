@@ -1,163 +1,256 @@
-import json
-import math
-from collections.abc import Iterator
-from pathlib import PurePosixPath
-from typing import TypedDict
-from uuid import NAMESPACE_URL, uuid5
+import asyncio
+import csv
+from io import StringIO
+from typing import Any, Literal, TypedDict, cast
+from uuid import NAMESPACE_DNS, uuid5
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from openlet_api.letfs.v1 import internal_pb2 as internal
-from openlet_api.letfs.v1 import letfs_pb2 as pb
-from openlet_sdk.config import Config, EmbeddingSettings, IOSettings
+from openlet_api.letfs.v1 import letfs_pb2 as letfs
+from openlet_sdk.config import Config
 from qdrant_client import AsyncQdrantClient, models
-from temporalio import activity
 
 from .providers import Models
 from .readme import own_body
-from .telemetry import ProcessingIdentity, stage
+
+PointKind = Literal["image", "table", "text", "text_chunk"]
 
 
 class PointPayload(TypedDict):
     workspace_id: str
-    storage_id: str
-    source_id: str
-    source_version: int
-    file_id: str
-    kind: str
+    blob_id: str
+    artifact_path: str
+    kind: PointKind
+    title: str
+    chunk_index: int
     text: str
 
 
+def _point_id(
+    blob_id: str, artifact_path: str, kind: PointKind, chunk_index: int
+) -> str:
+    return str(uuid5(NAMESPACE_DNS, f"{blob_id}:{artifact_path}:{kind}:{chunk_index}"))
+
+
+def _csv_headers(text: str) -> str:
+    rows = csv.reader(StringIO(text))
+    empty: list[str] = []
+    first = next(rows, empty)
+    cols = [c.strip() for c in first if c.strip()]
+    return ", ".join(cols)
+
+
+_MIN_FRAGMENT_CHARS = 160
+
+
+def _merge_small_chunks(
+    chunks: list[str], min_chars: int = _MIN_FRAGMENT_CHARS, max_chars: int = 4_000
+) -> list[str]:
+    """Fold undersized leading or trailing fragments into an adjacent chunk cleanly."""
+    if len(chunks) <= 1:
+        return chunks
+    out = list(chunks)
+    i = 0
+    while i < len(out) and len(out) > 1:
+        cur = out[i]
+        if len(cur.strip()) < min_chars:
+            if i > 0 and len(out[i - 1]) + 2 + len(cur) <= max_chars:
+                out[i - 1] = f"{out[i - 1].rstrip()}\n\n{cur.lstrip()}"
+                out.pop(i)
+                continue
+            if i + 1 < len(out) and len(cur) + 2 + len(out[i + 1]) <= max_chars:
+                out[i + 1] = f"{cur.rstrip()}\n\n{out[i + 1].lstrip()}"
+                out.pop(i)
+                continue
+        i += 1
+    return out
+
+
 def points(
-    source: internal.ProcessingInput,
-    identity: ProcessingIdentity,
-    settings: IOSettings,
-    embedding: EmbeddingSettings,
-    collection: str,
-) -> Iterator[tuple[str, PointPayload]]:
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=settings["chunk_size_tokens"] * 4,
-        chunk_overlap=settings["chunk_overlap_tokens"] * 4,
+    info: internal.GetBlobArtifactsResponse, config: Config
+) -> list[tuple[str, PointPayload]]:
+    io = config["services"]["letfs_ingest"]["io"]
+    splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
+        chunk_size=io["chunk_size_tokens"],
+        chunk_overlap=io["chunk_overlap_tokens"],
     )
-    space = [embedding["model"], embedding["dimensions"], collection]
-    artifacts = list(source.artifacts)
-    if source.media_type.startswith("image/"):
-        artifacts.append(
-            internal.ProcessingArtifact(
-                path=source.source_name,
-                node=pb.Node(
-                    id=identity["file_id"],
-                    file=pb.FileHeader(
-                        media_type=source.media_type, metadata=source.source_metadata
+    out: list[tuple[str, PointPayload]] = []
+
+    if not info.artifacts and info.media_type.startswith("image/"):
+        text = "\n\n".join(filter(None, [info.title, info.description]))
+        if text:
+            out.append(
+                (
+                    _point_id(info.blob_id, "", "image", 0),
+                    PointPayload(
+                        workspace_id=info.workspace_id,
+                        blob_id=info.blob_id,
+                        artifact_path="",
+                        kind="image",
+                        title=info.title,
+                        chunk_index=0,
+                        text=text,
                     ),
-                ),
+                )
             )
-        )
-    readmes = {
-        PurePosixPath(artifact.path).parent: artifact.node.file.metadata
-        for artifact in artifacts
-        if PurePosixPath(artifact.path).name == "README.md"
-        and artifact.node.HasField("file")
-    }
-    for artifact in artifacts:
-        node = artifact.node
-        if not node.HasField("file"):
+        return out
+
+    for art in info.artifacts:
+        if art.kind != letfs.NODE_KIND_FILE or not art.indexable:
             continue
-        metadata = node.file.metadata
-        ancestors: list[str] = []
-        for parent in reversed(PurePosixPath(artifact.path).parents):
-            owner = readmes.get(parent)
-            if owner is not None and parent / "README.md" != PurePosixPath(
-                artifact.path
-            ):
-                ancestors.append(f"{owner.title}: {owner.description}")
-        overview = "\n".join(
-            [
-                *ancestors,
-                artifact.path,
-                metadata.title,
-                metadata.description,
-                metadata.context,
-            ]
-        )
-        body = artifact.text_content if artifact.HasField("text_content") else ""
-        if PurePosixPath(artifact.path).name == "README.md":
+        summary = "\n\n".join(filter(None, [art.title, art.description]))
+
+        if art.media_type.startswith("image/"):
+            if summary:
+                out.append(
+                    (
+                        _point_id(info.blob_id, art.path, "image", 0),
+                        PointPayload(
+                            workspace_id=info.workspace_id,
+                            blob_id=info.blob_id,
+                            artifact_path=art.path,
+                            kind="image",
+                            title=art.title,
+                            chunk_index=0,
+                            text=summary,
+                        ),
+                    )
+                )
+            continue
+
+        body = art.text_content if art.HasField("text_content") else ""
+        if art.media_type == "text/csv" or art.path.endswith(".csv"):
+            headers = _csv_headers(body)
+            parts = [summary] if summary else []
+            if headers:
+                parts.append(f"Columns: {headers}")
+            text = "\n".join(parts)
+            if text:
+                out.append(
+                    (
+                        _point_id(info.blob_id, art.path, "table", 0),
+                        PointPayload(
+                            workspace_id=info.workspace_id,
+                            blob_id=info.blob_id,
+                            artifact_path=art.path,
+                            kind="table",
+                            title=art.title,
+                            chunk_index=0,
+                            text=text,
+                        ),
+                    )
+                )
+            continue
+
+        if art.path == "README.md":
             body = own_body(body)
-        if node.file.media_type == "text/csv" or not body:
-            chunks = [("file", overview)]
-        elif len(body) <= settings["chunk_size_tokens"] * 4:
-            chunks = [("file", overview + "\n\n" + body)]
+        if not body.strip():
+            continue
+        chunks = _merge_small_chunks(
+            splitter.split_text(body),
+            max_chars=max(2_400, int(io["chunk_size_tokens"]) * 5),
+        )
+        if len(chunks) == 1:
+            combined = f"{summary}\n\n{chunks[0]}".strip() if summary else chunks[0]
+            out.append(
+                (
+                    _point_id(info.blob_id, art.path, "text_chunk", 0),
+                    PointPayload(
+                        workspace_id=info.workspace_id,
+                        blob_id=info.blob_id,
+                        artifact_path=art.path,
+                        kind="text_chunk",
+                        title=art.title,
+                        chunk_index=0,
+                        text=combined,
+                    ),
+                )
+            )
         else:
-            prefix = "\n".join(
-                [*ancestors, artifact.path, metadata.title, metadata.description]
-            )
-            chunks = [
-                ("file", overview),
-                *(
-                    ("chunk", prefix + "\n\n" + chunk)
-                    for chunk in splitter.split_text(body)
-                ),
-            ]
-        for ordinal, (kind, text) in enumerate(chunks):
-            key = json.dumps(
-                [
-                    identity["file_id"],
-                    identity["version"],
-                    node.id,
-                    kind,
-                    ordinal,
-                    *space,
-                ],
-                separators=(",", ":"),
-            )
-            yield (
-                str(uuid5(NAMESPACE_URL, key)),
-                {
-                    "workspace_id": source.workspace_id,
-                    "storage_id": source.storage_id,
-                    "source_id": identity["file_id"],
-                    "source_version": identity["version"],
-                    "file_id": node.id,
-                    "kind": kind,
-                    "text": text,
-                },
-            )
+            if summary:
+                out.append(
+                    (
+                        _point_id(info.blob_id, art.path, "text", 0),
+                        PointPayload(
+                            workspace_id=info.workspace_id,
+                            blob_id=info.blob_id,
+                            artifact_path=art.path,
+                            kind="text",
+                            title=art.title,
+                            chunk_index=0,
+                            text=summary,
+                        ),
+                    )
+                )
+            for idx, chunk in enumerate(chunks):
+                if not any(ch.isalnum() for ch in chunk):
+                    continue
+                text = f"{art.title}\n\n{chunk}".strip() if art.title else chunk
+                out.append(
+                    (
+                        _point_id(info.blob_id, art.path, "text_chunk", idx),
+                        PointPayload(
+                            workspace_id=info.workspace_id,
+                            blob_id=info.blob_id,
+                            artifact_path=art.path,
+                            kind="text_chunk",
+                            title=art.title,
+                            chunk_index=idx,
+                            text=text,
+                        ),
+                    )
+                )
+    return out
 
 
 async def index(
-    source: internal.ProcessingInput,
-    identity: ProcessingIdentity,
+    info: internal.GetBlobArtifactsResponse,
     ai: Models,
     qdrant: AsyncQdrantClient,
     config: Config,
 ) -> None:
-    settings = config["services"]["letfs_ingest"]["io"]
-    embedding = config["models"]["embedding"]
+    io = config["services"]["letfs_ingest"]["io"]
     collection = config["dependencies"]["qdrant"]["collection"]
-    batch: list[tuple[str, PointPayload]] = []
+    # Clear any earlier retry/partial points before idempotent upsert.
+    await qdrant.delete(
+        collection_name=collection,
+        points_selector=models.FilterSelector(
+            filter=models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="blob_id", match=models.MatchValue(value=info.blob_id)
+                    )
+                ]
+            )
+        ),
+        wait=True,
+    )
 
-    async def flush() -> None:
-        with stage("embed", identity):
-            vectors = await ai.embed([payload["text"] for _, payload in batch])
-        if len(vectors) != len(batch) or any(
-            len(vector) != embedding["dimensions"]
-            or not all(math.isfinite(value) for value in vector)
-            for vector in vectors
-        ):
-            raise ValueError("embedding provider returned invalid vectors")
+    items = points(info, config)
+    if not items:
+        return
+
+    batch_size = int(io["embedding_batch_size"])
+    sem = asyncio.Semaphore(int(io["model_concurrency"]))
+
+    async def embed_chunk(
+        slice_items: list[tuple[str, PointPayload]],
+    ) -> list[models.PointStruct]:
+        async with sem:
+            vectors = await ai.embed([p[1]["text"] for p in slice_items])
+        return [
+            models.PointStruct(
+                id=pid, vector=vec, payload=cast(dict[str, Any], payload)
+            )
+            for (pid, payload), vec in zip(slice_items, vectors, strict=True)
+        ]
+
+    batches = [items[i : i + batch_size] for i in range(0, len(items), batch_size)]
+    nested = await asyncio.gather(*(embed_chunk(b) for b in batches))
+    structs = [pt for group in nested for pt in group]
+    for i in range(0, len(structs), 256):
         await qdrant.upsert(
             collection_name=collection,
+            points=structs[i : i + 256],
             wait=True,
-            points=[
-                models.PointStruct(id=key, vector=vector, payload=dict(payload))
-                for (key, payload), vector in zip(batch, vectors, strict=True)
-            ],
         )
-        batch.clear()
-        activity.heartbeat()
-
-    for point in points(source, identity, settings, embedding, collection):
-        batch.append(point)
-        if len(batch) == settings["embedding_batch_size"]:
-            await flush()
-    if batch:
-        await flush()

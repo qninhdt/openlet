@@ -345,10 +345,17 @@ def configure(output: Path, test: bool = False) -> None:
             dep["qdrant"]["api_key"],
             c["models"]["gateway"]["api_key"],
         ],
-        "ingest-cpu": ["${DATALAB_API_KEY}"]
-        if os.environ.get("DATALAB_API_KEY")
-        else [],
-        "ingest-io": [dep["qdrant"]["api_key"], c["models"]["gateway"]["api_key"]],
+        "ingest-cpu": [
+            dep["s3"]["access_key_id"],
+            dep["s3"]["secret_access_key"],
+            *(["${DATALAB_API_KEY}"] if os.environ.get("DATALAB_API_KEY") else []),
+        ],
+        "ingest-io": [
+            dep["s3"]["access_key_id"],
+            dep["s3"]["secret_access_key"],
+            dep["qdrant"]["api_key"],
+            c["models"]["gateway"]["api_key"],
+        ],
         "databases": [
             deploy["postgres"]["admin_password"],
             svc["platform"]["database"]["password"],

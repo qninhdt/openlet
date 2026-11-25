@@ -1,46 +1,58 @@
 import csv
-import io
-import json
 import re
 from bisect import bisect_left
-from contextlib import ExitStack
 from copy import deepcopy
-from itertools import accumulate
+from io import StringIO
 from pathlib import Path
 
-from .layout import PARSER
+from markdown_it import MarkdownIt
 
-TABLE_TAGS = re.compile(
-    r"""<!--[\s\S]*?-->|<(/?)([a-z][\w:-]*)\b(?:[^<>"']|"[^"]*"|'[^']*')*>""",
-    re.I,
-)
+TABLE_TAGS = re.compile(r"<(/?)(table)\b[^>]*>", re.I)
+_MD = MarkdownIt("commonmark").enable("table")
 
 
 def csv_text(rows: list[list[str]]) -> str:
-    buffer = io.StringIO(newline="")
-    csv.writer(buffer).writerows(rows)
+    buffer = StringIO()
+    csv.writer(buffer, lineterminator="\n").writerows(rows)
     return buffer.getvalue()
 
 
 def write_rows(
-    rows: list[list[str]], target: Path, max_text_bytes: int
+    rows: list[list[str]], destination: Path, max_text: int
 ) -> list[tuple[str, int, int]]:
+    """Write rows into one or more CSV parts staying within max_text bytes per file."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    header, body = (rows[:1], rows[1:]) if len(rows) > 1 else ([], rows)
+    full = csv_text(rows)
+    if len(full.encode("utf-8")) <= max_text:
+        destination.write_text(full, encoding="utf-8")
+        return [(destination.name, 0, len(rows))]
+
     parts: list[tuple[str, int, int]] = []
-    name, start = target.name, 0
-    with ExitStack() as stack:
-        stream = stack.enter_context(target.open("wb"))
-        for index, row in enumerate(rows):
-            data = csv_text([row]).encode()
-            if len(data) > max_text_bytes:
-                raise ValueError("table row exceeds text limit")
-            if stream.tell() + len(data) > max_text_bytes:
-                stream.close()
-                parts.append((name, start, index))
-                name = f"{target.stem}-part-{len(parts) + 1}{target.suffix}"
-                start = index
-                stream = stack.enter_context((target.parent / name).open("wb"))
-            stream.write(data)
-    parts.append((name, start, len(rows)))
+    chunk: list[list[str]] = list(header)
+    first_row = len(header)
+    part_num = 1
+    for idx, row in enumerate(body, len(header)):
+        candidate = csv_text([*chunk, row])
+        if len(candidate.encode("utf-8")) > max_text and len(chunk) > len(header):
+            name = f"{destination.stem}-{part_num:02d}{destination.suffix}"
+            (destination.parent / name).write_text(csv_text(chunk), encoding="utf-8")
+            parts.append((name, first_row, idx))
+            part_num += 1
+            chunk = [*header, row]
+            first_row = idx
+        else:
+            if len(candidate.encode("utf-8")) > max_text:
+                raise ValueError("table row exceeds max_text_bytes limit")
+            chunk.append(row)
+    if chunk:
+        name = (
+            destination.name
+            if part_num == 1
+            else f"{destination.stem}-{part_num:02d}{destination.suffix}"
+        )
+        (destination.parent / name).write_text(csv_text(chunk), encoding="utf-8")
+        parts.append((name, first_row, len(rows)))
     return parts
 
 
@@ -48,16 +60,8 @@ def write_html_table(markup: str, output: Path, start: int, max_text: int) -> st
     from lxml import html
 
     table = html.fragment_fromstring(markup)
-    # Browsers place consecutive direct rows in an implicit tbody.
-    section = None
-    for child in list(table):
-        if child.tag != "tr":
-            section = None
-            continue
-        if section is None:
-            section = html.Element("tbody")
-            child.addprevious(section)
-        section.append(child)
+    if str(table.tag).lower() != "table":
+        raise ValueError("expected HTML table element")
     shell = deepcopy(table)
     rows: list[tuple[html.HtmlElement, html.HtmlElement]] = []
     for original, destination in zip(
@@ -68,60 +72,59 @@ def write_html_table(markup: str, output: Path, start: int, max_text: int) -> st
         rows.extend((row, destination) for row in original.iterchildren("tr"))
         for row in list(destination.iterchildren("tr")):
             destination.remove(row)
-    size = empty_size = len(html.tostring(shell, encoding="utf-8")) + 1
-    links: list[str] = []
-    chunk: list[tuple[html.HtmlElement, html.HtmlElement]] = []
-
-    def flush() -> None:
-        name = f"table-{start + 1}-part-{len(links) + 1}.md"
-        (output / name).write_bytes(html.tostring(shell, encoding="utf-8") + b"\n")
-        links.append(f"- [Table part {len(links) + 1}]({name})")
-        for row, parent in chunk:
-            parent.remove(row)
-        chunk.clear()
-
-    remaining = 0
-    group_start = 0
-    group_size = 0
-    for index, (row, parent) in enumerate(rows):
-        group_size += len(html.tostring(row, encoding="utf-8"))
-        for cell in row.xpath("./th[@rowspan] | ./td[@rowspan]"):
-            span = cell.get("rowspan", "").strip()
-            if re.fullmatch(r"[0-9]{1,5}", span):
-                remaining = max(remaining, int(span) or len(rows))
-        remaining -= 1
-        if remaining > 0 and index + 1 < len(rows) and parent is rows[index + 1][1]:
-            continue
-        remaining = 0
-        if empty_size + group_size > max_text:
-            raise ValueError("HTML table row group exceeds text limit")
-        if size + group_size > max_text:
-            flush()
+    empty_size = len(html.tostring(shell, encoding="utf-8")) + 1
+    if empty_size > max_text:
+        raise ValueError("HTML table header exceeds max_text_bytes limit")
+    parts: list[str] = []
+    current = deepcopy(shell)
+    size = empty_size
+    part = 1
+    out_dir = output / "tables"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for row, target_section in rows:
+        row_bytes = html.tostring(row, encoding="utf-8")
+        if size + len(row_bytes) > max_text and size > empty_size:
+            name = f"{start + 1:02d}-table-{part:02d}.html"
+            (out_dir / name).write_bytes(
+                html.tostring(current, encoding="utf-8") + b"\n"
+            )
+            parts.append(f"- [Table part {part}](tables/{name})")
+            part += 1
+            current = deepcopy(shell)
             size = empty_size
-        group = rows[group_start : index + 1]
-        for item, destination in group:
-            destination.append(item)
-        chunk.extend(group)
-        size += group_size
-        group_start = index + 1
-        group_size = 0
-    if not chunk:
-        raise ValueError("HTML table has no rows to split")
-    flush()
-    return "\n".join(links)
+        dest = current.find(str(target_section.tag))
+        if dest is not None:
+            dest.append(deepcopy(row))
+        size += len(row_bytes)
+    if size > empty_size:
+        name = (
+            f"{start + 1:02d}-table-{part:02d}.html"
+            if part > 1
+            else f"{start + 1:02d}-table.html"
+        )
+        (out_dir / name).write_bytes(html.tostring(current, encoding="utf-8") + b"\n")
+        parts.append(
+            f"- [Table part {part}](tables/{name})"
+            if part > 1
+            else f"- [Table](tables/{name})"
+        )
+    return "\n".join(parts)
 
 
 def externalize_tables(
     body: str, output: Path, split_tokens: int, max_text: int
 ) -> str:
+    """Externalize oversized pipe and HTML tables to clean CSV/HTML files under tables/."""
     lines = body.splitlines(keepends=True)
-    offsets = list(accumulate(map(len, lines), initial=0))
+    offsets: list[int] = [0]
+    for line in lines:
+        offsets.append(offsets[-1] + len(line))
+
+    tokens = _MD.parse(body)
     rows: list[list[str]] | None = None
     start = end = 0
-    html_end = 0
-    for token in PARSER.parse(body):
-        if token.map and offsets[token.map[0]] < html_end:
-            continue
+    table_idx = 0
+    for token in tokens:
         if (
             token.type == "html_block"
             and token.level == 0
@@ -138,18 +141,19 @@ def externalize_tables(
                     continue
                 html_end = match.end()
                 markup = body[offsets[first] : html_end]
-                if len(markup.encode()) + 1 > max_text:
+                if len(markup.encode("utf-8")) + 1 > max_text:
                     stop = bisect_left(offsets, html_end)
-                    links = write_html_table(markup, output, first, max_text)
+                    links = write_html_table(markup, output, table_idx, max_text)
+                    table_idx += 1
                     lines[first] = f"{links}\n\n{body[html_end : offsets[stop]]}"
                     lines[first + 1 : stop] = [""] * (stop - first - 1)
                 break
         elif token.type == "table_open" and token.level == 0 and token.map:
             start, end = token.map
+            raw_table = "".join(lines[start:end])
             rows = (
                 []
-                if len("".join(lines[start:end]).encode())
-                > min(4 * split_tokens, max_text)
+                if len(raw_table.encode("utf-8")) > min(4 * split_tokens, max_text)
                 else None
             )
         elif rows is not None and token.type == "tr_open":
@@ -157,22 +161,14 @@ def externalize_tables(
         elif rows and token.type == "inline":
             rows[-1].append(token.content)
         elif rows is not None and token.type == "table_close":
-            filename = f"table-{start + 1}.csv"
-            parts = write_rows(rows, output / filename, max_text)
-            metadata = json.dumps(
-                {
-                    "source": filename,
-                    "parts": [part[0] for part in parts],
-                    "rich": any(
-                        "](" in cell or "<img" in cell for row in rows for cell in row
-                    ),
-                }
-            )
+            table_idx += 1
+            filename = f"{table_idx:02d}-table.csv"
+            parts = write_rows(rows, output / "tables" / filename, max_text)
             links = "\n".join(
-                f"- [Table rows {first + 1}-{last}]({name})"
+                f"- [Table rows {first + 1}-{last}](tables/{name})"
                 for name, first, last in parts
             )
-            lines[start] = f"<!-- artifact-table {metadata} -->\n\n{links}\n\n"
+            lines[start] = f"{links}\n"
             lines[start + 1 : end] = [""] * (end - start - 1)
             rows = None
     return "".join(lines)
