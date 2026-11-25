@@ -1,0 +1,49 @@
+{
+  "input": {
+    "format": 7,
+    "source": "sample.pdf",
+    "sha256": "485d521644a2b7a3d586684aa0d9d7c91c6c3460d1143eb7aff05a9f32ab2d70",
+    "embedding": {
+      "model": "openai/text-embedding-3-large",
+      "dimensions": 1536
+    },
+    "enrichment": {
+      "output_mode": "tools",
+      "max_input_characters": 24000,
+      "max_image_pixels": 25000000,
+      "image_max_side": 1600,
+      "image_jpeg_quality": 85
+    },
+    "prompt_label": "production",
+    "split_tokens": 4096,
+    "limits": {
+      "max_pages": 50,
+      "max_page_pixels": 25000000,
+      "max_office_expanded_bytes": 536870912,
+      "max_spreadsheet_cells": 1000000,
+      "max_sheets": 100,
+      "max_output_bytes": 268435456
+    },
+    "chunk_size_tokens": 512,
+    "chunk_overlap_tokens": 64
+  },
+  "files": {
+    ".": [
+      "Acme Q4 PDF Summary",
+      "Quarterly financial summary covering European expansion."
+    ],
+    "README.md": [
+      "Acme Q4 PDF Summary",
+      "Quarterly financial summary covering European expansion."
+    ]
+  },
+  "points": [
+    {
+      "path": "README.md",
+      "text": "# Acme Q4 Summary\n\nEuropean expansion contributed 42% of Q4 revenue growth.\n",
+      "kind": "chunk",
+      "title": "Acme Q4 PDF Summary",
+      "chunk_index": 0
+    }
+  ]
+}

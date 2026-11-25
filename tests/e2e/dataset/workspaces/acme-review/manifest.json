@@ -1,0 +1,44 @@
+{
+  "name": "Acme Quarterly Review",
+  "owner": "alice-chen",
+  "members": [
+    "bob-tran"
+  ],
+  "agents": {
+    "atlas": {
+      "name": "Atlas",
+      "title": "Review Analyst",
+      "operators": [
+        "bob-tran"
+      ],
+      "description": "Assists the Acme team with quarterly evidence review."
+    }
+  },
+  "grants": [
+    {
+      "storage": "shared",
+      "actor": "atlas",
+      "role": "viewer"
+    },
+    {
+      "storage": "personal/alice-chen",
+      "actor": "atlas",
+      "role": "viewer"
+    },
+    {
+      "storage": "personal/bob-tran",
+      "actor": "atlas",
+      "role": "editor"
+    }
+  ],
+  "conversations": {
+    "atlas-alice-chen": {
+      "agent": "atlas",
+      "user": "alice-chen"
+    },
+    "atlas-bob-tran": {
+      "agent": "atlas",
+      "user": "bob-tran"
+    }
+  }
+}
