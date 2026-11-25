@@ -10,6 +10,8 @@ dependencies = [
   "authzed",
   "boto3",
   "qdrant-client",
+  "httpx",
+  "numpy",
 ]
 
 [tool.uv.workspace]

@@ -1,4 +1,5 @@
 /.local/
+/datasets/
 **/target/
 **/bin/
 *.dump
