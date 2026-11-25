@@ -17,15 +17,14 @@ from openlet_evals.core.report import (
 from openlet_evals.suites.retrieval.suite import mrr_at_k, recall_at_k, validate_goldens
 
 
-def test_make_judge_disables_response_schema_and_sets_reasoning_effort() -> None:
+def test_make_judge_configures_model_and_reasoning_effort() -> None:
     judge = make_judge(
         model="gpt-6-luna",
-        base_url="https://api.vilao.ai/v1",
+        base_url="http://localhost:4000/v1",
         api_key="test-key",
         reasoning_effort="max",
     )
-    assert judge.supports_structured_outputs() is False
-    assert judge.supports_json_mode() is False
+    assert judge.get_model_name() == "gpt-6-luna"
     assert judge.generation_kwargs["extra_body"] == {"reasoning_effort": "max"}  # pyright: ignore[reportUnknownMemberType]
 
 

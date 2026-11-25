@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from deepeval import evaluate  # pyright: ignore[reportUnknownVariableType]
-from deepeval.evaluate.configs import AsyncConfig, DisplayConfig
+from deepeval.evaluate.configs import AsyncConfig, CacheConfig, DisplayConfig
 from deepeval.metrics import ContextualPrecisionMetric, ContextualRecallMetric
 from deepeval.test_case import LLMTestCase
 from dotenv import dotenv_values
@@ -40,6 +40,7 @@ class RetrievalConfig(BaseModel):
     judge_reasoning_effort: str | None = "max"
     judge_threshold: float = 0.7
     concurrency: int = 20
+    use_cache: bool = False
 
 
 def recall_at_k(relevant: Sequence[str], hit_files: Sequence[str], k: int) -> float:
@@ -181,10 +182,13 @@ def run_retrieval(
         )
         test_cases = [
             LLMTestCase(
+                name=str(g["additional_metadata"]["id"]),
+                tags=[str(g["additional_metadata"]["workspace"]), cfg.mode],
                 input=str(g["input"]),
                 actual_output="",
                 expected_output=str(g["expected_output"]),
                 retrieval_context=[str(h["text"]) for h in hits],
+                metadata=cast(dict[str, Any], g["additional_metadata"]),
             )
             for g, hits in zip(goldens, hits_by_sample, strict=True)
         ]
@@ -198,10 +202,18 @@ def run_retrieval(
                     threshold=cfg.judge_threshold, model=judge, include_reason=False
                 ),
             ],
+            identifier=cfg.name,
             async_config=AsyncConfig(run_async=True, max_concurrent=cfg.concurrency),
+            cache_config=CacheConfig(write_cache=True, use_cache=cfg.use_cache),
             display_config=DisplayConfig(show_indicator=False, print_results=False),
         )
-        for idx, tr in enumerate(result.test_results):
+        idx_by_id = {
+            str(g["additional_metadata"]["id"]): i for i, g in enumerate(goldens)
+        }
+        for tr in result.test_results:
+            idx = idx_by_id.get(getattr(tr, "name", "") or "")
+            if idx is None:
+                continue
             for md in tr.metrics_data or []:
                 key = md.name.lower().replace(" ", "_")
                 judge_scores[idx][key] = round(float(md.score or 0.0), 6)

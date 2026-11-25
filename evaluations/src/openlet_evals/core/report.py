@@ -6,7 +6,7 @@ import json
 from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 
 def build_run(
@@ -16,6 +16,7 @@ def build_run(
     config: dict[str, Any],
     samples: list[dict[str, Any]],
     wall_s: float,
+    telemetry: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Aggregate overall and per-group metrics across sample dicts."""
     keys = list(dict.fromkeys(k for s in samples for k in s["scores"]))
@@ -46,7 +47,7 @@ def build_run(
         }
         for grp, rows in sorted(grouped.items())
     }
-    return {
+    run: dict[str, Any] = {
         "suite": suite,
         "name": name,
         "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
@@ -58,6 +59,9 @@ def build_run(
         "by_group": by_group,
         "samples": samples,
     }
+    if telemetry is not None:
+        run["telemetry"] = telemetry
+    return run
 
 
 def save_run(run: dict[str, Any], path: Path) -> None:
@@ -68,6 +72,13 @@ def save_run(run: dict[str, Any], path: Path) -> None:
 def load_run(path: Path) -> dict[str, Any]:
     data: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
     return data
+
+
+def _fmt(value: object) -> str:
+    if isinstance(value, dict):
+        items = cast(dict[object, object], value).items()
+        return ", ".join(f"{k}={v}" for k, v in items) or "-"
+    return f"{value:.4f}" if isinstance(value, float) else str(value)
 
 
 def render_markdown(run: dict[str, Any]) -> str:
@@ -86,6 +97,17 @@ def render_markdown(run: dict[str, Any]) -> str:
             for k, v in metrics.items()
         ],
     ]
+    if telemetry := cast(dict[str, Any], run.get("telemetry") or {}):
+        lines.extend(
+            [
+                "",
+                "## Telemetry",
+                "",
+                "| Metric | Value |",
+                "|---|---:|",
+                *[f"| `{k}` | `{_fmt(v)}` |" for k, v in telemetry.items()],
+            ]
+        )
     by_group: dict[str, dict[str, Any]] = run.get("by_group", {})
     if by_group and metrics:
         keys = list(metrics)
@@ -105,6 +127,22 @@ def render_markdown(run: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _diff_table(
+    base_map: dict[str, Any], cand_map: dict[str, Any], keys: list[str]
+) -> list[str]:
+    rows = ["| Metric | Base | Candidate | Delta |", "|---|---:|---:|---:|"]
+    for k in keys:
+        bv, cv = base_map.get(k), cand_map.get(k)
+        b = float(bv) if isinstance(bv, (int, float)) else None
+        c = float(cv) if isinstance(cv, (int, float)) else None
+        delta = f"{c - b:+.4f}" if (b is not None and c is not None) else "n/a"
+        rows.append(
+            f"| `{k}` | `{f'{b:.4f}' if b is not None else 'n/a'}` | "
+            f"`{f'{c:.4f}' if c is not None else 'n/a'}` | `{delta}` |"
+        )
+    return rows
+
+
 def diff_runs(
     base: dict[str, Any], cand: dict[str, Any], *, metric: str | None = None
 ) -> str:
@@ -112,19 +150,25 @@ def diff_runs(
     lines = [
         f"# Eval Diff: `{base['name']}` → `{cand['name']}`",
         "",
-        "| Metric | Base | Candidate | Delta |",
-        "|---|---:|---:|---:|",
+        *_diff_table(base["metrics"], cand["metrics"], keys),
     ]
-    for k in keys:
-        b, c = base["metrics"].get(k), cand["metrics"].get(k)
-        delta = f"{c - b:+.4f}" if (b is not None and c is not None) else "n/a"
-        lines.append(
-            f"| `{k}` | `{f'{b:.4f}' if b is not None else 'n/a'}` | "
-            f"`{f'{c:.4f}' if c is not None else 'n/a'}` | `{delta}` |"
+    b_tel = cast(dict[str, Any], base.get("telemetry") or {})
+    c_tel = cast(dict[str, Any], cand.get("telemetry") or {})
+    tel_keys = [
+        k
+        for k in dict.fromkeys([*b_tel, *c_tel])
+        if isinstance(b_tel.get(k), (int, float))
+        or isinstance(c_tel.get(k), (int, float))
+    ]
+    if tel_keys:
+        lines.extend(
+            ["", "## Telemetry Diff", "", *_diff_table(b_tel, c_tel, tel_keys)]
         )
 
     focus = metric or (
-        "contextual_recall"
+        "pass_at_1"
+        if "pass_at_1" in keys
+        else "contextual_recall"
         if "contextual_recall" in keys
         else (keys[0] if keys else None)
     )
@@ -133,18 +177,16 @@ def diff_runs(
         c_map = {s["id"]: s["scores"].get(focus) for s in cand.get("samples", [])}
         changed = sorted(
             (
-                (
-                    float(c_map[sid]) - float(b_map[sid]),
-                    sid,
-                    float(b_map[sid]),
-                    float(c_map[sid]),
-                )
-                for sid in b_map
-                if sid in c_map
-                and b_map[sid] is not None
-                and c_map[sid] is not None
-                and abs(float(c_map[sid]) - float(b_map[sid])) > 1e-6
+                float(c_map[sid]) - float(b_map[sid]),
+                sid,
+                float(b_map[sid]),
+                float(c_map[sid]),
             )
+            for sid in b_map
+            if sid in c_map
+            and b_map[sid] is not None
+            and c_map[sid] is not None
+            and abs(float(c_map[sid]) - float(b_map[sid])) > 1e-6
         )
         if changed:
             lines.extend(
