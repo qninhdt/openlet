@@ -3,8 +3,10 @@
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
+from pathlib import PurePosixPath
 from uuid import UUID
 
+import grpc
 from mirage import FileStat, FileType
 from openlet_api.letfs.v1 import letfs_pb2 as fs
 from openlet_sdk.config import JSON
@@ -88,6 +90,17 @@ def references(content: str) -> list[tuple[str, UUID, UUID]]:
     return found
 
 
+def _dedup_name(name: str, *, is_dir: bool, tag: str) -> str:
+    ext = "" if is_dir else PurePosixPath(name).suffix
+    stem = name[: len(name) - len(ext)] if ext else name
+    suffix = f" ({tag}){ext}"
+    max_stem_bytes = max(0, 255 - len(suffix.encode("utf-8")))
+    encoded = stem.encode("utf-8")
+    if len(encoded) > max_stem_bytes:
+        stem = encoded[:max_stem_bytes].decode("utf-8", errors="ignore")
+    return f"{stem}{suffix}"
+
+
 async def validate(
     s: Services,
     workspace: UUID,
@@ -144,26 +157,47 @@ async def validate(
                     workspace_id=str(workspace),
                     storage_id=str(target["storage_id"]),
                     base=fs.NodeLocator(node_id=str(target["root_node_id"])),
-                    path=f"attachments/{copy_request}/{storage}/{node_id}",
+                    path="attachments",
                 ),
                 metadata=actor.metadata,
                 timeout=15,
             )
-            node = await s.files.CopyNode(
-                fs.TransferNodeRequest(
-                    workspace_id=str(workspace),
-                    storage_id=str(storage),
-                    source=fs.NodeLocator(node_id=str(node_id)),
-                    destination_storage_id=str(target["storage_id"]),
-                    parent=fs.NodeLocator(node_id=parent.id),
-                    name=node.name,
-                    request_id=str(
-                        stable(copy_request, f"attachment/{storage}/{node_id}")
-                    ),
-                ),
-                metadata=actor.metadata,
-                timeout=30,
+            primary_id = stable(copy_request, f"attachment/{storage}/{node_id}")
+            transfer = fs.TransferNodeRequest(
+                workspace_id=str(workspace),
+                storage_id=str(storage),
+                source=fs.NodeLocator(node_id=str(node_id)),
+                destination_storage_id=str(target["storage_id"]),
+                parent=fs.NodeLocator(node_id=parent.id),
+                name=node.name,
+                request_id=str(primary_id),
             )
+            try:
+                node = await s.files.CopyNode(
+                    transfer, metadata=actor.metadata, timeout=30
+                )
+            except grpc.aio.AioRpcError as error:
+                if error.code() != grpc.StatusCode.ALREADY_EXISTS:
+                    raise
+                dedup_id = stable(copy_request, f"attachment/{storage}/{node_id}/dedup")
+                dedup_name = _dedup_name(
+                    node.name,
+                    is_dir=node.kind == fs.NODE_KIND_DIRECTORY,
+                    tag=dedup_id.hex[:8],
+                )
+                node = await s.files.CopyNode(
+                    fs.TransferNodeRequest(
+                        workspace_id=str(workspace),
+                        storage_id=str(storage),
+                        source=fs.NodeLocator(node_id=str(node_id)),
+                        destination_storage_id=str(target["storage_id"]),
+                        parent=fs.NodeLocator(node_id=parent.id),
+                        name=dedup_name,
+                        request_id=str(dedup_id),
+                    ),
+                    metadata=actor.metadata,
+                    timeout=30,
+                )
             storage, node_id = UUID(node.storage_id), UUID(node.id)
             await s.auth.require(recipient, "storage", storage, "read")
         result.append(

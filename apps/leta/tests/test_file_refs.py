@@ -253,9 +253,7 @@ async def test_private_files_copy_to_conversation_without_granting_source_access
     assert calls[0].args[0].request_id == calls[1].args[0].request_id
     assert calls[0].args[0].parent.node_id == str(parent)
     assert ("x-openlet-zed-token", "causal-token") in calls[0].kwargs["metadata"]
-    assert files.CreateDirectories.await_args.args[0].path.endswith(
-        f"/{storage}/{node}"
-    )
+    assert files.CreateDirectories.await_args.args[0].path == "attachments"
     provision.assert_awaited_with(services, sender.id, recipient.id)
     auth.write.assert_not_called()
     auth.require.reset_mock(side_effect=True)
@@ -305,3 +303,84 @@ async def test_invalid_batch_is_rejected_before_copying_any_file() -> None:
             copy_request=uuid4(),
         )
     files.CopyNode.assert_not_awaited()
+
+
+async def test_flat_attachments_suffix_on_collision_preserves_idempotency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import grpc
+    from leta import conversations
+    from leta.agents import stable
+
+    class FakeAlreadyExists(grpc.aio.AioRpcError):
+        def __init__(self) -> None:
+            pass
+
+        def code(self) -> grpc.StatusCode:
+            return grpc.StatusCode.ALREADY_EXISTS
+
+    sender, recipient = Actor("agent", uuid4()), Actor("user", uuid4())
+    storage, node, destination, copied, parent, workspace, request = (
+        uuid4() for _ in range(7)
+    )
+    expected_tag = stable(request, f"attachment/{storage}/{node}/dedup").hex[:8]
+    expected_name = f"report ({expected_tag}).txt"
+    source = fs.Node(
+        id=str(node),
+        storage_id=str(storage),
+        name="report.txt",
+        kind=fs.NODE_KIND_FILE,
+        file=fs.FileHeader(media_type="text/plain", size_bytes=4, version=2),
+    )
+    dedup_result = fs.Node(
+        id=str(copied),
+        storage_id=str(destination),
+        name=expected_name,
+        kind=fs.NODE_KIND_FILE,
+        file=fs.FileHeader(media_type="text/plain", size_bytes=4, version=1),
+    )
+    files = SimpleNamespace(
+        Stat=AsyncMock(return_value=source),
+        CopyNode=AsyncMock(
+            side_effect=[
+                FakeAlreadyExists(),
+                dedup_result,
+                FakeAlreadyExists(),
+                dedup_result,
+            ]
+        ),
+        CreateDirectories=AsyncMock(return_value=fs.Node(id=str(parent))),
+    )
+    auth = SimpleNamespace(
+        require=AsyncMock(), allowed=AsyncMock(return_value=False), write=AsyncMock()
+    )
+    services = cast(Services, SimpleNamespace(auth=auth, files=files))
+    monkeypatch.setattr(
+        conversations,
+        "storage",
+        AsyncMock(
+            return_value={
+                "storage_id": str(destination),
+                "root_node_id": str(uuid4()),
+                "zed_token": "causal-token",
+            }
+        ),
+    )
+
+    for _ in range(2):
+        refs = await file_refs.validate(
+            services,
+            workspace,
+            sender,
+            recipient,
+            file_refs.token("Report", str(storage), str(node)),
+            copy_request=request,
+        )
+        assert isinstance(refs[0], dict)
+        assert refs[0]["name"] == expected_name
+
+    calls = files.CopyNode.await_args_list
+    assert calls[0].args[0].name == "report.txt"
+    assert calls[1].args[0].name == expected_name
+    assert calls[1].args[0].request_id == calls[3].args[0].request_id
+    assert calls[0].args[0].request_id != calls[1].args[0].request_id
