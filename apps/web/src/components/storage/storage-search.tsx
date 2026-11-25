@@ -96,23 +96,45 @@ export function StorageSearch() {
           )}
           <ul className="divide-y">
             {items.map((hit, index) => (
-              <li key={`${hit.node.id}:${hit.lineNumber ?? index}`}>
+              <li key={`${hit.fileId}:${hit.lineNumber ?? index}`}>
                 <button
                   className="flex w-full gap-3 rounded-md px-2 py-3 text-left hover:bg-accent"
-                  onClick={() => {
-                    b.open(hit.node, hit.lineNumber);
-                    setOpen(false);
+                  onClick={async () => {
+                    try {
+                      let target = hit.node ?? (await b.stat(b.storage.id, hit.fileId));
+                      while (
+                        hit.artifactPath &&
+                        target.readonly &&
+                        target.parent &&
+                        !target.parent.startsWith('root:')
+                      ) {
+                        target = await b.stat(b.storage.id, target.parent);
+                      }
+                      b.open(target, target.id === hit.node?.id ? hit.lineNumber : undefined);
+                      setOpen(false);
+                    } catch (error) {
+                      b.report(error);
+                    }
                   }}
                 >
-                  <FileIcon node={hit.node} />
+                  {hit.node ? (
+                    <FileIcon node={hit.node} />
+                  ) : (
+                    <Search className="mt-1 size-4 shrink-0" />
+                  )}
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium">{hit.node.name}</span>
+                    <span className="block truncate text-sm font-medium">
+                      {hit.node?.name ?? hit.path?.split('/').at(-1)}
+                    </span>
                     <span className="block truncate text-xs text-muted-foreground">
                       {hit.path}
+                      {hit.artifactPath && hit.path !== hit.artifactPath
+                        ? ` · ${hit.artifactPath}`
+                        : ''}
                       {hit.lineNumber ? ` · Line ${hit.lineNumber}` : ''}
                     </span>
                     <span className="mt-1 line-clamp-3 block whitespace-pre-wrap text-sm">
-                      {hit.snippet}
+                      {hit.text}
                     </span>
                   </span>
                 </button>

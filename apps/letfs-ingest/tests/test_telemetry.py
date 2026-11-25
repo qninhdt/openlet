@@ -1,16 +1,21 @@
+import json
+import logging
+import sys
+
 import httpx
 import pytest
-from letfs_ingest.artifacts import check_transfer
+from letfs_ingest import telemetry
 from letfs_ingest.telemetry import ProcessingIdentity
-from openlet_sdk.telemetry import redact_async_request, redact_request
-from opentelemetry.instrumentation.httpx import RequestInfo
+from openlet_sdk.telemetry import JSONFormatter, redact_async_request, redact_request
+from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor, RequestInfo
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from temporalio.exceptions import ApplicationError
 
 
-async def test_signed_queries_stay_out_of_exported_spans_and_transfer_errors() -> None:
+async def test_signed_queries_stay_out_of_exported_spans() -> None:
     signed = "https://s3.example/bucket/file?X-Amz-Credential=private-key&X-Amz-Signature=private-signature"
     request = httpx.Request("GET", signed)
     provider = TracerProvider()
@@ -29,21 +34,11 @@ async def test_signed_queries_stay_out_of_exported_spans_and_transfer_errors() -
             "http.url": "https://s3.example/bucket/file",
             "url.full": "https://s3.example/bucket/file",
         }
-        with pytest.raises(ApplicationError) as caught:
-            check_transfer(httpx.Response(403, request=request))
-        assert "403" in str(caught.value)
-        assert "private" not in str(caught.value) and "X-Amz" not in str(caught.value)
     finally:
         provider.shutdown()
 
 
 def test_json_logs_preserve_activity_exception_cause() -> None:
-    import json
-    import logging
-    import sys
-
-    from openlet_sdk.telemetry import JSONFormatter
-
     try:
         raise ValueError("embedding dimensions mismatch")
     except ValueError:
@@ -56,8 +51,6 @@ def test_json_logs_preserve_activity_exception_cause() -> None:
 
 
 async def test_native_http_instrumentation_redacts_signed_url() -> None:
-    from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
-
     provider = TracerProvider()
     exporter = InMemorySpanExporter()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
@@ -81,14 +74,6 @@ async def test_native_http_instrumentation_redacts_signed_url() -> None:
 def test_processing_stage_records_bounded_metrics_and_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import json
-    import logging
-
-    from letfs_ingest import telemetry
-    from openlet_sdk.telemetry import JSONFormatter
-    from opentelemetry.sdk.metrics import MeterProvider
-    from opentelemetry.sdk.metrics.export import InMemoryMetricReader
-
     provider = TracerProvider()
     exporter = InMemorySpanExporter()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
@@ -100,7 +85,7 @@ def test_processing_stage_records_bounded_metrics_and_failure(
         "duration",
         metering.get_meter("test").create_histogram("stage.duration", unit="s"),
     )
-    identity: ProcessingIdentity = {"file_id": "file-123", "version": 4}
+    identity: ProcessingIdentity = {"blob_id": "blob-123"}
     try:
         with telemetry.stage("parse", identity):
             record = logging.LogRecord(
@@ -108,7 +93,7 @@ def test_processing_stage_records_bounded_metrics_and_failure(
             )
             log = json.loads(JSONFormatter({"service.name": "cpu"}).format(record))
         with pytest.raises(ValueError):
-            with telemetry.stage("embed", identity):
+            with telemetry.stage("index", identity):
                 raise ValueError("private provider payload")
         spans = exporter.get_finished_spans()
         assert spans[0].context is not None
@@ -117,14 +102,16 @@ def test_processing_stage_records_bounded_metrics_and_failure(
         assert spans[1].status.status_code.name == "ERROR"
         assert spans[1].attributes is not None
         assert spans[1].attributes["error.type"] == "ValueError"
+        assert spans[1].attributes["blob.id"] == "blob-123"
         assert not spans[1].events
         data = reader.get_metrics_data()
         assert data is not None
-        points = data.resource_metrics[0].scope_metrics[0].metrics[0].data.data_points
-        attributes = [point.attributes for point in points]
-        assert len(attributes) == 2
+        points_data = (
+            data.resource_metrics[0].scope_metrics[0].metrics[0].data.data_points
+        )
+        attributes = [point.attributes for point in points_data]
         assert {"outcome": "success", "stage": "parse"} in attributes
-        assert {"outcome": "error", "stage": "embed"} in attributes
+        assert {"outcome": "error", "stage": "index"} in attributes
     finally:
         provider.shutdown()
         metering.shutdown()

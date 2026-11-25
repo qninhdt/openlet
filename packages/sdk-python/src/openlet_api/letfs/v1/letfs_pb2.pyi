@@ -134,28 +134,26 @@ class StorageAccess(_message.Message):
     def __init__(self, ownership: _Optional[_Union[StorageOwnership, _Mapping]] = ..., grants: _Optional[_Iterable[_Union[AccessGrant, _Mapping]]] = ..., visibility: _Optional[_Union[StorageVisibility, str]] = ...) -> None: ...
 
 class NodeLocator(_message.Message):
-    __slots__ = ("node_id", "path", "root_node_id", "cwd_node_id")
+    __slots__ = ("node_id", "path", "root_node_id", "cwd_node_id", "artifact_path")
     NODE_ID_FIELD_NUMBER: _ClassVar[int]
     PATH_FIELD_NUMBER: _ClassVar[int]
     ROOT_NODE_ID_FIELD_NUMBER: _ClassVar[int]
     CWD_NODE_ID_FIELD_NUMBER: _ClassVar[int]
+    ARTIFACT_PATH_FIELD_NUMBER: _ClassVar[int]
     node_id: str
     path: str
     root_node_id: str
     cwd_node_id: str
-    def __init__(self, node_id: _Optional[str] = ..., path: _Optional[str] = ..., root_node_id: _Optional[str] = ..., cwd_node_id: _Optional[str] = ...) -> None: ...
+    artifact_path: str
+    def __init__(self, node_id: _Optional[str] = ..., path: _Optional[str] = ..., root_node_id: _Optional[str] = ..., cwd_node_id: _Optional[str] = ..., artifact_path: _Optional[str] = ...) -> None: ...
 
 class FileMetadata(_message.Message):
-    __slots__ = ("title", "description", "semantic_type", "context")
+    __slots__ = ("title", "description")
     TITLE_FIELD_NUMBER: _ClassVar[int]
     DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
-    SEMANTIC_TYPE_FIELD_NUMBER: _ClassVar[int]
-    CONTEXT_FIELD_NUMBER: _ClassVar[int]
     title: str
     description: str
-    semantic_type: str
-    context: str
-    def __init__(self, title: _Optional[str] = ..., description: _Optional[str] = ..., semantic_type: _Optional[str] = ..., context: _Optional[str] = ...) -> None: ...
+    def __init__(self, title: _Optional[str] = ..., description: _Optional[str] = ...) -> None: ...
 
 class ProcessingSummary(_message.Message):
     __slots__ = ("stage", "error_code")
@@ -662,16 +660,18 @@ class TextSearchRequest(_message.Message):
     def __init__(self, workspace_id: _Optional[str] = ..., storage_id: _Optional[str] = ..., root: _Optional[_Union[NodeLocator, _Mapping]] = ..., query: _Optional[str] = ..., page_size: _Optional[int] = ..., page_token: _Optional[str] = ..., case_sensitive: _Optional[bool] = ..., lines_mode: _Optional[bool] = ...) -> None: ...
 
 class TextHit(_message.Message):
-    __slots__ = ("node", "snippet", "line_number", "path")
+    __slots__ = ("node", "snippet", "line_number", "path", "artifact_path")
     NODE_FIELD_NUMBER: _ClassVar[int]
     SNIPPET_FIELD_NUMBER: _ClassVar[int]
     LINE_NUMBER_FIELD_NUMBER: _ClassVar[int]
     PATH_FIELD_NUMBER: _ClassVar[int]
+    ARTIFACT_PATH_FIELD_NUMBER: _ClassVar[int]
     node: Node
     snippet: str
     line_number: int
     path: str
-    def __init__(self, node: _Optional[_Union[Node, _Mapping]] = ..., snippet: _Optional[str] = ..., line_number: _Optional[int] = ..., path: _Optional[str] = ...) -> None: ...
+    artifact_path: str
+    def __init__(self, node: _Optional[_Union[Node, _Mapping]] = ..., snippet: _Optional[str] = ..., line_number: _Optional[int] = ..., path: _Optional[str] = ..., artifact_path: _Optional[str] = ...) -> None: ...
 
 class TextSearchResponse(_message.Message):
     __slots__ = ("hits", "next_page_token")
@@ -681,31 +681,39 @@ class TextSearchResponse(_message.Message):
     next_page_token: str
     def __init__(self, hits: _Optional[_Iterable[_Union[TextHit, _Mapping]]] = ..., next_page_token: _Optional[str] = ...) -> None: ...
 
+class SemanticScope(_message.Message):
+    __slots__ = ("node_id", "path")
+    NODE_ID_FIELD_NUMBER: _ClassVar[int]
+    PATH_FIELD_NUMBER: _ClassVar[int]
+    node_id: str
+    path: str
+    def __init__(self, node_id: _Optional[str] = ..., path: _Optional[str] = ...) -> None: ...
+
 class SemanticSearchRequest(_message.Message):
-    __slots__ = ("workspace_id", "storage_id", "root", "query", "top_k")
+    __slots__ = ("workspace_id", "storage_id", "root", "query")
     WORKSPACE_ID_FIELD_NUMBER: _ClassVar[int]
     STORAGE_ID_FIELD_NUMBER: _ClassVar[int]
     ROOT_FIELD_NUMBER: _ClassVar[int]
     QUERY_FIELD_NUMBER: _ClassVar[int]
-    TOP_K_FIELD_NUMBER: _ClassVar[int]
     workspace_id: str
     storage_id: str
-    root: NodeLocator
+    root: SemanticScope
     query: str
-    top_k: int
-    def __init__(self, workspace_id: _Optional[str] = ..., storage_id: _Optional[str] = ..., root: _Optional[_Union[NodeLocator, _Mapping]] = ..., query: _Optional[str] = ..., top_k: _Optional[int] = ...) -> None: ...
+    def __init__(self, workspace_id: _Optional[str] = ..., storage_id: _Optional[str] = ..., root: _Optional[_Union[SemanticScope, _Mapping]] = ..., query: _Optional[str] = ...) -> None: ...
 
 class SemanticHit(_message.Message):
-    __slots__ = ("node", "snippet", "score", "path")
-    NODE_FIELD_NUMBER: _ClassVar[int]
-    SNIPPET_FIELD_NUMBER: _ClassVar[int]
+    __slots__ = ("score", "path", "file_id", "text", "artifact_path")
     SCORE_FIELD_NUMBER: _ClassVar[int]
     PATH_FIELD_NUMBER: _ClassVar[int]
-    node: Node
-    snippet: str
+    FILE_ID_FIELD_NUMBER: _ClassVar[int]
+    TEXT_FIELD_NUMBER: _ClassVar[int]
+    ARTIFACT_PATH_FIELD_NUMBER: _ClassVar[int]
     score: float
     path: str
-    def __init__(self, node: _Optional[_Union[Node, _Mapping]] = ..., snippet: _Optional[str] = ..., score: _Optional[float] = ..., path: _Optional[str] = ...) -> None: ...
+    file_id: str
+    text: str
+    artifact_path: str
+    def __init__(self, score: _Optional[float] = ..., path: _Optional[str] = ..., file_id: _Optional[str] = ..., text: _Optional[str] = ..., artifact_path: _Optional[str] = ...) -> None: ...
 
 class SemanticSearchResponse(_message.Message):
     __slots__ = ("hits",)

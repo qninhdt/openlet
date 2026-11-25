@@ -30,7 +30,11 @@ type Settings struct {
 	UploadURLTTLSeconds         int          `yaml:"upload_url_ttl_seconds"`
 	DownloadURLTTLSeconds       int          `yaml:"download_url_ttl_seconds"`
 	IdempotencyRetentionSeconds int          `yaml:"idempotency_retention_seconds"`
-	Processing                  struct {
+	SemanticSearch              struct {
+		CandidateLimit uint64 `yaml:"candidate_limit"`
+		ResultLimit    uint64 `yaml:"result_limit"`
+	} `yaml:"semantic_search"`
+	Processing struct {
 		MaxArtifacts              int   `yaml:"max_artifacts"`
 		MaxManifestTextBytes      int64 `yaml:"max_manifest_text_bytes"`
 		MaxArtifactBlobBytes      int64 `yaml:"max_artifact_blob_bytes"`

@@ -61,15 +61,20 @@ test('XLSX blob runs both workers, publishes readonly artifacts and becomes sear
   });
   expect(tree.ok(), await tree.text()).toBeTruthy();
   const { entries } = await tree.json();
-  const readme = entries.find((entry: { path: string }) => entry.path === 'README.md');
+  const readme = entries.find((entry: { path?: string }) => entry.path === 'README.md');
   expect(
     readme,
-    JSON.stringify(entries.map((entry: { path: string }) => entry.path)),
+    JSON.stringify(entries.map((entry: { path?: string }) => entry.path)),
   ).toBeDefined();
   expect(readme.node.readonly).toBe(true);
-  const sheetContent = (await (await api.get(`${base}/nodes/${readme.node.id}/text`)).json())
+  const tableEntry = entries.find((entry: { path?: string }) => entry.path?.endsWith('.csv'));
+  expect(
+    tableEntry,
+    JSON.stringify(entries.map((entry: { path?: string }) => entry.path)),
+  ).toBeDefined();
+  const sheetContent = (await (await api.get(`${base}/nodes/${tableEntry.node.id}/text`)).json())
     .content;
-  expect(sheetContent).toMatch(/\|\s*Europe\s*\|\s*120\s*\|/);
+  expect(sheetContent).toMatch(/Europe,120/);
   expect(
     (
       await api.patch(`${base}/nodes/${readme.node.id}/text`, {
@@ -78,26 +83,30 @@ test('XLSX blob runs both workers, publishes readonly artifacts and becomes sear
     ).status(),
   ).toBeGreaterThanOrEqual(400);
   const search = await api.post(`${base}/files:semanticSearch`, {
-    data: { root: { nodeId: rootId }, query: 'csv', topK: 1 },
+    data: { root: { nodeId: rootId }, query: 'Europe' },
   });
   expect(search.ok(), await search.text()).toBeTruthy();
   const { hits } = await search.json();
-  expect(hits).toHaveLength(1);
-  const artifactPath = (id: string): string =>
-    entries.find((entry: { path: string; node: { id: string } }) => entry.node.id === id).path;
-  expect(hits[0].path).toBe(`sales.xlsx/${artifactPath(hits[0].node.id)}`);
+  expect(hits.length).toBeGreaterThan(0);
+  expect(hits.length).toBeLessThanOrEqual(10);
+  expect(hits[0].fileId).toBe(node.id);
+  expect(hits[0].path).toBe('/sales.xlsx');
+  expect(hits[0].artifactPath).toBeTruthy();
   const scoped = await api.post(`${base}/files:semanticSearch`, {
-    data: { root: { nodeId: node.id }, query: 'csv', topK: 1 },
+    data: { root: { nodeId: node.id }, query: 'Europe' },
   });
   expect(scoped.ok(), await scoped.text()).toBeTruthy();
   const scopedHit = (await scoped.json()).hits[0];
-  expect(scopedHit.path).toBe(artifactPath(scopedHit.node.id));
+  expect(scopedHit.fileId).toBe(node.id);
+  expect(scopedHit.path).toBe('/sales.xlsx');
   const textSearch = await api.post(`${base}/files:textSearch`, {
     data: { root: { nodeId: node.id }, query: 'Europe', pageSize: 100 },
   });
   expect(textSearch.ok(), await textSearch.text()).toBeTruthy();
   const textHits = (await textSearch.json()).hits;
-  expect(textHits.some((hit: { path: string }) => hit.path === 'README.md')).toBe(true);
+  expect(
+    textHits.some((hit: { artifactPath?: string }) => Boolean(hit.artifactPath?.endsWith('.csv'))),
+  ).toBe(true);
   const download = await api.get(`${base}/nodes/${node.id}:download`);
   const original = await request.get((await download.json()).blob.url);
   expect(await original.body()).toEqual(bytes);

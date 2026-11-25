@@ -176,8 +176,9 @@ async def resources(c: Config) -> None:
                     distance=models.Distance.COSINE,
                 ),
             )
+        for field in ("workspace_id", "blob_id"):
             q.create_payload_index(
-                vector["collection"], "workspace_id", models.PayloadSchemaType.KEYWORD
+                vector["collection"], field, models.PayloadSchemaType.KEYWORD, wait=True
             )
         q.create_payload_index(
             vector["collection"],

@@ -180,7 +180,8 @@ func testTransfers(t *testing.T, s *Server, workspace, storage, folder string) {
 	s.Presign = s3.NewPresignClient(s.S3)
 	s.Bucket = "test"
 	upload := uuid.NewString()
-	if _, err = s.DB.Exec(ctx, `INSERT INTO uploads(id,storage_id,actor,root_id,parent_id,name,object_key,size_bytes,media_type,checksum,multipart_id,expires_at) VALUES($1,$2,$3,$4,$4,'file.pdf','objects/test',8,'application/pdf','AAAAAA==','multipart',$5)`, upload, storage, "user:"+actor, folder, time.Now().Add(time.Hour)); err != nil {
+	blob := uuid.NewString()
+	if _, err = s.DB.Exec(ctx, `INSERT INTO uploads(id,storage_id,actor,root_id,parent_id,name,blob_id,object_key,size_bytes,media_type,checksum,multipart_id,expires_at) VALUES($1,$2,$3,$4,$4,'file.pdf',$5,'objects/test',8,'application/pdf','AAAAAA==','multipart',$6)`, upload, storage, "user:"+actor, folder, blob, time.Now().Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	resumed, err := s.GetUpload(ctx, &pb.UploadRequest{WorkspaceId: workspace, StorageId: storage, UploadId: upload})

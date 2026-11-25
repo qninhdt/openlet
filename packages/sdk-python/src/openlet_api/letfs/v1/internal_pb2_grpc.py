@@ -51,35 +51,25 @@ class LetFSInternalServiceStub:
                 request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.StorageRequest.SerializeToString,
                 response_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
                 _registered_method=True)
-        self.GetProcessingInput = channel.unary_unary(
-                '/openlet.letfs.v1.LetFSInternalService/GetProcessingInput',
-                request_serializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.ProcessingRequest.SerializeToString,
-                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.ProcessingInput.FromString,
+        self.GetBlobArtifacts = channel.unary_unary(
+                '/openlet.letfs.v1.LetFSInternalService/GetBlobArtifacts',
+                request_serializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.BlobRequest.SerializeToString,
+                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.GetBlobArtifactsResponse.FromString,
                 _registered_method=True)
-        self.PrepareArtifactUploads = channel.unary_unary(
-                '/openlet.letfs.v1.LetFSInternalService/PrepareArtifactUploads',
-                request_serializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.PrepareArtifactUploadsRequest.SerializeToString,
-                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.PrepareArtifactUploadsResponse.FromString,
+        self.SaveParsedArtifacts = channel.unary_unary(
+                '/openlet.letfs.v1.LetFSInternalService/SaveParsedArtifacts',
+                request_serializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.SaveParsedArtifactsRequest.SerializeToString,
+                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.BlobProcessingOutcome.FromString,
                 _registered_method=True)
-        self.CommitParse = channel.unary_unary(
-                '/openlet.letfs.v1.LetFSInternalService/CommitParse',
-                request_serializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.CommitParseRequest.SerializeToString,
-                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.ProcessingOutcome.FromString,
+        self.SaveEnrichedArtifacts = channel.unary_unary(
+                '/openlet.letfs.v1.LetFSInternalService/SaveEnrichedArtifacts',
+                request_serializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.SaveEnrichedArtifactsRequest.SerializeToString,
+                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.BlobProcessingOutcome.FromString,
                 _registered_method=True)
-        self.CommitEnrichment = channel.unary_unary(
-                '/openlet.letfs.v1.LetFSInternalService/CommitEnrichment',
-                request_serializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.CommitEnrichmentRequest.SerializeToString,
-                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.ProcessingOutcome.FromString,
-                _registered_method=True)
-        self.CompleteIndex = channel.unary_unary(
-                '/openlet.letfs.v1.LetFSInternalService/CompleteIndex',
-                request_serializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.ProcessingRequest.SerializeToString,
-                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.ProcessingOutcome.FromString,
-                _registered_method=True)
-        self.FailProcessing = channel.unary_unary(
-                '/openlet.letfs.v1.LetFSInternalService/FailProcessing',
-                request_serializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.FailProcessingRequest.SerializeToString,
-                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.ProcessingOutcome.FromString,
+        self.CompleteBlobIndex = channel.unary_unary(
+                '/openlet.letfs.v1.LetFSInternalService/CompleteBlobIndex',
+                request_serializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.BlobRequest.SerializeToString,
+                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.BlobProcessingOutcome.FromString,
                 _registered_method=True)
 
 
@@ -104,37 +94,25 @@ class LetFSInternalServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def GetProcessingInput(self, request, context):
+    def GetBlobArtifacts(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def PrepareArtifactUploads(self, request, context):
+    def SaveParsedArtifacts(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def CommitParse(self, request, context):
+    def SaveEnrichedArtifacts(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def CommitEnrichment(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def CompleteIndex(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def FailProcessing(self, request, context):
+    def CompleteBlobIndex(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -158,35 +136,25 @@ def add_LetFSInternalServiceServicer_to_server(servicer, server):
                     request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.StorageRequest.FromString,
                     response_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
             ),
-            'GetProcessingInput': grpc.unary_unary_rpc_method_handler(
-                    servicer.GetProcessingInput,
-                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.ProcessingRequest.FromString,
-                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.ProcessingInput.SerializeToString,
+            'GetBlobArtifacts': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetBlobArtifacts,
+                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.BlobRequest.FromString,
+                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.GetBlobArtifactsResponse.SerializeToString,
             ),
-            'PrepareArtifactUploads': grpc.unary_unary_rpc_method_handler(
-                    servicer.PrepareArtifactUploads,
-                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.PrepareArtifactUploadsRequest.FromString,
-                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.PrepareArtifactUploadsResponse.SerializeToString,
+            'SaveParsedArtifacts': grpc.unary_unary_rpc_method_handler(
+                    servicer.SaveParsedArtifacts,
+                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.SaveParsedArtifactsRequest.FromString,
+                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.BlobProcessingOutcome.SerializeToString,
             ),
-            'CommitParse': grpc.unary_unary_rpc_method_handler(
-                    servicer.CommitParse,
-                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.CommitParseRequest.FromString,
-                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.ProcessingOutcome.SerializeToString,
+            'SaveEnrichedArtifacts': grpc.unary_unary_rpc_method_handler(
+                    servicer.SaveEnrichedArtifacts,
+                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.SaveEnrichedArtifactsRequest.FromString,
+                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.BlobProcessingOutcome.SerializeToString,
             ),
-            'CommitEnrichment': grpc.unary_unary_rpc_method_handler(
-                    servicer.CommitEnrichment,
-                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.CommitEnrichmentRequest.FromString,
-                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.ProcessingOutcome.SerializeToString,
-            ),
-            'CompleteIndex': grpc.unary_unary_rpc_method_handler(
-                    servicer.CompleteIndex,
-                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.ProcessingRequest.FromString,
-                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.ProcessingOutcome.SerializeToString,
-            ),
-            'FailProcessing': grpc.unary_unary_rpc_method_handler(
-                    servicer.FailProcessing,
-                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.FailProcessingRequest.FromString,
-                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.ProcessingOutcome.SerializeToString,
+            'CompleteBlobIndex': grpc.unary_unary_rpc_method_handler(
+                    servicer.CompleteBlobIndex,
+                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.BlobRequest.FromString,
+                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_internal__pb2.BlobProcessingOutcome.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -281,7 +249,7 @@ class LetFSInternalService:
             _registered_method=True)
 
     @staticmethod
-    def GetProcessingInput(request,
+    def GetBlobArtifacts(request,
             target,
             options=(),
             channel_credentials=None,
@@ -294,9 +262,9 @@ class LetFSInternalService:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/openlet.letfs.v1.LetFSInternalService/GetProcessingInput',
-            openlet__api_dot_letfs_dot_v1_dot_internal__pb2.ProcessingRequest.SerializeToString,
-            openlet__api_dot_letfs_dot_v1_dot_internal__pb2.ProcessingInput.FromString,
+            '/openlet.letfs.v1.LetFSInternalService/GetBlobArtifacts',
+            openlet__api_dot_letfs_dot_v1_dot_internal__pb2.BlobRequest.SerializeToString,
+            openlet__api_dot_letfs_dot_v1_dot_internal__pb2.GetBlobArtifactsResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -308,7 +276,7 @@ class LetFSInternalService:
             _registered_method=True)
 
     @staticmethod
-    def PrepareArtifactUploads(request,
+    def SaveParsedArtifacts(request,
             target,
             options=(),
             channel_credentials=None,
@@ -321,9 +289,9 @@ class LetFSInternalService:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/openlet.letfs.v1.LetFSInternalService/PrepareArtifactUploads',
-            openlet__api_dot_letfs_dot_v1_dot_internal__pb2.PrepareArtifactUploadsRequest.SerializeToString,
-            openlet__api_dot_letfs_dot_v1_dot_internal__pb2.PrepareArtifactUploadsResponse.FromString,
+            '/openlet.letfs.v1.LetFSInternalService/SaveParsedArtifacts',
+            openlet__api_dot_letfs_dot_v1_dot_internal__pb2.SaveParsedArtifactsRequest.SerializeToString,
+            openlet__api_dot_letfs_dot_v1_dot_internal__pb2.BlobProcessingOutcome.FromString,
             options,
             channel_credentials,
             insecure,
@@ -335,7 +303,7 @@ class LetFSInternalService:
             _registered_method=True)
 
     @staticmethod
-    def CommitParse(request,
+    def SaveEnrichedArtifacts(request,
             target,
             options=(),
             channel_credentials=None,
@@ -348,9 +316,9 @@ class LetFSInternalService:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/openlet.letfs.v1.LetFSInternalService/CommitParse',
-            openlet__api_dot_letfs_dot_v1_dot_internal__pb2.CommitParseRequest.SerializeToString,
-            openlet__api_dot_letfs_dot_v1_dot_internal__pb2.ProcessingOutcome.FromString,
+            '/openlet.letfs.v1.LetFSInternalService/SaveEnrichedArtifacts',
+            openlet__api_dot_letfs_dot_v1_dot_internal__pb2.SaveEnrichedArtifactsRequest.SerializeToString,
+            openlet__api_dot_letfs_dot_v1_dot_internal__pb2.BlobProcessingOutcome.FromString,
             options,
             channel_credentials,
             insecure,
@@ -362,7 +330,7 @@ class LetFSInternalService:
             _registered_method=True)
 
     @staticmethod
-    def CommitEnrichment(request,
+    def CompleteBlobIndex(request,
             target,
             options=(),
             channel_credentials=None,
@@ -375,63 +343,9 @@ class LetFSInternalService:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/openlet.letfs.v1.LetFSInternalService/CommitEnrichment',
-            openlet__api_dot_letfs_dot_v1_dot_internal__pb2.CommitEnrichmentRequest.SerializeToString,
-            openlet__api_dot_letfs_dot_v1_dot_internal__pb2.ProcessingOutcome.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def CompleteIndex(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/openlet.letfs.v1.LetFSInternalService/CompleteIndex',
-            openlet__api_dot_letfs_dot_v1_dot_internal__pb2.ProcessingRequest.SerializeToString,
-            openlet__api_dot_letfs_dot_v1_dot_internal__pb2.ProcessingOutcome.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def FailProcessing(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/openlet.letfs.v1.LetFSInternalService/FailProcessing',
-            openlet__api_dot_letfs_dot_v1_dot_internal__pb2.FailProcessingRequest.SerializeToString,
-            openlet__api_dot_letfs_dot_v1_dot_internal__pb2.ProcessingOutcome.FromString,
+            '/openlet.letfs.v1.LetFSInternalService/CompleteBlobIndex',
+            openlet__api_dot_letfs_dot_v1_dot_internal__pb2.BlobRequest.SerializeToString,
+            openlet__api_dot_letfs_dot_v1_dot_internal__pb2.BlobProcessingOutcome.FromString,
             options,
             channel_credentials,
             insecure,

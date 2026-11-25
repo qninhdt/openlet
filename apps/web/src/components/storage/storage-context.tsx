@@ -829,6 +829,7 @@ function useBrowser(
     download,
     upload,
     searchContent: live.searchContent,
+    stat: live.stat,
     clipboard,
     setClipboard,
     paste,

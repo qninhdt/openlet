@@ -92,6 +92,9 @@ services:
     maintenance:
       interval_seconds: 300
   letfs:
+    semantic_search:
+      candidate_limit: 50
+      result_limit: 10
     grpc_listen: 0.0.0.0:9090
     grpc_target: letfs:9090
     database:
@@ -145,9 +148,9 @@ services:
     io:
       activity_concurrency: 12
       model_concurrency: 16
-      embedding_batch_size: 64
-      chunk_size_tokens: 800
-      chunk_overlap_tokens: 100
+      embedding_batch_size: 256
+      chunk_size_tokens: 512
+      chunk_overlap_tokens: 64
 deployment:
   postgres:
     admin_user: openlet_admin

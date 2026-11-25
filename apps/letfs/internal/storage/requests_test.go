@@ -17,10 +17,11 @@ func TestStorageMutationRequests(t *testing.T) {
 		request proto.Message
 		valid   bool
 	}{
-		{"artifact name", &pb.EnrichedArtifact{NodeId: id, Name: proto.String("revenue.md")}, true},
-		{"artifact path is not a name", &pb.EnrichedArtifact{NodeId: id, Name: proto.String("folder/revenue.md")}, false},
-		{"artifact name is not empty", &pb.EnrichedArtifact{NodeId: id, Name: proto.String("")}, false},
-		{"artifact name rejects NUL", &pb.EnrichedArtifact{NodeId: id, Name: proto.String("bad\x00.md")}, false},
+		{"parsed artifact text", &pb.SaveParsedArtifactsRequest{BlobId: id, Artifacts: []*pb.ParsedArtifactInput{{Path: "01-intro.md", Kind: pb.NodeKind_NODE_KIND_FILE, MediaType: "text/markdown", TextContent: proto.String("# Intro"), Indexable: true}}}, true},
+		{"parsed artifact empty path", &pb.SaveParsedArtifactsRequest{BlobId: id, Artifacts: []*pb.ParsedArtifactInput{{Path: "", Kind: pb.NodeKind_NODE_KIND_FILE}}}, false},
+		{"enriched artifact path", &pb.EnrichedArtifactInput{ArtifactId: id, Path: proto.String("images/01-revenue.jpg")}, true},
+		{"enriched artifact empty path", &pb.EnrichedArtifactInput{ArtifactId: id, Path: proto.String("")}, false},
+		{"node locator artifact path", &pb.NodeLocator{Locator: &pb.NodeLocator_NodeId{NodeId: id}, ArtifactPath: proto.String("01-intro.md")}, true},
 		{"rename without receipt", &pb.UpdateStorageRequest{WorkspaceId: id, StorageId: id, Name: name}, true},
 		{"empty update", &pb.UpdateStorageRequest{WorkspaceId: id, StorageId: id}, false},
 		{"multipart checksums", &pb.SignPartsRequest{WorkspaceId: id, StorageId: id, UploadId: id, Parts: []*pb.UploadPart{{PartNumber: 1, Checksum: "AAAAAA=="}}}, true},

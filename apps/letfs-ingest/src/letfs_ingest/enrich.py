@@ -1,138 +1,175 @@
 import asyncio
-import json
-from collections import defaultdict
-from pathlib import PurePosixPath
+from typing import TYPE_CHECKING
 
-import httpx
 from openlet_api.letfs.v1 import internal_pb2 as internal
-from openlet_api.letfs.v1 import letfs_pb2 as pb
-from temporalio import activity
+from openlet_api.letfs.v1 import letfs_pb2 as letfs
+from openlet_sdk.config import Config
 
-from .artifacts import check_transfer
+if TYPE_CHECKING:
+    from openlet_api.letfs.v1 import internal_pb2_grpc
+
 from .naming import artifact_paths, rewrite_artifact_links, rich_csv_paths
-from .providers import Metadata, Models
-from .readme import own_body, render
-from .telemetry import ProcessingIdentity
-
-
-async def image_bytes(http: httpx.AsyncClient, url: str, limit: int) -> bytes:
-    data = bytearray()
-    async with http.stream("GET", url) as response:
-        check_transfer(response)
-        async for chunk in response.aiter_bytes():
-            if len(data) + len(chunk) > limit:
-                raise ValueError("image exceeds blob limit")
-            data.extend(chunk)
-    return bytes(data)
+from .providers import (
+    ArtifactEnrichment,
+    EnrichItem,
+    Models,
+    adaptive_item_budget,
+    evidence,
+    pack_batches,
+    vision,
+)
+from .readme import own_body
+from .readme import render as render_readme
+from .storage import S3Store
 
 
 async def enrich(
-    source: internal.ProcessingInput,
-    identity: ProcessingIdentity,
+    info: internal.GetBlobArtifactsResponse,
+    stub: "internal_pb2_grpc.LetFSInternalServiceAsyncStub",
+    s3: S3Store,
     ai: Models,
-    http: httpx.AsyncClient,
-    max_blob_bytes: int,
-) -> internal.CommitEnrichmentRequest:
-    files = {item.path: item for item in source.artifacts if item.node.HasField("file")}
-    metadata: dict[str, Metadata] = {}
-    children: defaultdict[PurePosixPath, list[str]] = defaultdict(list)
-    readmes = sorted(
-        (path for path in files if PurePosixPath(path).name == "README.md"),
-        key=lambda path: path.count("/"),
-        reverse=True,
-    )
-    for path in files:
-        location = PurePosixPath(path)
-        if location.name != "README.md":
-            children[location.parent].append(path)
-        elif location.parent != PurePosixPath("."):
-            children[location.parent.parent].append(path)
+    config: Config,
+) -> internal.BlobProcessingOutcome:
+    """Enrich standalone images or parsed artifact trees using unified multimodal batches."""
+    storage_cfg = config["services"]["letfs"]
+    max_blob_bytes = int(storage_cfg["max_blob_bytes"])
+    max_art_blob_bytes = int(storage_cfg["processing"]["max_artifact_blob_bytes"])
+    enrich_cfg = config["models"]["enrichment"]
+    io_cfg = config["services"]["letfs_ingest"]["io"]
+    sem = asyncio.Semaphore(int(io_cfg["model_concurrency"]))
 
-    async def describe(path: str, summaries: str = "") -> None:
-        item = files[path]
-        async with ai.slots:
-            image = (
-                await image_bytes(http, item.download_url, max_blob_bytes)
-                if item.node.file.media_type.startswith("image/")
-                else None
+    if not info.artifacts:
+        if not info.media_type.startswith("image/"):
+            return internal.BlobProcessingOutcome(
+                obsolete=False, stage=info.outcome.stage
             )
-            metadata[path] = await ai.describe(
-                path,
-                own_body(item.text_content),
-                item.node.file.media_type,
-                summaries,
-                image,
+        img_bytes = await s3.get_bytes(info.object_key, max_blob_bytes)
+        b64 = vision(img_bytes, enrich_cfg)
+        results = await ai.describe_batch(
+            [EnrichItem(id=".", media_type=info.media_type, image_b64=b64)]
+        )
+        res = results["."]
+        return await stub.SaveEnrichedArtifacts(
+            internal.SaveEnrichedArtifactsRequest(
+                blob_id=info.blob_id,
+                blob_title=res.title,
+                blob_description=res.description,
             )
-        activity.heartbeat()
+        )
 
-    async with asyncio.TaskGroup() as group:
-        for path in files:
-            if PurePosixPath(path).name != "README.md":
-                group.create_task(describe(path))
-    for path in readmes:
-        parent = PurePosixPath(path).parent
-        summaries = {
-            PurePosixPath(child).relative_to(parent).as_posix(): {
-                key: metadata[child].model_dump()[key]
-                for key in ("title", "description", "semantic_type")
-            }
-            for child in children[parent]
-        }
-        await describe(path, json.dumps(summaries, ensure_ascii=False))
-    paths = artifact_paths(source.artifacts, metadata)
-    rich_csvs = rich_csv_paths(
-        {path: item.text_content for path, item in files.items()}
+    file_arts = [a for a in info.artifacts if a.kind == letfs.NODE_KIND_FILE]
+    if not file_arts:
+        return await stub.SaveEnrichedArtifacts(
+            internal.SaveEnrichedArtifactsRequest(blob_id=info.blob_id)
+        )
+
+    item_budget = adaptive_item_budget(
+        len(file_arts), int(enrich_cfg["max_input_characters"])
     )
-    updates: list[internal.EnrichedArtifact] = []
-    for item in source.artifacts:
-        path = item.path
-        update = internal.EnrichedArtifact(node_id=item.node.id)
-        if PurePosixPath(paths[path]).name != PurePosixPath(path).name:
-            update.name = PurePosixPath(paths[path]).name
-        if item.node.HasField("file"):
-            update.metadata.CopyFrom(pb.FileMetadata(**metadata[path].model_dump()))
-            if PurePosixPath(path).suffix == ".md":
-                is_readme = PurePosixPath(path).name == "README.md"
-                body = rewrite_artifact_links(
-                    own_body(item.text_content) if is_readme else item.text_content,
-                    path,
-                    paths,
-                )
-                if is_readme:
-                    parent = PurePosixPath(paths[path]).parent
-                    summaries = {
-                        PurePosixPath(paths[child]).relative_to(parent).as_posix(): {
-                            key: metadata[child].model_dump()[key]
-                            for key in ("title", "description", "semantic_type")
-                        }
-                        for child in children[PurePosixPath(path).parent]
-                    }
-                    body = render(metadata[path], body, summaries)
-                update.text_content = body
-            elif path in rich_csvs:
-                update.text_content = rewrite_artifact_links(
-                    item.text_content, path, paths, csv_cells=True
-                )
-        updates.append(update)
-    root = metadata.get("README.md")
-    if root is None:
-        async with ai.slots:
-            image = (
-                await image_bytes(http, source.download_url, max_blob_bytes)
-                if source.media_type.startswith("image/")
-                else None
+    items: list[EnrichItem | None] = [None] * len(file_arts)
+    contents_by_path: dict[str, str] = {}
+
+    async def load_image_item(idx: int, art: internal.BlobArtifact) -> None:
+        async with sem:
+            raw = await s3.get_bytes(art.object_key, max_art_blob_bytes)
+        items[idx] = EnrichItem(
+            id=art.path, media_type=art.media_type, image_b64=vision(raw, enrich_cfg)
+        )
+
+    image_tasks: list[asyncio.Task[None]] = []
+    for idx, art in enumerate(file_arts):
+        if art.media_type.startswith("image/") and art.HasField("object_key"):
+            image_tasks.append(asyncio.create_task(load_image_item(idx, art)))
+        else:
+            text = art.text_content if art.HasField("text_content") else ""
+            contents_by_path[art.path] = text
+            sampled = (
+                evidence(text, art.media_type, item_budget)
+                if text.strip()
+                else art.path
             )
-            root = await ai.describe(
-                source.source_name,
-                "",
-                source.media_type,
-                "\n".join(
-                    f"{path}: {value.description}" for path, value in metadata.items()
-                ),
-                image,
+            items[idx] = EnrichItem(
+                id=art.path, media_type=art.media_type, text_sample=sampled
             )
-    return internal.CommitEnrichmentRequest(
-        **identity,
-        artifacts=updates,
-        source_metadata=pb.FileMetadata(**root.model_dump()),
-    )
+    if image_tasks:
+        await asyncio.gather(*image_tasks)
+
+    batches = pack_batches([it for it in items if it is not None])
+
+    async def run_batch(
+        batch: list[EnrichItem],
+    ) -> dict[str, ArtifactEnrichment]:
+        async with sem:
+            return await ai.describe_batch(batch)
+
+    batch_results = await asyncio.gather(*(run_batch(b) for b in batches))
+    results: dict[str, ArtifactEnrichment] = {}
+    for br in batch_results:
+        results.update(br)
+
+    existing_paths = [a.path for a in file_arts]
+    slugs = {
+        a.path: (results[a.path].slug if a.path in results else None) for a in file_arts
+    }
+    rename_map = artifact_paths(existing_paths, slugs)
+    rich_csvs = rich_csv_paths(contents_by_path)
+    max_text_bytes = int(storage_cfg["max_text_bytes"])
+
+    child_meta: dict[str, tuple[str, str]] = {}
+    for art in file_arts:
+        if art.path == "README.md":
+            continue
+        final_path = rename_map.get(art.path, art.path)
+        meta = results.get(art.path)
+        if meta is not None:
+            child_meta[final_path] = (meta.title, meta.description)
+        else:
+            child_meta[final_path] = (art.title or final_path, art.description or "")
+
+    updates: list[internal.EnrichedArtifactInput] = []
+    for art in file_arts:
+        new_path = rename_map.get(art.path, art.path)
+        meta = results.get(art.path)
+        updated_text: str | None = None
+        if art.path in contents_by_path:
+            raw_text = (
+                own_body(contents_by_path[art.path])
+                if art.path == "README.md"
+                else contents_by_path[art.path]
+            )
+            rewritten = rewrite_artifact_links(
+                raw_text,
+                new_path,
+                art.media_type,
+                rename_map,
+                is_rich_csv=(art.path in rich_csvs),
+            )
+            if art.path == "README.md" and meta is not None:
+                rendered = render_readme(
+                    meta.title, meta.description, child_meta, rewritten
+                )
+                if len(rendered.encode("utf-8")) <= max_text_bytes:
+                    rewritten = rendered
+            if rewritten != contents_by_path[art.path]:
+                updated_text = rewritten
+
+        entry = internal.EnrichedArtifactInput(artifact_id=art.id)
+        if new_path != art.path:
+            entry.path = new_path
+        if updated_text is not None:
+            entry.text_content = updated_text
+        if meta is not None:
+            entry.title = meta.title
+            entry.description = meta.description
+        updates.append(entry)
+
+    readme_meta = results.get("README.md")
+    req = internal.SaveEnrichedArtifactsRequest(blob_id=info.blob_id, artifacts=updates)
+    if readme_meta is not None:
+        req.blob_title = readme_meta.title
+        req.blob_description = readme_meta.description
+    elif len(file_arts) == 1 and (only_meta := results.get(file_arts[0].path)):
+        req.blob_title = only_meta.title
+        req.blob_description = only_meta.description
+
+    return await stub.SaveEnrichedArtifacts(req)

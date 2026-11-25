@@ -159,7 +159,9 @@ def configure_tracing(
     envoy["static_resources"]["clusters"].append(cluster)
 
 
-def configure(output: Path, test: bool = False) -> None:
+def configure(
+    output: Path, test: bool = False, dynamic_gateway_port: bool = False
+) -> None:
     c = load()
     dep, svc, deploy = c["dependencies"], c["services"], c["deployment"]
     pg, temporal = dep["postgres"], deploy["temporal"]
@@ -345,10 +347,17 @@ def configure(output: Path, test: bool = False) -> None:
             dep["qdrant"]["api_key"],
             c["models"]["gateway"]["api_key"],
         ],
-        "ingest-cpu": ["${DATALAB_API_KEY}"]
-        if os.environ.get("DATALAB_API_KEY")
-        else [],
-        "ingest-io": [dep["qdrant"]["api_key"], c["models"]["gateway"]["api_key"]],
+        "ingest-cpu": [
+            dep["s3"]["access_key_id"],
+            dep["s3"]["secret_access_key"],
+            *(["${DATALAB_API_KEY}"] if os.environ.get("DATALAB_API_KEY") else []),
+        ],
+        "ingest-io": [
+            dep["s3"]["access_key_id"],
+            dep["s3"]["secret_access_key"],
+            dep["qdrant"]["api_key"],
+            c["models"]["gateway"]["api_key"],
+        ],
         "databases": [
             deploy["postgres"]["admin_password"],
             svc["platform"]["database"]["password"],
@@ -474,7 +483,7 @@ def configure(output: Path, test: bool = False) -> None:
             ]
         }
     runtime["services"]["envoy"] = {
-        "ports": [f"127.0.0.1:{port}:{port}"],
+        "ports": [f"127.0.0.1:{'' if dynamic_gateway_port else port}:{port}"],
         "environment": {
             "OTEL_RESOURCE_ATTRIBUTES": os.environ.get("OTEL_RESOURCE_ATTRIBUTES", "")
         },

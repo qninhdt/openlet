@@ -9,7 +9,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	sdk "github.com/qninhdt/openlet/packages/sdk-go"
 	pb "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/letfs/v1"
-	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -42,9 +41,10 @@ func (s *Server) TrashNode(ctx context.Context, r *pb.TrashNodeRequest) (*pb.Tra
 	if v.Node.ParentId == nil {
 		return nil, invalid("storage root cannot be trashed")
 	}
-	var at time.Time
 	id := uuid.NewString()
-	err = tx.QueryRow(ctx, `WITH detached AS(UPDATE nodes SET parent_id=NULL,updated_at=now() WHERE id=$1 RETURNING id) INSERT INTO trash_entries(id,node_id,original_parent_id,trashed_by) SELECT $2,id,$3,$4 FROM detached RETURNING trashed_at`, v.Node.Id, id, v.Node.ParentId, a.String()).Scan(&at)
+	var at time.Time
+	err = tx.QueryRow(ctx, `WITH detached AS(UPDATE nodes SET parent_id=NULL,updated_at=now() WHERE id=$1 RETURNING id) INSERT INTO trash_entries(id,node_id,original_parent_id,trashed_by) SELECT $2,id,$3,$4 FROM detached RETURNING trashed_at`,
+		v.Node.Id, id, v.Node.ParentId, a.String()).Scan(&at)
 	if err != nil {
 		return nil, err
 	}
@@ -56,53 +56,55 @@ func (s *Server) TrashNode(ctx context.Context, r *pb.TrashNodeRequest) (*pb.Tra
 	}
 	return out, tx.Commit(ctx)
 }
+
+func parseActor(s string) sdk.Actor {
+	if kind, id, ok := strings.Cut(s, ":"); ok {
+		return sdk.Actor{Type: kind, ID: id}
+	}
+	return sdk.Actor{Type: "user", ID: s}
+}
+
 func actorRef(a sdk.Actor) *pb.ActorRef {
 	if a.Type == "agent" {
 		return &pb.ActorRef{Actor: &pb.ActorRef_AgentId{AgentId: a.ID}}
 	}
 	return &pb.ActorRef{Actor: &pb.ActorRef_UserId{UserId: a.ID}}
 }
+
 func (s *Server) ListTrash(ctx context.Context, r *pb.ListTrashRequest) (*pb.ListTrashResponse, error) {
 	if _, err := s.check(ctx, "storage", r.StorageId, "read"); err != nil {
 		return nil, err
 	}
-	if r.PageToken != "" {
-		if _, err := uuid.Parse(r.PageToken); err != nil {
-			return nil, invalid("invalid trash cursor")
-		}
-	}
-	rows, err := s.DB.Query(ctx, `SELECT t.id,`+headerSQL+`,t.original_parent_id,t.trashed_by,t.trashed_at FROM trash_entries t JOIN nodes n ON n.id=t.node_id JOIN storages s ON s.id=n.storage_id CROSS JOIN LATERAL(SELECT false AS readonly) v `+headerJoins+` WHERE s.id=$1 AND s.workspace_id=$2 AND ($3::uuid IS NULL OR t.id>$3) ORDER BY t.id LIMIT $4`, r.StorageId, r.WorkspaceId, nilString(r.PageToken), pageSize(r.PageSize)+1)
+	rows, err := s.DB.Query(ctx, `SELECT `+nodeColumns+`,t.id::text,t.original_parent_id::text,t.trashed_by,t.trashed_at FROM trash_entries t JOIN nodes n ON n.id=t.node_id JOIN storages s ON s.id=n.storage_id `+nodeJoins+` WHERE s.id=$1 AND s.workspace_id=$2 AND ($3::uuid IS NULL OR t.id>$3) ORDER BY t.id LIMIT $4`,
+		r.StorageId, r.WorkspaceId, nilString(r.PageToken), pageSize(r.PageSize)+1)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := new(pb.ListTrashResponse)
 	for rows.Next() {
-		v := new(pb.TrashEntry)
-		var raw []byte
+		var v pb.TrashEntry
+		var sc nodeScanner
 		var actor string
 		var at time.Time
-		if err = rows.Scan(&v.Id, &raw, &v.OriginalParentId, &actor, &at); err != nil {
+		if err = rows.Scan(sc.dests(&v.Id, &v.OriginalParentId, &actor, &at)...); err != nil {
 			return nil, err
 		}
-		v.Node = new(pb.Node)
-		if err = protojson.Unmarshal(raw, v.Node); err != nil {
-			return nil, err
-		}
-		kind, id, _ := strings.Cut(actor, ":")
-		v.TrashedBy = actorRef(sdk.Actor{Type: kind, ID: id})
+		v.Node = sc.finish(false)
+		v.TrashedBy = actorRef(parseActor(actor))
 		v.TrashedAt = timestamppb.New(at)
-		out.Entries = append(out.Entries, v)
+		out.Entries = append(out.Entries, &v)
 	}
 	if err = rows.Err(); err != nil {
 		return nil, err
 	}
-	if len(out.Entries) > pageSize(r.PageSize) {
-		out.Entries = out.Entries[:pageSize(r.PageSize)]
-		out.NextPageToken = out.Entries[len(out.Entries)-1].Id
+	if limit := pageSize(r.PageSize); len(out.Entries) > limit {
+		out.Entries = out.Entries[:limit]
+		out.NextPageToken = out.Entries[limit-1].Id
 	}
 	return out, nil
 }
+
 func (s *Server) RestoreTrash(ctx context.Context, r *pb.RestoreTrashRequest) (*pb.Node, error) {
 	if _, err := s.check(ctx, "storage", r.StorageId, "write"); err != nil {
 		return nil, err
@@ -112,20 +114,21 @@ func (s *Server) RestoreTrash(ctx context.Context, r *pb.RestoreTrashRequest) (*
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	var raw []byte
+	var sc nodeScanner
 	var original *string
-	err = tx.QueryRow(ctx, `WITH claimed AS(DELETE FROM trash_entries t USING nodes n,storages s WHERE t.id=$1 AND n.id=t.node_id AND s.id=n.storage_id AND s.id=$2 AND s.workspace_id=$3 RETURNING t.node_id,t.original_parent_id) SELECT `+headerSQL+`,c.original_parent_id FROM claimed c JOIN nodes n ON n.id=c.node_id CROSS JOIN LATERAL(SELECT false AS readonly) v `+headerJoins, r.TrashId, r.StorageId, r.WorkspaceId).Scan(&raw, &original)
+	err = tx.QueryRow(ctx, `WITH claimed AS(DELETE FROM trash_entries t USING nodes n,storages s WHERE t.id=$1 AND n.id=t.node_id AND s.id=n.storage_id AND s.id=$2 AND s.workspace_id=$3 RETURNING t.node_id,t.original_parent_id) SELECT `+nodeColumns+`,c.original_parent_id::text FROM claimed c JOIN nodes n ON n.id=c.node_id `+nodeJoins,
+		r.TrashId, r.StorageId, r.WorkspaceId).Scan(sc.dests(&original)...)
+	if err == pgx.ErrNoRows {
+		return nil, notFound()
+	}
 	if err != nil {
 		return nil, err
 	}
-	out := new(pb.Node)
-	if err = protojson.Unmarshal(raw, out); err != nil {
-		return nil, err
-	}
+	out := sc.finish(false)
 	target := r.Parent
 	if target == nil {
 		if original == nil {
-			return nil, invalid("choose a restore parent")
+			return nil, invalid("original parent no longer exists")
 		}
 		target = &pb.NodeLocator{Locator: &pb.NodeLocator_NodeId{NodeId: *original}}
 	}
@@ -138,10 +141,10 @@ func (s *Server) RestoreTrash(ctx context.Context, r *pb.RestoreTrashRequest) (*
 	}
 	name := out.Name
 	if r.Name != nil {
-		name = *r.Name
-		if err = s.checkFileName(out, name); err != nil {
+		if err = s.checkFileName(out, *r.Name); err != nil {
 			return nil, err
 		}
+		name = *r.Name
 	}
 	var updated time.Time
 	err = tx.QueryRow(ctx, `UPDATE nodes SET parent_id=$2,name=$3,updated_at=now() WHERE id=$1 RETURNING updated_at`, out.Id, parent.Node.Id, name).Scan(&updated)
@@ -153,6 +156,7 @@ func (s *Server) RestoreTrash(ctx context.Context, r *pb.RestoreTrashRequest) (*
 	out.UpdatedAt = timestamppb.New(updated)
 	return out, tx.Commit(ctx)
 }
+
 func (s *Server) PurgeTrash(ctx context.Context, r *pb.PurgeTrashRequest) (*emptypb.Empty, error) {
 	if _, err := s.check(ctx, "storage", r.StorageId, "write"); err != nil {
 		return nil, err
@@ -164,21 +168,40 @@ func (s *Server) PurgeTrash(ctx context.Context, r *pb.PurgeTrashRequest) (*empt
 	defer tx.Rollback(ctx)
 	var root string
 	err = tx.QueryRow(ctx, `DELETE FROM trash_entries t USING nodes n,storages s WHERE t.id=$1 AND n.id=t.node_id AND s.id=n.storage_id AND s.id=$2 AND s.workspace_id=$3 RETURNING t.node_id`, r.TrashId, r.StorageId, r.WorkspaceId).Scan(&root)
+	if err == pgx.ErrNoRows {
+		return nil, notFound()
+	}
 	if err != nil {
 		return nil, err
 	}
-	bytes, err := deleteSubtree(ctx, tx, root, true)
+	bytes, blobIDs, err := deleteSubtree(ctx, tx, root)
 	if err != nil {
 		return nil, err
 	}
 	if err = s.quota(ctx, tx, r.WorkspaceId, -bytes); err != nil {
 		return nil, err
 	}
-	return &emptypb.Empty{}, tx.Commit(ctx)
+	orphaned, err := markOrphanBlobs(ctx, tx, blobIDs)
+	if err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	for _, blobID := range orphaned {
+		if err = s.dispatchCleanupBlob(ctx, blobID); err != nil {
+			return nil, err
+		}
+	}
+	return &emptypb.Empty{}, nil
 }
 
-func deleteSubtree(ctx context.Context, tx pgx.Tx, root string, includeRoot bool) (int64, error) {
+func deleteSubtree(ctx context.Context, tx pgx.Tx, root string) (int64, []string, error) {
 	var bytes int64
-	err := tx.QueryRow(ctx, `WITH RECURSIVE doomed AS(SELECT id FROM nodes WHERE ($2 AND id=$1) OR (NOT $2 AND parent_id=$1) UNION ALL SELECT n.id FROM nodes n JOIN doomed d ON n.parent_id=d.id),sizes AS MATERIALIZED(SELECT d.id,coalesce(f.size_bytes,0) AS bytes FROM doomed d LEFT JOIN files f ON f.node_id=d.id),deleted AS(DELETE FROM nodes n USING sizes d WHERE n.id=d.id RETURNING d.bytes) SELECT coalesce(sum(bytes),0) FROM deleted`, root, includeRoot).Scan(&bytes)
-	return bytes, err
+	var blobIDs []string
+	err := tx.QueryRow(ctx, `WITH RECURSIVE doomed AS(SELECT id FROM nodes WHERE id=$1 UNION ALL SELECT n.id FROM nodes n JOIN doomed d ON n.parent_id=d.id),
+		sizes AS MATERIALIZED(SELECT d.id,coalesce(f.size_bytes,0) AS bytes,f.blob_id FROM doomed d LEFT JOIN files f ON f.node_id=d.id),
+		deleted AS(DELETE FROM nodes n USING sizes s WHERE n.id=s.id RETURNING s.bytes,s.blob_id)
+		SELECT coalesce(sum(bytes),0),coalesce(array_agg(DISTINCT blob_id::text) FILTER(WHERE blob_id IS NOT NULL),'{}') FROM deleted`, root).Scan(&bytes, &blobIDs)
+	return bytes, blobIDs, err
 }

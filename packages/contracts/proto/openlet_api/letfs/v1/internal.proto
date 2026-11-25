@@ -1,32 +1,106 @@
 syntax = "proto3";
 package openlet.letfs.v1;
 option go_package = "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/letfs/v1;letfsv1";
+
 import "google/protobuf/empty.proto";
 import "openlet_api/letfs/v1/letfs.proto";
 import "buf/validate/validate.proto";
-message ProvisionWorkspaceStorageRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; int64 quota_bytes = 2 [(buf.validate.field).int64.gte = 0]; }
-message CreateStorageRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; string root_node_id = 3 [(buf.validate.field).string.uuid = true]; StorageOwnership owner = 4 [(buf.validate.field).required = true]; string name = 5 [(buf.validate.field).string.min_len = 1]; StorageVisibility visibility = 6 [(buf.validate.field).enum = {in: [1,2]}]; bool allow_blob_files = 7; bool allow_indexing = 8; }
-message ProcessingRequest { string file_id = 1 [(buf.validate.field).string.uuid = true]; int64 version = 2 [(buf.validate.field).int64.gt = 0]; }
-message ProcessingOutcome { bool obsolete = 1; string stage = 2; }
-message ProcessingArtifact { Node node = 1; string path = 2; optional string text_content = 3; string download_url = 4; }
-message ProcessingInput { ProcessingOutcome outcome = 1; string workspace_id = 2; string storage_id = 3; string source_name = 4; string media_type = 5; string download_url = 6; bool allow_indexing = 7; repeated ProcessingArtifact artifacts = 8; FileMetadata source_metadata = 9; }
-message ArtifactUploadSpec { string path = 1 [(buf.validate.field).string.min_len = 1]; int64 size_bytes = 2 [(buf.validate.field).int64.gte = 0]; string media_type = 3; string checksum = 4; }
-message PrepareArtifactUploadsRequest { string file_id = 1 [(buf.validate.field).string.uuid = true]; int64 version = 2 [(buf.validate.field).int64.gt = 0]; repeated ArtifactUploadSpec outputs = 3; }
-message ArtifactUpload { string path = 1; string upload_id = 2; string put_url = 3; map<string,string> headers = 4; }
-message PrepareArtifactUploadsResponse { ProcessingOutcome outcome = 1; repeated ArtifactUpload uploads = 2; }
-message Artifact { string path = 1 [(buf.validate.field).string.min_len = 1]; oneof content { google.protobuf.Empty directory = 2; TextContent text = 3; string upload_id = 4 [(buf.validate.field).string.uuid = true]; } }
-message CommitParseRequest { string file_id = 1 [(buf.validate.field).string.uuid = true]; int64 version = 2 [(buf.validate.field).int64.gt = 0]; repeated Artifact artifacts = 3; }
-message EnrichedArtifact { string node_id = 1 [(buf.validate.field).string.uuid = true]; optional string text_content = 2; FileMetadata metadata = 3; optional string name = 4 [(buf.validate.field).string = {min_len: 1, max_bytes: 255, not_in: [".",".."], pattern: "^[^/\\x00]+$"}]; }
-message CommitEnrichmentRequest { string file_id = 1 [(buf.validate.field).string.uuid = true]; int64 version = 2 [(buf.validate.field).int64.gt = 0]; repeated EnrichedArtifact artifacts = 3; FileMetadata source_metadata = 4; }
-message FailProcessingRequest { string file_id = 1 [(buf.validate.field).string.uuid = true]; int64 version = 2 [(buf.validate.field).int64.gt = 0]; string error_code = 3 [(buf.validate.field).string.min_len = 1]; int64 attempt = 4 [(buf.validate.field).int64.gte = 0]; }
+
+message ProvisionWorkspaceStorageRequest {
+  string workspace_id = 1 [(buf.validate.field).string.uuid = true];
+  int64 quota_bytes = 2 [(buf.validate.field).int64.gte = 0];
+}
+
+message CreateStorageRequest {
+  string workspace_id = 1 [(buf.validate.field).string.uuid = true];
+  string storage_id = 2 [(buf.validate.field).string.uuid = true];
+  string root_node_id = 3 [(buf.validate.field).string.uuid = true];
+  StorageOwnership owner = 4 [(buf.validate.field).required = true];
+  string name = 5 [(buf.validate.field).string.min_len = 1];
+  StorageVisibility visibility = 6 [(buf.validate.field).enum = {in: [1, 2]}];
+  bool allow_blob_files = 7;
+  bool allow_indexing = 8;
+}
+
+message BlobRequest {
+  string blob_id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+message BlobProcessingOutcome {
+  bool obsolete = 1;
+  string stage = 2;
+}
+
+message BlobArtifact {
+  string id = 1;
+  string blob_id = 2;
+  string path = 3;
+  string parent_path = 4;
+  NodeKind kind = 5;
+  string media_type = 6;
+  int64 size_bytes = 7;
+  optional string checksum = 8;
+  optional string object_key = 9;
+  optional string text_content = 10;
+  string title = 11;
+  string description = 12;
+  bool indexable = 13;
+}
+
+message GetBlobArtifactsResponse {
+  BlobProcessingOutcome outcome = 1;
+  string workspace_id = 2;
+  string blob_id = 3;
+  string object_key = 4;
+  string source_download_url = 5;
+  string media_type = 6;
+  string source_name = 7;
+  int64 size_bytes = 8;
+  string checksum = 9;
+  string title = 10;
+  string description = 11;
+  repeated BlobArtifact artifacts = 12;
+}
+
+message ParsedArtifactInput {
+  string path = 1 [(buf.validate.field).string.min_len = 1];
+  NodeKind kind = 2 [(buf.validate.field).enum = {defined_only: true, not_in: [0]}];
+  string media_type = 3;
+  int64 size_bytes = 4 [(buf.validate.field).int64.gte = 0];
+  optional string checksum = 5;
+  optional string object_key = 6;
+  optional string text_content = 7;
+  optional string title = 8;
+  optional string description = 9;
+  bool indexable = 10;
+}
+
+message SaveParsedArtifactsRequest {
+  string blob_id = 1 [(buf.validate.field).string.uuid = true];
+  repeated ParsedArtifactInput artifacts = 2;
+}
+
+message EnrichedArtifactInput {
+  string artifact_id = 1 [(buf.validate.field).string.uuid = true];
+  optional string path = 2 [(buf.validate.field).string.min_len = 1];
+  optional string text_content = 3;
+  optional string title = 4;
+  optional string description = 5;
+}
+
+message SaveEnrichedArtifactsRequest {
+  string blob_id = 1 [(buf.validate.field).string.uuid = true];
+  optional string blob_title = 2;
+  optional string blob_description = 3;
+  repeated EnrichedArtifactInput artifacts = 4;
+}
+
 service LetFSInternalService {
- rpc ProvisionWorkspaceStorage(ProvisionWorkspaceStorageRequest) returns (WorkspaceStorage);
- rpc CreateStorage(CreateStorageRequest) returns (Storage);
- rpc DeleteStorage(StorageRequest) returns (google.protobuf.Empty);
- rpc GetProcessingInput(ProcessingRequest) returns (ProcessingInput);
- rpc PrepareArtifactUploads(PrepareArtifactUploadsRequest) returns (PrepareArtifactUploadsResponse);
- rpc CommitParse(CommitParseRequest) returns (ProcessingOutcome);
- rpc CommitEnrichment(CommitEnrichmentRequest) returns (ProcessingOutcome);
- rpc CompleteIndex(ProcessingRequest) returns (ProcessingOutcome);
- rpc FailProcessing(FailProcessingRequest) returns (ProcessingOutcome);
+  rpc ProvisionWorkspaceStorage(ProvisionWorkspaceStorageRequest) returns (WorkspaceStorage);
+  rpc CreateStorage(CreateStorageRequest) returns (Storage);
+  rpc DeleteStorage(StorageRequest) returns (google.protobuf.Empty);
+  rpc GetBlobArtifacts(BlobRequest) returns (GetBlobArtifactsResponse);
+  rpc SaveParsedArtifacts(SaveParsedArtifactsRequest) returns (BlobProcessingOutcome);
+  rpc SaveEnrichedArtifacts(SaveEnrichedArtifactsRequest) returns (BlobProcessingOutcome);
+  rpc CompleteBlobIndex(BlobRequest) returns (BlobProcessingOutcome);
 }

@@ -1,17 +1,19 @@
 import asyncio
-from collections.abc import Generator
-from contextlib import contextmanager
+import random
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
+from contextlib import asynccontextmanager, contextmanager
 from time import perf_counter
-from typing import TypedDict
+from typing import TypedDict, TypeVar
 
 from opentelemetry import metrics, trace
 from opentelemetry.trace import StatusCode
 from temporalio import activity
 
+_T = TypeVar("_T")
+
 
 class ProcessingIdentity(TypedDict):
-    file_id: str
-    version: int
+    blob_id: str
 
 
 duration = metrics.get_meter(__name__).create_histogram(
@@ -20,15 +22,37 @@ duration = metrics.get_meter(__name__).create_histogram(
 tracer = trace.get_tracer(__name__)
 
 
+async def retry_transient(
+    op: Callable[[], Awaitable[_T]],
+    *,
+    should_retry: Callable[[BaseException], bool],
+    attempts: int = 4,
+    base_delay: float = 1.0,
+    max_delay: float = 8.0,
+    on_attempt: Callable[[int], None] | None = None,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> _T:
+    """Retry transient failures with exponential backoff and bounded jitter."""
+    delay = base_delay
+    for attempt in range(1, attempts + 1):
+        if on_attempt is not None:
+            on_attempt(attempt)
+        try:
+            return await op()
+        except Exception as exc:
+            if attempt == attempts or not should_retry(exc):
+                raise
+            await sleep(delay + random.uniform(0.0, 0.5))
+            delay = min(max_delay, delay * 2.0)
+    raise AssertionError("unreachable")
+
+
 @contextmanager
 def stage(name: str, identity: ProcessingIdentity) -> Generator[None]:
     started, outcome = perf_counter(), "success"
     with tracer.start_as_current_span(
         f"ingest.{name}",
-        attributes={
-            "file.id": identity["file_id"],
-            "file.version": identity["version"],
-        },
+        attributes={"blob.id": identity["blob_id"]},
         record_exception=False,
         set_status_on_exception=False,
     ) as span:
@@ -49,3 +73,23 @@ def stage(name: str, identity: ProcessingIdentity) -> Generator[None]:
                 "processing stage finished",
                 extra={**identity, "stage": name, "outcome": outcome},
             )
+
+
+@asynccontextmanager
+async def heartbeats(interval: float = 10.0) -> AsyncGenerator[None]:
+    stop = asyncio.Event()
+
+    async def beat() -> None:
+        while not stop.is_set():
+            activity.heartbeat()
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=interval)
+            except TimeoutError:
+                continue
+
+    task = asyncio.create_task(beat())
+    try:
+        yield
+    finally:
+        stop.set()
+        await task

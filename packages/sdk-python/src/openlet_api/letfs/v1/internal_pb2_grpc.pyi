@@ -36,12 +36,10 @@ class LetFSInternalServiceStub:
     ProvisionWorkspaceStorage: _grpc.UnaryUnaryMultiCallable[_internal_pb2.ProvisionWorkspaceStorageRequest, _letfs_pb2.WorkspaceStorage]
     CreateStorage: _grpc.UnaryUnaryMultiCallable[_internal_pb2.CreateStorageRequest, _letfs_pb2.Storage]
     DeleteStorage: _grpc.UnaryUnaryMultiCallable[_letfs_pb2.StorageRequest, _empty_pb2.Empty]
-    GetProcessingInput: _grpc.UnaryUnaryMultiCallable[_internal_pb2.ProcessingRequest, _internal_pb2.ProcessingInput]
-    PrepareArtifactUploads: _grpc.UnaryUnaryMultiCallable[_internal_pb2.PrepareArtifactUploadsRequest, _internal_pb2.PrepareArtifactUploadsResponse]
-    CommitParse: _grpc.UnaryUnaryMultiCallable[_internal_pb2.CommitParseRequest, _internal_pb2.ProcessingOutcome]
-    CommitEnrichment: _grpc.UnaryUnaryMultiCallable[_internal_pb2.CommitEnrichmentRequest, _internal_pb2.ProcessingOutcome]
-    CompleteIndex: _grpc.UnaryUnaryMultiCallable[_internal_pb2.ProcessingRequest, _internal_pb2.ProcessingOutcome]
-    FailProcessing: _grpc.UnaryUnaryMultiCallable[_internal_pb2.FailProcessingRequest, _internal_pb2.ProcessingOutcome]
+    GetBlobArtifacts: _grpc.UnaryUnaryMultiCallable[_internal_pb2.BlobRequest, _internal_pb2.GetBlobArtifactsResponse]
+    SaveParsedArtifacts: _grpc.UnaryUnaryMultiCallable[_internal_pb2.SaveParsedArtifactsRequest, _internal_pb2.BlobProcessingOutcome]
+    SaveEnrichedArtifacts: _grpc.UnaryUnaryMultiCallable[_internal_pb2.SaveEnrichedArtifactsRequest, _internal_pb2.BlobProcessingOutcome]
+    CompleteBlobIndex: _grpc.UnaryUnaryMultiCallable[_internal_pb2.BlobRequest, _internal_pb2.BlobProcessingOutcome]
 
 @_typing.type_check_only
 class LetFSInternalServiceAsyncStub(LetFSInternalServiceStub):
@@ -49,12 +47,10 @@ class LetFSInternalServiceAsyncStub(LetFSInternalServiceStub):
     ProvisionWorkspaceStorage: _aio.UnaryUnaryMultiCallable[_internal_pb2.ProvisionWorkspaceStorageRequest, _letfs_pb2.WorkspaceStorage]  # type: ignore[assignment]
     CreateStorage: _aio.UnaryUnaryMultiCallable[_internal_pb2.CreateStorageRequest, _letfs_pb2.Storage]  # type: ignore[assignment]
     DeleteStorage: _aio.UnaryUnaryMultiCallable[_letfs_pb2.StorageRequest, _empty_pb2.Empty]  # type: ignore[assignment]
-    GetProcessingInput: _aio.UnaryUnaryMultiCallable[_internal_pb2.ProcessingRequest, _internal_pb2.ProcessingInput]  # type: ignore[assignment]
-    PrepareArtifactUploads: _aio.UnaryUnaryMultiCallable[_internal_pb2.PrepareArtifactUploadsRequest, _internal_pb2.PrepareArtifactUploadsResponse]  # type: ignore[assignment]
-    CommitParse: _aio.UnaryUnaryMultiCallable[_internal_pb2.CommitParseRequest, _internal_pb2.ProcessingOutcome]  # type: ignore[assignment]
-    CommitEnrichment: _aio.UnaryUnaryMultiCallable[_internal_pb2.CommitEnrichmentRequest, _internal_pb2.ProcessingOutcome]  # type: ignore[assignment]
-    CompleteIndex: _aio.UnaryUnaryMultiCallable[_internal_pb2.ProcessingRequest, _internal_pb2.ProcessingOutcome]  # type: ignore[assignment]
-    FailProcessing: _aio.UnaryUnaryMultiCallable[_internal_pb2.FailProcessingRequest, _internal_pb2.ProcessingOutcome]  # type: ignore[assignment]
+    GetBlobArtifacts: _aio.UnaryUnaryMultiCallable[_internal_pb2.BlobRequest, _internal_pb2.GetBlobArtifactsResponse]  # type: ignore[assignment]
+    SaveParsedArtifacts: _aio.UnaryUnaryMultiCallable[_internal_pb2.SaveParsedArtifactsRequest, _internal_pb2.BlobProcessingOutcome]  # type: ignore[assignment]
+    SaveEnrichedArtifacts: _aio.UnaryUnaryMultiCallable[_internal_pb2.SaveEnrichedArtifactsRequest, _internal_pb2.BlobProcessingOutcome]  # type: ignore[assignment]
+    CompleteBlobIndex: _aio.UnaryUnaryMultiCallable[_internal_pb2.BlobRequest, _internal_pb2.BlobProcessingOutcome]  # type: ignore[assignment]
 
 class LetFSInternalServiceServicer:
     def ProvisionWorkspaceStorage(
@@ -75,40 +71,28 @@ class LetFSInternalServiceServicer:
         context: _ServicerContext,
     ) -> _typing.Union[_empty_pb2.Empty, _abc.Awaitable[_empty_pb2.Empty]]: ...
 
-    def GetProcessingInput(
+    def GetBlobArtifacts(
         self,
-        request: _internal_pb2.ProcessingRequest,
+        request: _internal_pb2.BlobRequest,
         context: _ServicerContext,
-    ) -> _typing.Union[_internal_pb2.ProcessingInput, _abc.Awaitable[_internal_pb2.ProcessingInput]]: ...
+    ) -> _typing.Union[_internal_pb2.GetBlobArtifactsResponse, _abc.Awaitable[_internal_pb2.GetBlobArtifactsResponse]]: ...
 
-    def PrepareArtifactUploads(
+    def SaveParsedArtifacts(
         self,
-        request: _internal_pb2.PrepareArtifactUploadsRequest,
+        request: _internal_pb2.SaveParsedArtifactsRequest,
         context: _ServicerContext,
-    ) -> _typing.Union[_internal_pb2.PrepareArtifactUploadsResponse, _abc.Awaitable[_internal_pb2.PrepareArtifactUploadsResponse]]: ...
+    ) -> _typing.Union[_internal_pb2.BlobProcessingOutcome, _abc.Awaitable[_internal_pb2.BlobProcessingOutcome]]: ...
 
-    def CommitParse(
+    def SaveEnrichedArtifacts(
         self,
-        request: _internal_pb2.CommitParseRequest,
+        request: _internal_pb2.SaveEnrichedArtifactsRequest,
         context: _ServicerContext,
-    ) -> _typing.Union[_internal_pb2.ProcessingOutcome, _abc.Awaitable[_internal_pb2.ProcessingOutcome]]: ...
+    ) -> _typing.Union[_internal_pb2.BlobProcessingOutcome, _abc.Awaitable[_internal_pb2.BlobProcessingOutcome]]: ...
 
-    def CommitEnrichment(
+    def CompleteBlobIndex(
         self,
-        request: _internal_pb2.CommitEnrichmentRequest,
+        request: _internal_pb2.BlobRequest,
         context: _ServicerContext,
-    ) -> _typing.Union[_internal_pb2.ProcessingOutcome, _abc.Awaitable[_internal_pb2.ProcessingOutcome]]: ...
-
-    def CompleteIndex(
-        self,
-        request: _internal_pb2.ProcessingRequest,
-        context: _ServicerContext,
-    ) -> _typing.Union[_internal_pb2.ProcessingOutcome, _abc.Awaitable[_internal_pb2.ProcessingOutcome]]: ...
-
-    def FailProcessing(
-        self,
-        request: _internal_pb2.FailProcessingRequest,
-        context: _ServicerContext,
-    ) -> _typing.Union[_internal_pb2.ProcessingOutcome, _abc.Awaitable[_internal_pb2.ProcessingOutcome]]: ...
+    ) -> _typing.Union[_internal_pb2.BlobProcessingOutcome, _abc.Awaitable[_internal_pb2.BlobProcessingOutcome]]: ...
 
 def add_LetFSInternalServiceServicer_to_server(servicer: LetFSInternalServiceServicer, server: _typing.Union[_grpc.Server, _aio.Server]) -> None: ...

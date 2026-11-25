@@ -1,110 +1,220 @@
 import re
+from collections import Counter
 from pathlib import Path
 
+import tiktoken
 from markdown_it import MarkdownIt
 
-PARSER = MarkdownIt("commonmark").enable("table")
+HEADING = re.compile(r"^(#{1,6})\s*(.*)$")
+ENCODER = tiktoken.get_encoding("cl100k_base")
+_MD = MarkdownIt("commonmark").enable("table")
 
 
 def blocks(content: str) -> list[str]:
-    slides = list(re.finditer(r"^<!-- slide \d+ -->", content, re.M))
-    if slides:
-        cuts = sorted({0, *(match.start() for match in slides), len(content)})
-        return [
-            content[a:b].strip() for a, b in zip(cuts, cuts[1:]) if content[a:b].strip()
-        ]
-    lines = content.splitlines(keepends=True)
-    boundaries = {0, len(lines)}
-    depth = 0
-    for token in PARSER.parse(content):
-        if token.map and depth == 0:
-            boundaries.add(token.map[0])
-        depth += token.nesting
-    cuts = sorted(boundaries)
-    result: list[str] = []
-    pending = ""
-    for a, b in zip(cuts, cuts[1:]):
-        block = "".join(lines[a:b]).strip()
-        if not block:
-            continue
-        if re.fullmatch(r"#{1,6} [^\n]+|<!--[^\n]*-->|<a [^\n]+|Table [^\n]+", block):
-            pending += block + "\n\n"
+    text = content.strip()
+    if not text:
+        return []
+    lines = text.splitlines(keepends=True)
+    tokens = _MD.parse(text)
+    ranges: list[tuple[int, int]] = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token.map is not None:
+            start, end = token.map
+            ranges.append((start, end))
+            if token.nesting == 1:
+                depth = 1
+                index += 1
+                while index < len(tokens) and depth > 0:
+                    depth += tokens[index].nesting
+                    index += 1
+                continue
+        index += 1
+    units: list[str] = []
+    for pos, (start, end) in enumerate(ranges):
+        part = "".join(lines[start:end]).rstrip("\n")
+        if pos == 0 and start > 0:
+            prefix = "".join(lines[:start]).rstrip("\n")
+            if prefix:
+                part = f"{prefix}\n{part}"
+        if part.strip():
+            units.append(part)
+    if not units:
+        return [text]
+    # Keep slide marker HTML comment attached to its following slide block.
+    merged: list[str] = []
+    i = 0
+    while i < len(units):
+        if re.fullmatch(r"<!--\s*slide\b[^>]*-->", units[i].strip()) and i + 1 < len(
+            units
+        ):
+            merged.append(f"{units[i].strip()}\n\n{units[i + 1]}")
+            i += 2
         else:
-            result.append(pending + block)
-            pending = ""
-    if pending:
-        result.append(pending.strip())
-    return result
+            merged.append(units[i])
+            i += 1
+    return merged
 
 
 def contexts(units: list[str]) -> list[str]:
-    active: dict[int, str] = {}
+    headings: list[tuple[int, str]] = []
     prefixes: list[str] = []
-    for text in units:
-        parsed = PARSER.parse(text)
-        headings = [
-            (int(token.tag[1:]), parsed[i + 1].content)
-            for i, token in enumerate(parsed)
-            if token.type == "heading_open" and parsed[i + 1].content.strip()
-        ]
-        slide = bool(re.match(r"<!-- slide \d+ -->", text))
-        first = headings[0][0] if headings and text.startswith("#") else None
-        inherited = {k: v for k, v in active.items() if first is None or k < first}
-        prefix = (
-            ""
-            if slide
-            else "\n".join("#" * k + " " + v for k, v in sorted(inherited.items()))
-        )
-        prefixes.append(prefix + "\n\n" if prefix else "")
-        if slide:
-            active.clear()
+    for unit in units:
+        stripped = unit.lstrip()
+        first = stripped.splitlines()[0] if stripped else ""
+        if first.startswith("<!-- slide "):
+            headings.clear()
+            prefixes.append("")
+            for line in stripped.splitlines():
+                match = HEADING.match(line.strip())
+                if match and match.group(2).strip():
+                    level = len(match.group(1))
+                    headings = [(lvl, h) for lvl, h in headings if lvl < level]
+                    headings.append(
+                        (level, f"{match.group(1)} {match.group(2).strip()}")
+                    )
+            continue
+
+        match = HEADING.match(first)
+        if match:
+            level = len(match.group(1))
+            headings = [(lvl, h) for lvl, h in headings if lvl < level]
+            prefixes.append(
+                "\n\n".join(text for _, text in headings) + "\n\n" if headings else ""
+            )
+            if match.group(2).strip():
+                headings.append((level, f"{match.group(1)} {match.group(2).strip()}"))
         else:
-            for level, title in headings:
-                active = {k: v for k, v in active.items() if k < level}
-                active[level] = title
+            prefixes.append(
+                "\n\n".join(text for _, text in headings) + "\n\n" if headings else ""
+            )
     return prefixes
 
 
 def parts(content: str, split_tokens: int, max_text_bytes: int) -> list[str]:
     if split_tokens <= 0 or max_text_bytes <= 0:
-        raise ValueError("require positive split_tokens and max_text_bytes")
+        raise ValueError("split_tokens and max_text_bytes must be positive")
     units = blocks(content)
     if not units:
-        return [""]
+        return []
     prefixes = contexts(units)
-    sizes = [len(unit.encode()) for unit in units]
-    target = min(4 * split_tokens, max_text_bytes)
-    reserve = 0
-    while True:
-        output: list[str] = []
-        start, used = 0, 0
-        for i, size in enumerate(sizes):
-            if i > start and used + 2 + size + 1 > target - (
-                reserve if start == 0 else 0
-            ):
-                output.append(
-                    (prefixes[start] if start else "") + "\n\n".join(units[start:i])
-                )
-                start, used = i, len(prefixes[i].encode())
-            used += (2 if i > start else 0) + size
-        output.append((prefixes[start] if start else "") + "\n\n".join(units[start:]))
-        if len(output) > 1:
-            navigation = "\n\n" + "\n".join(
-                f"- [Part {i}](part-{i:03}.md)" for i in range(2, len(output) + 1)
-            )
-            size = len(navigation.encode())
-            if size > reserve:
-                reserve = size
-                continue
-            output[0] += navigation
-        if any(len(part.encode()) + 1 > max_text_bytes for part in output):
-            raise ValueError("artifact text exceeds limit")
-        return [part + "\n" for part in output]
+    output: list[str] = []
+    cur: list[str] = []
+    cur_prefix = ""
+    cur_tokens = 0
+    unit_tokens_list = [len(ENCODER.encode(u)) for u in units]
+    slide_span_tokens = list(unit_tokens_list)
+    for i in range(len(units)):
+        if units[i].lstrip().startswith("<!-- slide "):
+            total = unit_tokens_list[i]
+            for j in range(i + 1, len(units)):
+                if units[j].lstrip().startswith("<!-- slide "):
+                    break
+                total += unit_tokens_list[j]
+            slide_span_tokens[i] = total
+
+    for i, (unit, prefix) in enumerate(zip(units, prefixes, strict=True)):
+        is_slide = unit.lstrip().startswith("<!-- slide ")
+        rendered_single = f"{prefix}{unit}" if prefix and unit not in prefix else unit
+        if len(rendered_single.encode("utf-8")) > max_text_bytes:
+            if len(unit.encode("utf-8")) > max_text_bytes:
+                raise ValueError("artifact text exceeds max_text_bytes limit")
+            prefix = ""
+        unit_tokens = unit_tokens_list[i]
+        if not cur:
+            cur = [unit]
+            cur_prefix = prefix
+            cur_tokens = len(ENCODER.encode(cur_prefix)) + unit_tokens
+            continue
+        candidate_body = "\n\n".join([*cur, unit])
+        candidate = f"{cur_prefix}{candidate_body}"
+        needed_tokens = slide_span_tokens[i] if is_slide else unit_tokens
+        if cur_tokens + needed_tokens > split_tokens or (
+            len(candidate.encode("utf-8")) > max_text_bytes
+        ):
+            output.append(f"{cur_prefix}" + "\n\n".join(cur))
+            cur = [unit]
+            cur_prefix = prefix
+            cur_tokens = len(ENCODER.encode(cur_prefix)) + unit_tokens
+        else:
+            cur.append(unit)
+            cur_tokens += unit_tokens
+    if cur:
+        output.append(f"{cur_prefix}" + "\n\n".join(cur))
+    if len(output) == 1:
+        return [content.strip() + "\n"]
+    return [part.rstrip() + "\n" for part in output]
+
+
+def _first_heading(text: str) -> str | None:
+    for raw in text.splitlines():
+        ln = raw.strip()
+        if not ln or (ln.startswith("<!--") and ln.endswith("-->")):
+            continue
+        match = HEADING.match(ln)
+        if match:
+            cleaned = match.group(2).strip()
+            if cleaned and not re.fullmatch(r"Slide\s+\d+", cleaned, flags=re.I):
+                return cleaned[:80]
+    return None
+
+
+def _part_label(text: str, idx: int, repeated_titles: set[str] | None = None) -> str:
+    skip = repeated_titles or set()
+    lines = [
+        ln.strip()
+        for ln in text.splitlines()
+        if ln.strip()
+        and not (ln.strip().startswith("<!--") and ln.strip().endswith("-->"))
+    ]
+    headings: list[str] = []
+    for ln in lines:
+        match = HEADING.match(ln)
+        if match:
+            cleaned = match.group(2).strip()
+            if cleaned and not re.fullmatch(r"Slide\s+\d+", cleaned, flags=re.I):
+                headings.append(cleaned[:80])
+    for heading in headings:
+        if heading not in skip:
+            return heading
+    if headings:
+        return headings[0]
+    for ln in lines:
+        cleaned = ln.lstrip("# ").strip()
+        if cleaned and not re.fullmatch(r"Slide\s+\d+", cleaned, flags=re.I):
+            return cleaned[:80]
+    return (lines[0].lstrip("# ").strip() if lines else "")[:80] or f"Part {idx}"
 
 
 def write_markdown(
     content: str, output: Path, split_tokens: int, max_text_bytes: int
-) -> None:
-    for number, text in enumerate(parts(content, split_tokens, max_text_bytes), 1):
-        name = "README.md" if number == 1 else f"part-{number:03}.md"
+) -> list[str]:
+    """Write README.md (and 01-part.md, 02-part.md, ... when split). Returns child part filenames."""
+    output.mkdir(parents=True, exist_ok=True)
+    sections = parts(content, split_tokens, max_text_bytes)
+    if len(sections) <= 1:
+        text = sections[0] if sections else content.strip() + "\n"
+        (output / "README.md").write_text(text, encoding="utf-8")
+        return []
+    heading_counts = Counter(
+        h for text in sections if (h := _first_heading(text)) is not None
+    )
+    repeated = {h for h, count in heading_counts.items() if count >= 2}
+    width = max(2, len(str(len(sections))))
+    part_names: list[str] = []
+    toc_lines: list[str] = ["# Document Sections\n"]
+    for idx, text in enumerate(sections, 1):
+        name = f"{idx:0{width}d}-part.md"
         (output / name).write_text(text, encoding="utf-8")
+        part_names.append(name)
+        toc_lines.append(f"- [{_part_label(text, idx, repeated)}]({name})")
+    toc = "\n".join(toc_lines) + "\n"
+    if len(toc.encode("utf-8")) > max_text_bytes:
+        toc = (
+            "# Document Sections\n\n"
+            + "\n".join(f"- [{n}]({n})" for n in part_names)
+            + "\n"
+        )
+    (output / "README.md").write_text(toc, encoding="utf-8")
+    return part_names

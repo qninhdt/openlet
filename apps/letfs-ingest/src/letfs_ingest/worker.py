@@ -9,7 +9,6 @@ from datetime import timedelta
 from importlib.metadata import version
 from typing import Literal
 
-import httpx
 from openlet_api.letfs.v1.internal_pb2_grpc import LetFSInternalServiceStub
 from openlet_sdk.config import load
 from openlet_sdk.rpc import channel
@@ -26,7 +25,7 @@ from temporalio.runtime import (
 )
 from temporalio.worker import Worker
 
-from .telemetry import ProcessingIdentity
+from .storage import S3Store
 
 
 async def run(role: Literal["cpu", "io"]) -> None:
@@ -81,8 +80,8 @@ async def run(role: Literal["cpu", "io"]) -> None:
                 )
             )
             stub = LetFSInternalServiceStub(rpc)
-            http = await stack.enter_async_context(httpx.AsyncClient(timeout=120))
-            activities: list[Callable[[ProcessingIdentity], Awaitable[None]]]
+            s3 = S3Store(config)
+            activities: list[Callable[[str], Awaitable[None]]]
             if role == "cpu":
                 settings = config["services"]["letfs_ingest"]["cpu"]
                 from datalab_sdk import AsyncDatalabClient  # pyright: ignore[reportMissingTypeStubs]
@@ -97,7 +96,7 @@ async def run(role: Literal["cpu", "io"]) -> None:
                     if key
                     else None
                 )
-                activities = [Parser(stub, http, config, datalab).run]
+                activities = [Parser(stub, s3, config, datalab).run]
             else:
                 settings = config["services"]["letfs_ingest"]["io"]
                 from openlet_sdk.config import secret
@@ -121,7 +120,7 @@ async def run(role: Literal["cpu", "io"]) -> None:
                     )
                 lf = initialize_langfuse(lf_settings, runtime)
                 stack.callback(lf.shutdown)
-                ai = Models(config, lf_settings["prompt_label"])
+                ai = Models(config)
                 vector = config["dependencies"]["qdrant"]
                 host, port = vector["address"].rsplit(":", 1)
                 qdrant = AsyncQdrantClient(
@@ -132,7 +131,8 @@ async def run(role: Literal["cpu", "io"]) -> None:
                     api_key=secret(vector["api_key"]),
                 )
                 stack.push_async_callback(qdrant.close)
-                activities = [Processor(stub, http, ai, qdrant, config).run]
+                processor = Processor(stub, s3, ai, qdrant, config)
+                activities = [processor.enrich, processor.index]
             client = await Client.connect(
                 temporal["address"],
                 namespace=temporal["namespace"],

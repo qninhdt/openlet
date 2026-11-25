@@ -20,18 +20,17 @@ model_list:
       access_groups: [leta]
       supported_reasoning_efforts: [low, medium, high]
       supports_response_schema: false
-  - model_name: openai/gpt-6.1-sol
+  - model_name: openai/gpt-6-luna
     litellm_params:
-      # Vilao's Chat Completions stream works; avoid OpenAI's automatic Responses bridge.
-      model: gpt-6.1-sol
+      model: gpt-6-luna
       custom_llm_provider: custom_openai
       litellm_credential_name: vilao
       allowed_openai_params: [reasoning_effort]
     model_info:
       max_input_tokens: 131072
-      base_model: gpt-6.1-sol
+      base_model: gpt-6.2-sol
       access_groups: [leta]
-      supported_reasoning_efforts: [low, medium, high]
+      supported_reasoning_efforts: [low, medium, high, xhigh, max]
       supports_response_schema: false
   - model_name: deepseek/deepseek-v4.1-flash
     litellm_params:
@@ -40,7 +39,6 @@ model_list:
       litellm_credential_name: vilao
       allowed_openai_params: [reasoning_effort]
     model_info:
-      # Conservative deployment working bounds; not a provider capacity claim.
       max_input_tokens: 131072
       max_output_tokens: 8192
       supported_reasoning_efforts: [low, medium, high]

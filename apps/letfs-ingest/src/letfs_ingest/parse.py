@@ -1,218 +1,293 @@
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from openlet_api.letfs.v1.internal_pb2_grpc import LetFSInternalServiceAsyncStub
-
-
 import asyncio
-import math
-import os
+import mimetypes
 import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import TYPE_CHECKING
+from uuid import uuid4
 
-import httpx
-from datalab_sdk import AsyncDatalabClient, ConvertOptions, DatalabError, FileResult  # pyright: ignore[reportMissingTypeStubs]
-from openlet_api.letfs.v1 import internal_pb2 as pb
-from openlet_sdk.config import Config, DatalabSettings
+from datalab_sdk import (  # pyright: ignore[reportMissingTypeStubs]
+    AsyncDatalabClient,
+    ConversionResult,
+    ConvertOptions,
+    DatalabAPIError,
+    DatalabAuthenticationError,
+    DatalabError,
+    DatalabFileError,
+    DatalabNotFoundError,
+    DatalabPaymentRequiredError,
+    DatalabRateLimitError,
+    DatalabServerError,
+    DatalabTimeoutError,
+    DatalabValidationError,
+    FileResult,
+)
+from openlet_api.letfs.v1 import internal_pb2 as internal
+from openlet_api.letfs.v1 import letfs_pb2 as letfs
+from openlet_sdk.config import Config
+
+if TYPE_CHECKING:
+    from openlet_api.letfs.v1 import internal_pb2_grpc
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
-from .artifacts import download, heartbeats, publish
 from .convert import (
-    MEDIA_SUFFIXES,
-    REMOTE_MEDIA,
+    DOCX_MEDIA,
+    PDF_MEDIA,
+    PPTX_MEDIA,
+    XLSX_MEDIA,
     InvalidDocument,
-    page_limit,
     preflight,
 )
 from .datalab import export
-from .telemetry import ProcessingIdentity, stage
+from .storage import S3Store
+from .telemetry import ProcessingIdentity, heartbeats, retry_transient, stage
+
+REMOTE_MEDIA = {PDF_MEDIA, DOCX_MEDIA}
+MEDIA_SUFFIXES = {
+    PDF_MEDIA: ".pdf",
+    DOCX_MEDIA: ".docx",
+    PPTX_MEDIA: ".pptx",
+    XLSX_MEDIA: ".xlsx",
+}
+MEDIA_TYPES = {
+    ".md": "text/markdown",
+    ".csv": "text/csv",
+    ".html": "text/html",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+}
+
+_NON_RETRYABLE_DATALAB_ERRORS = (
+    DatalabAuthenticationError,
+    DatalabPaymentRequiredError,
+    DatalabNotFoundError,
+    DatalabFileError,
+    DatalabValidationError,
+)
+
+
+def _is_transient_datalab_error(exc: BaseException) -> bool:
+    if isinstance(exc, _NON_RETRYABLE_DATALAB_ERRORS):
+        return False
+    if isinstance(
+        exc,
+        (
+            DatalabTimeoutError,
+            DatalabServerError,
+            DatalabRateLimitError,
+            ConnectionError,
+            TimeoutError,
+            OSError,
+        ),
+    ):
+        return True
+    if isinstance(exc, DatalabAPIError):
+        return (
+            exc.status_code is None or exc.status_code == 429 or exc.status_code >= 500
+        )
+    return False
+
+
+async def convert_with_retry(
+    datalab: AsyncDatalabClient,
+    *,
+    file_url: str | None,
+    file_path: Path | None,
+    options: ConvertOptions,
+    stream_response_to: Path,
+    attempts: int = 3,
+) -> ConversionResult | FileResult:
+    """Retry transient network/5xx Datalab failures with exponential backoff + jitter."""
+
+    async def attempt() -> ConversionResult | FileResult:
+        stream_response_to.unlink(missing_ok=True)
+        return await datalab.convert(
+            file_url=file_url,
+            file_path=file_path,
+            options=options,
+            stream_response_to=stream_response_to,
+        )
+
+    return await retry_transient(
+        attempt,
+        should_retry=_is_transient_datalab_error,
+        attempts=attempts,
+        sleep=asyncio.sleep,
+    )
 
 
 async def run_child(arguments: list[str], timeout: float) -> int:
-    env = {
-        key: os.environ[key]
-        for key in ("PATH", "LANG", "LC_ALL", "TMPDIR", "OPENLET_CONFIG")
-        if key in os.environ
-    }
-    child = await asyncio.create_subprocess_exec(
+    process = await asyncio.create_subprocess_exec(
         sys.executable,
-        "-m",
         *arguments,
-        env=env,
-        stdout=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
     )
     try:
-        return await asyncio.wait_for(child.wait(), timeout=timeout)
-    finally:
-        if child.returncode is None:
-            child.terminate()
-            try:
-                await asyncio.wait_for(child.wait(), timeout=5)
-            except TimeoutError:
-                child.kill()
-                await child.wait()
+        _, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
+    except TimeoutError:
+        process.kill()
+        await process.wait()
+        raise
+    if process.returncode:
+        message = (
+            stderr.decode("utf-8", "replace").strip() or "subprocess conversion failed"
+        )
+        raise ApplicationError(message, non_retryable=True)
+    return process.returncode or 0
 
 
 class Parser:
     def __init__(
         self,
-        stub: LetFSInternalServiceAsyncStub,
-        http: httpx.AsyncClient,
+        stub: "internal_pb2_grpc.LetFSInternalServiceAsyncStub",
+        s3: S3Store,
         config: Config,
         datalab: AsyncDatalabClient | None,
     ) -> None:
-        self.stub, self.http, self.config = stub, http, config
-        self.settings = config["services"]["letfs"]
-        parser = config["services"]["letfs_ingest"]["cpu"]
-        self.office = asyncio.Semaphore(parser.get("office_concurrency", 2))
-        defaults: DatalabSettings = {
-            "concurrency": 2,
-            "result_concurrency": 2,
-            "requests_per_minute": 10,
-            "max_response_bytes": 96 * 1024 * 1024,
-        }
-        settings = parser.get("datalab", defaults)
-        if (
-            self.office.locked()
-            or min(
-                settings["concurrency"],
-                settings["result_concurrency"],
-                settings["requests_per_minute"],
-                settings["max_response_bytes"],
-            )
-            < 1
-        ):
-            raise ValueError("invalid parser concurrency or Datalab response limits")
+        self.stub = stub
+        self.s3 = s3
+        self.config = config
         self.datalab = datalab
-        self.remote_slots = asyncio.Semaphore(settings["concurrency"])
-        self.result_slots = asyncio.Semaphore(settings["result_concurrency"])
-        self.poll_interval = math.ceil(
-            60 * settings["concurrency"] / settings["requests_per_minute"]
+        parser = config["services"]["letfs_ingest"]["cpu"]
+        dl = parser.get("datalab", {"max_response_bytes": 96 * 1024 * 1024})
+        self.max_response_bytes = int(dl.get("max_response_bytes", 96 * 1024 * 1024))
+        self.parse_timeout = float(
+            config["services"]["letfs"]["processing"]["parse_timeout_seconds"]
         )
-        self.max_result_bytes = settings["max_response_bytes"]
+        self.max_blob_bytes = int(config["services"]["letfs"]["max_blob_bytes"])
 
     @activity.defn(name="ParseBlob")
-    async def run(self, request: ProcessingIdentity) -> None:
+    async def run(self, blob_id: str) -> None:
+        identity: ProcessingIdentity = {"blob_id": blob_id}
         async with heartbeats():
-            identity: ProcessingIdentity = {
-                "file_id": request["file_id"],
-                "version": request["version"],
-            }
-            query = pb.ProcessingRequest(**identity)
-            source = await self.stub.GetProcessingInput(query, timeout=30)
-            if source.outcome.obsolete or source.outcome.stage != "pending":
-                return
-            remote = source.media_type in REMOTE_MEDIA
-            slots = self.remote_slots if remote else self.office
-            queued = slots.locked()
-            with TemporaryDirectory(prefix="openlet-parse-") as temporary:
-                directory = Path(temporary)
-                output = directory / "output"
-                output.mkdir()
-                try:
-                    async with slots:
-                        if queued:
-                            source = await self.stub.GetProcessingInput(
-                                query, timeout=30
-                            )
-                            if (
-                                source.outcome.obsolete
-                                or source.outcome.stage != "pending"
-                            ):
-                                return
-                        name = directory / ("input" + MEDIA_SUFFIXES[source.media_type])
-                        with stage("parse", identity):
-                            await (self.remote if remote else self.local)(
-                                source, name, output
-                            )
-                except ValueError as error:
-                    raise ApplicationError(
-                        str(error),
-                        type="InvalidDocument",
-                        non_retryable=True,
-                    ) from None
-                with stage("export", identity):
-                    await publish(self.stub, self.http, identity, output, self.settings)
-
-    async def remote(
-        self,
-        source: pb.ProcessingInput,
-        name: Path,
-        output: Path,
-    ) -> None:
-        if self.datalab is None:
-            raise InvalidDocument("DATALAB_API_KEY is required for PDF and DOCX ingest")
-        direct = self.config["dependencies"]["s3"].get("processing_download_endpoint")
-        if not direct:
-            await download(
-                self.http,
-                source.download_url,
-                name,
-                self.settings["max_blob_bytes"],
-            )
-            await asyncio.to_thread(preflight, name, source.media_type, self.config)
-        limit = page_limit(self.config)
-        try:
-            result = await self.datalab.convert(
-                file_path=None if direct else name,
-                file_url=source.download_url if direct else None,
-                options=ConvertOptions(
-                    output_format="markdown",
-                    mode="balanced",
-                    max_pages=limit + 1,
-                    disable_image_captions=True,
-                ),
-                stream_response_to=name.parent / "datalab-response.json",
-                poll_interval=self.poll_interval,
-            )
-        except DatalabError as error:
-            raise InvalidDocument(
-                f"Datalab conversion failed ({type(error).__name__})"
-            ) from None
-        if not isinstance(result, FileResult) or not result.success:
-            raise InvalidDocument("Datalab conversion failed")
-        if result.output_path.stat().st_size > self.max_result_bytes:
-            raise InvalidDocument("Datalab response exceeds byte limit")
-        async with self.result_slots:
-            task = asyncio.create_task(
-                asyncio.to_thread(
-                    export,
-                    result.output_path,
-                    result.success,
-                    output,
-                    self.config,
+            with stage("parse", identity):
+                info = await self.stub.GetBlobArtifacts(
+                    internal.BlobRequest(blob_id=blob_id)
                 )
-            )
-            try:
-                await asyncio.shield(task)
-            finally:
-                if not task.done():
-                    await asyncio.gather(task, return_exceptions=True)
+                if info.outcome.obsolete or info.outcome.stage in {"enriched", "ready"}:
+                    return
+                suffix = MEDIA_SUFFIXES.get(info.media_type)
+                if suffix is None:
+                    raise ApplicationError(
+                        f"unsupported document media type: {info.media_type}",
+                        non_retryable=True,
+                    )
 
-    async def local(self, source: pb.ProcessingInput, name: Path, output: Path) -> None:
-        await download(
-            self.http,
-            source.download_url,
-            name,
-            self.settings["max_blob_bytes"],
-        )
-        code = await run_child(
-            [
-                "letfs_ingest.convert",
-                str(name),
-                str(output),
-                source.media_type,
-                f"--source-name={source.source_name}",
-            ],
-            self.settings["processing"]["parse_timeout_seconds"],
-        )
-        if code:
-            raise ApplicationError(
-                "document conversion failed",
-                type="ConversionFailed",
-                non_retryable=code == os.EX_DATAERR,
+                with TemporaryDirectory() as tmp:
+                    workdir = Path(tmp)
+                    src_file = workdir / f"input{suffix}"
+                    out_dir = workdir / "out"
+                    out_dir.mkdir()
+                    await self.s3.download_to_file(
+                        info.object_key, src_file, self.max_blob_bytes
+                    )
+
+                    if info.media_type in REMOTE_MEDIA:
+                        if self.datalab is None:
+                            raise ApplicationError(
+                                "Datalab client is not configured", non_retryable=True
+                            )
+                        try:
+                            await asyncio.to_thread(
+                                preflight, src_file, info.media_type, self.config
+                            )
+                            resp_path = workdir / "datalab-response.json"
+                            result = await convert_with_retry(
+                                self.datalab,
+                                file_url=info.source_download_url or None,
+                                file_path=None
+                                if info.source_download_url
+                                else src_file,
+                                options=ConvertOptions(
+                                    output_format="markdown",
+                                    max_pages=self.config["services"]["letfs_ingest"][
+                                        "cpu"
+                                    ]["limits"]["max_pages"],
+                                    paginate=False,
+                                ),
+                                stream_response_to=resp_path,
+                            )
+                            if resp_path.stat().st_size > self.max_response_bytes:
+                                raise InvalidDocument(
+                                    "Datalab response exceeds max_response_bytes"
+                                )
+                            await asyncio.to_thread(
+                                export,
+                                resp_path,
+                                bool(result.success),
+                                out_dir,
+                                self.config,
+                            )
+                        except (InvalidDocument, DatalabError) as exc:
+                            raise ApplicationError(
+                                str(exc), non_retryable=True
+                            ) from exc
+                    elif info.media_type in {PPTX_MEDIA, XLSX_MEDIA}:
+                        await run_child(
+                            [
+                                "-m",
+                                "letfs_ingest.convert",
+                                str(src_file),
+                                info.media_type,
+                                str(out_dir),
+                            ],
+                            timeout=self.parse_timeout,
+                        )
+
+                    artifacts = await self._build_artifacts(
+                        info.workspace_id, blob_id, out_dir
+                    )
+                    await self.stub.SaveParsedArtifacts(
+                        internal.SaveParsedArtifactsRequest(
+                            blob_id=blob_id, artifacts=artifacts
+                        )
+                    )
+
+    async def _build_artifacts(
+        self, workspace_id: str, blob_id: str, out_dir: Path
+    ) -> list[internal.ParsedArtifactInput]:
+        files = sorted(p for p in out_dir.rglob("*") if p.is_file())
+        rel_paths = [p.relative_to(out_dir).as_posix() for p in files]
+        has_parts = any(rel.endswith(".md") and rel != "README.md" for rel in rel_paths)
+
+        items: list[internal.ParsedArtifactInput] = []
+        for file, rel in zip(files, rel_paths, strict=True):
+            ext = file.suffix.lower()
+            media = (
+                MEDIA_TYPES.get(ext)
+                or mimetypes.guess_type(file.name)[0]
+                or "application/octet-stream"
             )
+            if ext in {".md", ".csv", ".html"}:
+                text = file.read_text(encoding="utf-8")
+                indexable = (rel != "README.md") if has_parts else True
+                items.append(
+                    internal.ParsedArtifactInput(
+                        path=rel,
+                        kind=letfs.NODE_KIND_FILE,
+                        media_type=media,
+                        size_bytes=len(text.encode("utf-8")),
+                        text_content=text,
+                        indexable=indexable,
+                    )
+                )
+            else:
+                data = file.read_bytes()
+                key = f"workspaces/{workspace_id}/blobs/{blob_id}/artifacts/{uuid4()}{ext}"
+                digest = await self.s3.put_bytes(key, data, media)
+                items.append(
+                    internal.ParsedArtifactInput(
+                        path=rel,
+                        kind=letfs.NODE_KIND_FILE,
+                        media_type=media,
+                        size_bytes=len(data),
+                        checksum=digest,
+                        object_key=key,
+                        indexable=True,
+                    )
+                )
+        return items

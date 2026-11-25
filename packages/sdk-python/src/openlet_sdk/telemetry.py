@@ -45,6 +45,7 @@ class JSONFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
         for key in (
+            "blob_id",
             "file_id",
             "version",
             "stage",

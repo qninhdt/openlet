@@ -110,23 +110,53 @@ export function storageApi(
     query: string,
     mode: 'text' | 'semantic',
     pageToken = '',
-  ) {
+  ): Promise<{
+    hits: {
+      fileId: string;
+      path?: string;
+      artifactPath?: string;
+      text?: string;
+      node?: StorageNode;
+      lineNumber?: number;
+    }[];
+    nextPageToken?: string;
+  }> {
+    if (mode === 'semantic') {
+      const page = await post<{
+        hits?: {
+          fileId: string;
+          path: string;
+          artifactPath?: string;
+          text: string;
+          score: number;
+        }[];
+      }>(`${base}/${storage}/files:semanticSearch`, { root: { path: '/' }, query });
+      return { hits: page.hits ?? [] };
+    }
     const page = await post<{
       hits?: {
         node: RemoteNode;
         snippet?: string;
         path?: string;
+        artifactPath?: string;
         lineNumber?: number;
-        score?: number;
       }[];
       nextPageToken?: string;
-    }>(`${base}/${storage}/files:${mode === 'text' ? 'textSearch' : 'semanticSearch'}`, {
+    }>(`${base}/${storage}/files:textSearch`, {
       root: locator(storage, rootId(storage)),
       query,
-      ...(mode === 'text' ? { pageSize: 50, pageToken } : { topK: 30 }),
+      pageSize: 50,
+      pageToken,
     });
     return {
-      hits: (page.hits ?? []).map((hit) => ({ ...hit, node: node(hit.node) })),
+      hits: (page.hits ?? []).map((hit) => ({
+        fileId: hit.node.id,
+        node: node(hit.node),
+        path: hit.path,
+        artifactPath: hit.artifactPath,
+        text: hit.snippet ?? '',
+        lineNumber: hit.lineNumber,
+      })),
       nextPageToken: page.nextPageToken,
     };
   }

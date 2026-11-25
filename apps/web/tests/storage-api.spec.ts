@@ -212,10 +212,15 @@ test('message sounds ignore history, reads, duplicate refresh and earlier pagina
   expect(newAssistantMessages([old], [{ ...next, role: 'user' }, old])).toEqual([]);
 });
 
-test('content search keeps snippets, paths and text cursor; semantic searches are bounded', async () => {
+test('content search sends semantic scope and uses the server result limit', async () => {
   const calls: Record<string, unknown>[] = [];
-  const api: Api = async <T>(_path: string, init?: RequestInit) => {
+  const api: Api = async <T>(path: string, init?: RequestInit) => {
     calls.push(JSON.parse(String(init?.body)));
+    if (path.endsWith(':semanticSearch')) {
+      return {
+        hits: [{ fileId: file.id, path: '/nested/report.md', text: 'passage', score: 0.9 }],
+      } as T;
+    }
     return {
       hits: [{ node: file, snippet: 'relevant content', path: 'nested/report.md', lineNumber: 12 }],
       nextPageToken: 'next',
@@ -226,7 +231,7 @@ test('content search keeps snippets, paths and text cursor; semantic searches ar
   const page = await files.searchContent('storage', 'relevant', 'text', 'previous');
   expect(page.hits[0]).toMatchObject({
     node: { id: file.id, version: 7 },
-    snippet: 'relevant content',
+    text: 'relevant content',
     path: 'nested/report.md',
     lineNumber: 12,
   });
@@ -237,11 +242,13 @@ test('content search keeps snippets, paths and text cursor; semantic searches ar
     pageSize: 50,
     pageToken: 'previous',
   });
-  await files.searchContent('storage', 'describe a topic', 'semantic');
+  const semantic = await files.searchContent('storage', 'describe a topic', 'semantic');
+  expect(semantic.hits).toEqual([
+    { fileId: file.id, path: '/nested/report.md', text: 'passage', score: 0.9 },
+  ]);
   expect(calls[1]).toEqual({
-    root: { nodeId: 'remote-root' },
+    root: { path: '/' },
     query: 'describe a topic',
-    topK: 30,
   });
 });
 
