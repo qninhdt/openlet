@@ -5,7 +5,7 @@ import yaml
 
 type JSON = None | bool | int | float | str | list[JSON] | dict[str, JSON]
 type ReasoningEffort = (
-    Literal["none", "minimal", "low", "medium", "high", "xhigh"] | None
+    Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"] | None
 )
 
 
