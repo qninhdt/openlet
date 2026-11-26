@@ -2,17 +2,18 @@ package storage
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
 	"path"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/bmatcuk/doublestar/v4"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/openai/openai-go/v3"
@@ -26,7 +27,116 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+func (s *Server) searchDefaultLimit() int {
+	if s.Settings.Search.DefaultLimit > 0 {
+		return s.Settings.Search.DefaultLimit
+	}
+	return 100
+}
+
+func (s *Server) searchMaxLimit() int {
+	if s.Settings.Search.MaxLimit > 0 {
+		return s.Settings.Search.MaxLimit
+	}
+	return 100
+}
+
+func (s *Server) searchTimeout() time.Duration {
+	if s.Settings.Search.TimeoutSeconds > 0 {
+		return time.Duration(s.Settings.Search.TimeoutSeconds) * time.Second
+	}
+	return 30 * time.Second
+}
+
+func (s *Server) searchMaxLineChars() int {
+	if s.Settings.Search.MaxLineChars > 0 {
+		return s.Settings.Search.MaxLineChars
+	}
+	return 2000
+}
+
+func (s *Server) semanticMaxResultLimit() uint64 {
+	if s.Settings.SemanticSearch.MaxResultLimit > 0 {
+		return s.Settings.SemanticSearch.MaxResultLimit
+	}
+	if s.Settings.SemanticSearch.ResultLimit > 25 {
+		return s.Settings.SemanticSearch.ResultLimit
+	}
+	return 25
+}
+
+func (s *Server) semanticTimeout() time.Duration {
+	if s.Settings.SemanticSearch.TimeoutSeconds > 0 {
+		return time.Duration(s.Settings.SemanticSearch.TimeoutSeconds) * time.Second
+	}
+	return 30 * time.Second
+}
+
+func (s *Server) semanticMaxExcerptChars() int {
+	if s.Settings.SemanticSearch.MaxExcerptChars > 0 {
+		return s.Settings.SemanticSearch.MaxExcerptChars
+	}
+	return 2000
+}
+
+func (s *Server) effectiveSearchLimit(requested int32) int {
+	limit := int(requested)
+	if limit <= 0 {
+		limit = s.searchDefaultLimit()
+	}
+	if maxLimit := s.searchMaxLimit(); limit > maxLimit {
+		limit = maxLimit
+	}
+	return limit
+}
+
+func hasHiddenSegment(relPath string) bool {
+	for _, seg := range strings.Split(relPath, "/") {
+		if len(seg) > 1 && seg[0] == '.' {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeGlobPattern(pattern string) string {
+	p := strings.TrimSpace(pattern)
+	p = strings.TrimPrefix(p, "/")
+	p = strings.TrimPrefix(p, "./")
+	return p
+}
+
+func matchesIncludeGlob(glob, relPath string) bool {
+	if glob == "" {
+		return true
+	}
+	if ok, _ := doublestar.Match(glob, relPath); ok {
+		return true
+	}
+	if !strings.Contains(glob, "/") {
+		if ok, _ := doublestar.Match(glob, path.Base(relPath)); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func clipRunes(s string, maxChars int) string {
+	if maxChars <= 0 || len(s) <= maxChars {
+		return s
+	}
+	count := 0
+	for idx := range s {
+		if count == maxChars {
+			return s[:idx]
+		}
+		count++
+	}
+	return s
+}
 
 func likeOp(caseSensitive bool) string {
 	if caseSensitive {
@@ -35,336 +145,374 @@ func likeOp(caseSensitive bool) string {
 	return "ILIKE"
 }
 
-func snippetExpr(col, needleArg string, caseSensitive bool) string {
+func regexOp(caseSensitive bool) string {
 	if caseSensitive {
-		return fmt.Sprintf(`substring(%s FROM greatest(1,strpos(%s,%s)-80) FOR 240)`, col, col, needleArg)
+		return "~"
 	}
-	return fmt.Sprintf(`substring(%s FROM greatest(1,strpos(lower(%s),lower(%s))-80) FOR 240)`, col, col, needleArg)
+	return "~*"
 }
 
-func (s *Server) SearchFiles(ctx context.Context, r *pb.SearchFilesRequest) (*pb.SearchFilesResponse, error) {
+// pgSafeRegex converts common RE2 patterns into Postgres POSIX ERE for pg_trgm GIN pre-filtering.
+// Returns ("", false) when the pattern uses Go-specific constructs that may differ in Postgres,
+// allowing the query to safely pre-filter by tree/glob and perform exact Go regex matching.
+func pgSafeRegex(pattern string) (string, bool) {
+	if strings.Contains(pattern, "(?") || strings.Contains(pattern, `\b`) || strings.Contains(pattern, `\B`) || strings.Contains(pattern, `\A`) || strings.Contains(pattern, `\z`) {
+		return "", false
+	}
+	return pattern, true
+}
+
+func (s *Server) Glob(ctx context.Context, r *pb.GlobRequest) (*pb.GlobResponse, error) {
 	if _, err := s.check(ctx, "storage", r.StorageId, "read"); err != nil {
 		return nil, err
 	}
+	pattern := normalizeGlobPattern(r.Pattern)
+	if pattern == "" || !doublestar.ValidatePattern(pattern) {
+		return nil, invalid("invalid glob pattern")
+	}
+	ctx, cancel := context.WithTimeout(ctx, s.searchTimeout())
+	defer cancel()
+
 	root, err := oneResolved(ctx, s.DB, r.WorkspaceId, r.StorageId, r.Root, false, false)
 	if err != nil {
 		return nil, err
 	}
-	if root.Artifact != nil {
-		return &pb.SearchFilesResponse{}, nil
+	limit := s.effectiveSearchLimit(r.Limit)
+	out := new(pb.GlobResponse)
+
+	matchAndAppend := func(hit *pb.GlobHit) bool {
+		if !r.IncludeHidden && hasHiddenSegment(hit.Path) {
+			return false
+		}
+		matched, _ := doublestar.Match(pattern, hit.Path)
+		if !matched {
+			return false
+		}
+		if len(out.Hits) >= limit {
+			out.Truncated = true
+			return true
+		}
+		out.Hits = append(out.Hits, hit)
+		return false
 	}
-	limit := pageSize(r.PageSize)
+
+	if root.Artifact != nil {
+		if root.Artifact.Kind == "file" {
+			name := path.Base(root.Artifact.Path)
+			matchAndAppend(&pb.GlobHit{
+				Path:         name,
+				NodeId:       root.Node.Id,
+				Kind:         root.Node.Kind,
+				ArtifactPath: root.Artifact.Path,
+				SizeBytes:    root.Artifact.SizeBytes,
+				UpdatedAt:    root.Node.UpdatedAt,
+			})
+			return out, nil
+		}
+		rows, err := s.DB.Query(ctx, `SELECT a.id::text,a.path,a.kind,a.size_bytes,a.created_at
+			FROM blob_artifacts a
+			WHERE a.blob_id=$1 AND a.path LIKE $2 ESCAPE '\'
+			ORDER BY a.path`,
+			root.Artifact.BlobID, prefixPattern(root.Artifact.Path))
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		prefix := root.Artifact.Path + "/"
+		for rows.Next() {
+			var id, artPath, kind string
+			var size int64
+			var created time.Time
+			if err = rows.Scan(&id, &artPath, &kind, &size, &created); err != nil {
+				return nil, err
+			}
+			rel := strings.TrimPrefix(artPath, prefix)
+			nk := pb.NodeKind_NODE_KIND_DIRECTORY
+			if kind == "file" {
+				nk = pb.NodeKind_NODE_KIND_FILE
+			}
+			if matchAndAppend(&pb.GlobHit{
+				Path:         rel,
+				NodeId:       id,
+				Kind:         nk,
+				ArtifactPath: artPath,
+				SizeBytes:    size,
+				UpdatedAt:    timestamppb.New(created),
+			}) {
+				break
+			}
+		}
+		return out, rows.Err()
+	}
+
+	if root.Node.Kind == pb.NodeKind_NODE_KIND_FILE {
+		if root.BlobID != nil {
+			rows, err := s.DB.Query(ctx, `SELECT a.id::text,a.path,a.kind,a.size_bytes,a.created_at
+				FROM blob_artifacts a WHERE a.blob_id=$1 ORDER BY a.path`, *root.BlobID)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var id, artPath, kind string
+				var size int64
+				var created time.Time
+				if err = rows.Scan(&id, &artPath, &kind, &size, &created); err != nil {
+					return nil, err
+				}
+				nk := pb.NodeKind_NODE_KIND_DIRECTORY
+				if kind == "file" {
+					nk = pb.NodeKind_NODE_KIND_FILE
+				}
+				if matchAndAppend(&pb.GlobHit{
+					Path:         artPath,
+					NodeId:       id,
+					Kind:         nk,
+					ArtifactPath: artPath,
+					SizeBytes:    size,
+					UpdatedAt:    timestamppb.New(created),
+				}) {
+					break
+				}
+			}
+			return out, rows.Err()
+		}
+		var size int64
+		if root.Node.File != nil {
+			size = root.Node.File.SizeBytes
+		}
+		matchAndAppend(&pb.GlobHit{
+			Path:      root.Node.Name,
+			NodeId:    root.Node.Id,
+			Kind:      root.Node.Kind,
+			SizeBytes: size,
+			UpdatedAt: root.Node.UpdatedAt,
+		})
+		return out, nil
+	}
+
 	rows, err := s.DB.Query(ctx, `WITH RECURSIVE tree AS (
-		SELECT n.id,n.kind FROM nodes n WHERE n.id=$1 AND n.storage_id=$2
+		SELECT n.id,n.kind,''::text AS rel_path,n.updated_at
+		FROM nodes n WHERE n.id=$1 AND n.storage_id=$2
 		UNION ALL
-		SELECT c.id,c.kind FROM tree t JOIN nodes c ON c.parent_id=t.id AND c.storage_id=$2 WHERE t.kind='directory'
+		SELECT c.id,c.kind,CASE WHEN t.rel_path='' THEN c.name ELSE t.rel_path||'/'||c.name END,c.updated_at
+		FROM tree t JOIN nodes c ON c.parent_id=t.id AND c.storage_id=$2
+		WHERE t.kind='directory'
+	),
+	entries AS (
+		SELECT t.rel_path,t.id::text AS node_id,t.kind,''::text AS artifact_path,coalesce(f.size_bytes,0) AS size_bytes,t.updated_at
+		FROM tree t LEFT JOIN files f ON f.node_id=t.id
+		WHERE t.rel_path<>''
+		UNION ALL
+		SELECT CASE WHEN t.rel_path='' THEN a.path ELSE t.rel_path||'/'||a.path END AS rel_path,
+		       a.id::text AS node_id,a.kind,a.path AS artifact_path,a.size_bytes,a.created_at AS updated_at
+		FROM tree t
+		JOIN files f ON f.node_id=t.id AND f.blob_id IS NOT NULL
+		JOIN blob_artifacts a ON a.blob_id=f.blob_id
 	)
-	SELECT `+nodeColumns+`
-	FROM tree t JOIN nodes n ON n.id=t.id `+nodeJoins+`
-	WHERE n.name `+likeOp(r.CaseSensitive)+` $3 ESCAPE '\' AND ($4::uuid IS NULL OR n.id>$4)
-	ORDER BY n.id LIMIT $5`,
-		root.Node.Id, r.StorageId, literalPattern(r.Query), nilString(r.PageToken), limit+1)
+	SELECT rel_path,node_id,kind,artifact_path,size_bytes,updated_at
+	FROM entries
+	ORDER BY updated_at DESC, rel_path ASC`,
+		root.Node.Id, r.StorageId)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := new(pb.SearchFilesResponse)
 	for rows.Next() {
-		var sc nodeScanner
-		if err = rows.Scan(sc.dests()...); err != nil {
+		var relPath, nodeID, kind, artPath string
+		var size int64
+		var updated time.Time
+		if err = rows.Scan(&relPath, &nodeID, &kind, &artPath, &size, &updated); err != nil {
 			return nil, err
 		}
-		out.Hits = append(out.Hits, sc.finish(false))
+		nk := pb.NodeKind_NODE_KIND_DIRECTORY
+		if kind == "file" {
+			nk = pb.NodeKind_NODE_KIND_FILE
+		}
+		if matchAndAppend(&pb.GlobHit{
+			Path:         relPath,
+			NodeId:       nodeID,
+			Kind:         nk,
+			ArtifactPath: artPath,
+			SizeBytes:    size,
+			UpdatedAt:    timestamppb.New(updated),
+		}) {
+			break
+		}
 	}
-	if err = rows.Err(); err != nil {
-		return nil, err
-	}
-	if len(out.Hits) > limit {
-		out.Hits = out.Hits[:limit]
-		out.NextPageToken = out.Hits[limit-1].Id
-	}
-	return out, nil
+	return out, rows.Err()
 }
 
-func (s *Server) TextSearch(ctx context.Context, r *pb.TextSearchRequest) (*pb.TextSearchResponse, error) {
+type lineMatcher struct {
+	literal       bool
+	caseSensitive bool
+	needle        string
+	re            *regexp.Regexp
+}
+
+func newLineMatcher(pattern string, literal, caseSensitive bool) (*lineMatcher, error) {
+	if literal {
+		needle := pattern
+		if !caseSensitive {
+			needle = strings.ToLower(needle)
+		}
+		return &lineMatcher{literal: true, caseSensitive: caseSensitive, needle: needle}, nil
+	}
+	expr := pattern
+	if !caseSensitive {
+		expr = "(?i)" + expr
+	}
+	re, err := regexp.Compile(expr)
+	if err != nil {
+		return nil, invalid("invalid regex pattern: " + err.Error())
+	}
+	return &lineMatcher{re: re, caseSensitive: caseSensitive}, nil
+}
+
+func (m *lineMatcher) matchLine(line string) bool {
+	if m.literal {
+		if m.caseSensitive {
+			return strings.Contains(line, m.needle)
+		}
+		return strings.Contains(strings.ToLower(line), m.needle)
+	}
+	return m.re.MatchString(line)
+}
+
+func extractGrepLines(text, relPath, nodeID, artPath string, matcher *lineMatcher, maxLineChars, limit int, out *pb.GrepResponse) bool {
+	for i, raw := range textLines(text) {
+		line := strings.TrimRight(raw, "\r\n")
+		if !matcher.matchLine(line) {
+			continue
+		}
+		if len(out.Hits) >= limit {
+			out.Truncated = true
+			return true
+		}
+		out.Hits = append(out.Hits, &pb.GrepHit{
+			Path:         relPath,
+			LineNumber:   uint32(i + 1),
+			LineText:     clipRunes(line, maxLineChars),
+			NodeId:       nodeID,
+			ArtifactPath: artPath,
+		})
+	}
+	return false
+}
+
+func (s *Server) Grep(ctx context.Context, r *pb.GrepRequest) (*pb.GrepResponse, error) {
 	if _, err := s.check(ctx, "storage", r.StorageId, "read"); err != nil {
 		return nil, err
 	}
+	includeGlob := normalizeGlobPattern(r.IncludeGlob)
+	if includeGlob != "" && !doublestar.ValidatePattern(includeGlob) {
+		return nil, invalid("invalid include_glob pattern")
+	}
+	matcher, err := newLineMatcher(r.Pattern, r.Literal, r.CaseSensitive)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, s.searchTimeout())
+	defer cancel()
+
 	root, err := oneResolved(ctx, s.DB, r.WorkspaceId, r.StorageId, r.Root, true, false)
 	if err != nil {
 		return nil, err
 	}
-	if r.LinesMode {
-		return textSearchLines(root, r)
+	limit := s.effectiveSearchLimit(r.Limit)
+	maxLineChars := s.searchMaxLineChars()
+	out := new(pb.GrepResponse)
+
+	// Single-file or single-artifact root: scan directly in Go without extra DB round-trip.
+	if root.Artifact != nil && root.Artifact.Kind == "file" {
+		if root.Text == nil || !matchesIncludeGlob(includeGlob, path.Base(root.Artifact.Path)) {
+			return out, nil
+		}
+		extractGrepLines(*root.Text, ".", root.Node.Id, root.Artifact.Path, matcher, maxLineChars, limit, out)
+		return out, nil
+	}
+	if root.Artifact == nil && root.Node.Kind == pb.NodeKind_NODE_KIND_FILE && root.BlobID == nil {
+		if root.Text == nil || !matchesIncludeGlob(includeGlob, root.Node.Name) {
+			return out, nil
+		}
+		extractGrepLines(*root.Text, ".", root.Node.Id, "", matcher, maxLineChars, limit, out)
+		return out, nil
 	}
 
-	afterPath, err := decodeTextCursor(r.PageToken)
-	if err != nil {
-		return nil, err
+	// Build Stage 1 Postgres pg_trgm GIN pre-filter predicate.
+	var filterClause string
+	var filterArg any
+	if r.Literal {
+		filterClause = fmt.Sprintf(`text_content %s $3 ESCAPE '\'`, likeOp(r.CaseSensitive))
+		filterArg = literalPattern(r.Pattern)
+	} else if pgPat, ok := pgSafeRegex(r.Pattern); ok {
+		filterClause = fmt.Sprintf(`text_content %s $3`, regexOp(r.CaseSensitive))
+		filterArg = pgPat
+	} else {
+		filterClause = `($3::text IS NOT NULL OR true)`
+		filterArg = ""
 	}
-	pattern := literalPattern(r.Query)
-	op := likeOp(r.CaseSensitive)
-	limit := pageSize(r.PageSize)
 
-	if root.Artifact != nil {
-		return s.textSearchArtifactRoot(ctx, r, root, pattern, op, afterPath, limit)
+	var rows pgx.Rows
+	switch {
+	case root.Artifact != nil:
+		rows, err = s.DB.Query(ctx, `SELECT trim(leading $4 from a.path) AS rel_path,a.id::text,a.path,a.text_content
+			FROM blob_artifacts a
+			WHERE a.blob_id=$1 AND a.path LIKE $2 ESCAPE '\' AND a.text_content IS NOT NULL AND a.`+filterClause+`
+			ORDER BY a.path`,
+			root.Artifact.BlobID, prefixPattern(root.Artifact.Path), filterArg, root.Artifact.Path+"/")
+	case root.Node.Kind == pb.NodeKind_NODE_KIND_FILE && root.BlobID != nil:
+		rows, err = s.DB.Query(ctx, `SELECT a.path AS rel_path,a.id::text,a.path,a.text_content
+			FROM blob_artifacts a
+			WHERE a.blob_id=$1 AND a.text_content IS NOT NULL AND ($2::text='' OR true) AND a.`+filterClause+`
+			ORDER BY a.path`,
+			*root.BlobID, "", filterArg)
+	default:
+		rows, err = s.DB.Query(ctx, `WITH RECURSIVE tree AS (
+			SELECT n.id,n.kind,''::text AS rel_path
+			FROM nodes n WHERE n.id=$1 AND n.storage_id=$2
+			UNION ALL
+			SELECT c.id,c.kind,CASE WHEN t.rel_path='' THEN c.name ELSE t.rel_path||'/'||c.name END
+			FROM tree t JOIN nodes c ON c.parent_id=t.id AND c.storage_id=$2
+			WHERE t.kind='directory'
+		),
+		tree_files AS MATERIALIZED (
+			SELECT t.rel_path,f.node_id,f.blob_id,f.text_content IS NOT NULL AS has_text
+			FROM tree t JOIN files f ON f.node_id=t.id
+		)
+		SELECT rel_path,node_id,artifact_path,text_content FROM (
+			SELECT tf.rel_path,tf.node_id::text AS node_id,''::text AS artifact_path,f.text_content
+			FROM tree_files tf
+			JOIN files f ON f.node_id=tf.node_id
+			WHERE tf.has_text AND f.`+filterClause+`
+			UNION ALL
+			SELECT CASE WHEN tf.rel_path='' THEN a.path ELSE tf.rel_path||'/'||a.path END AS rel_path,
+			       a.id::text AS node_id,a.path AS artifact_path,a.text_content
+			FROM tree_files tf
+			JOIN blob_artifacts a ON a.blob_id=tf.blob_id
+			WHERE a.text_content IS NOT NULL AND a.`+filterClause+`
+		) candidates
+		ORDER BY rel_path`,
+			root.Node.Id, r.StorageId, filterArg)
 	}
-	if root.Node.Kind == pb.NodeKind_NODE_KIND_FILE {
-		return s.textSearchFileRoot(ctx, r, root, pattern, op, afterPath, limit)
-	}
-
-	// Directory root: sort/limit lightweight key rows first, then fetch payloads & snippets only for winning rows.
-	rows, err := s.DB.Query(ctx, `WITH RECURSIVE tree AS (
-		SELECT n.id,n.kind,''::text AS rel_path
-		FROM nodes n WHERE n.id=$1 AND n.storage_id=$2
-		UNION ALL
-		SELECT c.id,c.kind,CASE WHEN t.rel_path='' THEN c.name ELSE t.rel_path||'/'||c.name END
-		FROM tree t JOIN nodes c ON c.parent_id=t.id AND c.storage_id=$2
-		WHERE t.kind='directory'
-	),
-	tree_files AS MATERIALIZED (
-		SELECT t.rel_path,f.node_id,f.blob_id,f.text_content IS NOT NULL AS has_text
-		FROM tree t JOIN files f ON f.node_id=t.id
-	),
-	matches AS (
-		SELECT tf.rel_path AS hit_path,''::text AS art_path,tf.node_id AS row_id,tf.node_id AS base_file_id
-		FROM tree_files tf
-		JOIN files f ON f.node_id=tf.node_id
-		WHERE tf.has_text AND f.text_content `+op+` $3 ESCAPE '\'
-		UNION ALL
-		SELECT CASE WHEN tf.rel_path='' THEN a.path ELSE tf.rel_path||'/'||a.path END AS hit_path,a.path AS art_path,a.id AS row_id,tf.node_id AS base_file_id
-		FROM tree_files tf
-		JOIN blob_artifacts a ON a.blob_id=tf.blob_id
-		WHERE a.text_content IS NOT NULL AND a.text_content `+op+` $3 ESCAPE '\'
-	),
-	page AS (
-		SELECT hit_path,art_path,row_id,base_file_id
-		FROM matches WHERE ($5::text='' OR hit_path>$5) ORDER BY hit_path LIMIT $6
-	)
-	SELECT p.hit_path,p.art_path,p.row_id::text,coalesce(pa.id,p.base_file_id)::text,
-	       coalesce(a.media_type,''),coalesce(a.size_bytes,0),coalesce(a.title,''),coalesce(a.description,''),coalesce(a.created_at,'epoch'::timestamptz),
-	       `+snippetExpr("coalesce(a.text_content,f.text_content)", "$4", r.CaseSensitive)+`,
-	       coalesce(n.id::text,''),coalesce(n.storage_id::text,''),n.parent_id::text,coalesce(n.name,''),coalesce(n.kind::text,''),coalesce(n.created_at,'epoch'::timestamptz),coalesce(n.updated_at,'epoch'::timestamptz),
-	       coalesce(f.node_id IS NOT NULL,false),f.version,f.size_bytes,f.media_type,f.blob_id::text,f.text_content IS NOT NULL,
-	       coalesce(b.title,''),coalesce(b.description,''),b.processing_stage,coalesce(b.processing_error_code,'')
-	FROM page p
-	LEFT JOIN nodes n ON p.art_path='' AND n.id=p.row_id
-	LEFT JOIN files f ON p.art_path='' AND f.node_id=p.row_id
-	LEFT JOIN blobs b ON p.art_path='' AND b.id=f.blob_id
-	LEFT JOIN blob_artifacts a ON p.art_path<>'' AND a.id=p.row_id
-	LEFT JOIN blob_artifacts pa ON p.art_path<>'' AND pa.blob_id=a.blob_id AND pa.path=a.parent_path AND a.parent_path<>''
-	ORDER BY p.hit_path`,
-		root.Node.Id, r.StorageId, pattern, r.Query, afterPath, limit+1)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := new(pb.TextSearchResponse)
+
 	for rows.Next() {
-		var hitPath, artPath, rowID, artParentID, artMedia, artTitle, artDesc, snippet string
-		var artSize int64
-		var artCreated time.Time
-		var sc nodeScanner
-		if err = rows.Scan(
-			&hitPath, &artPath, &rowID, &artParentID, &artMedia, &artSize, &artTitle, &artDesc, &artCreated, &snippet,
-			&sc.node.Id, &sc.node.StorageId, &sc.parentID, &sc.node.Name, &sc.kind, &sc.created, &sc.updated,
-			&sc.hasFile, &sc.version, &sc.sizeBytes, &sc.mediaType, &sc.blobID, &sc.hasText,
-			&sc.title, &sc.desc, &sc.stage, &sc.errCode,
-		); err != nil {
+		var relPath, nodeID, artPath, textContent string
+		if err = rows.Scan(&relPath, &nodeID, &artPath, &textContent); err != nil {
 			return nil, err
 		}
-		var node *pb.Node
-		if artPath == "" {
-			node = sc.finish(false)
-		} else {
-			empty := ""
-			node = buildArtifactNode(r.StorageId, artParentID, blobArtifact{
-				ID: rowID, Path: artPath, Kind: "file", MediaType: artMedia, SizeBytes: artSize, TextContent: &empty,
-			}, artTitle, artDesc, artCreated)
-		}
-		out.Hits = append(out.Hits, &pb.TextHit{Node: node, Snippet: snippet, Path: hitPath, ArtifactPath: artPath})
-	}
-	if err = rows.Err(); err != nil {
-		return nil, err
-	}
-	if len(out.Hits) > limit {
-		out.Hits = out.Hits[:limit]
-		out.NextPageToken = encodeTextCursor(out.Hits[limit-1].Path)
-	}
-	return out, nil
-}
-
-func derefStr(v *string) string {
-	if v == nil {
-		return ""
-	}
-	return *v
-}
-
-func textSearchLines(root resolved, r *pb.TextSearchRequest) (*pb.TextSearchResponse, error) {
-	if root.Text == nil {
-		return nil, invalid("lines mode requires a text file")
-	}
-	startLine := 0
-	if r.PageToken != "" {
-		raw, err := decodeTextCursor(r.PageToken)
-		if err != nil {
-			return nil, err
-		}
-		n, err := strconv.Atoi(raw)
-		if err != nil || n < 0 {
-			return nil, invalid("invalid cursor")
-		}
-		startLine = n
-	}
-	limit := pageSize(r.PageSize)
-	artPath := ""
-	if root.Artifact != nil {
-		artPath = root.Artifact.Path
-	}
-	needle := r.Query
-	if !r.CaseSensitive {
-		needle = strings.ToLower(needle)
-	}
-	out := new(pb.TextSearchResponse)
-	for i, line := range textLines(*root.Text) {
-		lineNum := i + 1
-		if lineNum <= startLine {
+		if !matchesIncludeGlob(includeGlob, relPath) {
 			continue
 		}
-		haystack := line
-		if !r.CaseSensitive {
-			haystack = strings.ToLower(haystack)
-		}
-		if strings.Contains(haystack, needle) {
-			if len(out.Hits) >= limit {
-				out.NextPageToken = encodeTextCursor(strconv.Itoa(int(out.Hits[limit-1].LineNumber)))
-				break
-			}
-			out.Hits = append(out.Hits, &pb.TextHit{
-				Node: root.Node, Snippet: line, LineNumber: uint32(lineNum), Path: ".", ArtifactPath: artPath,
-			})
+		if extractGrepLines(textContent, relPath, nodeID, artPath, matcher, maxLineChars, limit, out) {
+			break
 		}
 	}
-	return out, nil
-}
-
-func (s *Server) textSearchArtifactRoot(ctx context.Context, r *pb.TextSearchRequest, root resolved, pattern, op, afterPath string, limit int) (*pb.TextSearchResponse, error) {
-	if root.Artifact.Kind == "file" {
-		if root.Text == nil {
-			return &pb.TextSearchResponse{}, nil
-		}
-		matched, idx := matchSubstring(*root.Text, r.Query, r.CaseSensitive)
-		if !matched || (afterPath != "" && "." <= afterPath) {
-			return &pb.TextSearchResponse{}, nil
-		}
-		start := max(0, idx-80)
-		end := min(len(*root.Text), start+240)
-		return &pb.TextSearchResponse{Hits: []*pb.TextHit{{
-			Node: root.Node, Snippet: (*root.Text)[start:end], Path: ".", ArtifactPath: root.Artifact.Path,
-		}}}, nil
-	}
-	rows, err := s.DB.Query(ctx, `SELECT `+artifactColumns+`,`+artifactPayloadCols(false)+`,`+snippetExpr("a.text_content", "$4", r.CaseSensitive)+`
-		FROM blob_artifacts a
-		WHERE a.blob_id=$1 AND a.path LIKE $2 ESCAPE '\' AND a.text_content IS NOT NULL
-		  AND a.text_content `+op+` $3 ESCAPE '\'
-		  AND ($5::text='' OR trim(leading $6 from a.path)>$5)
-		ORDER BY a.path LIMIT $7`,
-		root.Artifact.BlobID, prefixPattern(root.Artifact.Path), pattern, r.Query, afterPath, root.Artifact.Path+"/", limit+1)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := new(pb.TextSearchResponse)
-	for rows.Next() {
-		var sc artifactScanner
-		var snippet string
-		if err = rows.Scan(sc.dests(false, &snippet)...); err != nil {
-			return nil, err
-		}
-		rel := strings.TrimPrefix(sc.a.Path, root.Artifact.Path+"/")
-		out.Hits = append(out.Hits, &pb.TextHit{
-			Node: sc.build(r.StorageId, root.Node.Id, false), Snippet: snippet, Path: rel, ArtifactPath: sc.a.Path,
-		})
-	}
-	if err = rows.Err(); err != nil {
-		return nil, err
-	}
-	if len(out.Hits) > limit {
-		out.Hits = out.Hits[:limit]
-		out.NextPageToken = encodeTextCursor(out.Hits[limit-1].Path)
-	}
-	return out, nil
-}
-
-func (s *Server) textSearchFileRoot(ctx context.Context, r *pb.TextSearchRequest, root resolved, pattern, op, afterPath string, limit int) (*pb.TextSearchResponse, error) {
-	if root.BlobID == nil {
-		if root.Text == nil {
-			return &pb.TextSearchResponse{}, nil
-		}
-		matched, idx := matchSubstring(*root.Text, r.Query, r.CaseSensitive)
-		if !matched || (afterPath != "" && "." <= afterPath) {
-			return &pb.TextSearchResponse{}, nil
-		}
-		start := max(0, idx-80)
-		end := min(len(*root.Text), start+240)
-		return &pb.TextSearchResponse{Hits: []*pb.TextHit{{
-			Node: root.Node, Snippet: (*root.Text)[start:end], Path: ".",
-		}}}, nil
-	}
-	rows, err := s.DB.Query(ctx, `SELECT `+artifactColumns+`,`+artifactPayloadCols(false)+`,coalesce(pa.id,$1),`+snippetExpr("a.text_content", "$4", r.CaseSensitive)+`
-		FROM blob_artifacts a LEFT JOIN blob_artifacts pa ON pa.blob_id=a.blob_id AND pa.path=a.parent_path AND a.parent_path<>''
-		WHERE a.blob_id=$2 AND a.text_content IS NOT NULL AND a.text_content `+op+` $3 ESCAPE '\'
-		  AND ($5::text='' OR a.path>$5)
-		ORDER BY a.path LIMIT $6`,
-		root.Node.Id, *root.BlobID, pattern, r.Query, afterPath, limit+1)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := new(pb.TextSearchResponse)
-	for rows.Next() {
-		var sc artifactScanner
-		var parentID, snippet string
-		if err = rows.Scan(sc.dests(false, &parentID, &snippet)...); err != nil {
-			return nil, err
-		}
-		out.Hits = append(out.Hits, &pb.TextHit{
-			Node: sc.build(r.StorageId, parentID, false), Snippet: snippet, Path: sc.a.Path, ArtifactPath: sc.a.Path,
-		})
-	}
-	if err = rows.Err(); err != nil {
-		return nil, err
-	}
-	if len(out.Hits) > limit {
-		out.Hits = out.Hits[:limit]
-		out.NextPageToken = encodeTextCursor(out.Hits[limit-1].Path)
-	}
-	return out, nil
-}
-
-func matchSubstring(haystack, needle string, caseSensitive bool) (bool, int) {
-	if caseSensitive {
-		idx := strings.Index(haystack, needle)
-		return idx >= 0, idx
-	}
-	idx := strings.Index(strings.ToLower(haystack), strings.ToLower(needle))
-	return idx >= 0, idx
-}
-
-func encodeTextCursor(path string) string {
-	return base64.RawURLEncoding.EncodeToString([]byte(path))
-}
-
-func decodeTextCursor(token string) (string, error) {
-	if token == "" {
-		return "", nil
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(token)
-	if err != nil {
-		return "", invalid("invalid cursor")
-	}
-	return string(raw), nil
+	return out, rows.Err()
 }
 
 const storagePathSQL = `WITH RECURSIVE chain AS (
@@ -435,6 +583,9 @@ func (s *Server) SemanticSearch(ctx context.Context, r *pb.SemanticSearchRequest
 	if _, err := s.check(ctx, "storage", r.StorageId, "read"); err != nil {
 		return nil, err
 	}
+	ctx, cancel := context.WithTimeout(ctx, s.semanticTimeout())
+	defer cancel()
+
 	var target *pb.NodeLocator
 	if p := r.Root.GetPath(); p != "" {
 		if !strings.HasPrefix(p, "/") || strings.ContainsRune(p, 0) || path.Clean(p) != p {
@@ -521,12 +672,16 @@ func (s *Server) SemanticSearch(ctx context.Context, r *pb.SemanticSearchRequest
 	ctx = propagation.Baggage{}.Extract(ctx, propagation.MapCarrier{"baggage": strings.Join(incoming.Get("baggage"), ",")})
 	span := trace.SpanFromContext(ctx)
 	settings := s.Settings.SemanticSearch
+	resultLimit := settings.ResultLimit
+	if r.Limit != nil && *r.Limit > 0 {
+		resultLimit = min(uint64(*r.Limit), s.semanticMaxResultLimit())
+	}
 	span.SetAttributes(ragAttributes(ctx)...)
 	span.SetAttributes(
 		attribute.String("langfuse.observation.type", "retriever"),
 		attribute.String("langfuse.observation.input", r.Query),
 		attribute.String("langfuse.observation.metadata.storage_id", r.StorageId),
-		attribute.Int("langfuse.observation.metadata.result_limit", int(settings.ResultLimit)),
+		attribute.Int("langfuse.observation.metadata.result_limit", int(resultLimit)),
 	)
 	defer func() {
 		if result == nil {
@@ -540,8 +695,8 @@ func (s *Server) SemanticSearch(ctx context.Context, r *pb.SemanticSearchRequest
 	if err != nil {
 		return nil, err
 	}
-	prefetchLimit := settings.CandidateLimit
-	limit := settings.ResultLimit
+	prefetchLimit := max(settings.CandidateLimit, resultLimit)
+	limit := resultLimit
 	if s.RerankingModel != "" {
 		limit = prefetchLimit
 	}
@@ -587,7 +742,7 @@ func (s *Server) SemanticSearch(ctx context.Context, r *pb.SemanticSearchRequest
 		for i, c := range candidates {
 			documents[i] = map[string]string{"text": c.text}
 		}
-		ranked, err := s.rerank(ctx, r.Query, documents, int(settings.ResultLimit))
+		ranked, err := s.rerank(ctx, r.Query, documents, int(resultLimit))
 		if err != nil {
 			return nil, err
 		}
@@ -600,17 +755,19 @@ func (s *Server) SemanticSearch(ctx context.Context, r *pb.SemanticSearchRequest
 		candidates = reordered
 	}
 
+	maxExcerpt := s.semanticMaxExcerptChars()
 	result = new(pb.SemanticSearchResponse)
 	for _, c := range candidates {
+		excerpt := clipRunes(c.text, maxExcerpt)
 		for _, ref := range byBlob[c.blobID] {
 			result.Hits = append(result.Hits, &pb.SemanticHit{
 				FileId:       ref.fileID,
 				Path:         ref.path,
 				ArtifactPath: c.artPath,
-				Text:         c.text,
+				Text:         excerpt,
 				Score:        c.score,
 			})
-			if uint64(len(result.Hits)) >= settings.ResultLimit {
+			if uint64(len(result.Hits)) >= resultLimit {
 				return result, nil
 			}
 		}

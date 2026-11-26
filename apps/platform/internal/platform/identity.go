@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func (s *Server) Onboard(ctx context.Context, _ *emptypb.Empty) (*pb.User, error) {
@@ -140,4 +141,23 @@ func (s *Server) GetUserByHandle(ctx context.Context, r *pb.UserHandleRequest) (
 		return nil, notFound("user")
 	}
 	return user, err
+}
+
+func (s *Server) GetRealtimeConnectToken(ctx context.Context, _ *emptypb.Empty) (*pb.RealtimeConnectToken, error) {
+	a, err := human(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if s.CentrifugoSecret == "" {
+		return nil, status.Error(codes.FailedPrecondition, "realtime gateway is not configured")
+	}
+	tok, exp, err := sdk.SignCentrifugoToken(s.CentrifugoSecret, a.ID, "", s.CentrifugoTTL)
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	return &pb.RealtimeConnectToken{
+		Token:     tok,
+		ExpiresAt: timestamppb.New(exp),
+		UserId:    a.ID,
+	}, nil
 }

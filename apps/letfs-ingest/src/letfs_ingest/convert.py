@@ -506,6 +506,71 @@ def _group_header_fills(
     return fills
 
 
+_DIRECT_CELL_REF_RE = re.compile(
+    r"^=\s*(?:(?:'((?:[^']|'')+)'|([A-Za-z0-9_.\s]+))!)?\$?([A-Za-z]{1,3})\$?(\d+)\s*$"
+)
+
+
+def _col_letters_to_index(col: str) -> int:
+    idx = 0
+    for ch in col.upper():
+        idx = idx * 26 + (ord(ch) - ord("A") + 1)
+    return idx
+
+
+def _extract_formula_text(val: object) -> str:
+    if isinstance(val, str):
+        return val.strip()
+    text = getattr(val, "text", None)
+    if isinstance(text, str):
+        return text.strip()
+    return ""
+
+
+def _resolve_formula_fallback(
+    wb_cached: object,
+    wb_formulas: object,
+    sheet_name: str,
+    r1: int,
+    c1: int,
+) -> str:
+    """Resolve uncached formula cells by following simple cell refs or emitting the formula."""
+    cached_wb = cast(Any, wb_cached)
+    formula_wb = cast(Any, wb_formulas)
+    cur_sheet, cur_r, cur_c = sheet_name, r1, c1
+    visited: set[tuple[str, int, int]] = set()
+    first_formula = ""
+    for _ in range(8):
+        key = (cur_sheet, cur_r, cur_c)
+        if key in visited:
+            break
+        visited.add(key)
+        if cur_sheet not in formula_wb.sheetnames:
+            break
+        f_cell = getattr(formula_wb[cur_sheet], "_cells", {}).get((cur_r, cur_c))
+        formula = _extract_formula_text(getattr(f_cell, "value", None))
+        if not formula.startswith("="):
+            break
+        if not first_formula:
+            first_formula = formula
+        m = _DIRECT_CELL_REF_RE.match(formula)
+        if not m:
+            return first_formula
+        ref_sheet = m.group(1) or m.group(2)
+        if ref_sheet is not None:
+            ref_sheet = ref_sheet.replace("''", "'").strip()
+            if ref_sheet not in cached_wb.sheetnames:
+                return first_formula
+            cur_sheet = ref_sheet
+        cur_c = _col_letters_to_index(m.group(3))
+        cur_r = int(m.group(4))
+        c_cell = getattr(cached_wb[cur_sheet], "_cells", {}).get((cur_r, cur_c))
+        cached_txt = _cell_str(getattr(c_cell, "value", None))
+        if cached_txt:
+            return cached_txt
+    return first_formula
+
+
 def convert_xlsx(source: Path, output: Path, config: Config) -> None:
     storage = config["services"]["letfs"]
     limits = config["services"]["letfs_ingest"]["cpu"]["limits"]
@@ -514,6 +579,7 @@ def convert_xlsx(source: Path, output: Path, config: Config) -> None:
     max_output = limits["max_output_bytes"]
 
     wb: Any = openpyxl.load_workbook(source, read_only=False, data_only=True)
+    wb_formulas: Any = openpyxl.load_workbook(source, read_only=False, data_only=False)
     output.mkdir(parents=True, exist_ok=True)
     writer = ImageArtifactWriter(output, max_blob=max_blob, max_output=max_output)
     readme_lines: list[str] = ["# Workbook Index\n"]
@@ -522,13 +588,20 @@ def convert_xlsx(source: Path, output: Path, config: Config) -> None:
     try:
         for sheet_name in wb.sheetnames:
             ws: Any = wb[sheet_name]
+            ws_f: Any = wb_formulas[sheet_name]
             readme_lines.append(f"\n## Sheet: {sheet_name}\n")
 
             cells: dict[tuple[int, int], str] = {}
-            for (r1, c1), cell in getattr(ws, "_cells", {}).items():
-                txt = _cell_str(getattr(cell, "value", None))
+            cached_cells: dict[tuple[int, int], Any] = getattr(ws, "_cells", {})
+            formula_cells: dict[tuple[int, int], Any] = getattr(ws_f, "_cells", {})
+            for coord in set(cached_cells) | set(formula_cells):
+                r1, c1 = int(coord[0]), int(coord[1])
+                c_cell = cached_cells.get(coord)
+                txt = _cell_str(getattr(c_cell, "value", None))
+                if not txt and coord in formula_cells:
+                    txt = _resolve_formula_fallback(wb, wb_formulas, sheet_name, r1, c1)
                 if txt:
-                    cells[(int(r1) - 1, int(c1) - 1)] = txt
+                    cells[(r1 - 1, c1 - 1)] = txt
 
             if cells:
                 merged_rects: dict[tuple[int, int], tuple[int, int, int, int]] = {}
@@ -636,6 +709,7 @@ def convert_xlsx(source: Path, output: Path, config: Config) -> None:
                     )
     finally:
         wb.close()
+        wb_formulas.close()
 
     readme = _fit_utf8_bytes("\n".join(readme_lines).strip() + "\n", max_text)
     (output / "README.md").write_text(readme, encoding="utf-8")

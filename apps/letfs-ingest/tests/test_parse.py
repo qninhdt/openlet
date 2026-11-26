@@ -329,3 +329,35 @@ async def test_parser_retries_transient_datalab_errors_and_stops_on_permanent(
     assert auth_calls == 1
     assert exc_info.value.non_retryable is True
     _ = tmp_path
+
+
+def test_convert_xlsx_recovers_uncached_formula_cells(
+    tmp_path: Path, config: Config
+) -> None:
+    import openpyxl
+    from letfs_ingest.convert import convert_xlsx
+
+    xlsx = tmp_path / "uncached.xlsx"
+    wb = openpyxl.Workbook()
+    ws1 = wb.active
+    assert ws1 is not None
+    ws1.title = "Assumptions"
+    ws1["A1"] = "Metric"
+    ws1["B1"] = "Value"
+    ws1["A2"] = "EBITDA"
+    ws1["B2"] = 572.5
+    ws2 = wb.create_sheet("Summary")
+    ws2["A1"] = "Line"
+    ws2["B1"] = "Amount"
+    ws2["A2"] = "Direct Ref"
+    ws2["B2"] = "=Assumptions!B2"
+    ws2["A3"] = "Computed"
+    ws2["B3"] = "=SUM(B2:B2)*2"
+    wb.save(xlsx)
+
+    out = tmp_path / "out"
+    convert_xlsx(xlsx, out, config)
+    csv_files = sorted((out / "tables").glob("*.csv"))
+    combined = "\n".join(p.read_text(encoding="utf-8") for p in csv_files)
+    assert "Direct Ref,572.5" in combined
+    assert "Computed,=SUM(B2:B2)*2" in combined

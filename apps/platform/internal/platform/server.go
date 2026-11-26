@@ -11,6 +11,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	sdk "github.com/qninhdt/openlet/packages/sdk-go"
+	chatpb "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/chat/v1"
+	letapb "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/leta/v1"
 	pb "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/platform/v1"
 	"go.temporal.io/sdk/client"
 	"google.golang.org/grpc/codes"
@@ -40,6 +42,10 @@ type Server struct {
 	Settings          Settings
 	Queues            sdk.Queues
 	Queue             string
+	CentrifugoSecret  string
+	CentrifugoTTL     time.Duration
+	ChatInternal      chatpb.ChatInternalServiceClient
+	LetaInternal      letapb.LetaInternalServiceClient
 }
 
 var _ pb.PlatformServiceServer = (*Server)(nil)

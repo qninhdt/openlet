@@ -8,6 +8,8 @@ import (
 	az "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/google/uuid"
 	sdk "github.com/qninhdt/openlet/packages/sdk-go"
+	chatpb "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/chat/v1"
+	letapb "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/leta/v1"
 	pb "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/platform/v1"
 	enums "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/activity"
@@ -31,9 +33,8 @@ type ProvisionResult struct {
 	ZedToken  string
 }
 type DeleteWorkspaceInput struct {
-	WorkspaceID     string
-	LetFSQueue      string
-	LetaBridgeQueue string
+	WorkspaceID string
+	LetFSQueue  string
 }
 
 func RegisterWorker(w worker.Worker, s *Server) {
@@ -45,6 +46,8 @@ func RegisterWorker(w worker.Worker, s *Server) {
 	w.RegisterActivityWithOptions(s.provisionWorkspaceAccess, activity.RegisterOptions{Name: "ProvisionWorkspaceAccess"})
 	w.RegisterActivityWithOptions(s.activateWorkspace, activity.RegisterOptions{Name: "ActivateWorkspace"})
 	w.RegisterActivityWithOptions(s.revokeWorkspaceAccess, activity.RegisterOptions{Name: "RevokeWorkspaceAccess"})
+	w.RegisterActivityWithOptions(s.deleteWorkspaceChat, activity.RegisterOptions{Name: "DeleteWorkspaceChat"})
+	w.RegisterActivityWithOptions(s.deleteWorkspaceAgents, activity.RegisterOptions{Name: "DeleteWorkspaceAgents"})
 	w.RegisterActivityWithOptions(s.deleteWorkspaceRecord, activity.RegisterOptions{Name: "DeleteWorkspaceRecord"})
 	w.RegisterActivityWithOptions(s.maintenance, activity.RegisterOptions{Name: "PlatformMaintenance"})
 }
@@ -77,7 +80,7 @@ func ProvisionMemberStorage(ctx workflow.Context, in sdk.MemberStorageInput) err
 	return workflow.ExecuteActivity(ctx, "ProvisionMemberStorageResources", in).Get(ctx, nil)
 }
 func DeleteWorkspace(ctx workflow.Context, in DeleteWorkspaceInput) error {
-	if _, err := uuid.Parse(in.WorkspaceID); err != nil || in.LetFSQueue == "" || in.LetaBridgeQueue == "" {
+	if _, err := uuid.Parse(in.WorkspaceID); err != nil || in.LetFSQueue == "" {
 		return temporal.NewNonRetryableApplicationError("workspace ID and owning cleanup queues are required", "invalid_cleanup_input", nil)
 	}
 	options := workflow.ActivityOptions{StartToCloseTimeout: 2 * time.Minute, RetryPolicy: &temporal.RetryPolicy{InitialInterval: time.Second, MaximumInterval: time.Minute}}
@@ -86,25 +89,24 @@ func DeleteWorkspace(ctx workflow.Context, in DeleteWorkspaceInput) error {
 	if err := workflow.ExecuteActivity(local, "RevokeWorkspaceAccess", payload).Get(ctx, nil); err != nil {
 		return err
 	}
-	options.TaskQueue = in.LetFSQueue
-	storage := workflow.ExecuteActivity(workflow.WithActivityOptions(ctx, options), "DeleteWorkspaceStorage", payload)
-	options.TaskQueue = in.LetaBridgeQueue
-	options.StartToCloseTimeout = 24 * time.Hour
-	options.HeartbeatTimeout = 30 * time.Second
-	agents := workflow.ExecuteActivity(workflow.WithActivityOptions(ctx, options), "DeleteWorkspaceAgents", payload)
+	storageOpts := options
+	storageOpts.TaskQueue = in.LetFSQueue
+	storage := workflow.ExecuteActivity(workflow.WithActivityOptions(ctx, storageOpts), "DeleteWorkspaceStorage", payload)
+	chat := workflow.ExecuteActivity(local, "DeleteWorkspaceChat", payload)
+	agents := workflow.ExecuteActivity(local, "DeleteWorkspaceAgents", payload)
 	storageErr := storage.Get(ctx, nil)
-	var recordErr error
-	if storageErr == nil {
-		recordErr = workflow.ExecuteActivity(local, "DeleteWorkspaceRecord", payload).Get(ctx, nil)
-	}
+	chatErr := chat.Get(ctx, nil)
 	agentsErr := agents.Get(ctx, nil)
 	if storageErr != nil {
 		return storageErr
 	}
-	if recordErr != nil {
-		return recordErr
+	if chatErr != nil {
+		return chatErr
 	}
-	return agentsErr
+	if agentsErr != nil {
+		return agentsErr
+	}
+	return workflow.ExecuteActivity(local, "DeleteWorkspaceRecord", payload).Get(ctx, nil)
 }
 func Maintenance(ctx workflow.Context) error {
 	return workflow.ExecuteActivity(activityContext(ctx), "PlatformMaintenance").Get(ctx, nil)
@@ -165,12 +167,26 @@ func (s *Server) revokeWorkspaceAccess(ctx context.Context, in sdk.WorkspaceClea
 	_, err := s.Graph.DeleteRelationships(ctx, &az.DeleteRelationshipsRequest{RelationshipFilter: &az.RelationshipFilter{ResourceType: "workspace", OptionalResourceId: in.WorkspaceID}})
 	return err
 }
+func (s *Server) deleteWorkspaceChat(ctx context.Context, in sdk.WorkspaceCleanup) error {
+	if s.ChatInternal == nil {
+		return nil
+	}
+	_, err := s.ChatInternal.DeleteWorkspaceData(ctx, &chatpb.DeleteWorkspaceDataRequest{WorkspaceId: in.WorkspaceID})
+	return err
+}
+func (s *Server) deleteWorkspaceAgents(ctx context.Context, in sdk.WorkspaceCleanup) error {
+	if s.LetaInternal == nil {
+		return nil
+	}
+	_, err := s.LetaInternal.DeleteWorkspaceAgents(ctx, &letapb.DeleteWorkspaceAgentsRequest{WorkspaceId: in.WorkspaceID})
+	return err
+}
 func (s *Server) deleteWorkspaceRecord(ctx context.Context, in sdk.WorkspaceCleanup) error {
 	_, err := s.DB.Exec(ctx, `DELETE FROM workspaces WHERE id=$1 AND state='deleting'`, in.WorkspaceID)
 	return err
 }
 func (s *Server) cleanupInput(id string) DeleteWorkspaceInput {
-	return DeleteWorkspaceInput{WorkspaceID: id, LetFSQueue: s.Queues.LetFS, LetaBridgeQueue: s.Queues.LetaBridge}
+	return DeleteWorkspaceInput{WorkspaceID: id, LetFSQueue: s.Queues.LetFS}
 }
 func (s *Server) maintenance(ctx context.Context) error {
 	if _, err := s.DB.Exec(ctx, `DELETE FROM idempotency_keys WHERE (caller,method,key) IN (SELECT caller,method,key FROM idempotency_keys WHERE expires_at<now() LIMIT 500)`); err != nil {

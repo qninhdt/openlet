@@ -14,6 +14,7 @@ RUN set -eux; \
     echo "${PROBE_SHA}  /tools/grpc-health-probe" | sha256sum -c -; \
     chmod 0755 /tools/goose /tools/grpc-health-probe
 COPY go.work go.work.sum ./
+COPY apps/chat/go.* apps/chat/
 COPY apps/platform/go.* apps/platform/
 COPY apps/letfs/go.* apps/letfs/
 COPY packages/sdk-go/go.* packages/sdk-go/
