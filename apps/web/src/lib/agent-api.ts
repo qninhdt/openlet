@@ -216,9 +216,7 @@ export function normalizeActivityEntry(raw: RawActivityRow | ActivityEntry): Act
               ]
             : [],
         );
-        const isReaction =
-          meta.event === 'reaction' ||
-          (rawKind === 'notification' && typeof meta.emoji === 'string');
+        const isReaction = rawKind === 'reaction';
         const reactionPayload = isReaction
           ? {
               actor: {
@@ -226,7 +224,8 @@ export function normalizeActivityEntry(raw: RawActivityRow | ActivityEntry): Act
                 id: typeof sender.id === 'string' ? sender.id : '',
               },
               target: {
-                message_id: typeof meta.message_id === 'string' ? meta.message_id : '',
+                message_id:
+                  typeof meta.target_message_id === 'string' ? meta.target_message_id : '',
                 kind: 'incoming' as const,
                 content: String(it.content ?? it.preview ?? ''),
               },
@@ -267,7 +266,24 @@ export function normalizeActivityEntry(raw: RawActivityRow | ActivityEntry): Act
                 request_type: typeof meta.type === 'string' ? meta.type : undefined,
                 decision: {
                   status: typeof meta.status === 'string' ? meta.status : '',
-                  ...(meta.outcome ? { outcome: { status: String(meta.outcome) } } : {}),
+                  ...(meta.outcome != null
+                    ? {
+                        outcome: {
+                          status:
+                            typeof meta.outcome === 'string'
+                              ? meta.outcome
+                              : typeof meta.outcome === 'object' && !Array.isArray(meta.outcome)
+                                ? meta.outcome.applied === true
+                                  ? meta.outcome.role
+                                    ? `applied (${String(meta.outcome.role)})`
+                                    : 'applied'
+                                  : meta.outcome.applied === false
+                                    ? `not_applied: ${String(meta.outcome.reason ?? 'failed')}`
+                                    : JSON.stringify(meta.outcome)
+                                : String(meta.outcome),
+                        },
+                      }
+                    : {}),
                 },
               }
             : {}),
@@ -359,7 +375,15 @@ export function normalizeActivityEntry(raw: RawActivityRow | ActivityEntry): Act
           text: `Compacted (${String(data.reason ?? 'auto')}): ${String(data.before_tokens ?? '?')} → ${String(data.after_tokens ?? '?')} tokens.\n${String(data.summary_preview ?? '')}`,
         },
       };
-    case 'activity.agent_message':
+    case 'activity.agent_message': {
+      const from =
+        data.from && typeof data.from === 'object' && !Array.isArray(data.from)
+          ? (data.from as Record<string, Json>)
+          : {};
+      const sourceName =
+        (typeof from.name === 'string' && from.name) ||
+        (typeof from.handle === 'string' && from.handle) ||
+        'agent';
       return {
         id,
         agent_id: raw.agent_id,
@@ -375,13 +399,15 @@ export function normalizeActivityEntry(raw: RawActivityRow | ActivityEntry): Act
             items: [
               {
                 source_kind: 'agent',
-                source_name: String(data.from_handle ?? 'agent'),
+                source_name: sourceName,
+                source_handle: typeof from.handle === 'string' ? from.handle : undefined,
                 content: String(data.content ?? ''),
               },
             ],
           },
         },
       };
+    }
     default:
       return null;
   }

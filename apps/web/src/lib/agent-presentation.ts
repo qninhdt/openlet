@@ -97,19 +97,11 @@ export function activityToolResult(entry: ActivityEntry): ToolResult | string {
   const { payload } = entry;
   const ui = payload.ui;
   const name = payload.name ?? '';
-  if (
-    name === 'websearch' ||
-    name === 'webfetch' ||
-    name === 'web_search' ||
-    name === 'web_fetch'
-  ) {
+  if (name === 'websearch' || name === 'webfetch') {
     if (payload.status === 'error') return { output: payload.text ?? '' };
     const data = object(ui?.data);
     return {
-      webSources: (name === 'websearch' || name === 'web_search'
-        ? rows(data.results)
-        : [data]
-      ).flatMap((source) => {
+      webSources: (name === 'websearch' ? rows(data.results) : [data]).flatMap((source) => {
         const href = source.final_url ?? source.url;
         if (typeof href !== 'string') return [];
         let url: URL;
@@ -133,7 +125,7 @@ export function activityToolResult(entry: ActivityEntry): ToolResult | string {
     };
   }
   if (!ui && name === 'agent_status' && entry.has_details && payload.status !== 'error') return {};
-  if (!ui && name !== 'execute' && name !== 'bash') return payload.text ?? '';
+  if (!ui && name !== 'bash') return payload.text ?? '';
   const data = object(ui?.data);
   const items = rows(
     data.items ?? data.members ?? data.boxes ?? data.letis ?? data.entries ?? data.channels,
@@ -166,7 +158,7 @@ export function activityToolResult(entry: ActivityEntry): ToolResult | string {
       kind: item.kind === 'directory' ? 'folder' : 'file',
       file: item.kind === 'directory' && !item.artifacts ? undefined : file(item),
     }));
-  if (name === 'file_semantic_search' || name === 'semantic_search')
+  if (name === 'semantic_search')
     result.items = rows(data.groups).flatMap((group) =>
       rows(group.hits).map((hit) => ({
         title: string(hit.path),
@@ -175,32 +167,6 @@ export function activityToolResult(entry: ActivityEntry): ToolResult | string {
         file: file(hit),
       })),
     );
-  if (name === 'activity_search')
-    result.items = items.map((item) => ({
-      title: [
-        `#${item.seq}`,
-        string(item.kind).replaceAll('_', ' '),
-        string(item.tool),
-        string(item.status),
-      ]
-        .filter(Boolean)
-        .join(' · '),
-      detail: string(item.text_preview),
-      meta: string(item.created_at),
-    }));
-  if (name === 'activity_read') {
-    result.title = [
-      `Entry #${string(data.entry)}`,
-      string(data.kind).replaceAll('_', ' '),
-      string(data.tool),
-      string(data.status),
-    ]
-      .filter(Boolean)
-      .join(' · ');
-    result.summary = data.paired_entry ? `Paired with entry #${string(data.paired_entry)}` : '';
-    result.lineRange = data.start_line ? `From line ${string(data.start_line)}` : '';
-    result.content = string(data.content) || payload.text || '';
-  }
   if (ui?.kind === 'inbox_history')
     result.items = items.map((item) => {
       const reply = object(item.reply);
@@ -245,18 +211,8 @@ export function activityToolResult(entry: ActivityEntry): ToolResult | string {
         })),
     };
   }
-  if (name.startsWith('box_')) {
-    result.title = string(data.name ?? data.box);
-    result.home = string(data.home);
-    result.leader = string(object(data.leader).name);
-    result.edges = Array.isArray(data.additional_links)
-      ? data.additional_links.flatMap((link) =>
-          Array.isArray(link) ? [[string(link[0]), string(link[1])]] : [],
-        )
-      : [];
-  }
-  if (name === 'execute' || name === 'bash') result.exitCode = payload.status === 'error' ? 1 : 0;
-  if (name === 'inbox_send' || name === 'send_message') {
+  if (name === 'bash') result.exitCode = payload.status === 'error' ? 1 : 0;
+  if (name === 'send_message') {
     const recipient = object(data.recipient);
     if (
       (recipient.kind === 'user' || recipient.kind === 'agent' || recipient.kind === 'box') &&
@@ -279,19 +235,14 @@ export function activityToolResult(entry: ActivityEntry): ToolResult | string {
       result.messages = [{ content: '', fileRefs: atts }];
     }
   }
-  if (name === 'inbox_react' || name === 'react_message')
+  if (name === 'react_message')
     result.reaction = {
       emoji: typeof data.emoji === 'string' ? data.emoji : null,
       content: string(data.content),
     };
-  if (
-    name === 'hitl_ask' ||
-    name === 'hitl_request' ||
-    name === 'hitl_request_access' ||
-    name === 'hitl_get'
-  )
+  if (name === 'hitl_ask' || name === 'hitl_request_access')
     result.target = string(data.recipient_user_id);
-  if (name === 'hitl_ask' || name === 'hitl_request' || name === 'hitl_request_access')
+  if (name === 'hitl_ask' || name === 'hitl_request_access')
     result.request = {
       title: string(data.title),
       status: string(data.status) as HumanRequest['status'],

@@ -29,7 +29,7 @@ import { useFileSessions } from '@/components/storage/file-sessions';
 import { storageApi } from '@/lib/storage-api';
 import type { ComposerEditorHandle } from './composer-editor';
 import type { ComposerSelection } from './openbot/composer-dom';
-import { fileReferences, fileText, fileToken, type FileRef } from '@/lib/file-refs';
+import { fileLink, fileReferences, fileText, type FileRef } from '@/lib/file-refs';
 import { toUiChatMessage } from '@/lib/chat-api';
 import { downloadNodes, type StorageNode } from '@/lib/storage-preview';
 
@@ -289,7 +289,7 @@ function usePreviewState() {
         agentId,
         prefix +
           (prefix && !/\s$/.test(prefix) ? ' ' : '') +
-          fileToken(ref) +
+          fileLink(ref) +
           ' ' +
           draft.slice(at.end),
       );
@@ -458,7 +458,7 @@ function usePreviewState() {
         title: live.profile.data.title ?? resource.role,
         appearance: live.profile.data.appearance,
         description: live.profile.data.description,
-        instructions: live.settings.data?.system_prompt ?? '',
+        instructions: live.settings.data?.custom_instructions ?? '',
         model: live.profile.data.model_id ?? 'Default model',
         effort: live.profile.data.reasoning_effort ?? '',
       }
@@ -573,26 +573,35 @@ function usePreviewState() {
         live.conversationId ||
         (await live.chatClient!.createOrGetDM({ type: 'agent', id: resource.id })).id;
       const refs = fileReferences(message.content);
-      const attachments = refs.map((ref) => ({
+      const mentions = refs.map((ref) => ({
+        kind: ref.kind ?? 'file',
+        id: ref.node_id,
         storageId: ref.storage_id,
         nodeId: ref.node_id,
-        kind: ref.kind ?? 'file',
-        name: ref.label,
+        label: ref.label,
       }));
-      await live.chatClient!.sendMessage(convId, {
+      const sent = await live.chatClient!.sendMessage(convId, {
         idempotencyKey: message.id,
         content: message.content,
         replyToId: message.reply?.id ?? null,
-        attachments,
+        mentions,
       });
-      messageSent(`${backend.actorId}:${workspace.id}`, message.id);
+      setOptimistic((current) => ({
+        ...current,
+        [resource.id]: (current[resource.id] ?? []).map((item) =>
+          item.id === message.id ? { ...item, id: sent.id, status: undefined } : item,
+        ),
+      }));
+      messageSent(`${backend.actorId}:${workspace.id}`, sent.id);
       await live.refresh();
       const key = draftKey(backend.actorId, workspace.id, resource.id);
       if (!drafts.get(resource.id)?.trim() && readDraft(key).text.trim() === message.content)
         persistDraft(resource.id, { text: '', reply: null });
       setOptimistic((current) => ({
         ...current,
-        [resource.id]: (current[resource.id] ?? []).filter((item) => item.id !== message.id),
+        [resource.id]: (current[resource.id] ?? []).filter(
+          (item) => item.id !== message.id && item.id !== sent.id,
+        ),
       }));
     } catch (error) {
       setOptimistic((current) => ({

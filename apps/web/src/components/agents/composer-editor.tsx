@@ -4,7 +4,7 @@ import { usePreferences } from '@/lib/backend';
 // Required Notice: Copyright 2026 Synthetify Labs spółka z ograniczoną odpowiedzialnością.
 // Required Notice: For a commercial license, contact licenses@openbot.run.
 import { useEffect, useCallback, useId, useLayoutEffect, useRef, useState } from 'react';
-import { fileReferences, fileToken, fileTokenPattern, type FileRef } from '@/lib/file-refs';
+import { fileLink, fileReferences, letfsLinkPattern, type FileRef } from '@/lib/file-refs';
 import { fileReferenceStyles } from '@/components/ui/styles';
 import { FileIcon } from '@/components/storage/file-icon';
 import { Button } from '@/components/ui/button';
@@ -77,7 +77,7 @@ function createAttachmentToken(ref: FileRef) {
 function renderEditorValue(editor: HTMLDivElement, value: string) {
   editor.replaceChildren();
   let cursor = 0;
-  for (const match of value.matchAll(fileTokenPattern())) {
+  for (const match of value.matchAll(letfsLinkPattern())) {
     if (match.index > cursor)
       editor.append(document.createTextNode(value.slice(cursor, match.index)));
     editor.append(createAttachmentToken(fileReferences(match[0])[0]));
@@ -219,7 +219,7 @@ export function ComposerEditor({ onEmptyChange }: { onEmptyChange: (empty: boole
       p.composers.delete(p.resource.id);
       for (const item of pending.splice(0)) {
         const draft = p.drafts.get(p.resource.id) ?? '';
-        p.setDraft(p.resource.id, draft + ' ' + fileToken(item.ref) + ' ');
+        p.setDraft(p.resource.id, draft + ' ' + fileLink(item.ref) + ' ');
       }
     };
   }, [p.resource.id, p.drafts, p.composers, onEmptyChange, emitValue, insertFile, submit]);

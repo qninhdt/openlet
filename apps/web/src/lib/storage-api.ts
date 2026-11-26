@@ -119,29 +119,40 @@ export function storageApi(
       limit: 100,
     });
     const hits = (result.hits ?? []).filter((h) => !h.artifactPath && h.nodeId);
-    const hydrated = await Promise.all(
-      hits.map(async (hit) => {
-        try {
-          return await stat(storage, hit.nodeId!);
-        } catch {
-          const cleanPath = (hit.path ?? '').replace(/^\/+/, '');
-          const name = cleanPath.split('/').pop() || hit.nodeId!;
-          return {
-            id: hit.nodeId!,
-            storage,
-            parent: rootId(storage),
-            name,
-            kind: hit.kind === 'directory' ? ('folder' as const) : ('file' as const),
-            mime: '',
-            size: Number(hit.sizeBytes ?? 0),
-            version: 0,
-            updated: hit.updatedAt ? Date.parse(hit.updatedAt) : Date.now(),
-            read: () => blob(storage, hit.nodeId!),
-          } satisfies StorageNode;
+    if (!hits.length) return [];
+    const byId = new Map<string, StorageNode>();
+    for (let i = 0; i < hits.length; i += 100) {
+      const targets = hits.slice(i, i + 100).map((h) => ({ nodeId: h.nodeId! }));
+      try {
+        const batch = await post<{ results?: { node?: RemoteNode }[] }>(
+          `${base}/${storage}/nodes:batchStat`,
+          { targets },
+        );
+        for (const res of batch.results ?? []) {
+          if (res.node?.id) byId.set(res.node.id, node(res.node));
         }
-      }),
-    );
-    return hydrated;
+      } catch {
+        // Fallback to GlobHit metadata below if batchStat fails.
+      }
+    }
+    return hits.map((hit) => {
+      const existing = byId.get(hit.nodeId!);
+      if (existing) return existing;
+      const cleanPath = (hit.path ?? '').replace(/^\/+/, '');
+      const name = cleanPath.split('/').pop() || hit.nodeId!;
+      return {
+        id: hit.nodeId!,
+        storage,
+        parent: rootId(storage),
+        name,
+        kind: hit.kind === 'NODE_KIND_DIRECTORY' ? ('folder' as const) : ('file' as const),
+        mime: '',
+        size: Number(hit.sizeBytes ?? 0),
+        version: 0,
+        updated: hit.updatedAt ? Date.parse(hit.updatedAt) : Date.now(),
+        read: () => blob(storage, hit.nodeId!),
+      } satisfies StorageNode;
+    });
   }
   async function searchContent(
     storage: string,
@@ -173,7 +184,7 @@ export function storageApi(
     }
     const page = await post<{
       hits?: {
-        fileId: string;
+        nodeId: string;
         path?: string;
         artifactPath?: string;
         lineNumber?: number;
@@ -189,7 +200,7 @@ export function storageApi(
     });
     return {
       hits: (page.hits ?? []).map((hit) => ({
-        fileId: hit.fileId,
+        fileId: hit.nodeId,
         path: hit.path,
         artifactPath: hit.artifactPath,
         text: hit.lineText ?? '',

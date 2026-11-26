@@ -1,5 +1,5 @@
 import type { Json } from '@/lib/agent-api';
-import { fileToken } from '@/lib/file-refs';
+import { fileLink } from '@/lib/file-refs';
 import { campaignReport } from './landing-demo-report';
 
 export const channelCSV =
@@ -75,7 +75,7 @@ Morrow gives your clients one place for project files, feedback and approvals. S
 
 CTA: Create your first client project.
 `;
-const file = (node_id: string, label: string) => fileToken({ storage_id: 'team', node_id, label });
+const file = (node_id: string, label: string) => fileLink({ storage_id: 'team', node_id, label });
 export const demoScenes: Record<
   string,
   {
@@ -139,7 +139,7 @@ Choose the channels whenever you’re ready. Nothing has been published.`,
       {
         at: 4900,
         duration: 650,
-        name: 'inbox_send',
+        name: 'send_message',
         args: {
           conversation: 'Scout',
           messages: [
@@ -182,7 +182,7 @@ PY`,
       {
         at: 11600,
         duration: 1700,
-        name: 'file_semantic_search',
+        name: 'semantic_search',
         args: {
           query: 'Where do client files, feedback and approvals get separated?',
           paths: ['/mnt/team'],
@@ -285,7 +285,7 @@ I saved the findings with the ${file('team-research', 'interview notes')} and ke
       },
       {
         at: 4800,
-        name: 'file_semantic_search',
+        name: 'semantic_search',
         args: { query: 'client files, feedback, review decisions' },
         data: {
           groups: [
@@ -303,7 +303,7 @@ I saved the findings with the ${file('team-research', 'interview notes')} and ke
       },
       {
         at: 8200,
-        name: 'inbox_send',
+        name: 'send_message',
         args: {
           conversation: 'Atlas',
           messages: [
@@ -375,7 +375,7 @@ The full ${file('team-announcement', 'announcement and newsletter')} is ready to
       },
       {
         at: 8200,
-        name: 'inbox_send',
+        name: 'send_message',
         args: {
           conversation: 'Atlas',
           messages: [

@@ -32,9 +32,6 @@ Instructions:
 - Keep the final message text to a brief summary of what was completed; do not put the detailed analysis or findings in the message text."""
 
 _JINJA = jinja2.Environment(trim_blocks=True, lstrip_blocks=True, autoescape=False)
-_MENTION_RE = re.compile(
-    r":(?:file|folder)\[((?:\\.|[^\]\\\n]){1,1024})\]\{name=([\w:-]+/[\w:-]+)\}"
-)
 _LETFS_LINK_RE = re.compile(
     r"(?<!!)\[((?:\\.|[^\]\\\n]){1,1024})\]\(/letfs/([\w-]+)/([\w-]+)(?:/[^)\s]*)?\)"
 )
@@ -115,23 +112,15 @@ def _json_list(obj: Mapping[str, Any], key: str) -> list[dict[str, Any]]:
 def resolve_inline_mentions(
     content: str, path_map: Mapping[tuple[str, str], str]
 ) -> str:
-    def _format(label: str, sid: str, nid: str) -> str:
-        path = path_map.get((sid, nid))
+    def _sub_letfs(m: re.Match[str]) -> str:
+        label = re.sub(r"\\(.)", r"\1", m.group(1))
+        path = path_map.get((m.group(2), m.group(3)))
         if not path:
             return label
         target = f"<{path}>" if any(c.isspace() or c in "()" for c in path) else path
         return f"[{label}]({target})"
 
-    def _sub_legacy(m: re.Match[str]) -> str:
-        label = re.sub(r"\\(.)", r"\1", m.group(1))
-        sid, _, nid = m.group(2).partition("/")
-        return _format(label, sid, nid)
-
-    def _sub_letfs(m: re.Match[str]) -> str:
-        label = re.sub(r"\\(.)", r"\1", m.group(1))
-        return _format(label, m.group(2), m.group(3))
-
-    return _MENTION_RE.sub(_sub_legacy, _LETFS_LINK_RE.sub(_sub_letfs, content))
+    return _LETFS_LINK_RE.sub(_sub_letfs, content)
 
 
 def parse_history(
@@ -303,8 +292,8 @@ async def _collect_outputs(
     )
     if conv.is_success:
         cd = _json_obj(conv)
-        conv_sid = str(cd.get("storageId") or cd.get("storage_id") or "")
-        conv_root = str(cd.get("rootNodeId") or cd.get("root_node_id") or "")
+        conv_sid = str(cd.get("storageId") or "")
+        conv_root = str(cd.get("rootNodeId") or "")
         if conv_sid and conv_root:
             prefixes[conv_sid] = "/chat"
             path_cache[(conv_sid, conv_root)] = "/chat"
@@ -324,7 +313,7 @@ async def _collect_outputs(
         if not items:
             break
         raw_msgs.extend(m for m in items if m.get("senderType") == "agent")
-        if not data.get("hasMore"):
+        if not data.get("hasBefore"):
             break
         seqs = [int(m.get("seq", 0)) for m in items if int(m.get("seq", 0)) > 0]
         if not seqs or min(seqs) <= 1:
@@ -360,9 +349,6 @@ async def _collect_outputs(
     for idx, m in enumerate(raw_msgs):
         is_final = idx == last_idx
         raw_content = str(m.get("content") or "")
-        for match in _MENTION_RE.finditer(raw_content):
-            sid, _, nid = match.group(2).partition("/")
-            await _resolve_path(client, wid, prefixes, path_cache, sid, nid)
         for match in _LETFS_LINK_RE.finditer(raw_content):
             await _resolve_path(
                 client, wid, prefixes, path_cache, match.group(2), match.group(3)
@@ -374,8 +360,8 @@ async def _collect_outputs(
             if s.get("kind") == "web":
                 sources.append(s)
                 continue
-            sid = str(s.get("storage_id") or s.get("storageId") or "")
-            nid = str(s.get("node_id") or s.get("nodeId") or "")
+            sid = str(s.get("storage_id") or "")
+            nid = str(s.get("node_id") or "")
             resolved = await _resolve_path(client, wid, prefixes, path_cache, sid, nid)
             sources.append(
                 {**s, "path": resolved or str(s.get("path") or s.get("label") or "")}
@@ -383,8 +369,8 @@ async def _collect_outputs(
 
         att_paths: list[str] = []
         for ref in _json_list(m, "attachments"):
-            sid = str(ref.get("storageId") or ref.get("storage_id") or "")
-            nid = str(ref.get("nodeId") or ref.get("node_id") or "")
+            sid = str(ref.get("storageId") or "")
+            nid = str(ref.get("nodeId") or "")
             name = str(ref.get("name") or nid)
             path = (
                 await _resolve_path(client, wid, prefixes, path_cache, sid, nid)

@@ -80,18 +80,13 @@ function LiveInbox() {
           const sourceKind = c.type === 'group' ? 'box' : (other?.actorType ?? 'user');
           const preview = c.lastMessagePreview;
           return {
-            id: preview?.id ?? preview?.messageId ?? c.id,
+            id: preview?.id ?? c.id,
             conversation_id: c.id,
             source_kind: sourceKind,
             source_id: other?.actorId ?? c.id,
             source_name: c.title || c.handle || other?.actorId || c.id,
             content: preview?.snippet ?? '',
-            created_at:
-              c.lastMsgAt ??
-              preview?.createdAt ??
-              c.updatedAt ??
-              c.createdAt ??
-              new Date().toISOString(),
+            created_at: c.lastMsgAt ?? c.createdAt ?? new Date().toISOString(),
             direction: preview?.senderId === p.activityAgent.id ? 'out' : 'in',
             unread_count: Number(c.unreadCount ?? 0),
             agent_last_read_seq: Number(selfMember?.lastReadSeq ?? 0),
@@ -148,7 +143,7 @@ function LiveInbox() {
       );
       return {
         items,
-        next_cursor: (resp.hasBefore ?? resp.hasMore) && oldestSeq > 1 ? oldestSeq : null,
+        next_cursor: resp.hasBefore && oldestSeq > 1 ? oldestSeq : null,
       };
     },
     getNextPageParam: (page) => page.next_cursor,

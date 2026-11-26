@@ -15,7 +15,7 @@ import type { BoxGraph } from '@/lib/box-api';
 import type { ChatConversationDto, ChatMessageDto, SidebarLayoutDto } from '@/lib/chat-api';
 import type { RealtimeContextValue, RealtimeEnvelope } from '@/lib/realtime';
 import { agentAppearance } from '@/components/agent-appearance';
-import { fileReferences, fileToken } from '@/lib/file-refs';
+import { fileLink, fileReferences } from '@/lib/file-refs';
 import { research, announcement, channelCSV, demoScenes } from './landing-demo-content';
 
 const owner = 'preview-owner';
@@ -56,7 +56,6 @@ export function createLandingDemo() {
   const chatUserListeners = new Set<(event: RealtimeEnvelope) => void>();
   const letaUserListeners = new Set<(event: RealtimeEnvelope) => void>();
   const previewRealtime: RealtimeContextValue = {
-    status: 'connected',
     subscribe(channel, _getToken, listener) {
       let set = channelListeners.get(channel);
       if (!set) {
@@ -926,7 +925,7 @@ export function createLandingDemo() {
         message(
           'atlas',
           'assistant',
-          `Scout checked the evidence; Forge’s draft is ready. Maya asked to keep the budget flat, so the report now shows both spend and activation. I’m finishing the ${fileToken({ storage_id: 'team', node_id: 'team-brief', label: 'launch review' })}.`,
+          `Scout checked the evidence; Forge’s draft is ready. Maya asked to keep the budget flat, so the report now shows both spend and activation. I’m finishing the ${fileLink({ storage_id: 'team', node_id: 'team-brief', label: 'launch review' })}.`,
         );
       });
       schedule(24100, () => {
@@ -1287,7 +1286,7 @@ export function createLandingDemo() {
     }
     if (path.endsWith('/settings'))
       return {
-        system_prompt:
+        custom_instructions:
           instructions[agent] ??
           'Work with the team. Use shared files, cite your sources and ask before making decisions.',
         model_id: profiles.find((p) => p.id === agent)?.model_id,
@@ -1327,8 +1326,6 @@ export function createLandingDemo() {
         Object.assign(profile, body);
         if (typeof body.custom_instructions === 'string') {
           instructions[agent] = body.custom_instructions;
-        } else if (typeof body.system_prompt === 'string') {
-          instructions[agent] = body.system_prompt;
         }
       }
       return { ...profile, custom_instructions: defaultPrompt };
@@ -1472,7 +1469,7 @@ export function createLandingDemo() {
       message(
         request.leta_id!,
         'assistant',
-        `Confirmed: ${channels}. I’ve updated the ${fileToken({ storage_id: 'team', node_id: 'team-brief', label: 'launch review' })}. ${files.some((file) => file.id === 'team-announcement') ? 'The announcement is ready for Thursday’s review' : 'I’m continuing with the draft and report'}; nothing has been published.`,
+        `Confirmed: ${channels}. I’ve updated the ${fileLink({ storage_id: 'team', node_id: 'team-brief', label: 'launch review' })}. ${files.some((file) => file.id === 'team-announcement') ? 'The announcement is ready for Thursday’s review' : 'I’m continuing with the draft and report'}; nothing has been published.`,
       );
       emitActivity(request.leta_id!, 'hitl.updated', {
         request_id: request.id,
@@ -1645,7 +1642,7 @@ export function createLandingDemo() {
   message(
     'atlas',
     'user',
-    `The campaign export is in ${fileToken({ storage_id: 'team', node_id: 'team-channels', label: 'last campaign’s CSV' })}. Social had the most traffic, but I’m not convinced we should spend more there.`,
+    `The campaign export is in ${fileLink({ storage_id: 'team', node_id: 'team-channels', label: 'last campaign’s CSV' })}. Social had the most traffic, but I’m not convinced we should spend more there.`,
   );
   message(
     'atlas',
@@ -1660,7 +1657,7 @@ export function createLandingDemo() {
   message(
     'scout',
     'assistant',
-    `I have INT-014, INT-019 and INT-023 in the ${fileToken({ storage_id: 'team', node_id: 'team-research', label: 'interview notes' })}. I’ll separate direct quotes from our interpretation; three interviews are not a survey.`,
+    `I have INT-014, INT-019 and INT-023 in the ${fileLink({ storage_id: 'team', node_id: 'team-research', label: 'interview notes' })}. I’ll separate direct quotes from our interpretation; three interviews are not a survey.`,
   );
   message(
     'forge',

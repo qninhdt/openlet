@@ -10,11 +10,9 @@ import {
   FileText,
   Folder,
   Globe2,
-  History,
   Inbox,
   LoaderCircle,
   MessageSquare,
-  Network,
   Pause,
   Search,
   Send,
@@ -331,7 +329,7 @@ const InboxTool: ToolCallMessagePartComponent = (props) => {
   const p = useAgentPreview();
   const result = resultOf(props);
   const rawTo = String(props.args.to ?? props.args.conversation ?? '');
-  const send = props.toolName === 'inbox_send' || props.toolName === 'send_message';
+  const send = props.toolName === 'send_message';
   const rawChatTarget = rawTo.startsWith('chat:') ? rawTo.slice(5) : '';
   const needsConvLookup =
     send &&
@@ -395,8 +393,8 @@ const InboxTool: ToolCallMessagePartComponent = (props) => {
       : typeof props.args.content === 'string' && props.args.content
         ? [{ content: props.args.content, fileRefs: result.messages?.[0]?.fileRefs ?? [] }]
         : (result.messages ?? []);
-  const list = props.toolName === 'inbox_list' || props.toolName === 'list_channels';
-  const history = props.args.mode === 'history' || props.toolName === 'read_messages';
+  const list = props.toolName === 'list_channels';
+  const history = props.toolName === 'read_messages';
   return (
     <ToolStep
       props={props}
@@ -653,53 +651,6 @@ function ScheduleTarget({ target }: { target: string }) {
   );
 }
 
-const ActivityTool: ToolCallMessagePartComponent = (props) => {
-  const result = resultOf(props);
-  const search = props.toolName === 'activity_search';
-  const filters = [props.args.kind, props.args.tool].filter(Boolean).map(String).join(' · ');
-  const label = search
-    ? props.args.query
-      ? `Searched activity for “${String(props.args.query)}”`
-      : filters
-        ? `Browsed ${filters} activity`
-        : 'Checked recent activity'
-    : `Read activity entry ${String(props.args.entry ?? '')}`;
-  return (
-    <ToolStep props={props} label={label} icon={<History />}>
-      <div className="w-fit max-w-[min(100%,520px)]">
-        {search ? (
-          result.items?.length ? (
-            <ol className="ml-1 border-l pl-4">
-              {result.items.map((item, index) => (
-                <li key={index} className="relative py-2 first:pt-0 last:pb-0">
-                  <span className="absolute -left-5 top-3 size-2 rounded-full border bg-background" />
-                  <time className="text-xs text-muted-foreground">{item.meta}</time>
-                  <p className="mt-1 text-sm font-medium">{item.title}</p>
-                  <p className="mt-1 text-caption leading-relaxed text-muted-foreground">
-                    {item.detail}
-                  </p>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <EmptyResult icon={<History />}>
-              {result.summary ?? 'No matching activity.'}
-            </EmptyResult>
-          )
-        ) : (
-          <article className="rounded-xl border p-4">
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b pb-3 text-xs text-muted-foreground">
-              <span>{result.summary}</span>
-              <span>{result.lineRange}</span>
-            </div>
-            <h4 className="mb-3 text-base font-medium">{result.title}</h4>
-            <AgentMarkdown text={result.content ?? ''} />
-          </article>
-        )}
-      </div>
-    </ToolStep>
-  );
-};
 const ContextTool: ToolCallMessagePartComponent = (props) => {
   const result = resultOf(props);
   return (
@@ -788,98 +739,6 @@ const AgentStatusTool: ToolCallMessagePartComponent = (props) => {
     </ToolStep>
   );
 };
-const BoxTool: ToolCallMessagePartComponent = (props) => {
-  const result = resultOf(props);
-  const name = props.toolName;
-  const deleted = name === 'box_delete';
-  return (
-    <ToolStep
-      props={props}
-      label={`${name === 'box_create' ? 'Created' : deleted ? 'Archived' : 'Checked'} ${result.title || 'agent teams'}`}
-      icon={deleted ? <Trash2 /> : <Network />}
-    >
-      {name === 'box_list' ? (
-        <ActionCard>
-          <ul className="divide-y">
-            {result.items?.map((item) => (
-              <li key={item.title} className="flex items-start gap-3 p-3">
-                <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted">
-                  <Network className="size-4 text-muted-foreground" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="font-medium">{item.title}</span>
-                    <Status>{item.status}</Status>
-                  </div>
-                  <p className="mt-1 text-caption text-muted-foreground">{item.detail}</p>
-                  <p className="mt-2 text-xs text-muted-foreground">{item.meta}</p>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </ActionCard>
-      ) : deleted ? (
-        <div className="flex w-fit max-w-[min(100%,520px)] items-start gap-3 py-2">
-          <Trash2 className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-          <div>
-            <p className="text-sm">
-              <span className="line-through">{result.title}</span>
-              <span className="ml-2 text-caption text-muted-foreground">Archived</span>
-            </p>
-            <p className="mt-1 text-caption leading-relaxed text-muted-foreground">
-              {result.summary}
-            </p>
-          </div>
-        </div>
-      ) : (
-        <ActionCard>
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3">
-            <span className="flex items-center gap-2 font-medium">
-              <Network className="size-4 text-muted-foreground" />
-              {result.title}
-            </span>
-            <Status>{result.status}</Status>
-          </div>
-          <div className="flex flex-col gap-3 p-4">
-            {result.items?.map((item) => (
-              <div key={item.title} className="flex items-start gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <ActivityIdentity
-                      kind="agent"
-                      address={item.address}
-                      name={item.title}
-                      className="font-medium"
-                    />
-                    <Badge variant={item.title === result.leader ? 'secondary' : 'outline'}>
-                      {item.meta}
-                    </Badge>
-                  </div>
-                  <p className="mt-1 text-caption leading-relaxed text-muted-foreground">
-                    {item.detail}
-                  </p>
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="flex flex-col gap-3 border-t bg-muted/30 px-4 py-3">
-            {result.edges?.map(([from, to]) => (
-              <div key={`${from}-${to}`} className="flex flex-wrap items-center gap-2 text-caption">
-                <span>{from}</span>
-                <ArrowRight className="size-3.5 text-muted-foreground" />
-                <span>{to}</span>
-              </div>
-            ))}
-            <div className="flex items-start gap-2 text-xs text-muted-foreground">
-              <Folder className="size-3.5 shrink-0" />
-              <span className="font-mono wrap-anywhere">{result.home}</span>
-            </div>
-          </div>
-        </ActionCard>
-      )}
-    </ToolStep>
-  );
-};
 const HitlStatusTool: ToolCallMessagePartComponent = (props) => {
   const result = resultOf(props);
   const cancelled = props.toolName === 'hitl_cancel';
@@ -954,7 +813,7 @@ const HitlStatusTool: ToolCallMessagePartComponent = (props) => {
 };
 const WebTool: ToolCallMessagePartComponent = (props) => {
   const result = resultOf(props);
-  const search = props.toolName === 'websearch' || props.toolName === 'web_search';
+  const search = props.toolName === 'websearch';
   const label = search
     ? `Web search${props.args.query ? `: ${String(props.args.query)}` : ''}`
     : `Web fetch (${result.webFormat || String(props.args.format ?? 'markdown')})`;
@@ -1007,45 +866,27 @@ const UnknownTool: ToolCallMessagePartComponent = (props) => (
 
 const renderers = {
   by_name: {
-    file_list: FileListTool,
     glob: FileListTool,
     grep: SearchTool,
     file_read: FileReadTool,
     file_write: FileWriteTool,
     file_edit: FileEditTool,
-    file_semantic_search: SearchTool,
     semantic_search: SearchTool,
     websearch: WebTool,
     webfetch: WebTool,
-    web_search: WebTool,
-    web_fetch: WebTool,
-    execute: ExecuteTool,
     bash: ExecuteTool,
-    inbox_send: InboxTool,
     send_message: InboxTool,
-    inbox_list: InboxTool,
     list_channels: InboxTool,
-    inbox_read: InboxTool,
     read_messages: InboxTool,
-    inbox_react: ReactionTool,
     react_message: ReactionTool,
     schedule_create: ScheduleTool,
-    schedule_get: ScheduleTool,
     schedule_update: ScheduleTool,
     schedule_delete: ScheduleTool,
     schedule_list: ScheduleTool,
-    activity_search: ActivityTool,
-    activity_read: ActivityTool,
     get_context: ContextTool,
     agent_status: AgentStatusTool,
-    box_create: BoxTool,
-    box_list: BoxTool,
-    box_get: BoxTool,
-    box_delete: BoxTool,
     hitl_ask: AskCard,
-    hitl_request: AccessRequestCard,
     hitl_request_access: AccessRequestCard,
-    hitl_get: HitlStatusTool,
     hitl_list: HitlStatusTool,
     hitl_cancel: HitlStatusTool,
   },

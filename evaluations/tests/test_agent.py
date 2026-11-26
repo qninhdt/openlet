@@ -88,7 +88,7 @@ def test_mentions_and_deliverable_rendering() -> None:
     }
     assert (
         resolve_inline_mentions(
-            r"See :file[Q3 \[Final\]]{name=s1/n1}, :file[Budget]{name=s1/n2}, :file[X]{name=s9/n9}.",
+            r"See [Q3 \[Final\]](/letfs/s1/n1), [Budget](/letfs/s1/n2), [X](/letfs/s9/n9).",
             path_map,
         )
         == "See [Q3 [Final]](/shared/q3/report.pdf), [Budget](</shared/My Folder/Budget (2026).xlsx>), X."
@@ -479,7 +479,7 @@ def test_collect_outputs_keeps_only_final_message_chat_attachments() -> None:
                             ],
                         },
                     ],
-                    "hasMore": False,
+                    "hasBefore": False,
                 },
             )
         if p.endswith("/activity"):

@@ -21,7 +21,7 @@ test('activity adapters render structured snapshots and tool errors', () => {
     adapt('file_write', { path: '~/report.txt', storage_id: 'storage', node_id: 'node' }),
   ).toMatchObject({ file: { storage_id: 'storage', node_id: 'node', label: '~/report.txt' } });
   expect(
-    adapt('inbox_send', {
+    adapt('send_message', {
       messages: [
         { content: 'The report is ready.', file_refs: [] },
         {
@@ -46,7 +46,7 @@ test('activity adapters render structured snapshots and tool errors', () => {
     file: undefined,
   });
   expect(
-    adapt('file_list', {
+    adapt('glob', {
       items: [
         { path: '~/report.txt', kind: 'file', storage_id: 'storage', node_id: 'node' },
         { path: '~/folder', kind: 'directory', storage_id: 'storage', node_id: 'folder' },
@@ -54,59 +54,6 @@ test('activity adapters render structured snapshots and tool errors', () => {
     }),
   ).toMatchObject({
     items: [{ file: { storage_id: 'storage', node_id: 'node' } }, { file: undefined }],
-  });
-  expect(
-    adapt('activity_search', {
-      entries: [
-        { seq: 4, kind: 'final_note', tool: null, status: null, text_preview: 'Actual note' },
-        {
-          seq: 5,
-          kind: 'tool_result',
-          tool: 'execute',
-          status: 'error',
-          text_preview: 'Timeout',
-        },
-      ],
-    }),
-  ).toMatchObject({
-    items: [
-      { title: '#4 · final note', detail: 'Actual note' },
-      { title: '#5 · tool result · execute · error', detail: 'Timeout' },
-    ],
-  });
-  expect(
-    adapt('activity_read', {
-      entry: 5,
-      kind: 'tool_result',
-      tool: 'execute',
-      status: 'error',
-      paired_entry: 4,
-      start_line: 1,
-      content: 'Output:\nTimeout',
-    }),
-  ).toMatchObject({
-    title: 'Entry #5 · tool result · execute · error',
-    summary: 'Paired with entry #4',
-    lineRange: 'From line 1',
-    content: 'Output:\nTimeout',
-  });
-  expect(
-    adapt('box_get', {
-      name: 'review',
-      handle: 'review',
-      home: '~/.boxes/review/',
-      leader: { name: 'Scout', handle: 'scout-the-researcher' },
-      letis: [
-        { name: 'Scout', handle: 'scout-the-researcher' },
-        { name: 'Forge', handle: 'forge-the-analyst' },
-        { name: 'Altair', handle: 'altair-the-writer' },
-      ],
-      additional_links: [['Forge', 'Altair']],
-    }),
-  ).toMatchObject({
-    home: '~/.boxes/review/',
-    leader: 'Scout',
-    edges: [['Forge', 'Altair']],
   });
   expect(
     adapt('schedule_update', {
@@ -140,7 +87,7 @@ test('activity adapters render structured snapshots and tool errors', () => {
   expect(
     activityToolResult({
       ...entry,
-      payload: { name: 'inbox_read', ui: { version: 1, kind: 'messages', items } },
+      payload: { name: 'read_messages', ui: { version: 1, kind: 'messages', items } },
     }),
   ).toMatchObject({ inputItems: items });
   expect(
@@ -172,10 +119,10 @@ test('activity adapters render structured snapshots and tool errors', () => {
       },
     ],
   });
-  expect(adapt('inbox_react', { emoji: '👍', content: 'Approved' })).toMatchObject({
+  expect(adapt('react_message', { emoji: '👍', content: 'Approved' })).toMatchObject({
     reaction: { emoji: '👍', content: 'Approved' },
   });
-  expect(adapt('inbox_react', { emoji: null, content: 'Approved' })).toMatchObject({
+  expect(adapt('react_message', { emoji: null, content: 'Approved' })).toMatchObject({
     reaction: { emoji: null, content: 'Approved' },
   });
 });
@@ -188,53 +135,59 @@ test('schedule timing uses supplied calendar fields and interval precision', () 
   expect(scheduleTiming({})).toBe('Timing unavailable');
 });
 
-test('activity deltas are root/run scoped, bounded and ignore reconnect orphans', () => {
-  const event = (type: string, run = 'run', agent = 'root', id = 'message'): LiveEvent => ({
+test('activity deltas are root/run scoped, bounded and cleared on run.finished', () => {
+  const event = (
+    type: string,
+    delta = 'Hello',
+    run = 'run',
+    agent = 'root',
+    toolCallId?: string,
+  ): LiveEvent => ({
     type,
-    messageId: id,
-    delta: 'Hello',
-    metadata: { openlet: { agentId: agent, runId: run } },
+    data: {
+      agent_id: agent,
+      run_id: run,
+      delta,
+      ...(toolCallId ? { tool_call_id: toolCallId } : {}),
+    },
   });
   let items: StreamingItem[] = [];
-  expect(reduceActivityStream(items, event('TEXT_MESSAGE_CONTENT'), 'root')).toEqual([]);
-  items = reduceActivityStream(items, event('TEXT_MESSAGE_START'), 'root');
-  expect(reduceActivityStream(items, event('TEXT_MESSAGE_START'), 'root')).toEqual(items);
-  expect(reduceActivityStream(items, event('TEXT_MESSAGE_CONTENT', 'other'), 'root')).toEqual(
-    items,
-  );
-  expect(
-    reduceActivityStream(items, event('TEXT_MESSAGE_CONTENT', 'run', 'child'), 'root'),
-  ).toEqual(items);
-  items = reduceActivityStream(items, event('TEXT_MESSAGE_CONTENT'), 'root');
+  items = reduceActivityStream(items, event('stream.text_delta', 'Hello', 'run', 'child'), 'root');
+  expect(items).toEqual([]);
+  items = reduceActivityStream(items, event('stream.text_delta', 'Hello'), 'root');
   expect(items[0].text).toBe('Hello');
-  const huge = { ...event('TEXT_MESSAGE_CONTENT'), delta: 'x'.repeat(300000) };
+  items = reduceActivityStream(items, event('stream.text_delta', ' world'), 'root');
+  expect(items[0].text).toBe('Hello world');
+  const huge = event('stream.text_delta', 'x'.repeat(300000));
   expect(reduceActivityStream(items, huge, 'root')[0].text).toHaveLength(262144);
   for (let index = 0; index < 50; index++)
     items = reduceActivityStream(
       items,
-      event('TEXT_MESSAGE_START', 'run', 'root', String(index)),
+      event('stream.tool_args_delta', '{}', 'run', 'root', String(index)),
       'root',
     );
   expect(items).toHaveLength(40);
   expect(items[0].id).toBe('10');
+  expect(
+    reduceActivityStream(
+      items,
+      { type: 'run.finished', data: { agent_id: 'root', run_id: 'run' } },
+      'root',
+    ),
+  ).toEqual([]);
 });
 
-test('reasoning and answer streams with the same message ID stay separate', () => {
-  const event = (type: string, delta = ''): LiveEvent => ({
+test('reasoning and text streams in the same run stay separate', () => {
+  const event = (type: string, delta: string): LiveEvent => ({
     type,
-    messageId: 'message',
-    delta,
-    metadata: { openlet: { agentId: 'root', runId: 'run' } },
+    data: { agent_id: 'root', run_id: 'run', delta },
   });
-  let items = reduceActivityStream([], event('REASONING_MESSAGE_START'), 'root');
-  items = reduceActivityStream(items, event('REASONING_MESSAGE_CONTENT', 'Plan'), 'root');
-  items = reduceActivityStream(items, event('TEXT_MESSAGE_START'), 'root');
-  items = reduceActivityStream(items, event('TEXT_MESSAGE_CONTENT', 'Answer'), 'root');
+  let items = reduceActivityStream([], event('stream.thinking_delta', 'Plan'), 'root');
+  items = reduceActivityStream(items, event('stream.text_delta', 'Answer'), 'root');
   expect(items.map(({ kind, text }) => ({ kind, text }))).toEqual([
     { kind: 'reasoning', text: 'Plan' },
     { kind: 'text', text: 'Answer' },
   ]);
-  expect(reduceActivityStream(items, event('REASONING_MESSAGE_START'), 'root')).toEqual(items);
 });
 
 test('live activity keeps interleaved model parts in one turn with results and detail IDs', async () => {

@@ -62,22 +62,18 @@ export type ChatConversationDto = {
   storageId?: string;
   storageReady?: boolean;
   lastSeq?: string | number;
-  lastMessageSeq?: string | number;
   lastMsgAt?: string;
   unreadCount?: string | number;
   members?: ChatMember[];
   lastMessagePreview?: {
     id?: string;
-    messageId?: string;
     seq?: string | number;
     senderType: 'user' | 'agent';
     senderId: string;
     snippet: string;
     hasAttachments?: boolean;
-    createdAt?: string;
   };
   createdAt?: string;
-  updatedAt?: string;
 };
 
 export type SidebarFolderDto = {
@@ -231,7 +227,6 @@ export function chatApi(api: Api, workspaceId: string) {
         messages?: ChatMessageDto[];
         hasBefore?: boolean;
         hasAfter?: boolean;
-        hasMore?: boolean;
       }>(`${base}/conversations/${conversationId}/messages${suffix}`);
     },
     sendMessage: (

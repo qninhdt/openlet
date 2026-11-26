@@ -31,7 +31,7 @@ test('mentions stay inline; explicit attachments support albums, file-only messa
     const fixtures = [
       {
         id: 'mention',
-        content: `Xem :file[Báo cáo]{name=${storage}/${ids.report}}`,
+        content: `Xem [Báo cáo](/letfs/${storage}/${ids.report})`,
         attachments: [],
       },
       {
@@ -46,7 +46,7 @@ test('mentions stay inline; explicit attachments support albums, file-only messa
       { id: 'file-only', content: '', attachments: [ref(ids.report, 'report.txt')] },
       {
         id: 'folder',
-        content: `See :folder[Research notes]{name=${storage}/${ids.folder}}.`,
+        content: `See [Research notes](/letfs/${storage}/${ids.folder}).`,
         attachments: [{ storageId: storage, nodeId: ids.folder, name: 'Research', kind: 'folder' }],
       },
       {

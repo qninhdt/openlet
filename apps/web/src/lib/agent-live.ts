@@ -3,7 +3,7 @@ import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-quer
 import { reduceActivityStream, type StreamingItem } from './agent-stream';
 import { useBackend } from './backend';
 import { chatApi, toUiChatMessage, type ChatConversationDto } from './chat-api';
-import { useRealtime } from './realtime';
+import { useRealtime, useRealtimeStatus } from './realtime';
 import {
   agentCapabilities,
   normalizeActivityEntry,
@@ -28,6 +28,7 @@ export function useAgentLive(
 ) {
   const backend = useBackend();
   const realtime = useRealtime();
+  const realtimeStatus = useRealtimeStatus();
   const { api, actorId } = backend;
   const client = useQueryClient();
   const activityOnly = activityAgent !== agent;
@@ -84,7 +85,7 @@ export function useAgentLive(
       );
       return {
         items,
-        next_cursor: (page.hasBefore ?? page.hasMore) && oldestSeq > 1 ? oldestSeq : null,
+        next_cursor: page.hasBefore && oldestSeq > 1 ? oldestSeq : null,
       };
     },
     getNextPageParam: (page) => page.next_cursor,
@@ -143,12 +144,11 @@ export function useAgentLive(
     queryFn: async () => {
       const data = await api!<{
         custom_instructions?: string;
-        system_prompt?: string;
         model_id: string;
         reasoning_effort: string | null;
       }>(`${path}/agents/${activityAgent}`);
       return {
-        system_prompt: data.custom_instructions ?? data.system_prompt ?? '',
+        custom_instructions: data.custom_instructions ?? '',
         model_id: data.model_id,
         reasoning_effort: data.reasoning_effort ?? '',
       };
@@ -330,9 +330,9 @@ export function useAgentLive(
   const isWorking = Boolean(profile.data?.running || latestRun?.status === 'running' || isTyping);
 
   const connectionLabel =
-    realtime.status === 'connected'
+    realtimeStatus === 'connected'
       ? 'Live'
-      : realtime.status === 'reconnecting'
+      : realtimeStatus === 'reconnecting'
         ? 'Reconnecting'
         : 'Connecting';
 

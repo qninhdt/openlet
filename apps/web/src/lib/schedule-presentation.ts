@@ -17,6 +17,9 @@ export function scheduleTiming(spec: Record<string, Json>): string {
         return `Every ${amount} ${unit}${amount === 1 ? '' : 's'}`;
       }
   }
+  if (typeof spec.cron === 'string' && spec.cron.trim()) {
+    return spec.cron.trim();
+  }
   const calendar = spec.calendar;
   if (calendar && typeof calendar === 'object' && !Array.isArray(calendar)) {
     const values = (key: string, fallback: number[]) =>

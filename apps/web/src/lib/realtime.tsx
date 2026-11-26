@@ -29,7 +29,6 @@ type ManagedSub = {
 };
 
 export type RealtimeContextValue = {
-  status: RealtimeStatus;
   subscribe: (
     channel: string,
     getToken: (() => Promise<string>) | undefined,
@@ -40,11 +39,12 @@ export type RealtimeContextValue = {
 };
 
 const RealtimeContext = createContext<RealtimeContextValue>({
-  status: 'disconnected',
   subscribe: () => () => {},
   onChatUserEvent: () => () => {},
   onLetaUserEvent: () => () => {},
 });
+
+const RealtimeStatusContext = createContext<RealtimeStatus>('disconnected');
 
 function websocketUrl() {
   if (baseUrl) {
@@ -83,6 +83,12 @@ function LiveRealtimeProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<RealtimeStatus>('disconnected');
   const clientRef = useRef<Centrifuge | null>(null);
   const subsRef = useRef<Map<string, ManagedSub>>(new Map());
+  const pendingSubsRef = useRef<
+    Map<
+      string,
+      { getToken: (() => Promise<string>) | undefined; listeners: Set<SubscriptionListener> }
+    >
+  >(new Map());
   const chatUserListeners = useRef<Set<(event: RealtimeEnvelope) => void>>(new Set());
   const letaUserListeners = useRef<Set<(event: RealtimeEnvelope) => void>>(new Set());
 
@@ -157,6 +163,13 @@ function LiveRealtimeProvider({ children }: { children: ReactNode }) {
     };
     letaPersonal.listeners.add(letaListener);
 
+    // Attach any subscriptions registered before the client was initialized.
+    for (const [channel, pending] of pendingSubsRef.current) {
+      if (pending.listeners.size === 0) continue;
+      const managed = ensureSub(client, channel, pending.getToken);
+      for (const listener of pending.listeners) managed.listeners.add(listener);
+    }
+
     client.connect();
 
     return () => {
@@ -179,16 +192,33 @@ function LiveRealtimeProvider({ children }: { children: ReactNode }) {
       getToken: (() => Promise<string>) | undefined,
       listener: SubscriptionListener,
     ) => {
+      let pending = pendingSubsRef.current.get(channel);
+      if (!pending) {
+        pending = { getToken, listeners: new Set() };
+        pendingSubsRef.current.set(channel, pending);
+      }
+      pending.listeners.add(listener);
+
       const client = clientRef.current;
-      if (!client) return () => {};
-      const managed = ensureSub(client, channel, getToken);
-      managed.listeners.add(listener);
+      if (client) {
+        const managed = ensureSub(client, channel, getToken);
+        managed.listeners.add(listener);
+      }
       return () => {
-        managed.listeners.delete(listener);
-        if (managed.listeners.size === 0) {
-          managed.sub.unsubscribe();
-          client.removeSubscription(managed.sub);
-          subsRef.current.delete(channel);
+        const entry = pendingSubsRef.current.get(channel);
+        if (entry) {
+          entry.listeners.delete(listener);
+          if (entry.listeners.size === 0) pendingSubsRef.current.delete(channel);
+        }
+        const activeClient = clientRef.current;
+        const managed = subsRef.current.get(channel);
+        if (activeClient && managed) {
+          managed.listeners.delete(listener);
+          if (managed.listeners.size === 0) {
+            managed.sub.unsubscribe();
+            activeClient.removeSubscription(managed.sub);
+            subsRef.current.delete(channel);
+          }
         }
       };
     },
@@ -210,13 +240,21 @@ function LiveRealtimeProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<RealtimeContextValue>(
-    () => ({ status, subscribe, onChatUserEvent, onLetaUserEvent }),
-    [status, subscribe, onChatUserEvent, onLetaUserEvent],
+    () => ({ subscribe, onChatUserEvent, onLetaUserEvent }),
+    [subscribe, onChatUserEvent, onLetaUserEvent],
   );
 
-  return <RealtimeContext.Provider value={value}>{children}</RealtimeContext.Provider>;
+  return (
+    <RealtimeStatusContext.Provider value={status}>
+      <RealtimeContext.Provider value={value}>{children}</RealtimeContext.Provider>
+    </RealtimeStatusContext.Provider>
+  );
 }
 
 export function useRealtime() {
   return useContext(RealtimeContext);
+}
+
+export function useRealtimeStatus() {
+  return useContext(RealtimeStatusContext);
 }

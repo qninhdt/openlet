@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { storageApi } from '../src/lib/storage-api.js';
 import type { Api } from '../src/lib/agent-api.js';
-import { fileMarkdown, fileReferences, fileToken, fileText } from '../src/lib/file-refs.js';
+import { fileLink, fileMarkdown, fileReferences, fileText } from '../src/lib/file-refs.js';
 import { readTextFile, serializeTextFile } from '../src/lib/text-file.js';
 import { newAssistantMessages } from '../src/lib/message-sound.js';
 
@@ -43,7 +43,18 @@ test('live adapter binds root IDs, paginates, searches nested files and loads fu
         : { nodes: [], nextPageToken: 'next' };
     else if (path.endsWith('/files:glob'))
       result = {
-        hits: [{ nodeId: file.id, path: 'nested/report.md', kind: 'file', sizeBytes: '4' }],
+        hits: [
+          { nodeId: file.id, path: 'nested/report.md', kind: 'NODE_KIND_FILE', sizeBytes: '4' },
+        ],
+      };
+    else if (path.endsWith('/nodes:batchStat')) {
+      expect(JSON.parse(String(init?.body))).toEqual({ targets: [{ nodeId: file.id }] });
+      result = { results: [{ node: file }] };
+    } else if (path.endsWith('/files:grep'))
+      result = {
+        hits: [
+          { nodeId: file.id, path: 'nested/report.md', lineNumber: 3, lineText: 'matched line' },
+        ],
       };
     else if (path.endsWith(`/nodes/${file.id}`)) result = file;
     else if (path.endsWith(':download'))
@@ -67,6 +78,17 @@ test('live adapter binds root IDs, paginates, searches nested files and loads fu
   expect(branch.map((n) => n.id)).toEqual(['nested', 'report.md']);
   expect(await (await branch[1].read!()).text()).toBe('data');
   expect((await files.search('storage', 'report'))[0].version).toBe(7);
+  expect(calls.some((call) => call.path.endsWith('/nodes:batchStat'))).toBe(true);
+  const grepRes = await files.searchContent('storage', 'matched', 'text');
+  expect(grepRes.hits).toEqual([
+    {
+      fileId: file.id,
+      path: 'nested/report.md',
+      artifactPath: undefined,
+      text: 'matched line',
+      lineNumber: 3,
+    },
+  ]);
   expect(calls.find((call) => call.path.endsWith('/files:glob'))?.body).toEqual({
     root: { nodeId: 'remote-root' },
     pattern: '**/*report*',
@@ -93,10 +115,10 @@ test('live edits pass the opened version and surface conflicts without silently 
 
 test('file chips round-trip escaped custom labels and canonical /letfs links without turning ordinary paths into references', () => {
   const reference = { storage_id: 'storage', node_id: 'node', label: 'bản [dự toán] \\ final' };
-  const token = fileToken(reference);
-  expect(fileReferences(`Review ${token} please`)).toEqual([reference]);
+  const link = fileLink(reference);
+  expect(fileReferences(`Review ${link} please`)).toEqual([reference]);
   expect(fileReferences('Budget.xlsx /mnt/storage/Budget.xlsx')).toEqual([]);
-  expect(fileText(`Review ${token} please`)).toBe(`Review ${reference.label} please`);
+  expect(fileText(`Review ${link} please`)).toBe(`Review ${reference.label} please`);
   expect(fileReferences('Open [Q3 Report](/letfs/sid-1/nid-2) now')).toEqual([
     { storage_id: 'sid-1', node_id: 'nid-2', label: 'Q3 Report' },
   ]);
@@ -173,17 +195,17 @@ test('Trash pagination retains deletion IDs and quota bytes are parsed', async (
 });
 
 test('file mentions render outside code while code examples stay literal', () => {
-  const token = fileToken({ storage_id: 'storage', node_id: 'node', label: 'draft [1]' });
-  expect(fileMarkdown(token)).toContain('(openlet-file:storage/node)');
+  const link = fileLink({ storage_id: 'storage', node_id: 'node', label: 'draft [1]' });
+  expect(fileMarkdown(link)).toContain('(openlet-file:storage/node)');
   for (const code of [
-    `\`${token}\``,
-    `\`\`${token}\`\``,
-    `\`\`\`md\n${token}\n\`\`\``,
-    `~~~\n${token}\n~~~~`,
-    `\`\`\`\n${token}`,
+    `\`${link}\``,
+    `\`\`${link}\`\``,
+    `\`\`\`md\n${link}\n\`\`\``,
+    `~~~\n${link}\n~~~~`,
+    `\`\`\`\n${link}`,
   ])
     expect(fileMarkdown(code)).toBe(code);
-  expect(fileMarkdown(`\`unclosed ${token}`)).toContain('(openlet-file:storage/node)');
+  expect(fileMarkdown(`\`unclosed ${link}`)).toContain('(openlet-file:storage/node)');
 });
 
 test('text previews preserve BOM and CRLF on save and reject binary content', async () => {
@@ -235,7 +257,7 @@ test('content search sends grep and semantic scope with server result limits', a
     }
     return {
       hits: [
-        { fileId: file.id, lineText: 'relevant content', path: 'nested/report.md', lineNumber: 12 },
+        { nodeId: file.id, lineText: 'relevant content', path: 'nested/report.md', lineNumber: 12 },
       ],
       truncated: false,
     } as T;

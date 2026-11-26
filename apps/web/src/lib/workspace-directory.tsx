@@ -40,7 +40,6 @@ export type CreateAgent = {
   appearance?: AgentAppearance;
   description: string;
   custom_instructions?: string;
-  system_prompt?: string;
   model_id: string | null;
   reasoning_effort: string | null;
 };
@@ -106,13 +105,8 @@ export function WorkspaceDirectory({ children }: { children: ReactNode }) {
         (raw) => {
           const caps = agentCapabilities(raw);
           const dm = convByAgent.get(raw.id);
-          const previewTime =
-            dm?.lastMsgAt ??
-            dm?.lastMessagePreview?.createdAt ??
-            dm?.updatedAt ??
-            raw.updated_at ??
-            null;
-          const previewMsgId = dm?.lastMessagePreview?.id ?? dm?.lastMessagePreview?.messageId;
+          const previewTime = dm?.lastMsgAt ?? raw.updated_at ?? null;
+          const previewMsgId = dm?.lastMessagePreview?.id;
           return {
             ...raw,
             capabilities: caps,
@@ -184,7 +178,7 @@ export function WorkspaceDirectory({ children }: { children: ReactNode }) {
       title: input.title,
       appearance: input.appearance,
       description: input.description,
-      custom_instructions: input.custom_instructions ?? input.system_prompt ?? '',
+      custom_instructions: input.custom_instructions ?? '',
       model_id: input.model_id,
       reasoning_effort: input.reasoning_effort,
     };
