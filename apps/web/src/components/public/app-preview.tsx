@@ -3,6 +3,7 @@ import { createMemoryHistory, createRouter, RouterProvider } from '@tanstack/rea
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { router } from '@/router';
 import { PreviewBackendProvider } from '@/lib/backend';
+import { RealtimeProvider } from '@/lib/realtime';
 import { createLandingDemo } from './landing-demo';
 
 export function AppPreview() {
@@ -75,7 +76,9 @@ export function AppPreview() {
     <div className="dark relative h-dvh bg-background text-foreground [&_.h-dvh]:h-full">
       <QueryClientProvider client={client}>
         <PreviewBackendProvider value={demo.backend}>
-          <RouterProvider router={previewRouter} />
+          <RealtimeProvider>
+            <RouterProvider router={previewRouter} />
+          </RealtimeProvider>
         </PreviewBackendProvider>
       </QueryClientProvider>
     </div>

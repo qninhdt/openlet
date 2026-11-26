@@ -171,7 +171,7 @@ function AgentCreateForm() {
                 ? { appearance: { shape: draft.appearance.shape, color: draft.appearance.color } }
                 : {}),
               description: draft.description,
-              system_prompt: draft.instructions,
+              custom_instructions: draft.instructions,
               model_id: draft.model === 'Default model' ? null : draft.model,
               reasoning_effort: draft.effort ? draft.effort.toLowerCase() : null,
             });

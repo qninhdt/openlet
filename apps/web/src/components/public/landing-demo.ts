@@ -7,11 +7,13 @@ import {
   type InboxItem,
   type InputItem,
   type Json,
-  type LiveEvent,
+  type RunRecord,
 } from '@/lib/agent-api';
 import type { Backend } from '@/lib/backend';
 import type { AgentLayout } from '@/lib/agent-organization';
 import type { BoxGraph } from '@/lib/box-api';
+import type { ChatConversationDto, ChatMessageDto, SidebarLayoutDto } from '@/lib/chat-api';
+import type { RealtimeContextValue, RealtimeEnvelope } from '@/lib/realtime';
 import { agentAppearance } from '@/components/agent-appearance';
 import { fileReferences, fileToken } from '@/lib/file-refs';
 import { research, announcement, channelCSV, demoScenes } from './landing-demo-content';
@@ -50,11 +52,53 @@ export function createLandingDemo() {
     generation = 0;
   let timer: ReturnType<typeof setInterval> | undefined;
   const played = new Set<string>();
-  const streams = new Set<{
-    path: string;
-    controller: ReadableStreamDefaultController<Uint8Array>;
-  }>();
-  const encoder = new TextEncoder();
+  const channelListeners = new Map<string, Set<(event: RealtimeEnvelope) => void>>();
+  const chatUserListeners = new Set<(event: RealtimeEnvelope) => void>();
+  const letaUserListeners = new Set<(event: RealtimeEnvelope) => void>();
+  const previewRealtime: RealtimeContextValue = {
+    status: 'connected',
+    subscribe(channel, _getToken, listener) {
+      let set = channelListeners.get(channel);
+      if (!set) {
+        set = new Set();
+        channelListeners.set(channel, set);
+      }
+      set.add(listener.onEvent);
+      return () => {
+        set?.delete(listener.onEvent);
+        if (set && set.size === 0) channelListeners.delete(channel);
+      };
+    },
+    onChatUserEvent(handler) {
+      chatUserListeners.add(handler);
+      return () => {
+        chatUserListeners.delete(handler);
+      };
+    },
+    onLetaUserEvent(handler) {
+      letaUserListeners.add(handler);
+      return () => {
+        letaUserListeners.delete(handler);
+      };
+    },
+  };
+  function publishChannel(channel: string, type: string, data: Record<string, unknown> = {}) {
+    const set = channelListeners.get(channel);
+    if (!set) return;
+    const envelope: RealtimeEnvelope = { type, data };
+    for (const fn of [...set]) fn(envelope);
+  }
+  function publishChatUser(type: string, data: Record<string, unknown> = {}) {
+    const envelope: RealtimeEnvelope = { type, data };
+    for (const fn of [...chatUserListeners]) fn(envelope);
+  }
+  function publishLetaUser(type: string, data: Record<string, unknown> = {}) {
+    const envelope: RealtimeEnvelope = { type, data };
+    for (const fn of [...letaUserListeners]) fn(envelope);
+  }
+  const convIdFor = (agent: string) => `conv-${agent}`;
+  const agentFromConv = (convId: string) =>
+    convId.startsWith('conv-') ? convId.slice(5) : (convId.split(':').at(-1) ?? selected);
   const profiles: AgentResource[] = [
     [
       'atlas',
@@ -73,11 +117,15 @@ export function createLandingDemo() {
     id,
     name,
     title,
+    handle: id,
     description,
     workspace_id: workspace,
     appearance: agentAppearance(name),
     state: 'active',
     paused: false,
+    running: false,
+    can_manage: true,
+    can_delete: true,
     model_id: id === 'scout' ? 'google/gemini-2.5-pro' : 'openai/gpt-5',
     reasoning_effort: 'medium',
     capabilities: {
@@ -190,6 +238,7 @@ export function createLandingDemo() {
   }
   const chats: Record<string, ChatMessage[]> = {};
   const activity: Record<string, ActivityEntry[]> = {};
+  const runs: Record<string, RunRecord[]> = {};
   const requests: HumanRequest[] = [];
   let channelSelection: string | null = null;
   const instructions: Record<string, string> = {};
@@ -244,19 +293,130 @@ export function createLandingDemo() {
       status: 'idle',
     });
   const steps: { at: number; run: () => void }[] = [];
-  function emit(
-    agent: string,
-    event: LiveEvent = { type: 'CUSTOM', name: 'openlet.preview_changed' },
-  ) {
-    const root = graph.agents.find((node) => node.id === agent)?.leta_id ?? agent;
-    for (const stream of streams)
-      if (stream.path.includes(`/letas/${root}/`) || stream.path.includes('/sidebar/'))
-        stream.controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+  function rootOf(agent: string) {
+    return graph.agents.find((node) => node.id === agent)?.leta_id ?? agent;
+  }
+  function toChatMessageDto(agent: string, item: ChatMessage, seq: number): ChatMessageDto {
+    const refs = item.file_refs ?? fileReferences(item.content);
+    return {
+      id: item.id,
+      conversationId: item.conversation_id ?? convIdFor(agent),
+      seq,
+      senderType: item.role === 'user' ? 'user' : 'agent',
+      senderId: item.role === 'user' ? owner : agent,
+      content: item.content,
+      ...(item.reply_to_id || item.reply?.id
+        ? { replyToId: item.reply_to_id ?? item.reply?.id }
+        : {}),
+      ...(refs.length
+        ? {
+            attachments: refs.map((r) => ({
+              storageId: r.storage_id,
+              nodeId: r.node_id,
+              kind: r.kind ?? 'file',
+              name: r.label,
+            })),
+          }
+        : {}),
+      reactions: (item.reactions ?? []).map((r) => ({
+        actorType: r.actor_kind,
+        actorId: r.actor_id,
+        emoji: r.emoji,
+      })),
+      createdAt: item.created_at,
+    };
+  }
+  function buildDmConversation(agent: string): ChatConversationDto {
+    const p = profiles.find((item) => item.id === agent);
+    const list = chats[agent] ?? [];
+    const lastMsg = list.at(-1);
+    const convId = convIdFor(agent);
+    return {
+      id: convId,
+      workspaceId: workspace,
+      type: 'dm',
+      title: p?.name ?? agent,
+      handle: p?.handle ?? agent,
+      lastSeq: list.length,
+      lastMsgAt: lastMsg?.created_at ?? p?.updated_at ?? date(),
+      unreadCount: p?.unread_count ?? 0,
+      members: [
+        { actorType: 'user', actorId: owner, role: 'member', lastReadSeq: list.length },
+        { actorType: 'agent', actorId: agent, role: 'member', lastReadSeq: list.length },
+      ],
+      ...(lastMsg
+        ? {
+            lastMessagePreview: {
+              id: lastMsg.id,
+              seq: list.length,
+              senderType: lastMsg.role === 'user' ? 'user' : 'agent',
+              senderId: lastMsg.role === 'user' ? owner : agent,
+              snippet: p?.preview ?? lastMsg.content.slice(0, 180),
+              hasAttachments: Boolean(lastMsg.file_refs?.length),
+            },
+          }
+        : {}),
+      createdAt: date(),
+    };
+  }
+  function toSidebarDto(src: AgentLayout): SidebarLayoutDto {
+    return {
+      folders: src.folders.map((f) => ({
+        id: f.id,
+        name: f.name,
+        ...(f.parent_id ? { parentId: f.parent_id } : {}),
+      })),
+      assignments: src.assignments,
+      pins: src.pins,
+      order: src.order,
+      collapsed: src.collapsed,
+    };
+  }
+  function fromSidebarDto(dto?: SidebarLayoutDto): AgentLayout {
+    return {
+      folders: (dto?.folders ?? []).map((f) => ({
+        id: f.id,
+        name: f.name,
+        parent_id: f.parentId ?? null,
+      })),
+      assignments: dto?.assignments ?? {},
+      pins: dto?.pins ?? [],
+      order: dto?.order ?? [],
+      collapsed: dto?.collapsed ?? [],
+    };
+  }
+  function ensureRun(agent: string): RunRecord {
+    const list = (runs[agent] ??= []);
+    const active = list[0];
+    if (active && active.status === 'running') return active;
+    const rec: RunRecord = {
+      id: `scene-${agent}`,
+      agent_id: agent,
+      status: 'running',
+      input_tokens: 18400,
+      cached_input_tokens: 15200,
+      output_tokens: 640,
+      reasoning_tokens: 420,
+      cost_usd: 0.0124,
+      llm_calls: 1,
+      started_at: timestamp(),
+      heartbeat_at: timestamp(),
+      finished_at: null,
+    };
+    list.unshift(rec);
+    return rec;
+  }
+  function emitActivity(agent: string, type: string, data: Record<string, unknown> = {}) {
+    publishChannel(`leta:activity:${rootOf(agent)}`, type, {
+      agent_id: agent,
+      run_id: `scene-${agent}`,
+      ...data,
+    });
   }
   function changed(agent: string) {
     const p = profiles.find((p) => p.id === agent);
     if (p) p.updated_at = new Date().toISOString();
-    emit(agent);
+    emitActivity(agent, 'activity.updated', {});
   }
   function entry(
     agent: string,
@@ -275,7 +435,24 @@ export function createLandingDemo() {
       kind,
       payload,
     });
-    changed(agent);
+    const rec = runs[agent]?.[0];
+    if (rec && rec.status === 'running') {
+      rec.input_tokens += 4200;
+      rec.cached_input_tokens += 3900;
+      rec.output_tokens += 310;
+      rec.llm_calls += kind === 'tool_call' ? 1 : 0;
+      rec.cost_usd = Number((rec.cost_usd + 0.0042).toFixed(4));
+      rec.heartbeat_at = timestamp();
+    }
+    const eventType =
+      kind === 'tool_call'
+        ? 'activity.tool_call'
+        : kind === 'tool_result'
+          ? 'activity.tool_result'
+          : kind === 'inbox_input'
+            ? 'activity.inbox_received'
+            : 'activity.message';
+    emitActivity(agent, eventType, { seq: items.length });
   }
   function message(
     agent: string,
@@ -283,16 +460,21 @@ export function createLandingDemo() {
     content: string,
     id: string = crypto.randomUUID(),
   ) {
+    const list = (chats[agent] ??= []);
+    const seq = list.length + 1;
     const item: ChatMessage = {
       id,
+      seq,
       role,
+      sender_type: role === 'user' ? 'user' : 'agent',
+      sender_id: role === 'user' ? owner : agent,
       content,
       created_at: timestamp(),
-      conversation_id: `${owner}:${agent}`,
+      conversation_id: convIdFor(agent),
       file_refs: fileReferences(content),
       reactions: [],
     };
-    (chats[agent] ??= []).push(item);
+    list.push(item);
     const p = profiles.find((p) => p.id === agent);
     if (p && role === 'assistant') {
       p.latest_reply_id = item.id;
@@ -301,9 +483,17 @@ export function createLandingDemo() {
     if (p)
       p.preview = content
         .replace(/@\[[^\]]*\]\([^)]*\)/g, 'file')
+        .replace(/:file\[([^\]]+)\]\{[^}]+\}/g, '$1')
         .replace(/[#*`]/g, '')
         .replace(/\s+/g, ' ')
         .slice(0, 180);
+    const convId = convIdFor(agent);
+    publishChannel(`chat:conv:${convId}`, 'message.created', {
+      conversation_id: convId,
+      message_id: item.id,
+      seq,
+    });
+    publishChatUser('message.created', { conversation_id: convId, message_id: item.id, seq });
     changed(agent);
     return item;
   }
@@ -315,9 +505,11 @@ export function createLandingDemo() {
     duration = 900,
   ) {
     const id = crypto.randomUUID();
-    const metadata = { openlet: { agentId: agent, runId: `scene-${agent}` } };
-    emit(agent, { type: 'TOOL_CALL_START', toolCallId: id, toolCallName: name, metadata });
-    emit(agent, { type: 'TOOL_CALL_ARGS', toolCallId: id, delta: JSON.stringify(args), metadata });
+    emitActivity(agent, 'stream.tool_args_delta', {
+      tool_call_id: id,
+      name,
+      delta: JSON.stringify(args),
+    });
     entry(agent, 'tool_call', { name, args, tool_call_id: id });
     working(agent, true, name);
     schedule(duration, () => {
@@ -418,22 +610,14 @@ export function createLandingDemo() {
   }
   function narrate(agent: string, text: string, kind: 'reasoning' | 'text' = 'reasoning') {
     const id = crypto.randomUUID();
-    const metadata = { openlet: { agentId: agent, runId: `scene-${agent}` } };
-    const prefix = kind === 'reasoning' ? 'REASONING_MESSAGE' : 'TEXT_MESSAGE';
-    emit(agent, { type: `${prefix}_START`, messageId: id, metadata });
+    const streamType = kind === 'reasoning' ? 'stream.thinking_delta' : 'stream.text_delta';
     for (let offset = 0; offset < text.length; offset += 24) {
       schedule(45 * (offset / 24 + 1), () =>
-        emit(agent, {
-          type: `${prefix}_CONTENT`,
-          messageId: id,
-          delta: text.slice(offset, offset + 24),
-          metadata,
-        }),
+        emitActivity(agent, streamType, { delta: text.slice(offset, offset + 24) }),
       );
     }
     schedule(Math.ceil(text.length / 24) * 45 + 50, () => {
       entry(agent, 'assistant', { [kind]: text }, `scene-${agent}`, id);
-      emit(agent, { type: `${prefix}_END`, messageId: id, metadata });
       if (kind === 'text') {
         message(agent, 'assistant', text);
         working(agent, false);
@@ -475,6 +659,24 @@ export function createLandingDemo() {
       node.tool_name = toolName ?? null;
       node.heartbeat_at = timestamp();
     }
+    const profile = profiles.find((p) => p.id === agent);
+    if (profile) profile.running = value;
+    if (value) {
+      ensureRun(agent);
+      emitActivity(agent, 'run.started', {});
+    } else {
+      const rec = runs[agent]?.[0];
+      if (rec && rec.status === 'running') {
+        rec.status = 'completed';
+        rec.finished_at = timestamp();
+      }
+      emitActivity(agent, 'run.finished', { status: 'completed' });
+    }
+    publishChannel(`chat:conv:${convIdFor(agent)}`, 'typing', {
+      actor_type: 'agent',
+      actor_id: agent,
+      active: value,
+    });
     changed(agent);
   }
   function begin(agent: string, typed?: string) {
@@ -669,6 +871,8 @@ export function createLandingDemo() {
         created_at: timestamp(),
       };
       requests.push(request);
+      emitActivity(agent, 'hitl.updated', { request_id: request.id, status: 'pending' });
+      publishLetaUser('hitl.updated', { request_id: request.id, status: 'pending' });
       changed(agent);
     });
     if (launch) {
@@ -739,6 +943,10 @@ export function createLandingDemo() {
         const input = chats.atlas?.find((m) => m.role === 'user' && m.content === scene.input);
         if (input) {
           input.reactions = [{ actor_kind: 'agent', actor_id: 'atlas', emoji: '👍' }];
+          publishChannel(`chat:conv:${convIdFor('atlas')}`, 'reaction.added', {
+            message_id: input.id,
+            emoji: '👍',
+          });
           changed('atlas');
         }
       });
@@ -822,13 +1030,17 @@ export function createLandingDemo() {
       if (method === 'PATCH') workspaceName = String(body.name);
       return { id: workspace, name: workspaceName, state: 'WORKSPACE_STATE_ACTIVE' };
     }
-    if (path.endsWith('/members'))
+    if (path.endsWith('/members') && !path.includes('/conversations/'))
       return {
         members: [{ user: { id: owner, displayName: 'You' }, role: 'WORKSPACE_ROLE_OWNER' }],
       };
     if (path.endsWith('/invitations') && method === 'GET') return { invitations: [] };
     if (path.endsWith('/access') && path.includes('/letas/'))
-      return page([{ user_id: owner, role: 'owner' }]);
+      return {
+        owners: [{ id: owner, display_name: 'You', handle: 'you' }],
+        operators: [],
+        items: [{ user_id: owner, role: 'owner', display_name: 'You' }],
+      };
     if (path === '/v1/workspaces') {
       if (method !== 'GET')
         throw new ApiError(
@@ -846,6 +1058,14 @@ export function createLandingDemo() {
         ],
       };
     }
+    if (path.endsWith('/chat/sidebar')) {
+      if (method === 'PUT') {
+        layout = fromSidebarDto(body.layout as SidebarLayoutDto | undefined);
+        revision++;
+        publishChatUser('sidebar.updated', { revision });
+      }
+      return { revision, layout: toSidebarDto(layout) };
+    }
     if (path.endsWith('/letas/sidebar')) {
       if (method === 'PUT') {
         layout = body.layout;
@@ -853,13 +1073,175 @@ export function createLandingDemo() {
       }
       return { revision, layout, can_create_agent: false };
     }
-    if (path.endsWith('/letas/models'))
+    if (path.endsWith('/chat:realtimeToken') && method === 'POST') {
+      return { channel: String(body.channel ?? ''), token: 'preview' };
+    }
+    if (path.endsWith('/conversations:dm') && method === 'POST') {
+      const targetId = String(body.target?.id ?? selected);
+      return buildDmConversation(targetId);
+    }
+    if (/\/agents\/([^/]+)\/conversations$/.test(path) && method === 'GET') {
+      const aid = /\/agents\/([^/]+)\/conversations$/.exec(path)![1];
+      const byConv = new Map<string, ChatConversationDto>();
+      if (profiles.some((p) => p.id === aid)) {
+        byConv.set(convIdFor(aid), buildDmConversation(aid));
+      }
+      for (const item of inbox[aid] ?? []) {
+        if (item.conversation_id === `${owner}:${aid}` || item.conversation_id === convIdFor(aid)) {
+          continue;
+        }
+        byConv.set(item.conversation_id, {
+          id: item.conversation_id,
+          workspaceId: workspace,
+          type: 'dm',
+          title: item.source_name ?? item.source_id,
+          lastSeq: 1,
+          lastMsgAt: item.created_at,
+          unreadCount: item.unread_count,
+          members: [
+            {
+              actorType: item.source_kind === 'agent' ? 'agent' : 'user',
+              actorId: item.source_id,
+              role: 'member',
+            },
+            { actorType: 'agent', actorId: aid, role: 'member' },
+          ],
+          lastMessagePreview: {
+            id: item.id,
+            seq: 1,
+            senderType: item.source_kind === 'agent' ? 'agent' : 'user',
+            senderId: item.source_id,
+            snippet: item.content.slice(0, 180),
+          },
+          createdAt: item.created_at,
+        });
+      }
+      return { conversations: [...byConv.values()], nextPageToken: '' };
+    }
+    if (/\/conversations$/.test(path) && method === 'GET') {
       return {
-        models: [
-          { model_id: 'openai/gpt-5', reasoning_efforts: ['low', 'medium', 'high'] },
-          { model_id: 'google/gemini-2.5-pro', reasoning_efforts: ['medium', 'high'] },
-        ],
+        conversations: profiles.map((p) => buildDmConversation(p.id)),
+        nextPageToken: '',
       };
+    }
+    if (/\/conversations\/([^/]+):ensureStorage$/.test(path) && method === 'POST') {
+      const convId = /\/conversations\/([^/]+):ensureStorage$/.exec(path)![1];
+      const targetAgent = agentFromConv(convId);
+      const targetProfile = profiles.find((p) => p.id === targetAgent);
+      const id = `conversation-${targetAgent}`;
+      if (!roots.some((r) => r.id === id)) {
+        roots.push({
+          id,
+          name: `${targetProfile?.name ?? targetAgent} conversation`,
+          rootNodeId: `root-${id}`,
+          capabilities: { write: true },
+        });
+        files.push({
+          id: `root-${id}`,
+          storageId: id,
+          name: 'Conversation',
+          kind: 'NODE_KIND_DIRECTORY',
+          content: '',
+          updatedAt: date(),
+        });
+      }
+      return { storageId: id, rootNodeId: `root-${id}` };
+    }
+    if (/\/conversations\/([^/]+):markRead$/.test(path) && method === 'POST') {
+      const convId = /\/conversations\/([^/]+):markRead$/.exec(path)![1];
+      const targetAgent = agentFromConv(convId);
+      const targetProfile = profiles.find((p) => p.id === targetAgent);
+      if (targetProfile) targetProfile.unread_count = 0;
+      const seq = Number(body.seq ?? chats[targetAgent]?.length ?? 0);
+      publishChannel(`chat:conv:${convId}`, 'read_receipt', { conversation_id: convId, seq });
+      publishChatUser('read_receipt', { conversation_id: convId, seq });
+      return { lastReadSeq: seq };
+    }
+    if (/\/conversations\/([^/]+):typing$/.test(path) && method === 'POST') {
+      return {};
+    }
+    if (/\/conversations\/([^/]+)\/messages\/([^/]+)\/reactions\/([^/]+)$/.test(path)) {
+      const [, convId, messageId, rawEmoji] =
+        /\/conversations\/([^/]+)\/messages\/([^/]+)\/reactions\/([^/]+)$/.exec(path)!;
+      const targetAgent = agentFromConv(convId);
+      const emoji = decodeURIComponent(rawEmoji);
+      const item = chats[targetAgent]?.find((m) => m.id === messageId);
+      if (item) {
+        const rest = (item.reactions ?? []).filter(
+          (r) => !(r.actor_kind === 'user' && r.actor_id === owner && r.emoji === emoji),
+        );
+        item.reactions =
+          method === 'DELETE' ? rest : [...rest, { actor_kind: 'user', actor_id: owner, emoji }];
+      }
+      publishChannel(
+        `chat:conv:${convId}`,
+        method === 'DELETE' ? 'reaction.removed' : 'reaction.added',
+        { message_id: messageId, emoji },
+      );
+      changed(targetAgent);
+      return {};
+    }
+    if (/\/conversations\/([^/]+)\/messages$/.test(path)) {
+      const convId = /\/conversations\/([^/]+)\/messages$/.exec(path)![1];
+      const targetAgent = agentFromConv(convId);
+      if (method === 'POST') {
+        const messageId = String(body.idempotencyKey ?? body.message_id ?? crypto.randomUUID());
+        const existing = chats[targetAgent]?.find((m) => m.id === messageId);
+        if (existing) {
+          const idx = chats[targetAgent]!.indexOf(existing) + 1;
+          return toChatMessageDto(targetAgent, existing, idx);
+        }
+        completeScene();
+        const m = message(targetAgent, 'user', String(body.content ?? ''), messageId);
+        if (body.replyToId) {
+          m.reply_to_id = String(body.replyToId);
+          const parent = chats[targetAgent]?.find((msg) => msg.id === body.replyToId);
+          if (parent) {
+            m.reply = { id: parent.id, role: parent.role, content: parent.content };
+          }
+        }
+        begin(targetAgent, String(body.content ?? ''));
+        play();
+        return toChatMessageDto(targetAgent, m, chats[targetAgent]?.length ?? 1);
+      }
+      if (convId.startsWith('conv-')) {
+        const list = chats[targetAgent] ?? [];
+        const beforeSeq = Number(url.searchParams.get('beforeSeq') ?? 0);
+        const filtered = beforeSeq > 0 ? list.filter((_, i) => i + 1 < beforeSeq) : list;
+        return {
+          messages: filtered.map((m, i) => toChatMessageDto(targetAgent, m, i + 1)),
+          hasBefore: false,
+          hasAfter: false,
+        };
+      }
+      const inboxMatches = Object.values(inbox)
+        .flat()
+        .filter((it) => it.conversation_id === convId);
+      return {
+        messages: inboxMatches.map((it, idx): ChatMessageDto => ({
+          id: it.id,
+          conversationId: convId,
+          seq: idx + 1,
+          senderType: it.source_kind === 'agent' ? 'agent' : 'user',
+          senderId: it.source_id,
+          content: it.content,
+          createdAt: it.created_at,
+        })),
+        hasBefore: false,
+        hasAfter: false,
+      };
+    }
+    if (/\/conversations\/([^/]+)$/.test(path) && method === 'GET') {
+      const convId = /\/conversations\/([^/]+)$/.exec(path)![1];
+      return buildDmConversation(agentFromConv(convId));
+    }
+    if (path.endsWith('/models')) {
+      const models = [
+        { model_id: 'openai/gpt-5', reasoning_efforts: ['low', 'medium', 'high'] },
+        { model_id: 'google/gemini-2.5-pro', reasoning_efforts: ['medium', 'high'] },
+      ];
+      return { items: models, models };
+    }
     if (path.endsWith('/letas/box-view')) {
       const root = url.searchParams.get('leta_id');
       return {
@@ -869,7 +1251,40 @@ export function createLandingDemo() {
         next_cursor: null,
       };
     }
-    if (path.endsWith('/letas')) return page(profiles);
+    if (path.endsWith('/letas')) return { ...page(profiles), can_create_agent: false };
+    if (/\/letas\/[^/]+\/realtime-token$/.test(path) && method === 'POST') {
+      return { channel: `leta:activity:${agent}`, token: 'preview' };
+    }
+    if (/\/letas\/[^/]+\/agents$/.test(path) && method === 'GET') {
+      const rows = graph.agents
+        .filter((node) => node.leta_id === agent)
+        .map((node) => ({
+          id: node.id,
+          leta_id: node.leta_id,
+          parent_agent_id: node.id === agent ? null : agent,
+          depth: node.id === agent ? 0 : 1,
+          name: node.name,
+          title: node.title,
+          handle: node.handle ?? node.id,
+          description: node.description,
+          appearance: node.appearance,
+          model_id: node.model_id,
+          reasoning_effort: node.reasoning_effort ?? 'medium',
+          state: 'active',
+          running: node.status === 'working',
+        }));
+      return { items: rows };
+    }
+    if (/\/letas\/[^/]+\/agents\/([^/]+)\/runs$/.test(path) && method === 'GET') {
+      const aid = /\/agents\/([^/]+)\/runs$/.exec(path)![1];
+      return { items: runs[aid] ?? [] };
+    }
+    if (/\/letas\/[^/]+\/agents\/([^/]+)\/cancel$/.test(path) && method === 'POST') {
+      const aid = /\/agents\/([^/]+)\/cancel$/.exec(path)![1];
+      steps.length = 0;
+      working(aid, false);
+      return { accepted: true };
+    }
     if (path.endsWith('/settings'))
       return {
         system_prompt:
@@ -887,12 +1302,17 @@ export function createLandingDemo() {
     const profile = profiles.find((p) => p.id === agent);
     if (/\/letas\/[^/]+$/.test(path) || /\/letas\/[^/]+\/agents\/[^/]+$/.test(path)) {
       const childId = /\/agents\/([^/]+)$/.exec(path)?.[1];
+      const defaultPrompt =
+        instructions[agent] ??
+        'Work with the team. Use shared files, cite your sources and ask before making decisions.';
       if (childId && childId !== agent) {
         const child = graph.agents.find((node) => node.id === childId);
         if (child)
           return {
             ...profile,
             ...child,
+            custom_instructions: instructions[childId] ?? child.description,
+            running: child.status === 'working',
             capabilities: { can_chat: false, can_view_activity: true, can_edit_settings: false },
           };
       }
@@ -905,9 +1325,13 @@ export function createLandingDemo() {
       }
       if (method === 'PATCH') {
         Object.assign(profile, body);
-        if (typeof body.system_prompt === 'string') instructions[agent] = body.system_prompt;
+        if (typeof body.custom_instructions === 'string') {
+          instructions[agent] = body.custom_instructions;
+        } else if (typeof body.system_prompt === 'string') {
+          instructions[agent] = body.system_prompt;
+        }
       }
-      return profile;
+      return { ...profile, custom_instructions: defaultPrompt };
     }
     if (path.endsWith('/messages/read')) return {};
     if (path.endsWith('/reaction')) {
@@ -988,7 +1412,10 @@ export function createLandingDemo() {
           })),
       );
     if (path.endsWith('/hitl-requests')) {
-      const id = url.searchParams.get('leta_id');
+      const id =
+        url.searchParams.get('leta_id') ??
+        /\/letas\/([^/]+)\/hitl-requests$/.exec(path)?.[1] ??
+        null;
       const items = requests.filter(
         (r) =>
           (!id || r.leta_id === id) &&
@@ -1005,7 +1432,23 @@ export function createLandingDemo() {
         pending_count: items.filter((r) => r.status === 'pending').length,
       };
     }
-    if (path.endsWith('/answer')) {
+    if (/\/hitl-requests\/([^/]+)$/.test(path) && method === 'GET') {
+      const rid = /\/hitl-requests\/([^/]+)$/.exec(path)![1];
+      const req = requests.find((r) => r.id === rid);
+      if (!req) throw new ApiError(404, 'Question not found');
+      return req;
+    }
+    if (/\/hitl-requests\/([^/]+)\/cancel$/.test(path) && method === 'POST') {
+      const rid = /\/hitl-requests\/([^/]+)\/cancel$/.exec(path)![1];
+      const req = requests.find((r) => r.id === rid);
+      if (!req) throw new ApiError(404, 'Question not found');
+      req.status = 'cancelled';
+      req.resolved_at = new Date().toISOString();
+      emitActivity(req.leta_id!, 'hitl.updated', { request_id: req.id, status: 'cancelled' });
+      publishLetaUser('hitl.updated', { request_id: req.id, status: 'cancelled' });
+      return { cancelled: true };
+    }
+    if (path.endsWith('/decide') || path.endsWith('/answer')) {
       const request = requests.find((r) => r.id === path.split('/').at(-2));
       if (!request) throw new ApiError(404, 'Question not found');
       Object.assign(request, {
@@ -1031,12 +1474,18 @@ export function createLandingDemo() {
         'assistant',
         `Confirmed: ${channels}. I’ve updated the ${fileToken({ storage_id: 'team', node_id: 'team-brief', label: 'launch review' })}. ${files.some((file) => file.id === 'team-announcement') ? 'The announcement is ready for Thursday’s review' : 'I’m continuing with the draft and report'}; nothing has been published.`,
       );
+      emitActivity(request.leta_id!, 'hitl.updated', {
+        request_id: request.id,
+        status: request.status,
+      });
+      publishLetaUser('hitl.updated', { request_id: request.id, status: request.status });
       changed(request.leta_id!);
       return request;
     }
     if (path.includes('/activity/')) {
       const activityAgent = /\/agents\/([^/]+)/.exec(path)?.[1] ?? agent;
-      return activity[activityAgent]?.find((e) => e.id === path.split('/').at(-1)) ?? {};
+      const key = path.split('/').at(-1);
+      return activity[activityAgent]?.find((e) => e.id === key || String(e.seq) === key) ?? {};
     }
     if (path.endsWith('/activity')) {
       const activityAgent = /\/agents\/([^/]+)/.exec(path)?.[1] ?? agent;
@@ -1088,32 +1537,39 @@ export function createLandingDemo() {
       const node = files.find((n) => n.id === nodeId && n.storageId === storage);
       if (path.endsWith('/children'))
         return { nodes: files.filter((n) => n.storageId === storage && n.parentId === nodeId) };
-      if (path.endsWith('/files:search'))
+      if (path.endsWith('/files:glob')) {
+        const needle = String(body.pattern ?? '')
+          .replace(/\*/g, '')
+          .toLowerCase();
         return {
-          hits: files.filter(
-            (n) =>
-              n.storageId === storage &&
-              n.name.toLowerCase().includes(String(body.query).toLowerCase()),
-          ),
+          hits: files
+            .filter((n) => n.storageId === storage && n.name.toLowerCase().includes(needle))
+            .map((n) => ({
+              nodeId: n.id,
+              path: n.name,
+              kind: n.kind === 'NODE_KIND_DIRECTORY' ? 'directory' : 'file',
+              sizeBytes: n.file?.sizeBytes ?? '0',
+              updatedAt: n.updatedAt,
+            })),
         };
-      if (path.endsWith('/files:textSearch'))
+      }
+      if (path.endsWith('/files:grep')) {
+        const needle = String(body.pattern ?? '').toLowerCase();
         return {
           hits: files
             .filter(
-              (n) =>
-                n.storageId === storage &&
-                n.file &&
-                n.content.toLowerCase().includes(String(body.query).toLowerCase()),
+              (n) => n.storageId === storage && n.file && n.content.toLowerCase().includes(needle),
             )
             .map((node) => ({
-              node,
+              fileId: node.id,
               path: node.name,
-              snippet: node.content.slice(0, 240),
+              lineText: node.content.slice(0, 240),
               lineNumber: node.content
-                .slice(0, node.content.toLowerCase().indexOf(String(body.query).toLowerCase()))
+                .slice(0, node.content.toLowerCase().indexOf(needle))
                 .split('\n').length,
             })),
         };
+      }
       if (path.endsWith('/files:semanticSearch'))
         throw new ApiError(
           503,
@@ -1161,6 +1617,7 @@ export function createLandingDemo() {
   }
   const backend: Backend = {
     preview: true,
+    previewRealtime,
     enabled: true,
     ready: true,
     actorId: owner,
@@ -1172,26 +1629,7 @@ export function createLandingDemo() {
         const image = files.find((file) => file.id === id);
         if (image?.downloadUrl) return fetch(image.downloadUrl);
       }
-      if (!path.endsWith('/events')) return Response.json(await handle(path, init));
-      let stream: { path: string; controller: ReadableStreamDefaultController<Uint8Array> };
-      return new Response(
-        new ReadableStream<Uint8Array>({
-          start(controller) {
-            stream = { path, controller };
-            streams.add(stream);
-            controller.enqueue(encoder.encode(': preview connected\n\n'));
-            const close = () => {
-              if (streams.delete(stream)) controller.close();
-            };
-            if (init?.signal?.aborted) close();
-            else init?.signal?.addEventListener('abort', close, { once: true });
-          },
-          cancel() {
-            streams.delete(stream);
-          },
-        }),
-        { headers: { 'Content-Type': 'text/event-stream' } },
-      );
+      return Response.json(await handle(path, init));
     },
   };
   message(
@@ -1255,8 +1693,9 @@ export function createLandingDemo() {
     dispose() {
       pause();
       disposed = true;
-      for (const stream of streams) stream.controller.close();
-      streams.clear();
+      channelListeners.clear();
+      chatUserListeners.clear();
+      letaUserListeners.clear();
       steps.length = 0;
     },
   };

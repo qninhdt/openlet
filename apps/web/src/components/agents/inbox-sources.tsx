@@ -45,7 +45,7 @@ export function RequestInspector({ request }: { request: HumanRequest }) {
   const [error, setError] = useState('');
   const detail = useQuery({
     queryKey: [...p.live.scope, 'inbox', 'request', request.id],
-    queryFn: () => p.live.api!<HumanRequest>(`${p.live.path}/hitl-requests/${request.id}`),
+    queryFn: () => p.live.api!<HumanRequest>(`/v1/hitl-requests/${request.id}`),
   });
   const value = detail.data ?? request;
   return (

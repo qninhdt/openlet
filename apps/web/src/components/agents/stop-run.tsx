@@ -27,9 +27,9 @@ export function StopRun({
       onClick={async () => {
         setBusy(true);
         try {
-          await p.live.api!(p.live.path + `/agents/${agent}/runs/${run}/cancel`, {
+          await p.live.api!(p.live.path + `/agents/${agent}/cancel`, {
             method: 'POST',
-            body: '{}',
+            body: JSON.stringify({ run_id: run }),
           });
           await Promise.all([
             p.live.refresh(),

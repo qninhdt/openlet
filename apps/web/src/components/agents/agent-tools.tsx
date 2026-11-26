@@ -26,10 +26,12 @@ import {
   X,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { AgentAvatar } from '@/components/agent-avatar';
 import { FileIcon } from '@/components/storage/file-icon';
+import { chatApi } from '@/lib/chat-api';
 import { cn } from '@/lib/utils';
 import { AccessRequestCard, AskCard } from './agent-hitl';
 import { MessagePreview } from './message-preview';
@@ -207,8 +209,8 @@ const FileWriteTool: ToolCallMessagePartComponent = (props) => {
 };
 const FileEditTool: ToolCallMessagePartComponent = (props) => {
   const result = resultOf(props);
-  const before = String(props.args.old_text ?? '');
-  const after = String(props.args.new_text ?? '');
+  const before = String(props.args.old_string ?? props.args.oldString ?? props.args.old_text ?? '');
+  const after = String(props.args.new_string ?? props.args.newString ?? props.args.new_text ?? '');
   const code = [
     ...before.split('\n').map((line) => `- ${line}`),
     ...after.split('\n').map((line) => `+ ${line}`),
@@ -328,11 +330,73 @@ const ReactionTool: ToolCallMessagePartComponent = (props) => {
 const InboxTool: ToolCallMessagePartComponent = (props) => {
   const p = useAgentPreview();
   const result = resultOf(props);
-  const [recipientKind, recipientHandle] = String(props.args.conversation ?? '').split(':', 2);
-  const send = props.toolName === 'inbox_send';
-  const outgoing = result.messages ?? [];
-  const list = props.toolName === 'inbox_list';
-  const history = props.args.mode === 'history';
+  const rawTo = String(props.args.to ?? props.args.conversation ?? '');
+  const send = props.toolName === 'inbox_send' || props.toolName === 'send_message';
+  const rawChatTarget = rawTo.startsWith('chat:') ? rawTo.slice(5) : '';
+  const needsConvLookup =
+    send &&
+    !result.recipient &&
+    Boolean(rawChatTarget) &&
+    !rawChatTarget.startsWith('user:') &&
+    !rawChatTarget.startsWith('agent:');
+  const agentConversations = useQuery({
+    queryKey: [...p.live.scope, 'agent-conversations'],
+    enabled: needsConvLookup && Boolean(p.live.api),
+    staleTime: 30_000,
+    queryFn: async () => {
+      const resp = await chatApi(p.live.api!, p.workspace.id).listAgentConversations(
+        p.activityAgent.id,
+        100,
+      );
+      return resp.conversations ?? [];
+    },
+  });
+  let recipientKind: 'agent' | 'user' | 'box' = 'user';
+  let recipientAddress: string | undefined;
+  let recipientName: string | undefined;
+  if (result.recipient) {
+    recipientKind = result.recipient.kind;
+    recipientAddress = result.recipient.id;
+    recipientName = result.recipient.name;
+  } else if (rawTo.startsWith('agent:')) {
+    recipientKind = 'agent';
+    recipientAddress = rawTo.slice(6);
+  } else if (rawTo.startsWith('chat:user:')) {
+    recipientKind = 'user';
+    recipientAddress = rawTo.slice(10);
+  } else if (rawTo.startsWith('chat:agent:')) {
+    recipientKind = 'agent';
+    recipientAddress = rawTo.slice(11);
+  } else if (rawChatTarget) {
+    const conv =
+      p.workspace.conversations?.find((c) => c.id === rawChatTarget) ??
+      agentConversations.data?.find((c) => c.id === rawChatTarget);
+    if (conv) {
+      if (conv.type === 'group') {
+        recipientKind = 'box';
+        recipientAddress = conv.id;
+        recipientName = conv.title || conv.handle || 'Group';
+      } else {
+        const peer = conv.members?.find((m) => m.actorId !== p.activityAgent.id);
+        if (peer) {
+          recipientKind = peer.actorType === 'agent' ? 'agent' : 'user';
+          recipientAddress = peer.actorId;
+        }
+      }
+    }
+  } else if (rawTo) {
+    const [kindPart, handlePart] = rawTo.split(':', 2);
+    recipientKind = kindPart === 'agent' ? 'agent' : 'user';
+    recipientAddress = handlePart ?? rawTo;
+  }
+  const outgoing: NonNullable<ToolResult['messages']> =
+    result.messages?.length && result.messages.some((m) => m.content)
+      ? result.messages
+      : typeof props.args.content === 'string' && props.args.content
+        ? [{ content: props.args.content, fileRefs: result.messages?.[0]?.fileRefs ?? [] }]
+        : (result.messages ?? []);
+  const list = props.toolName === 'inbox_list' || props.toolName === 'list_channels';
+  const history = props.args.mode === 'history' || props.toolName === 'read_messages';
   return (
     <ToolStep
       props={props}
@@ -359,9 +423,9 @@ const InboxTool: ToolCallMessagePartComponent = (props) => {
             />
             <ArrowRight aria-label="to" className="size-3.5 shrink-0 text-muted-foreground" />
             <ActivityIdentity
-              kind={result.recipient?.kind ?? (recipientKind === 'agent' ? 'agent' : 'user')}
-              address={result.recipient?.id ?? recipientHandle}
-              name={!result.recipient && !recipientHandle ? 'Recipient' : undefined}
+              kind={recipientKind}
+              address={recipientAddress}
+              name={recipientName ?? (!recipientAddress ? 'Recipient' : undefined)}
               className="font-medium"
             />
           </div>
@@ -890,7 +954,7 @@ const HitlStatusTool: ToolCallMessagePartComponent = (props) => {
 };
 const WebTool: ToolCallMessagePartComponent = (props) => {
   const result = resultOf(props);
-  const search = props.toolName === 'websearch';
+  const search = props.toolName === 'websearch' || props.toolName === 'web_search';
   const label = search
     ? `Web search${props.args.query ? `: ${String(props.args.query)}` : ''}`
     : `Web fetch (${result.webFormat || String(props.args.format ?? 'markdown')})`;
@@ -944,17 +1008,27 @@ const UnknownTool: ToolCallMessagePartComponent = (props) => (
 const renderers = {
   by_name: {
     file_list: FileListTool,
+    glob: FileListTool,
+    grep: SearchTool,
     file_read: FileReadTool,
     file_write: FileWriteTool,
     file_edit: FileEditTool,
     file_semantic_search: SearchTool,
+    semantic_search: SearchTool,
     websearch: WebTool,
     webfetch: WebTool,
+    web_search: WebTool,
+    web_fetch: WebTool,
     execute: ExecuteTool,
+    bash: ExecuteTool,
     inbox_send: InboxTool,
+    send_message: InboxTool,
     inbox_list: InboxTool,
+    list_channels: InboxTool,
     inbox_read: InboxTool,
+    read_messages: InboxTool,
     inbox_react: ReactionTool,
+    react_message: ReactionTool,
     schedule_create: ScheduleTool,
     schedule_get: ScheduleTool,
     schedule_update: ScheduleTool,
@@ -970,6 +1044,7 @@ const renderers = {
     box_delete: BoxTool,
     hitl_ask: AskCard,
     hitl_request: AccessRequestCard,
+    hitl_request_access: AccessRequestCard,
     hitl_get: HitlStatusTool,
     hitl_list: HitlStatusTool,
     hitl_cancel: HitlStatusTool,

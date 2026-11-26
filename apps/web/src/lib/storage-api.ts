@@ -98,18 +98,56 @@ export function storageApi(
     return result;
   }
   async function search(storage: string, query: string): Promise<StorageNode[]> {
-    const result = await post<{ hits?: RemoteNode[] }>(`${base}/${storage}/files:search`, {
+    const trimmed = query.trim();
+    const pattern =
+      trimmed.includes('*') || trimmed.includes('?') || trimmed.includes('[')
+        ? trimmed
+        : `**/*${trimmed}*`;
+    const result = await post<{
+      hits?: {
+        nodeId?: string;
+        path?: string;
+        artifactPath?: string;
+        kind?: string;
+        sizeBytes?: string;
+        updatedAt?: string;
+      }[];
+    }>(`${base}/${storage}/files:glob`, {
       root: locator(storage, rootId(storage)),
-      query,
-      pageSize: 100,
+      pattern,
+      includeHidden: false,
+      limit: 100,
     });
-    return (result.hits ?? []).map(node);
+    const hits = (result.hits ?? []).filter((h) => !h.artifactPath && h.nodeId);
+    const hydrated = await Promise.all(
+      hits.map(async (hit) => {
+        try {
+          return await stat(storage, hit.nodeId!);
+        } catch {
+          const cleanPath = (hit.path ?? '').replace(/^\/+/, '');
+          const name = cleanPath.split('/').pop() || hit.nodeId!;
+          return {
+            id: hit.nodeId!,
+            storage,
+            parent: rootId(storage),
+            name,
+            kind: hit.kind === 'directory' ? ('folder' as const) : ('file' as const),
+            mime: '',
+            size: Number(hit.sizeBytes ?? 0),
+            version: 0,
+            updated: hit.updatedAt ? Date.parse(hit.updatedAt) : Date.now(),
+            read: () => blob(storage, hit.nodeId!),
+          } satisfies StorageNode;
+        }
+      }),
+    );
+    return hydrated;
   }
   async function searchContent(
     storage: string,
     query: string,
     mode: 'text' | 'semantic',
-    pageToken = '',
+    _pageToken = '',
   ): Promise<{
     hits: {
       fileId: string;
@@ -130,34 +168,33 @@ export function storageApi(
           text: string;
           score: number;
         }[];
-      }>(`${base}/${storage}/files:semanticSearch`, { root: { path: '/' }, query });
+      }>(`${base}/${storage}/files:semanticSearch`, { root: { path: '/' }, query, limit: 25 });
       return { hits: page.hits ?? [] };
     }
     const page = await post<{
       hits?: {
-        node: RemoteNode;
-        snippet?: string;
+        fileId: string;
         path?: string;
         artifactPath?: string;
         lineNumber?: number;
+        lineText?: string;
       }[];
-      nextPageToken?: string;
-    }>(`${base}/${storage}/files:textSearch`, {
+      truncated?: boolean;
+    }>(`${base}/${storage}/files:grep`, {
       root: locator(storage, rootId(storage)),
-      query,
-      pageSize: 50,
-      pageToken,
+      pattern: query,
+      literal: true,
+      caseSensitive: false,
+      limit: 100,
     });
     return {
       hits: (page.hits ?? []).map((hit) => ({
-        fileId: hit.node.id,
-        node: node(hit.node),
+        fileId: hit.fileId,
         path: hit.path,
         artifactPath: hit.artifactPath,
-        text: hit.snippet ?? '',
+        text: hit.lineText ?? '',
         lineNumber: hit.lineNumber,
       })),
-      nextPageToken: page.nextPageToken,
     };
   }
   async function descendants(current: StorageNode): Promise<StorageNode[]> {

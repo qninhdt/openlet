@@ -228,7 +228,7 @@ export function AgentChat() {
         document.hasFocus() &&
         lastDelivery
       )
-        void p.markChatRead(lastDelivery.id);
+        void p.markChatRead(lastDelivery.id, lastDelivery.seq);
     };
     read();
     window.addEventListener('focus', read);

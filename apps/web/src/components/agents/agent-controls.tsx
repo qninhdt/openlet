@@ -36,11 +36,19 @@ export function AgentControls({ action }: { action: 'pause' | 'delete' }) {
     try {
       await api!(p.live.path + (action === 'delete' ? '' : '/' + action), {
         method: action === 'delete' ? 'DELETE' : 'POST',
-        body: JSON.stringify({ request_id: command.current.id }),
+        ...(action === 'pause'
+          ? { body: JSON.stringify({ cancel_active: false }) }
+          : action === 'resume'
+            ? { body: '{}' }
+            : {}),
       });
       if (action === 'delete') {
-        client.setQueryData<AgentResource[]>(['agents', actorId, p.workspace.id], (items) =>
-          items?.filter((agent) => agent.id !== p.resource.id),
+        client.setQueryData<{ items: AgentResource[] }>(
+          ['agents', actorId, p.workspace.id],
+          (current) =>
+            current
+              ? { ...current, items: current.items.filter((agent) => agent.id !== p.resource.id) }
+              : current,
         );
         try {
           writeDraft(draftKey(actorId, p.workspace.id, p.resource.id), { text: '', reply: null });

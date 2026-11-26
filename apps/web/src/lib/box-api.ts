@@ -1,11 +1,13 @@
 import { useInfiniteQuery } from '@tanstack/react-query';
 import type { AgentAppearance } from '@/components/agent-appearance';
-import type { Json } from './agent-api';
+import type { AgentResource, Json } from './agent-api';
 import { useBackend } from './backend';
 
 export type BoxAgent = {
   id: string;
   leta_id: string;
+  parent_agent_id?: string | null;
+  depth?: number;
   box_id: string | null;
   name: string;
   handle?: string;
@@ -50,20 +52,116 @@ export type BoxGraph = {
   letas: string[];
   next_cursor?: string | null;
 };
+
+type RawSubagentRow = {
+  id: string;
+  leta_id: string;
+  parent_agent_id: string | null;
+  depth: number;
+  name: string;
+  title: string;
+  handle: string;
+  description: string;
+  appearance?: AgentAppearance;
+  model_id: string | null;
+  reasoning_effort?: string | null;
+  state: string;
+  running?: boolean;
+};
+
 export function useBoxGraph(workspace: string, root: string, enabled: boolean) {
   const backend = useBackend();
   return useInfiniteQuery({
     queryKey: ['box-graph', backend.actorId, workspace, root],
-    enabled: backend.enabled && enabled,
+    enabled: backend.enabled && enabled && Boolean(backend.api),
     initialPageParam: null as string | null,
-    queryFn: ({ pageParam }) => {
-      const params = new URLSearchParams({
-        ...(root ? { leta_id: root } : {}),
-        ...(pageParam ? { cursor: pageParam } : {}),
-      });
-      return backend.api!<BoxGraph>(`/v1/workspaces/${workspace}/letas/box-view?${params}`);
+    queryFn: async () => {
+      const api = backend.api!;
+      let letaIds: string[] = [];
+      if (root) {
+        letaIds = [root];
+      } else {
+        const list = await api<{ items: AgentResource[] }>(`/v1/workspaces/${workspace}/letas`);
+        letaIds = (list.items ?? [])
+          .filter((item) => item.can_manage || item.capabilities?.can_view_activity)
+          .map((item) => item.id);
+      }
+
+      const agents: BoxAgent[] = [];
+      const boxes: AgentBox[] = [];
+      const schedules: BoxSchedule[] = [];
+      const additionalLinks: BoxGraph['additional_links'] = [];
+
+      await Promise.all(
+        letaIds.map(async (lid) => {
+          const [agentsResp, schedResp] = await Promise.all([
+            api<{ items: RawSubagentRow[] }>(
+              `/v1/workspaces/${workspace}/letas/${lid}/agents`,
+            ).catch(() => ({ items: [] })),
+            api<{ items: BoxSchedule[] }>(
+              `/v1/workspaces/${workspace}/letas/${lid}/schedules`,
+            ).catch(() => ({ items: [] })),
+          ]);
+
+          const rows = agentsResp.items ?? [];
+          const subagents = rows.filter((r) => r.parent_agent_id !== null && r.state === 'active');
+          const groupBoxId = subagents.length > 0 ? `subagents:${lid}` : null;
+
+          if (groupBoxId && subagents.length > 0) {
+            boxes.push({
+              id: groupBoxId,
+              leta_id: lid,
+              name: 'Subagents',
+              description: 'Active subagents delegated by this Leta',
+              leader_agent_id: subagents[0].id,
+              state: 'active',
+            });
+          }
+
+          for (const row of rows) {
+            const isSub = row.parent_agent_id !== null;
+            const status: BoxAgent['status'] =
+              row.state !== 'active' ? 'inactive' : row.running ? 'working' : 'idle';
+            agents.push({
+              id: row.id,
+              leta_id: row.leta_id,
+              parent_agent_id: row.parent_agent_id,
+              depth: row.depth,
+              box_id: isSub && row.state === 'active' ? groupBoxId : null,
+              name: row.name,
+              handle: row.handle,
+              title: row.title,
+              appearance: row.appearance,
+              description: row.description,
+              model_id: row.model_id,
+              reasoning_effort: row.reasoning_effort,
+              status,
+            });
+            if (isSub && groupBoxId && row.parent_agent_id && row.parent_agent_id !== lid) {
+              additionalLinks.push({
+                box_id: groupBoxId,
+                agent_low_id: row.parent_agent_id,
+                agent_high_id: row.id,
+              });
+            }
+          }
+
+          for (const sc of schedResp.items ?? []) {
+            schedules.push(sc);
+          }
+        }),
+      );
+
+      return {
+        agents,
+        boxes,
+        schedules,
+        additional_links: additionalLinks,
+        letas: letaIds,
+        next_cursor: null,
+      } satisfies BoxGraph;
     },
-    getNextPageParam: (page) => page.next_cursor ?? null,
-    refetchInterval: enabled ? 5000 : false,
+    getNextPageParam: () => null,
+    refetchInterval: enabled ? 10000 : false,
   });
 }

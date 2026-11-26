@@ -56,6 +56,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { AgentPreviewProvider, useAgentPreview } from '@/components/agents/agent-preview';
 import { AgentSidebar } from '@/components/agents/agent-sidebar';
 import { AgentPanel, AgentPanelHeader, AgentCreateDialog } from '@/components/agents/agent-panels';
+import { HitlInboxBell } from '@/components/agents/hitl-inbox-bell';
 import { BoxSidebar } from '@/components/agents/box-view';
 import { Boxes } from 'lucide-react';
 import { useWorkspaces } from '@/lib/workspace-directory';
@@ -245,6 +246,7 @@ function WorkspaceShell() {
           </IconAction>
         ))}
         <div className="mt-auto flex flex-col items-center gap-2">
+          <HitlInboxBell workspaceId={workspace.id} />
           <WorkspaceUsage workspace={workspace.id} />
           <IconAction
             label="Settings"

@@ -36,7 +36,12 @@ export default defineConfig(({ mode }) => {
       ),
       'import.meta.env.VITE_DEV_AUTH': JSON.stringify(devAuth),
     },
-    server: { proxy: { '/v1': 'http://127.0.0.1:8080' } },
+    server: {
+      proxy: {
+        '/v1': 'http://127.0.0.1:8080',
+        '/connection': { target: 'http://127.0.0.1:8080', ws: true },
+      },
+    },
     plugins: [react(), tailwindcss(), ...(devAuth === '1' ? [devAccountsPlugin(rootDir)] : [])],
     resolve: {
       alias: {

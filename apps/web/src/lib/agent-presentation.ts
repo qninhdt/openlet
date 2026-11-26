@@ -35,7 +35,7 @@ export type ToolResult = {
   timezone?: string;
   upcoming?: string[];
   target?: string;
-  recipient?: { kind: 'user' | 'agent'; id: string };
+  recipient?: { kind: 'user' | 'agent' | 'box'; id: string; name?: string };
   agentStatus?: {
     title: string;
     leader: boolean;
@@ -97,11 +97,19 @@ export function activityToolResult(entry: ActivityEntry): ToolResult | string {
   const { payload } = entry;
   const ui = payload.ui;
   const name = payload.name ?? '';
-  if (name === 'websearch' || name === 'webfetch') {
+  if (
+    name === 'websearch' ||
+    name === 'webfetch' ||
+    name === 'web_search' ||
+    name === 'web_fetch'
+  ) {
     if (payload.status === 'error') return { output: payload.text ?? '' };
     const data = object(ui?.data);
     return {
-      webSources: (name === 'websearch' ? rows(data.results) : [data]).flatMap((source) => {
+      webSources: (name === 'websearch' || name === 'web_search'
+        ? rows(data.results)
+        : [data]
+      ).flatMap((source) => {
         const href = source.final_url ?? source.url;
         if (typeof href !== 'string') return [];
         let url: URL;
@@ -125,9 +133,11 @@ export function activityToolResult(entry: ActivityEntry): ToolResult | string {
     };
   }
   if (!ui && name === 'agent_status' && entry.has_details && payload.status !== 'error') return {};
-  if (!ui && name !== 'execute') return payload.text ?? '';
+  if (!ui && name !== 'execute' && name !== 'bash') return payload.text ?? '';
   const data = object(ui?.data);
-  const items = rows(data.items ?? data.members ?? data.boxes ?? data.letis ?? data.entries);
+  const items = rows(
+    data.items ?? data.members ?? data.boxes ?? data.letis ?? data.entries ?? data.channels,
+  );
   const result: ToolResult = {
     output: payload.text ?? '',
     content: payload.text ?? '',
@@ -156,7 +166,7 @@ export function activityToolResult(entry: ActivityEntry): ToolResult | string {
       kind: item.kind === 'directory' ? 'folder' : 'file',
       file: item.kind === 'directory' && !item.artifacts ? undefined : file(item),
     }));
-  if (name === 'file_semantic_search')
+  if (name === 'file_semantic_search' || name === 'semantic_search')
     result.items = rows(data.groups).flatMap((group) =>
       rows(group.hits).map((hit) => ({
         title: string(hit.path),
@@ -245,14 +255,18 @@ export function activityToolResult(entry: ActivityEntry): ToolResult | string {
         )
       : [];
   }
-  if (name === 'execute') result.exitCode = payload.status === 'error' ? 1 : 0;
-  if (name === 'inbox_send') {
+  if (name === 'execute' || name === 'bash') result.exitCode = payload.status === 'error' ? 1 : 0;
+  if (name === 'inbox_send' || name === 'send_message') {
     const recipient = object(data.recipient);
     if (
-      (recipient.kind === 'user' || recipient.kind === 'agent') &&
+      (recipient.kind === 'user' || recipient.kind === 'agent' || recipient.kind === 'box') &&
       typeof recipient.id === 'string'
     )
-      result.recipient = { kind: recipient.kind, id: recipient.id };
+      result.recipient = {
+        kind: recipient.kind,
+        id: recipient.id,
+        ...(typeof recipient.name === 'string' && recipient.name ? { name: recipient.name } : {}),
+      };
     result.messages = rows(data.messages).map((message) => ({
       content: string(message.content),
       ...(Array.isArray(message.sources) && message.sources.length
@@ -260,15 +274,24 @@ export function activityToolResult(entry: ActivityEntry): ToolResult | string {
         : {}),
       fileRefs: fileRefsOf(message.file_refs),
     }));
+    const atts = fileRefsOf(data.attachments);
+    if (!result.messages.length && atts.length) {
+      result.messages = [{ content: '', fileRefs: atts }];
+    }
   }
-  if (name === 'inbox_react')
+  if (name === 'inbox_react' || name === 'react_message')
     result.reaction = {
       emoji: typeof data.emoji === 'string' ? data.emoji : null,
       content: string(data.content),
     };
-  if (name === 'hitl_ask' || name === 'hitl_request' || name === 'hitl_get')
+  if (
+    name === 'hitl_ask' ||
+    name === 'hitl_request' ||
+    name === 'hitl_request_access' ||
+    name === 'hitl_get'
+  )
     result.target = string(data.recipient_user_id);
-  if (name === 'hitl_ask' || name === 'hitl_request')
+  if (name === 'hitl_ask' || name === 'hitl_request' || name === 'hitl_request_access')
     result.request = {
       title: string(data.title),
       status: string(data.status) as HumanRequest['status'],
