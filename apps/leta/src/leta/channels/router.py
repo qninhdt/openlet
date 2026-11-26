@@ -2,11 +2,10 @@ from __future__ import annotations
 
 from uuid import UUID, uuid5
 
-from langchain_core.tools import ToolException
-
 from .base import (
     CallerContext,
     ChannelAdapter,
+    ChannelError,
     ChannelMessage,
     ChannelSummary,
     OutboundMessage,
@@ -44,7 +43,7 @@ class ChannelRouter:
         """Resolve prefixed or plain destinations (e.g. 'ethan', '<uuid>', 'chat:<id>', 'agent:<handle>')."""
         raw = to.strip()
         if not raw:
-            raise ToolException("Destination 'to' cannot be empty.")
+            raise ChannelError("Destination 'to' cannot be empty.")
 
         # 1. Explicit '<scheme>:<target>' (including convenience 'user:<handle|uuid>')
         if ":" in raw:
@@ -62,11 +61,11 @@ class ChannelRouter:
             adapter = self._adapters.get(scheme)
             if adapter is None:
                 supported = ", ".join(sorted(self._adapters))
-                raise ToolException(
+                raise ChannelError(
                     f"Unsupported channel scheme {scheme!r} (supported: {supported})."
                 )
             if not target:
-                raise ToolException(f"Invalid destination {to!r}: missing target.")
+                raise ChannelError(f"Invalid destination {to!r}: missing target.")
             return adapter, target
 
         # 2. Unprefixed destination (bare UUID or plain handle, with optional stray '@')
@@ -77,7 +76,7 @@ class ChannelRouter:
         # Subagents only talk to agents in their own Leta tree.
         if not caller.is_root:
             if agent_adapter is None:
-                raise ToolException("Internal agent channel is unavailable.")
+                raise ChannelError("Internal agent channel is unavailable.")
             return agent_adapter, cleaned
 
         # Bare UUID -> check own subagent tree first, otherwise treat as chat conversation UUID.
@@ -113,7 +112,7 @@ class ChannelRouter:
 
         if len(candidates) > 1:
             opts = ", ".join(f"'{addr}' ({lbl})" for _, _, addr, lbl in candidates)
-            raise ToolException(
+            raise ChannelError(
                 f"Destination {to!r} matches multiple targets. Specify one of: {opts}"
             )
 
@@ -121,11 +120,11 @@ class ChannelRouter:
         available = await self.list_channels(caller, limit=10)
         if available:
             hints = ", ".join(f"'{c.address}' ({c.title})" for c in available[:8])
-            raise ToolException(
+            raise ChannelError(
                 f"Destination {to!r} not found. Available channels/agents: {hints}. "
                 "Call list_channels or list_members to find more."
             )
-        raise ToolException(
+        raise ChannelError(
             f"Destination {to!r} not found. Call list_channels or list_members to see valid handles."
         )
 

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
+from contextlib import ExitStack
 from time import monotonic
 from typing import cast
 from uuid import UUID, uuid4
@@ -9,8 +11,9 @@ from uuid import UUID, uuid4
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
+from langfuse import propagate_attributes
+from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler
 from openlet_sdk.config import ReasoningEffort
-from temporalio import activity
 
 from ..channels.base import CallerContext
 from ..channels.internal_agent import InternalAgentAdapter
@@ -21,13 +24,19 @@ from ..db import (
     LeaseLostError,
     WriterBusyError,
     acquire_lease,
-    make_checkpointer,
     release_lease,
     renew_lease,
 )
 from ..filesystem.workspace import Filesystem
-from ..orchestration.agent_workflow import RunInput, RunResult
+from ..runs import (
+    RunOutcome,
+    load_agent_runtime_record,
+    start_run,
+    touch_run_heartbeat,
+)
+from .checkpoint import make_checkpointer
 from .graph import build_agent_graph
+from .prompts import prompt_version_hash
 from .state import RuntimeContext
 from .tools.files import build_file_tools
 from .tools.messaging import build_messaging_tools
@@ -87,32 +96,14 @@ def find_orphaned_tool_calls(messages: list[BaseMessage]) -> list[tuple[str, str
     return missing
 
 
-async def _load_agent_row(services: Services, agent_id: UUID) -> dict[str, object]:
-    async with services.db.connection() as conn:
-        row = await (
-            await conn.execute(
-                """
-                SELECT a.id, a.leta_id, a.parent_agent_id, a.depth, a.name, a.title,
-                       a.description, a.handle, a.custom_instructions, a.model_id,
-                       a.reasoning_effort, a.state, l.workspace_id, l.storage_id,
-                       p.handle AS parent_handle
-                FROM agents a
-                JOIN letas l ON l.id = a.leta_id
-                LEFT JOIN agents p ON p.id = a.parent_agent_id
-                WHERE a.id = %s
-                """,
-                (agent_id,),
-            )
-        ).fetchone()
-    if row is None:
-        raise LookupError(f"agent {agent_id} not found")
-    return dict(row)
-
-
-async def run_agent_turn(services: Services, payload: RunInput) -> RunResult:
-    """Layer 2 Temporal Activity wrapper executing the 5-node LangGraph StateGraph."""
-    agent_id = payload.agent_id
-    run_id = payload.run_id
+async def run_agent_turn(
+    services: Services,
+    *,
+    agent_id: UUID,
+    run_id: UUID,
+    heartbeat: Callable[[], None] | None = None,
+) -> RunOutcome:
+    """Layer 2 runner executing the 5-node LangGraph StateGraph."""
     orch_cfg = services.settings.orchestration
     lease_token = uuid4()
 
@@ -130,14 +121,15 @@ async def run_agent_turn(services: Services, payload: RunInput) -> RunResult:
         except WriterBusyError:
             if monotonic() >= lease_deadline:
                 raise
-            try:
-                activity.heartbeat()
-            except Exception:
-                pass
+            if heartbeat is not None:
+                try:
+                    heartbeat()
+                except Exception:
+                    pass
             await asyncio.sleep(1.5)
 
     try:
-        agent_row = await _load_agent_row(services, agent_id)
+        agent_row = await load_agent_runtime_record(services.db, agent_id)
         leta_id = UUID(str(agent_row["leta_id"]))
         workspace_id = UUID(str(agent_row["workspace_id"]))
         storage_id = UUID(str(agent_row["storage_id"]))
@@ -182,27 +174,7 @@ async def run_agent_turn(services: Services, payload: RunInput) -> RunResult:
         tools=tools,
     )
 
-    # Insert/resume run row & emit run.started
-    async with services.db.connection() as conn:
-        trigger_row = await (
-            await conn.execute(
-                """
-                SELECT COALESCE(MIN(seq), 0) AS trigger_seq
-                FROM inbox_items
-                WHERE agent_id = %s AND delivery_state IN ('pending', 'previewed')
-                """,
-                (agent_id,),
-            )
-        ).fetchone()
-        trigger_seq = int(trigger_row["trigger_seq"]) if trigger_row else 0
-        await conn.execute(
-            """
-            INSERT INTO runs(id, agent_id, status, heartbeat_at)
-            VALUES (%s, %s, 'running', now())
-            ON CONFLICT (id) DO UPDATE SET heartbeat_at = now()
-            """,
-            (run_id, agent_id),
-        )
+    trigger_seq = await start_run(services.db, run_id, agent_id)
 
     await services.activity.emit(
         leta_id=leta_id,
@@ -212,17 +184,18 @@ async def run_agent_turn(services: Services, payload: RunInput) -> RunResult:
         data={"agent_handle": handle, "trigger_seq": trigger_seq},
     )
 
-    # Independent Temporal heartbeat task (never blocks on DB or gRPC).
+    # Independent heartbeat task (never blocks on DB or gRPC).
     graph_task: asyncio.Task[dict[str, object]] | None = None
     lease_lost = False
 
-    async def _temporal_heartbeat_loop() -> None:
+    async def _heartbeat_loop() -> None:
         while True:
             await asyncio.sleep(orch_cfg.heartbeat_interval_seconds)
-            try:
-                activity.heartbeat()
-            except Exception:
-                pass
+            if heartbeat is not None:
+                try:
+                    heartbeat()
+                except Exception:
+                    pass
 
     async def _lease_renew_loop() -> None:
         nonlocal lease_lost
@@ -248,11 +221,7 @@ async def run_agent_turn(services: Services, payload: RunInput) -> RunResult:
                     graph_task.cancel()
                 return
             try:
-                async with services.db.connection() as conn:
-                    await conn.execute(
-                        "UPDATE runs SET heartbeat_at = now() WHERE id = %s",
-                        (run_id,),
-                    )
+                await touch_run_heartbeat(services.db, run_id)
             except Exception:
                 pass
             for addr in list(rt.active_typing):
@@ -261,7 +230,7 @@ async def run_agent_turn(services: Services, payload: RunInput) -> RunResult:
                 except Exception:
                     pass
 
-    hb_task = asyncio.create_task(_temporal_heartbeat_loop())
+    hb_task = asyncio.create_task(_heartbeat_loop())
     lease_task = asyncio.create_task(_lease_renew_loop())
     final_cursor = 0
 
@@ -275,6 +244,11 @@ async def run_agent_turn(services: Services, payload: RunInput) -> RunResult:
             "configurable": {"thread_id": str(agent_id)},
             "recursion_limit": 200,
         }
+        lf = services.langfuse
+        if lf is not None:
+            lf_handler = LangfuseCallbackHandler()
+            lf_handler.run_inline = True
+            config["callbacks"] = [lf_handler]
 
         snapshot = await compiled.aget_state(config)
         existing_values = cast(dict[str, object], snapshot.values or {})
@@ -298,16 +272,79 @@ async def run_agent_turn(services: Services, payload: RunInput) -> RunResult:
 
         # Case B: Resume interrupted worker OOM mid-node vs Case C: normal start.
         async def _run_graph() -> dict[str, object]:
-            if snapshot.next and not orphans:
-                out = await compiled.ainvoke(None, config, context=rt)  # pyright: ignore[reportUnknownMemberType]
-            else:
-                initial_state: dict[str, object] = (
-                    {}
-                    if existing_msgs
-                    else {"messages": [], "inbox_cursor": final_cursor}
-                )
-                out = await compiled.ainvoke(initial_state, config, context=rt)  # pyright: ignore[reportUnknownMemberType,reportArgumentType]
-            return cast(dict[str, object], out)
+            with ExitStack() as stack:
+                if lf is not None:
+                    stack.enter_context(
+                        lf.start_as_current_observation(
+                            name="leta.agent_turn",
+                            as_type="agent",
+                            metadata={
+                                "run_id": str(run_id),
+                                "agent_id": str(agent_id),
+                                "handle": handle,
+                                "is_root": is_root,
+                                "model_id": model_spec.model_id,
+                                "prompt_hash": prompt_version_hash(is_root),
+                            },
+                        )
+                    )
+                    stack.enter_context(
+                        propagate_attributes(
+                            session_id=str(leta_id),
+                            user_id=str(workspace_id),
+                            trace_name=f"leta.{'root' if is_root else 'subagent'}.turn",
+                            tags=[
+                                "leta",
+                                "root" if is_root else "subagent",
+                                model_spec.model_id,
+                            ],
+                            metadata={
+                                "agent_id": str(agent_id),
+                                "leta_id": str(leta_id),
+                                "workspace_id": str(workspace_id),
+                                "run_id": str(run_id),
+                                "prompt_hash": prompt_version_hash(is_root),
+                            },
+                        )
+                    )
+                outcome_label = "completed"
+                try:
+                    if snapshot.next and not orphans:
+                        out = await compiled.ainvoke(None, config, context=rt)  # pyright: ignore[reportUnknownMemberType]
+                    else:
+                        initial_state: dict[str, object] = (
+                            {}
+                            if existing_msgs
+                            else {"messages": [], "inbox_cursor": final_cursor}
+                        )
+                        out = await compiled.ainvoke(initial_state, config, context=rt)  # pyright: ignore[reportUnknownMemberType,reportArgumentType]
+                    return cast(dict[str, object], out)
+                except asyncio.CancelledError:
+                    outcome_label = "cancelled"
+                    raise
+                except Exception:
+                    outcome_label = "failed"
+                    raise
+                finally:
+                    if lf is not None:
+                        try:
+                            lf.score_current_trace(
+                                name="run_outcome",
+                                value=outcome_label,
+                                data_type="CATEGORICAL",
+                            )
+                            lf.score_current_trace(
+                                name="llm_calls",
+                                value=float(rt.usage.llm_calls),
+                                data_type="NUMERIC",
+                            )
+                            lf.score_current_trace(
+                                name="cost_usd",
+                                value=round(rt.usage.cost_usd, 6),
+                                data_type="NUMERIC",
+                            )
+                        except Exception:
+                            logger.debug("langfuse score emit failed", exc_info=True)
 
         graph_task = asyncio.create_task(_run_graph())
 
@@ -320,28 +357,11 @@ async def run_agent_turn(services: Services, payload: RunInput) -> RunResult:
 
         final_cursor = int(cast(int, final_state.get("inbox_cursor", final_cursor)))
 
-        # Compute zero-drop return cursors for AgentWorkflow.
-        async with services.db.connection() as conn:
-            cursor_row = await (
-                await conn.execute(
-                    """
-                    SELECT
-                        COALESCE(MAX(seq), 0) AS latest_wake_seq,
-                        MIN(seq) FILTER (WHERE delivery_state IN ('pending', 'previewed')) AS min_undelivered
-                    FROM inbox_items
-                    WHERE agent_id = %s AND NOT silent
-                    """,
-                    (agent_id,),
-                )
-            ).fetchone()
-        latest_wake_seq = int(cursor_row["latest_wake_seq"]) if cursor_row else 0
-        min_undelivered = cursor_row["min_undelivered"] if cursor_row else None
-        if min_undelivered is not None:
-            reported_cursor = min(final_cursor, int(min_undelivered) - 1)
-        else:
-            reported_cursor = max(final_cursor, latest_wake_seq)
+        reported_cursor, latest_wake_seq = await services.inbox.compute_wake_cursors(
+            agent_id, final_cursor
+        )
 
-        return RunResult(
+        return RunOutcome(
             inbox_cursor=reported_cursor,
             latest_wake_seq=latest_wake_seq,
         )

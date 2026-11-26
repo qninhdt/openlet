@@ -24,6 +24,7 @@ from ..hitl.service import (
     list_leta_hitl,
     list_recipient_hitl,
 )
+from ..observability import instrument_fastapi
 from ..orchestration.lifecycle_workflow import (
     LetaCreateInput,
     LetaLifecycleInput,
@@ -159,11 +160,20 @@ async def _ensure_leta_in_workspace(
     return dict(row)
 
 
-def create_app(*, services: Services | None = None, start_grpc: bool = True) -> FastAPI:
+def create_app(
+    *,
+    services: Services | None = None,
+    langfuse: object | None = None,
+    start_grpc: bool = True,
+) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         owned = services is None
-        svc = services if services is not None else await Services.create()
+        svc = (
+            services
+            if services is not None
+            else await Services.create(langfuse=langfuse)  # pyright: ignore[reportArgumentType]
+        )
         app.state.services = svc
         grpc_server = await start_internal_grpc(svc) if start_grpc else None
         try:
@@ -175,6 +185,7 @@ def create_app(*, services: Services | None = None, start_grpc: bool = True) -> 
                 await svc.close()
 
     app = FastAPI(title="Openlet Leta API", lifespan=lifespan)
+    instrument_fastapi(app)
 
     @app.get("/ready")
     @app.get("/health")

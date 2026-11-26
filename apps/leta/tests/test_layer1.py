@@ -169,3 +169,31 @@ def test_handles_appearance_and_yaml_config_loading(
     assert cfg.queues.orchestration == "openlet-leta-orchestration"
     assert cfg.queues.runtime == "openlet-leta-runtime"
     _ = monkeypatch
+
+
+def test_observability_masking_baggage_and_prompt_hash() -> None:
+    from leta.observability import build_rag_baggage, mask_trace_data
+    from leta.runtime.prompts import prompt_version_hash
+
+    payload = {
+        "text": "hello",
+        "nested": [
+            {"url": "data:image/png;base64," + "A" * 500},
+            {"url": "https://example.com/a.png"},
+        ],
+    }
+    masked = cast(dict[str, object], mask_trace_data(data=payload))
+    nested = cast(list[dict[str, str]], masked["nested"])
+    assert masked["text"] == "hello"
+    assert "[omitted" in nested[0]["url"]
+    assert "AAAA" not in nested[0]["url"]
+    assert nested[1]["url"] == "https://example.com/a.png"
+
+    bag = build_rag_baggage(session_id="s1", agent_id="a1", workspace_id="w1")
+    assert "langfuse_session_id=s1" in bag
+    assert "langfuse_metadata_agent_id=%22a1%22" in bag
+    assert "langfuse_metadata_workspace_id=%22w1%22" in bag
+
+    h_root = prompt_version_hash(True)
+    h_sub = prompt_version_hash(False)
+    assert len(h_root) == 12 and len(h_sub) == 12 and h_root != h_sub

@@ -428,9 +428,19 @@ class LetFS(BaseVFS):
 
     @vfs_call(effect=Effect.READ, target=Target.ANY)
     async def semantic_search(
-        self, path: PathSpec, query: str, limit: int = 10
+        self,
+        path: PathSpec,
+        query: str,
+        limit: int = 10,
+        *,
+        baggage: str | None = None,
     ) -> list[dict[str, JSON]]:
         scope_path = "/" + path.vfs_path.lstrip("/") if path.vfs_path else "/"
+        meta = (
+            (*self.actor.metadata, ("baggage", baggage))
+            if baggage
+            else self.actor.metadata
+        )
         resp = await _grpc_call(
             self.stub.SemanticSearch(
                 fs.SemanticSearchRequest(
@@ -440,7 +450,7 @@ class LetFS(BaseVFS):
                     query=query,
                     limit=max(1, min(limit, 25)),
                 ),
-                metadata=self.actor.metadata,
+                metadata=meta,
                 timeout=30,
             )
         )

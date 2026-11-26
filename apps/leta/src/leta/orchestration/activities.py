@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from typing import Literal
 from uuid import UUID
@@ -24,6 +25,7 @@ from ..hitl.service import (
     open_hitl,
     resolve_hitl,
 )
+from ..runs import finish_run
 from ..schedules.service import fire_schedule, temporal_schedule_id
 from ..subagents.service import (
     allocate_unique_root_handle,
@@ -47,43 +49,14 @@ class OrchestrationActivities:
         status: Literal["completed", "failed", "cancelled"],
         error_code: str | None,
     ) -> None:
-        async with self.s.db.connection() as conn:
-            row = await (
-                await conn.execute(
-                    """
-                    UPDATE runs
-                    SET status = %s,
-                        finished_at = coalesce(finished_at, now()),
-                        error_code = coalesce(%s, error_code)
-                    WHERE id = %s AND status = 'running'
-                    RETURNING id, input_tokens, cached_input_tokens, output_tokens,
-                              reasoning_tokens, cost_usd, llm_calls
-                    """,
-                    (status, error_code, run_id),
-                )
-            ).fetchone()
-            agent = await (
-                await conn.execute(
-                    "SELECT leta_id FROM agents WHERE id = %s", (agent_id,)
-                )
-            ).fetchone()
-        if row is not None and agent is not None:
-            await self.s.activity.emit(
-                leta_id=UUID(str(agent["leta_id"])),
-                agent_id=agent_id,
-                run_id=run_id,
-                event_type="run.finished",
-                data={
-                    "status": status,
-                    "error_code": error_code,
-                    "input_tokens": int(row["input_tokens"]),
-                    "cached_input_tokens": int(row["cached_input_tokens"]),
-                    "output_tokens": int(row["output_tokens"]),
-                    "reasoning_tokens": int(row["reasoning_tokens"]),
-                    "cost_usd": float(row["cost_usd"]),
-                    "llm_calls": int(row["llm_calls"]),
-                },
-            )
+        await finish_run(
+            self.s.db,
+            self.s.activity,
+            run_id=run_id,
+            agent_id=agent_id,
+            status=status,
+            error_code=error_code,
+        )
 
     @activity.defn(name="notify_parent_failure")
     async def notify_parent_failure(self, agent_id: UUID, error_message: str) -> None:
@@ -120,7 +93,7 @@ class OrchestrationActivities:
             lock_key = data.workspace_id.int & ((1 << 63) - 1)
             await conn.execute("SELECT pg_advisory_xact_lock(%s)", (lock_key,))
             handle = await allocate_unique_root_handle(
-                self.s.db, data.workspace_id, data.name, data.title
+                conn, data.workspace_id, data.name, data.title
             )
             await conn.execute(
                 """
@@ -212,14 +185,18 @@ class OrchestrationActivities:
                     (leta_id,),
                 )
             ).fetchall()
-        for r in rows:
+
+        async def _del(sid: str) -> None:
             try:
                 await self.s.temporal.get_schedule_handle(
-                    temporal_schedule_id(str(r["id"]))
+                    temporal_schedule_id(sid)
                 ).delete()
             except RPCError as exc:
                 if exc.status != RPCStatusCode.NOT_FOUND:
                     raise
+
+        if rows:
+            await asyncio.gather(*(_del(str(r["id"])) for r in rows))
 
     @activity.defn(name="cleanup_leta_hitl")
     async def cleanup_leta_hitl(self, leta_id: UUID) -> None:
@@ -230,14 +207,17 @@ class OrchestrationActivities:
                     (leta_id,),
                 )
             ).fetchall()
-        for r in rows:
-            rid = UUID(str(r["id"]))
+
+        async def _cancel(rid: UUID) -> None:
             try:
                 handle = self.s.temporal.get_workflow_handle(f"hitl/{rid}")
                 await handle.signal("cancel", leta_id)
             except RPCError as exc:
                 if exc.status != RPCStatusCode.NOT_FOUND:
                     raise
+
+        if rows:
+            await asyncio.gather(*(_cancel(UUID(str(r["id"]))) for r in rows))
 
     @activity.defn(name="cleanup_leta_agents")
     async def cleanup_leta_agents(self, leta_id: UUID) -> None:
@@ -324,4 +304,13 @@ class RuntimeActivities:
     async def run_agent_turn(self, payload: RunInput) -> RunResult:
         from ..runtime.runner import run_agent_turn
 
-        return await run_agent_turn(self.s, payload)
+        outcome = await run_agent_turn(
+            self.s,
+            agent_id=payload.agent_id,
+            run_id=payload.run_id,
+            heartbeat=activity.heartbeat,
+        )
+        return RunResult(
+            inbox_cursor=outcome.inbox_cursor,
+            latest_wake_seq=outcome.latest_wake_seq,
+        )

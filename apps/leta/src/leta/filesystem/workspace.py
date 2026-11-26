@@ -32,7 +32,7 @@ from openlet_api.platform.v1 import internal_pb2 as plat_pb
 
 from ..auth import Actor
 from ..config import Services
-from ..runtime.truncation import (
+from ..truncation import (
     format_tail_truncated,
     spill_filename,
     truncate_tail,

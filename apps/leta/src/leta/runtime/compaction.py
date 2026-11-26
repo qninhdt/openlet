@@ -6,6 +6,7 @@ import logging
 import math
 import time
 from collections.abc import Sequence
+from contextlib import ExitStack
 from dataclasses import dataclass
 from typing import Literal, cast
 
@@ -20,6 +21,10 @@ from langchain_core.messages import (
 from openlet_sdk.config import JSON
 
 from ..config import CompactionConfig, ModelConfig, ModelSpec
+from ..hitl.service import list_leta_hitl
+from ..runs import record_run_usage
+from ..schedules.service import list_schedules
+from ..subagents.service import list_active_subagents_status
 from .prompts import render_system_prompt
 from .retry import ContextOverflowError, compute_output_limit, retry_one_shot
 from .state import (
@@ -423,25 +428,45 @@ async def _invoke_summary_call(
     async def _call() -> AIMessage:
         return await runnable.ainvoke(prompt_messages)
 
-    ai_msg = await retry_one_shot(_call, cfg=rt.services.settings.model.retry)
-    usage = _usage_from_ai_message(ai_msg, rt.model_spec)
-    text = ai_msg.text.strip()
+    with ExitStack() as stack:
+        obs = None
+        if rt.services.langfuse is not None:
+            obs = stack.enter_context(
+                rt.services.langfuse.start_as_current_observation(
+                    name="leta.compaction.summarize",
+                    as_type="generation",
+                    model=rt.model_spec.model_id,
+                    metadata={"include_tools": include_tools, "max_tokens": max_tokens},
+                )
+            )
+        ai_msg = await retry_one_shot(_call, cfg=rt.services.settings.model.retry)
+        usage = _usage_from_ai_message(ai_msg, rt.model_spec)
+        text = ai_msg.text.strip()
 
-    if not _has_template_headings(text):
-        nudge_msgs = [
-            *prompt_messages,
-            AIMessage(content=text or "(empty)"),
-            HumanMessage(content=NUDGE_PROMPT),
-        ]
+        if not _has_template_headings(text):
+            nudge_msgs = [
+                *prompt_messages,
+                AIMessage(content=text or "(empty)"),
+                HumanMessage(content=NUDGE_PROMPT),
+            ]
 
-        async def _nudge() -> AIMessage:
-            return await runnable.ainvoke(nudge_msgs)
+            async def _nudge() -> AIMessage:
+                return await runnable.ainvoke(nudge_msgs)
 
-        ai_msg2 = await retry_one_shot(_nudge, cfg=rt.services.settings.model.retry)
-        usage.merge(_usage_from_ai_message(ai_msg2, rt.model_spec))
-        text2 = ai_msg2.text.strip()
-        if text2:
-            text = text2
+            ai_msg2 = await retry_one_shot(_nudge, cfg=rt.services.settings.model.retry)
+            usage.merge(_usage_from_ai_message(ai_msg2, rt.model_spec))
+            text2 = ai_msg2.text.strip()
+            if text2:
+                text = text2
+
+        if obs is not None:
+            obs.update(
+                usage_details={
+                    "input": usage.input_tokens,
+                    "output": usage.output_tokens,
+                },
+                cost_details={"total": round(usage.cost_usd, 6)},
+            )
 
     return text, usage
 
@@ -578,64 +603,32 @@ async def build_live_db_snapshots(rt: RuntimeContext) -> tuple[str, str, str]:
     sched_lines: list[str] = []
 
     try:
-        async with rt.services.db.connection() as conn:
-            sub_rows = await (
-                await conn.execute(
-                    """
-                    SELECT a.handle, a.name, a.title, a.state,
-                           EXISTS(SELECT 1 FROM runs r WHERE r.agent_id = a.id AND r.status = 'running') AS running
-                    FROM agents a
-                    WHERE a.leta_id = %s AND a.parent_agent_id IS NOT NULL AND a.state = 'active'
-                    ORDER BY running DESC, a.created_at DESC
-                    """,
-                    (rt.leta_id,),
-                )
-            ).fetchall()
-            idle_kept = 0
-            for r in sub_rows:
-                if len(sub_lines) >= comp_cfg.snapshot_max_subagents:
-                    break
-                is_running = bool(r["running"])
-                if not is_running:
-                    if idle_kept >= comp_cfg.snapshot_max_idle_subagents:
-                        continue
-                    idle_kept += 1
-                st_str = "running" if is_running else "idle"
-                sub_lines.append(
-                    f"- {r['name']} ({r['title']}) | handle: agent:{r['handle']} | status: {st_str}"
-                )
-
-            hitl_rows = await (
-                await conn.execute(
-                    """
-                    SELECT id, type, title, status, recipient_user_id
-                    FROM hitl_requests
-                    WHERE leta_id = %s AND status = 'pending'
-                    ORDER BY created_at DESC LIMIT 20
-                    """,
-                    (rt.leta_id,),
-                )
-            ).fetchall()
-            for r in hitl_rows:
-                hitl_lines.append(
-                    f"- {r['id']} | {r['type']} | status: {r['status']} | {r['title']} (user: {r['recipient_user_id']})"
-                )
-
-            sched_rows = await (
-                await conn.execute(
-                    """
-                    SELECT id, title, type, paused, spec
-                    FROM schedules
-                    WHERE leta_id = %s AND deleted_at IS NULL
-                    ORDER BY created_at DESC LIMIT 20
-                    """,
-                    (rt.leta_id,),
-                )
-            ).fetchall()
-            for r in sched_rows:
-                sched_lines.append(
-                    f"- {r['id']} | {r['title']} | {r['type']} | paused={r['paused']}"
-                )
+        sub_rows, hitl_rows, sched_rows = await asyncio.gather(
+            list_active_subagents_status(rt.services.db, rt.leta_id),
+            list_leta_hitl(rt.services.db, rt.leta_id, status="pending", limit=20),
+            list_schedules(rt.services.db, rt.leta_id),
+        )
+        idle_kept = 0
+        for r in sub_rows:
+            if len(sub_lines) >= comp_cfg.snapshot_max_subagents:
+                break
+            is_running = bool(r["running"])
+            if not is_running:
+                if idle_kept >= comp_cfg.snapshot_max_idle_subagents:
+                    continue
+                idle_kept += 1
+            st_str = "running" if is_running else "idle"
+            sub_lines.append(
+                f"- {r['name']} ({r['title']}) | handle: agent:{r['handle']} | status: {st_str}"
+            )
+        for r in hitl_rows:
+            hitl_lines.append(
+                f"- {r['id']} | {r['type']} | status: {r['status']} | {r['title']} (user: {r['recipient_user_id']})"
+            )
+        for r in sched_rows[:20]:
+            sched_lines.append(
+                f"- {r['id']} | {r['title']} | {r['type']} | paused={r['paused']}"
+            )
     except Exception:
         logger.warning("live DB snapshot query failed during compaction", exc_info=True)
 
@@ -683,29 +676,16 @@ async def _persist_run_usage(rt: RuntimeContext, delta: UsageTotals) -> None:
         return
     rt.usage.merge(delta)
     try:
-        async with rt.services.db.connection() as conn:
-            await conn.execute(
-                """
-                UPDATE runs
-                SET input_tokens = input_tokens + %s,
-                    cached_input_tokens = cached_input_tokens + %s,
-                    output_tokens = output_tokens + %s,
-                    reasoning_tokens = reasoning_tokens + %s,
-                    cost_usd = cost_usd + %s,
-                    llm_calls = llm_calls + %s,
-                    heartbeat_at = now()
-                WHERE id = %s
-                """,
-                (
-                    delta.input_tokens,
-                    delta.cached_input_tokens,
-                    delta.output_tokens,
-                    delta.reasoning_tokens,
-                    delta.cost_usd,
-                    delta.llm_calls,
-                    rt.run_id,
-                ),
-            )
+        await record_run_usage(
+            rt.services.db,
+            rt.run_id,
+            input_tokens=delta.input_tokens,
+            cached_input_tokens=delta.cached_input_tokens,
+            output_tokens=delta.output_tokens,
+            reasoning_tokens=delta.reasoning_tokens,
+            cost_usd=delta.cost_usd,
+            llm_calls=delta.llm_calls,
+        )
     except Exception:
         logger.warning("failed to persist compaction usage to runs", exc_info=True)
 

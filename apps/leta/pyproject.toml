@@ -4,11 +4,10 @@ version = "0.1.0"
 requires-python = ">=3.14,<3.15"
 dependencies = [
   "openlet-sdk", "fastapi", "uvicorn", "pydantic",
-  "psycopg[binary,pool]", "redis", "authzed", "httpx", "grpcio", "pillow", "google-crc32c", "temporalio", "tinyfish==0.11.0",
+  "psycopg[binary,pool]", "authzed", "httpx", "grpcio", "pillow", "google-crc32c", "temporalio", "tinyfish==0.11.0",
   "langchain==1.5.0", "langchain-litellm==0.11.2", "langgraph-checkpoint-postgres==3.2.0",
-  "langfuse==5.2.0", "mirage-ai==0.0.8", "pydantic-monty", "jinja2",
+  "langfuse==5.2.0", "mirage-ai==0.0.8", "pydantic-monty", "jinja2", "html-to-markdown>=3.23.0",
   "opentelemetry-instrumentation-fastapi", "opentelemetry-instrumentation-psycopg",
-  "opentelemetry-instrumentation-redis", "regex>=2026.11.9",
 ]
 
 [build-system]

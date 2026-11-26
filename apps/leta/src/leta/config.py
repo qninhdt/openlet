@@ -1,20 +1,21 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
 from pathlib import Path
 from time import monotonic
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 import grpc.aio
 import httpx
-import redis.asyncio as aioredis
 from openlet_sdk.config import Config, ReasoningEffort, load, secret
-from pydantic import BaseModel, Field
+from openlet_sdk.rpc import channel as rpc_channel
+from pydantic import BaseModel, ConfigDict, Field
 from temporalio.client import Client as TemporalClient
+from temporalio.contrib.opentelemetry import TracingInterceptor
 from temporalio.contrib.pydantic import pydantic_data_converter
 
 if TYPE_CHECKING:
+    from langfuse import Langfuse
     from openlet_api.chat.v1.chat_pb2_grpc import ChatServiceAsyncStub
     from openlet_api.chat.v1.internal_pb2_grpc import ChatInternalServiceAsyncStub
     from openlet_api.letfs.v1.internal_pb2_grpc import LetFSInternalServiceAsyncStub
@@ -30,8 +31,11 @@ if TYPE_CHECKING:
     from .inbox import InboxGateway
 
 
-@dataclass(frozen=True, slots=True)
-class ToolFlags:
+class _FrozenConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+
+class ToolFlags(_FrozenConfig):
     hitl: bool = True
     subagents: bool = True
     schedule: bool = True
@@ -42,8 +46,7 @@ class ToolFlags:
     react: bool = True
 
 
-@dataclass(frozen=True, slots=True)
-class ModelRetryConfig:
+class ModelRetryConfig(_FrozenConfig):
     max_attempts: int = 10
     initial_interval_seconds: float = 2.0
     max_interval_seconds: float = 10.0
@@ -54,8 +57,7 @@ class ModelRetryConfig:
     one_shot_retries: int = 3
 
 
-@dataclass(frozen=True, slots=True)
-class ModelConfig:
+class ModelConfig(_FrozenConfig):
     output_token_fallback: int = 32000
     output_token_max: int = 256000
     output_token_min: int = 1024
@@ -66,11 +68,10 @@ class ModelConfig:
     chars_per_token: int = 4
     image_token_estimate: int = 1500
     pdf_token_estimate: int = 2000
-    retry: ModelRetryConfig = field(default_factory=ModelRetryConfig)
+    retry: ModelRetryConfig = Field(default_factory=ModelRetryConfig)
 
 
-@dataclass(frozen=True, slots=True)
-class CompactionBackgroundConfig:
+class CompactionBackgroundConfig(_FrozenConfig):
     enabled: bool = True
     precompute_lead_tokens: int = 60000
     tail_share: float = 0.4
@@ -79,8 +80,7 @@ class CompactionBackgroundConfig:
     max_failures: int = 2
 
 
-@dataclass(frozen=True, slots=True)
-class CompactionConfig:
+class CompactionConfig(_FrozenConfig):
     auto: bool = True
     reserve_share: float = 0.15
     reserve_min_tokens: int = 16000
@@ -92,13 +92,12 @@ class CompactionConfig:
     shrink_steps: tuple[float, ...] = (0.85, 0.7, 0.5, 0.35)
     snapshot_max_subagents: int = 20
     snapshot_max_idle_subagents: int = 10
-    background: CompactionBackgroundConfig = field(
+    background: CompactionBackgroundConfig = Field(
         default_factory=CompactionBackgroundConfig
     )
 
 
-@dataclass(frozen=True, slots=True)
-class ToolOutputConfig:
+class ToolOutputConfig(_FrozenConfig):
     max_lines: int = 2000
     max_bytes: int = 51200
     max_line_length: int = 2000
@@ -108,8 +107,7 @@ class ToolOutputConfig:
     input_excerpt_limit: int = 2048
 
 
-@dataclass(frozen=True, slots=True)
-class FileToolsConfig:
+class FileToolsConfig(_FrozenConfig):
     read_tail_lines: int = 100
     edit_miss_hint_lines: int = 12
     edit_miss_hint_line_length: int = 200
@@ -117,8 +115,7 @@ class FileToolsConfig:
     search_timeout_seconds: int = 30
 
 
-@dataclass(frozen=True, slots=True)
-class BashConfig:
+class BashConfig(_FrozenConfig):
     default_timeout_seconds: int = 120
     max_timeout_seconds: int = 600
     python_max_memory: str = "256MB"
@@ -126,8 +123,7 @@ class BashConfig:
     shared_mount_read_policy: Literal["fresh", "bounded"] = "fresh"
 
 
-@dataclass(frozen=True, slots=True)
-class MediaConfig:
+class MediaConfig(_FrozenConfig):
     max_ingest_bytes: int = 20971520
     image_auto_resize: bool = True
     image_max_width: int = 2000
@@ -140,8 +136,7 @@ class MediaConfig:
     history_image_bytes_target: int = 15728640
 
 
-@dataclass(frozen=True, slots=True)
-class WebConfig:
+class WebConfig(_FrozenConfig):
     fetch_mode: Literal["direct", "tinyfish", "direct_with_fallback"] = (
         "direct_with_fallback"
     )
@@ -152,22 +147,19 @@ class WebConfig:
     search_max_results: int = 5
 
 
-@dataclass(frozen=True, slots=True)
-class SubagentsConfig:
+class SubagentsConfig(_FrozenConfig):
     max_depth: int = 3
     max_active_per_leta: int = 16
 
 
-@dataclass(frozen=True, slots=True)
-class MessagingConfig:
+class MessagingConfig(_FrozenConfig):
     max_attachments: int = 20
     max_sources: int = 64
     active_channel_ttl_seconds: int = 300
     notification_preview_chars: int = 120
 
 
-@dataclass(frozen=True, slots=True)
-class OrchestrationConfig:
+class OrchestrationConfig(_FrozenConfig):
     run_timeout_seconds: int = 7200
     heartbeat_interval_seconds: int = 3
     heartbeat_timeout_seconds: int = 60
@@ -177,245 +169,39 @@ class OrchestrationConfig:
     max_concurrent_runtime_activities: int = 32
 
 
-@dataclass(frozen=True, slots=True)
-class QueueNames:
+class QueueNames(_FrozenConfig):
     orchestration: str = "openlet-leta-orchestration"
     runtime: str = "openlet-leta-runtime"
 
 
-@dataclass(frozen=True, slots=True)
-class LetaRuntimeConfig:
+class LetaRuntimeConfig(_FrozenConfig):
     http_listen: str = "0.0.0.0:8000"
     grpc_listen: str = "0.0.0.0:9091"
-    tools: ToolFlags = field(default_factory=ToolFlags)
-    model: ModelConfig = field(default_factory=ModelConfig)
-    compaction: CompactionConfig = field(default_factory=CompactionConfig)
-    tool_output: ToolOutputConfig = field(default_factory=ToolOutputConfig)
-    file_tools: FileToolsConfig = field(default_factory=FileToolsConfig)
-    bash: BashConfig = field(default_factory=BashConfig)
-    media: MediaConfig = field(default_factory=MediaConfig)
-    web: WebConfig = field(default_factory=WebConfig)
-    subagents: SubagentsConfig = field(default_factory=SubagentsConfig)
-    messaging: MessagingConfig = field(default_factory=MessagingConfig)
-    orchestration: OrchestrationConfig = field(default_factory=OrchestrationConfig)
-    queues: QueueNames = field(default_factory=QueueNames)
+    tools: ToolFlags = Field(default_factory=ToolFlags)
+    model: ModelConfig = Field(default_factory=ModelConfig)
+    compaction: CompactionConfig = Field(default_factory=CompactionConfig)
+    tool_output: ToolOutputConfig = Field(default_factory=ToolOutputConfig)
+    file_tools: FileToolsConfig = Field(default_factory=FileToolsConfig)
+    bash: BashConfig = Field(default_factory=BashConfig)
+    media: MediaConfig = Field(default_factory=MediaConfig)
+    web: WebConfig = Field(default_factory=WebConfig)
+    subagents: SubagentsConfig = Field(default_factory=SubagentsConfig)
+    messaging: MessagingConfig = Field(default_factory=MessagingConfig)
+    orchestration: OrchestrationConfig = Field(default_factory=OrchestrationConfig)
+    queues: QueueNames = Field(default_factory=QueueNames)
     web_search_api_key: str | None = None
 
     @classmethod
     def from_openlet_config(cls, cfg: Config) -> LetaRuntimeConfig:
-        leta = cfg["services"]["leta"]
+        leta = dict(cast(dict[str, object], cfg["services"]["leta"]))
         queues = cfg["dependencies"]["temporal"]["queues"]
-
-        t = leta.get("tools", {})
-        tools = ToolFlags(
-            hitl=bool(t.get("hitl", True)),
-            subagents=bool(t.get("subagents", True)),
-            schedule=bool(t.get("schedule", True)),
-            web=bool(t.get("web", True)),
-            bash=bool(t.get("bash", True)),
-            semantic_search=bool(t.get("semantic_search", True)),
-            todo=bool(t.get("todo", False)),
-            react=bool(t.get("react", True)),
-        )
-
-        m = leta.get("model")
-        if m is not None:
-            r = m["retry"]
-            model = ModelConfig(
-                output_token_fallback=int(m["output_token_fallback"]),
-                output_token_max=int(m["output_token_max"]),
-                output_token_min=int(m["output_token_min"]),
-                estimate_error_margin=float(m["estimate_error_margin"]),
-                window_headroom=float(m["window_headroom"]),
-                max_length_continuations=int(m["max_length_continuations"]),
-                max_steps_per_run=m["max_steps_per_run"],
-                chars_per_token=int(m["chars_per_token"]),
-                image_token_estimate=int(m["image_token_estimate"]),
-                pdf_token_estimate=int(m["pdf_token_estimate"]),
-                retry=ModelRetryConfig(
-                    max_attempts=int(r["max_attempts"]),
-                    initial_interval_seconds=float(r["initial_interval_seconds"]),
-                    max_interval_seconds=float(r["max_interval_seconds"]),
-                    retry_after_max_seconds=float(r["retry_after_max_seconds"]),
-                    timeout_max_retries=int(r["timeout_max_retries"]),
-                    unreachable_gap_max_seconds=float(r["unreachable_gap_max_seconds"]),
-                    unreachable_window_seconds=float(r["unreachable_window_seconds"]),
-                    one_shot_retries=int(r["one_shot_retries"]),
-                ),
-            )
-        else:
-            model = ModelConfig()
-
-        comp = leta.get("compaction")
-        if comp is not None:
-            bg = comp["background"]
-            compaction = CompactionConfig(
-                auto=bool(comp["auto"]),
-                reserve_share=float(comp["reserve_share"]),
-                reserve_min_tokens=int(comp["reserve_min_tokens"]),
-                unknown_window_tokens=int(comp["unknown_window_tokens"]),
-                summary_output_floor=int(comp["summary_output_floor"]),
-                keep_recent_tokens=int(comp["keep_recent_tokens"]),
-                recent_tool_output_max_chars=int(comp["recent_tool_output_max_chars"]),
-                transcript_clip_chars=int(comp["transcript_clip_chars"]),
-                shrink_steps=tuple(float(x) for x in comp["shrink_steps"]),
-                snapshot_max_subagents=int(comp["snapshot_max_subagents"]),
-                snapshot_max_idle_subagents=int(comp["snapshot_max_idle_subagents"]),
-                background=CompactionBackgroundConfig(
-                    enabled=bool(bg["enabled"]),
-                    precompute_lead_tokens=int(bg["precompute_lead_tokens"]),
-                    tail_share=float(bg["tail_share"]),
-                    cache_lifetime_seconds=int(bg["cache_lifetime_seconds"]),
-                    cache_margin_seconds=int(bg["cache_margin_seconds"]),
-                    max_failures=int(bg["max_failures"]),
-                ),
-            )
-        else:
-            compaction = CompactionConfig()
-
-        to = leta.get("tool_output")
-        tool_output = (
-            ToolOutputConfig(
-                max_lines=int(to["max_lines"]),
-                max_bytes=int(to["max_bytes"]),
-                max_line_length=int(to["max_line_length"]),
-                spill_dir=str(to["spill_dir"]),
-                retention_days=int(to["retention_days"]),
-                input_repair_max_depth=int(to["input_repair_max_depth"]),
-                input_excerpt_limit=int(to["input_excerpt_limit"]),
-            )
-            if to is not None
-            else ToolOutputConfig()
-        )
-
-        ft = leta.get("file_tools")
-        file_tools = (
-            FileToolsConfig(
-                read_tail_lines=int(ft["read_tail_lines"]),
-                edit_miss_hint_lines=int(ft["edit_miss_hint_lines"]),
-                edit_miss_hint_line_length=int(ft["edit_miss_hint_line_length"]),
-                search_default_limit=int(ft["search_default_limit"]),
-                search_timeout_seconds=int(ft["search_timeout_seconds"]),
-            )
-            if ft is not None
-            else FileToolsConfig()
-        )
-
-        bs = leta.get("bash")
-        if bs is not None:
-            raw_net = bs["network"]
-            net_val: Literal["public_only", False] = (
-                "public_only" if raw_net == "public_only" else False
-            )
-            bash = BashConfig(
-                default_timeout_seconds=int(bs["default_timeout_seconds"]),
-                max_timeout_seconds=int(bs["max_timeout_seconds"]),
-                python_max_memory=str(bs["python_max_memory"]),
-                network=net_val,
-                shared_mount_read_policy=bs["shared_mount_read_policy"],
-            )
-        else:
-            bash = BashConfig()
-
-        md = leta.get("media")
-        media = (
-            MediaConfig(
-                max_ingest_bytes=int(md["max_ingest_bytes"]),
-                image_auto_resize=bool(md["image_auto_resize"]),
-                image_max_width=int(md["image_max_width"]),
-                image_max_height=int(md["image_max_height"]),
-                image_max_base64_bytes=int(md["image_max_base64_bytes"]),
-                png_passthrough_max_base64_bytes=int(
-                    md["png_passthrough_max_base64_bytes"]
-                ),
-                small_png_max_pixels=int(md["small_png_max_pixels"]),
-                jpeg_qualities=tuple(int(q) for q in md["jpeg_qualities"]),
-                history_image_bytes_trigger=int(md["history_image_bytes_trigger"]),
-                history_image_bytes_target=int(md["history_image_bytes_target"]),
-            )
-            if md is not None
-            else MediaConfig()
-        )
-
-        wb = leta.get("web")
-        web = (
-            WebConfig(
-                fetch_mode=wb["fetch_mode"],
-                fetch_default_timeout_seconds=int(wb["fetch_default_timeout_seconds"]),
-                fetch_max_timeout_seconds=int(wb["fetch_max_timeout_seconds"]),
-                fetch_max_redirects=int(wb["fetch_max_redirects"]),
-                fetch_max_response_bytes=int(wb["fetch_max_response_bytes"]),
-                search_max_results=int(wb["search_max_results"]),
-            )
-            if wb is not None
-            else WebConfig()
-        )
-
-        sa = leta.get("subagents")
-        subagents = (
-            SubagentsConfig(
-                max_depth=int(sa["max_depth"]),
-                max_active_per_leta=int(sa["max_active_per_leta"]),
-            )
-            if sa is not None
-            else SubagentsConfig()
-        )
-
-        ms = leta.get("messaging")
-        messaging = (
-            MessagingConfig(
-                max_attachments=int(ms["max_attachments"]),
-                max_sources=int(ms["max_sources"]),
-                active_channel_ttl_seconds=int(ms["active_channel_ttl_seconds"]),
-                notification_preview_chars=int(ms["notification_preview_chars"]),
-            )
-            if ms is not None
-            else MessagingConfig()
-        )
-
-        orch = leta.get("orchestration")
-        orchestration = (
-            OrchestrationConfig(
-                run_timeout_seconds=int(orch["run_timeout_seconds"]),
-                heartbeat_interval_seconds=int(orch["heartbeat_interval_seconds"]),
-                heartbeat_timeout_seconds=int(orch["heartbeat_timeout_seconds"]),
-                lease_ttl_seconds=int(orch["lease_ttl_seconds"]),
-                lease_renew_interval_seconds=int(orch["lease_renew_interval_seconds"]),
-                max_concurrent_orchestration_activities=int(
-                    orch["max_concurrent_orchestration_activities"]
-                ),
-                max_concurrent_runtime_activities=int(
-                    orch["max_concurrent_runtime_activities"]
-                ),
-            )
-            if orch is not None
-            else OrchestrationConfig()
-        )
-
-        ws_key: str | None = None
-        if ws_cfg := leta.get("web_search"):
-            ws_key = secret(ws_cfg["api_key"])
-
-        return cls(
-            http_listen=leta["http_listen"],
-            grpc_listen=leta.get("grpc_listen", "0.0.0.0:9091"),
-            tools=tools,
-            model=model,
-            compaction=compaction,
-            tool_output=tool_output,
-            file_tools=file_tools,
-            bash=bash,
-            media=media,
-            web=web,
-            subagents=subagents,
-            messaging=messaging,
-            orchestration=orchestration,
-            queues=QueueNames(
-                orchestration=queues["leta_orchestration"],
-                runtime=queues["leta_runtime"],
-            ),
-            web_search_api_key=ws_key,
-        )
+        ws_cfg = cfg["services"]["leta"].get("web_search")
+        leta["queues"] = {
+            "orchestration": queues["leta_orchestration"],
+            "runtime": queues["leta_runtime"],
+        }
+        leta["web_search_api_key"] = secret(ws_cfg["api_key"]) if ws_cfg else None
+        return cls.model_validate(leta)
 
 
 class ModelInfoPayload(BaseModel):
@@ -546,7 +332,6 @@ class Services:
         letfs_internal: LetFSInternalServiceAsyncStub,
         chat: ChatServiceAsyncStub,
         chat_internal: ChatInternalServiceAsyncStub,
-        redis_client: aioredis.Redis,
         gateway_http: httpx.AsyncClient,
         models: ModelCatalog,
         centrifugo: CentrifugoPublisher,
@@ -555,6 +340,7 @@ class Services:
         activity: ActivityEmitter,
         inbox: InboxGateway,
         channels: list[grpc.aio.Channel],
+        langfuse: Langfuse | None = None,
     ) -> None:
         self.config = config
         self.settings = settings
@@ -567,7 +353,6 @@ class Services:
         self.letfs_internal = letfs_internal
         self.chat = chat
         self.chat_internal = chat_internal
-        self.redis = redis_client
         self.gateway_http = gateway_http
         self.models = models
         self.centrifugo = centrifugo
@@ -575,6 +360,7 @@ class Services:
         self.centrifugo_ttl = centrifugo_ttl
         self.activity = activity
         self.inbox = inbox
+        self.langfuse = langfuse
         self._channels = channels
 
     @property
@@ -582,17 +368,15 @@ class Services:
         return self.settings.queues
 
     @classmethod
-    async def create(cls, config: Config | None = None) -> Services:
+    async def create(
+        cls, config: Config | None = None, *, langfuse: Langfuse | None = None
+    ) -> Services:
         from openlet_api.chat.v1 import chat_pb2_grpc
         from openlet_api.chat.v1 import internal_pb2_grpc as chat_int
         from openlet_api.letfs.v1 import internal_pb2_grpc as letfs_int
         from openlet_api.letfs.v1 import letfs_pb2_grpc
-        from openlet_api.platform.v1 import (
-            internal_pb2_grpc as plat_int,
-        )
-        from openlet_api.platform.v1 import (
-            platform_pb2_grpc,
-        )
+        from openlet_api.platform.v1 import internal_pb2_grpc as plat_int
+        from openlet_api.platform.v1 import platform_pb2_grpc
 
         from .activity import ActivityEmitter, CentrifugoPublisher
         from .auth import Authorization
@@ -609,35 +393,22 @@ class Services:
             namespace=t_cfg["namespace"],
             tls=t_cfg["tls"],
             data_converter=pydantic_data_converter,
+            interceptors=[TracingInterceptor()],
         )
 
         auth = Authorization.from_config(cfg)
 
         max_recv = cfg["grpc"]["max_receive_bytes"]
-        opts = [
-            ("grpc.max_receive_message_length", max_recv),
-            ("grpc.max_send_message_length", max_recv),
-        ]
-        plat_ch = grpc.aio.insecure_channel(
-            cfg["services"]["platform"]["grpc_target"], options=opts
+        plat_ch = rpc_channel(
+            cfg["services"]["platform"]["grpc_target"], max_bytes=max_recv
         )
-        letfs_ch = grpc.aio.insecure_channel(
-            cfg["services"]["letfs"]["grpc_target"], options=opts
+        letfs_ch = rpc_channel(
+            cfg["services"]["letfs"]["grpc_target"], max_bytes=max_recv
         )
         chat_target = cfg["services"].get("chat", {"grpc_target": "chat:9090"})[
             "grpc_target"
         ]
-        chat_ch = grpc.aio.insecure_channel(chat_target, options=opts)
-
-        r_cfg = cfg["dependencies"]["redis"]
-        r_host, r_port = r_cfg["address"].rsplit(":", 1)
-        redis_client: aioredis.Redis = aioredis.Redis(
-            host=r_host,
-            port=int(r_port),
-            db=int(r_cfg["database"]),
-            password=secret(r_cfg["password"]),
-            decode_responses=False,
-        )
+        chat_ch = rpc_channel(chat_target, max_bytes=max_recv)
 
         gw = cfg["models"]["gateway"]
         gateway_http = httpx.AsyncClient(
@@ -688,7 +459,6 @@ class Services:
             letfs_internal=letfs_int.LetFSInternalServiceStub(letfs_ch),
             chat=chat_pb2_grpc.ChatServiceStub(chat_ch),
             chat_internal=chat_int.ChatInternalServiceStub(chat_ch),
-            redis_client=redis_client,
             gateway_http=gateway_http,
             models=models,
             centrifugo=centrifugo,
@@ -697,12 +467,12 @@ class Services:
             activity=activity,
             inbox=inbox,
             channels=[plat_ch, letfs_ch, chat_ch],
+            langfuse=langfuse,
         )
 
     async def close(self) -> None:
         await self.centrifugo.close()
         await self.gateway_http.aclose()
-        await self.redis.aclose()
         for ch in self._channels:
             await ch.close()
         await self.auth.close()

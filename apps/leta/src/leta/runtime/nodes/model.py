@@ -16,6 +16,7 @@ from langgraph.runtime import Runtime
 from openlet_sdk.config import JSON
 
 from ...activity import StreamCoalescer
+from ...runs import record_run_usage
 from ..compaction import (
     estimate_prompt_tokens,
     maybe_start_background_compaction,
@@ -102,29 +103,16 @@ async def _record_step_usage(rt: RuntimeContext, msg: AIMessage) -> None:
 
     rt.usage.merge(delta)
     try:
-        async with rt.services.db.connection() as conn:
-            await conn.execute(
-                """
-                UPDATE runs
-                SET input_tokens = input_tokens + %s,
-                    cached_input_tokens = cached_input_tokens + %s,
-                    output_tokens = output_tokens + %s,
-                    reasoning_tokens = reasoning_tokens + %s,
-                    cost_usd = cost_usd + %s,
-                    llm_calls = llm_calls + %s,
-                    heartbeat_at = now()
-                WHERE id = %s
-                """,
-                (
-                    delta.input_tokens,
-                    delta.cached_input_tokens,
-                    delta.output_tokens,
-                    delta.reasoning_tokens,
-                    delta.cost_usd,
-                    delta.llm_calls,
-                    rt.run_id,
-                ),
-            )
+        await record_run_usage(
+            rt.services.db,
+            rt.run_id,
+            input_tokens=delta.input_tokens,
+            cached_input_tokens=delta.cached_input_tokens,
+            output_tokens=delta.output_tokens,
+            reasoning_tokens=delta.reasoning_tokens,
+            cost_usd=delta.cost_usd,
+            llm_calls=delta.llm_calls,
+        )
     except Exception:
         logger.warning("failed to persist model usage to runs", exc_info=True)
 
@@ -344,18 +332,6 @@ async def after_model_router(
         return "tools"
 
     # Text-only AIMessage: recheck DB for any newly arrived pending inbox items.
-    async with rt.services.db.connection() as conn:
-        row = await (
-            await conn.execute(
-                """
-                SELECT 1
-                FROM inbox_items
-                WHERE agent_id = %s AND delivery_state = 'pending'
-                LIMIT 1
-                """,
-                (rt.agent_id,),
-            )
-        ).fetchone()
-    if row is not None:
+    if await rt.services.inbox.has_pending(rt.agent_id):
         return "inbox"
     return "__end__"

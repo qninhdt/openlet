@@ -37,24 +37,9 @@ def detect_media_type(data: bytes) -> str | None:
 def _has_significant_transparency(img: Image.Image) -> bool:
     if img.mode not in ("RGBA", "LA", "PA") and "transparency" not in img.info:
         return False
-    rgba = img.convert("RGBA")
-    w, h = rgba.size
-    if w <= 0 or h <= 0:
-        return False
-    step_x = max(1, w // 64)
-    step_y = max(1, h // 64)
-    total = 0
-    transparent = 0
-    px = rgba.load()
-    if px is None:
-        return False
-    for y in range(0, h, step_y):
-        for x in range(0, w, step_x):
-            total += 1
-            pixel = cast(tuple[int, int, int, int], px[x, y])
-            if pixel[3] < 250:
-                transparent += 1
-    return total > 0 and (transparent / total) > 0.05
+    alpha_hist = img.convert("RGBA").getchannel("A").histogram()
+    total = sum(alpha_hist)
+    return total > 0 and (sum(alpha_hist[:250]) / total) > 0.05
 
 
 def _encode_jpeg(img: Image.Image, quality: int) -> bytes:

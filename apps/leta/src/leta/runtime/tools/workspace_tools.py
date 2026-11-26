@@ -16,21 +16,19 @@ from openlet_api.platform.v1 import internal_pb2 as plat_int_pb
 from openlet_api.platform.v1 import platform_pb2 as plat_pb
 from openlet_sdk.config import JSON
 from pydantic import BaseModel, ConfigDict, Field
-from temporalio.service import RPCError, RPCStatusCode
 
 from ...auth import Actor
 from ...hitl.service import (
     OpenHitlInput,
     Question,
     build_ask_form,
-    format_hitl_outcome,
-    format_hitl_response,
+    cancel_hitl_workflow,
     get_hitl,
     list_leta_hitl,
+    start_hitl_workflow,
 )
-from ...hitl.workflow import HitlWorkflow
+from ...runs import list_recent_activity
 from ...schedules.service import (
-    CalendarValues,
     Timing,
     create_schedule,
     delete_schedule,
@@ -38,7 +36,14 @@ from ...schedules.service import (
     list_schedules,
     update_schedule,
 )
-from ...subagents.service import list_leta_agents, spawn_subagent, stop_agent_tree
+from ...subagents.service import (
+    list_leta_agents,
+    list_workspace_root_agents,
+    resolve_leta_agent,
+    spawn_subagent,
+    stop_agent_tree,
+)
+from ..formatting import format_hitl_outcome, format_hitl_response
 from ..state import AgentState, RuntimeContext
 from .base import ToolArgs, ToolResult, idempotency_key, make_tool
 
@@ -113,28 +118,7 @@ async def handle_get_context(
         cast(dict[str, JSON], dict(u)) for u in all_users[:30]
     ]
 
-    async with s.db.connection() as conn:
-        peer_rows = await (
-            await conn.execute(
-                """
-                SELECT a.id, a.name, a.title, a.handle, a.description
-                FROM agents a JOIN letas l ON l.id = a.leta_id
-                WHERE l.workspace_id = %s AND l.state = 'active' AND a.parent_agent_id IS NULL
-                ORDER BY a.created_at ASC LIMIT 20
-                """,
-                (rt.workspace_id,),
-            )
-        ).fetchall()
-    peers: list[dict[str, JSON]] = [
-        {
-            "id": str(r["id"]),
-            "name": str(r["name"]),
-            "title": str(r["title"]),
-            "handle": str(r["handle"]),
-            "description": str(r["description"]),
-        }
-        for r in peer_rows
-    ]
+    peers = await list_workspace_root_agents(s.db, rt.workspace_id, limit=20)
 
     groups: list[dict[str, JSON]] = []
     try:
@@ -242,18 +226,7 @@ async def handle_list_members(
             )
 
     if kind in ("all", "agent"):
-        async with s.db.connection() as conn:
-            rows = await (
-                await conn.execute(
-                    """
-                    SELECT a.id, a.name, a.title, a.handle
-                    FROM agents a JOIN letas l ON l.id = a.leta_id
-                    WHERE l.workspace_id = %s AND l.state = 'active' AND a.parent_agent_id IS NULL
-                    ORDER BY a.created_at ASC
-                    """,
-                    (rt.workspace_id,),
-                )
-            ).fetchall()
+        rows = await list_workspace_root_agents(s.db, rt.workspace_id)
         for r in rows:
             name, handle, title = str(r["name"]), str(r["handle"]), str(r["title"])
             if (
@@ -338,43 +311,11 @@ async def _resolve_leta_agent(
     cleaned = raw_ref.strip().removeprefix("agent:").lstrip("@").strip()
     if not cleaned:
         raise ToolException("Agent handle or UUID cannot be empty.")
-    uid: UUID | None = None
-    try:
-        uid = UUID(cleaned)
-    except ValueError:
-        uid = None
-    low = cleaned.lower()
-
-    state_clause = "AND a.state = 'active'" if active_only else ""
-    async with rt.services.db.connection() as conn:
-        if uid is not None:
-            row = await (
-                await conn.execute(
-                    f"""
-                    SELECT a.id, a.parent_agent_id, a.name, a.title, a.handle, a.state,
-                           EXISTS(SELECT 1 FROM runs r WHERE r.agent_id = a.id AND r.status = 'running') AS running
-                    FROM agents a
-                    WHERE a.leta_id = %s AND a.id = %s {state_clause}
-                    ORDER BY a.created_at DESC LIMIT 1
-                    """,
-                    (rt.leta_id, uid),
-                )
-            ).fetchone()
-        else:
-            row = await (
-                await conn.execute(
-                    f"""
-                    SELECT a.id, a.parent_agent_id, a.name, a.title, a.handle, a.state,
-                           EXISTS(SELECT 1 FROM runs r WHERE r.agent_id = a.id AND r.status = 'running') AS running
-                    FROM agents a
-                    WHERE a.leta_id = %s AND lower(a.handle) = %s {state_clause}
-                    ORDER BY a.created_at DESC LIMIT 1
-                    """,
-                    (rt.leta_id, low),
-                )
-            ).fetchone()
+    row = await resolve_leta_agent(
+        rt.services.db, rt.leta_id, cleaned, active_only=active_only
+    )
     if row is not None:
-        return dict(row)
+        return row
 
     agents = await list_leta_agents(rt.services.db, rt.leta_id)
     active = [a for a in agents if a.get("state") == "active"]
@@ -520,19 +461,9 @@ async def handle_agent_status(
 ) -> ToolResult:
     rt = runtime.context
     row = await _resolve_leta_agent(rt, agent, active_only=False)
-    async with rt.services.db.connection() as conn:
-        events = await (
-            await conn.execute(
-                """
-                SELECT seq, type, data, created_at
-                FROM activity_events
-                WHERE agent_id = %s
-                ORDER BY seq DESC
-                LIMIT %s
-                """,
-                (row["id"], activity_limit),
-            )
-        ).fetchall()
+    events = await list_recent_activity(
+        rt.services.db, UUID(str(row["id"])), activity_limit
+    )
     st = "running" if row["running"] else str(row["state"])
     lines = [
         f"{row['handle']} (agent:{row['handle']}, {row['name']} — {row['title']}): {st}"
@@ -688,9 +619,10 @@ async def handle_hitl_ask(
     req_id = uuid4()
     expires = datetime.now(UTC) + timedelta(seconds=expires_in_seconds)
     payload = build_ask_form(questions)
-    await rt.services.temporal.start_workflow(
-        HitlWorkflow.run,
-        OpenHitlInput(
+    await start_hitl_workflow(
+        temporal=rt.services.temporal,
+        orchestration_queue=rt.services.queues.orchestration,
+        request=OpenHitlInput(
             id=req_id,
             requester_agent_id=rt.agent_id,
             recipient_user_id=recipient_id,
@@ -699,8 +631,6 @@ async def handle_hitl_ask(
             payload=payload,
             expires_at=expires,
         ),
-        id=f"hitl/{req_id}",
-        task_queue=rt.services.queues.orchestration,
     )
     return (
         f"Opened HITL question form {req_id} ('{title}') for {recipient_label}. "
@@ -722,9 +652,10 @@ async def handle_hitl_request_access(
     recipient_id, recipient_label = await _resolve_human_recipient(rt, recipient)
     req_id = uuid4()
     expires = datetime.now(UTC) + timedelta(seconds=expires_in_seconds)
-    await rt.services.temporal.start_workflow(
-        HitlWorkflow.run,
-        OpenHitlInput(
+    await start_hitl_workflow(
+        temporal=rt.services.temporal,
+        orchestration_queue=rt.services.queues.orchestration,
+        request=OpenHitlInput(
             id=req_id,
             requester_agent_id=rt.agent_id,
             recipient_user_id=recipient_id,
@@ -733,8 +664,6 @@ async def handle_hitl_request_access(
             payload={"role": role, "reason": reason},
             expires_at=expires,
         ),
-        id=f"hitl/{req_id}",
-        task_queue=rt.services.queues.orchestration,
     )
     return (
         f"Opened HITL storage access request {req_id} ({role}) for {recipient_label}. "
@@ -749,13 +678,12 @@ async def handle_hitl_cancel(
     runtime: ToolRuntime[RuntimeContext, AgentState],
 ) -> ToolResult:
     rt = runtime.context
-    try:
-        await rt.services.temporal.get_workflow_handle(f"hitl/{request_id}").signal(
-            "cancel", rt.agent_id
-        )
-    except RPCError as exc:
-        if exc.status != RPCStatusCode.NOT_FOUND:
-            raise
+    cancelled = await cancel_hitl_workflow(
+        temporal=rt.services.temporal,
+        request_id=request_id,
+        actor_id=rt.agent_id,
+    )
+    if not cancelled:
         pending = await list_leta_hitl(
             rt.services.db, rt.leta_id, status="pending", limit=10
         )
@@ -763,10 +691,10 @@ async def handle_hitl_cancel(
             opts = ", ".join(f"{h['id']} ({h['title']})" for h in pending)
             raise ToolException(
                 f"Active HITL request {request_id} not found (may already be resolved). Pending requests: {opts}"
-            ) from None
+            )
         raise ToolException(
             f"Active HITL request {request_id} not found (no pending HITL requests)."
-        ) from None
+        )
     return (
         f"Cancelled HITL request {request_id}.",
         {"request_id": str(request_id), "status": "cancelled"},
@@ -846,29 +774,6 @@ _DURATION_UNITS: dict[str, int] = {
     "wks": 604800,
     "week": 604800,
     "weeks": 604800,
-}
-_CRON_MONTH_NAMES = {
-    "jan": 1,
-    "feb": 2,
-    "mar": 3,
-    "apr": 4,
-    "may": 5,
-    "jun": 6,
-    "jul": 7,
-    "aug": 8,
-    "sep": 9,
-    "oct": 10,
-    "nov": 11,
-    "dec": 12,
-}
-_CRON_DOW_NAMES = {
-    "sun": 0,
-    "mon": 1,
-    "tue": 2,
-    "wed": 3,
-    "thu": 4,
-    "fri": 5,
-    "sat": 6,
 }
 _REPEAT_SHORTHANDS: dict[str, str] = {
     "@hourly": "0 * * * *",
@@ -952,57 +857,6 @@ def _try_duration_seconds(raw: str) -> int | None:
         return None
 
 
-def _parse_cron_field(
-    field: str,
-    lo: int,
-    hi: int,
-    *,
-    names: dict[str, int] | None = None,
-    is_dow: bool = False,
-) -> list[int] | None:
-    text = field.strip().lower()
-    if text == "*":
-        return None
-
-    def _val(tok: str) -> int:
-        if names and tok in names:
-            return names[tok]
-        n = int(tok)
-        if is_dow and n == 7:
-            return 0
-        return n
-
-    values: set[int] = set()
-    for part in text.split(","):
-        step = 1
-        if "/" in part:
-            base, step_s = part.split("/", 1)
-            step = int(step_s)
-            if step <= 0:
-                raise ValueError(f"invalid cron step in {field!r}")
-        else:
-            base = part
-        if base == "*":
-            start, end = lo, hi
-        elif "-" in base:
-            a_s, b_s = base.split("-", 1)
-            start, end = _val(a_s), _val(b_s)
-            if start > end:
-                raise ValueError(f"invalid cron range {base!r} in {field!r}")
-        else:
-            start = _val(base)
-            end = hi if "/" in part else start
-        for v in range(start, end + 1, step):
-            if v < lo or v > hi:
-                raise ValueError(
-                    f"cron value {v} out of range [{lo}, {hi}] in {field!r}"
-                )
-            values.add(v)
-    if not values:
-        raise ValueError(f"empty cron field {field!r}")
-    return sorted(values)
-
-
 def _parse_iso_datetime(raw: str, tz_name: str) -> datetime:
     text = raw.strip()
     if text.endswith("Z"):
@@ -1064,29 +918,9 @@ def parse_schedule_timing(
             f"invalid repeat {repeat!r}; expected 5-field cron (e.g. '0 9 * * 1-5'), "
             "'every <duration>' (e.g. 'every 15m'), or shorthand ('hourly', 'daily', 'weekdays', 'weekly')"
         )
-    specs: list[
-        tuple[
-            Literal["minute", "hour", "day_of_month", "month", "day_of_week"],
-            int,
-            int,
-            dict[str, int] | None,
-            bool,
-        ]
-    ] = [
-        ("minute", 0, 59, None, False),
-        ("hour", 0, 23, None, False),
-        ("day_of_month", 1, 31, None, False),
-        ("month", 1, 12, _CRON_MONTH_NAMES, False),
-        ("day_of_week", 0, 6, _CRON_DOW_NAMES, True),
-    ]
-    cal: CalendarValues = {}
-    for raw_field, (key, lo, hi, names, is_dow) in zip(parts, specs, strict=True):
-        parsed = _parse_cron_field(raw_field, lo, hi, names=names, is_dow=is_dow)
-        if parsed is not None:
-            cal[key] = parsed
-    if not cal:
+    if all(p == "*" for p in parts):
         return Timing(every_seconds=60, ends_at=ends_dt, timezone=tz)
-    return Timing(calendar=cal, ends_at=ends_dt, timezone=tz)
+    return Timing(cron=" ".join(parts), ends_at=ends_dt, timezone=tz)
 
 
 class ScheduleCreateArgs(ToolArgs):

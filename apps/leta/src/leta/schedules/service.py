@@ -54,17 +54,26 @@ class Timing(BaseModel):
     after_seconds: int | None = Field(default=None, ge=0)
     every_seconds: int | None = Field(default=None, ge=1)
     calendar: CalendarValues | None = None
+    cron: str | None = Field(default=None, min_length=9, max_length=128)
     starts_at: datetime | None = None
     ends_at: datetime | None = None
     timezone: str = "UTC"
 
     @model_validator(mode="after")
     def validate_timing(self) -> Timing:
-        selectors = [self.at, self.after_seconds, self.every_seconds, self.calendar]
+        selectors = [
+            self.at,
+            self.after_seconds,
+            self.every_seconds,
+            self.calendar,
+            self.cron,
+        ]
         if sum(v is not None for v in selectors) > 1:
             raise ValueError(
-                "specify at most one of at, after_seconds, every_seconds, or calendar"
+                "specify at most one of at, after_seconds, every_seconds, calendar, or cron"
             )
+        if self.cron is not None and len(self.cron.split()) != 5:
+            raise ValueError("cron must be a 5-field expression (e.g. '0 9 * * 1-5')")
         ZoneInfo(self.timezone)
         for dt in (self.at, self.starts_at, self.ends_at):
             if dt is not None and dt.tzinfo is None:
@@ -109,6 +118,9 @@ def normalize_timing(
     if timing.calendar is not None:
         spec["calendar"] = cast(dict[str, JSON], timing.calendar)
         return "calendar", spec
+    if timing.cron is not None:
+        spec["cron"] = timing.cron
+        return "cron", spec
     return None
 
 
@@ -154,6 +166,14 @@ def build_temporal_schedule(
         every = timedelta(seconds=int(cast(int, spec["every_seconds"])))
         t_spec = ScheduleSpec(
             intervals=[ScheduleIntervalSpec(every=every)],
+            start_at=start_at,
+            end_at=end_at,
+            time_zone_name=tz,
+        )
+        state = ScheduleState(paused=paused)
+    elif sched_type == "cron":
+        t_spec = ScheduleSpec(
+            cron_expressions=[str(spec["cron"])],
             start_at=start_at,
             end_at=end_at,
             time_zone_name=tz,

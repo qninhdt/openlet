@@ -11,7 +11,11 @@ from langgraph.runtime import Runtime
 from openlet_sdk.config import JSON
 
 from ...channels.base import CallerContext
-from ...hitl.service import format_hitl_outcome_attr
+from ..formatting import (
+    format_hitl_outcome,
+    format_hitl_outcome_attr,
+    format_hitl_response,
+)
 from ..state import AgentState, RuntimeContext
 
 
@@ -31,6 +35,26 @@ def _sender_label(sender: Mapping[str, object]) -> str:
     if handle:
         return handle
     return name or f"{stype}:{sid}"
+
+
+def _inbox_display_content(kind: str, content: str, meta: Mapping[str, object]) -> str:
+    if content:
+        return content
+    if kind == "hitl":
+        req_id = str(meta.get("request_id") or "")
+        status = str(meta.get("status") or "")
+        title = str(meta.get("title") or "")
+        parts = [f"HITL request '{title}' ({req_id}) resolved with status: {status}."]
+        resp_text = format_hitl_response(meta.get("payload"), meta.get("response"))
+        if resp_text:
+            parts.append(resp_text)
+        outcome_text = format_hitl_outcome(meta.get("outcome"))
+        if outcome_text:
+            parts.append(f"Outcome: {outcome_text}")
+        return "\n".join(parts)
+    if kind == "notification" and meta.get("event") == "subagent_failed":
+        return str(meta.get("error") or "unknown error")
+    return ""
 
 
 def format_inbox_item_full(
@@ -79,21 +103,35 @@ def format_inbox_item_full(
         h_type = str(meta.get("type") or "")
         status = str(meta.get("status") or "")
         outcome = format_hitl_outcome_attr(meta.get("outcome"))
+        body = _inbox_display_content(kind, content, meta)
         return (
             f'  <hitl-result seq="{seq}" request_id={sax.quoteattr(req_id)} '
             f"type={sax.quoteattr(h_type)} status={sax.quoteattr(status)} "
             f"outcome={sax.quoteattr(outcome)} from={sax.quoteattr(from_str)}>\n"
-            f"    {sax.escape(content)}\n"
+            f"    {sax.escape(body)}\n"
             f"  </hitl-result>"
         )
 
-    if meta.get("event") == "reaction":
+    if kind == "notification" and meta.get("event") == "subagent_failed":
+        sub_handle = str(meta.get("subagent_handle") or sender.get("handle") or "")
+        sub_name = str(meta.get("subagent_name") or sender.get("name") or "")
+        sub_id = str(meta.get("subagent_id") or "")
+        err_text = _inbox_display_content(kind, content, meta)
+        return (
+            f'  <subagent-failed seq="{seq}" handle={sax.quoteattr(sub_handle)} '
+            f"name={sax.quoteattr(sub_name)} subagent_id={sax.quoteattr(sub_id)}>\n"
+            f"    {sax.escape(err_text)}\n"
+            f"  </subagent-failed>"
+        )
+
+    if kind == "reaction":
         target_msg = str(meta.get("target_message_id") or "")
-        emoji = str(meta.get("emoji") or content)
+        emoji = str(meta.get("emoji") or "")
+        action = str(meta.get("action") or "added")
         return (
             f'  <reaction seq="{seq}" channel={sax.quoteattr(channel)} '
             f"from={sax.quoteattr(from_str)} target_message_id={sax.quoteattr(target_msg)} "
-            f"emoji={sax.quoteattr(emoji)} />"
+            f"emoji={sax.quoteattr(emoji)} action={sax.quoteattr(action)} />"
         )
 
     msg_id = str(meta.get("message_id") or "")
@@ -178,46 +216,9 @@ async def inbox_node(
     is_turn_start = rt.step_count == 0
     rt.drained_this_step = False
 
-    async with rt.services.db.connection() as conn:
-        if not rt.is_root:
-            rows = await (
-                await conn.execute(
-                    """
-                    SELECT seq, kind, channel, reply_address, sender, content,
-                           attachments, metadata, silent, delivery_state, created_at
-                    FROM inbox_items
-                    WHERE agent_id = %s AND delivery_state = 'pending'
-                    ORDER BY seq ASC
-                    """,
-                    (rt.agent_id,),
-                )
-            ).fetchall()
-        elif is_turn_start:
-            rows = await (
-                await conn.execute(
-                    """
-                    SELECT seq, kind, channel, reply_address, sender, content,
-                           attachments, metadata, silent, delivery_state, created_at
-                    FROM inbox_items
-                    WHERE agent_id = %s AND delivery_state IN ('pending', 'previewed')
-                    ORDER BY seq ASC
-                    """,
-                    (rt.agent_id,),
-                )
-            ).fetchall()
-        else:
-            rows = await (
-                await conn.execute(
-                    """
-                    SELECT seq, kind, channel, reply_address, sender, content,
-                           attachments, metadata, silent, delivery_state, created_at
-                    FROM inbox_items
-                    WHERE agent_id = %s AND delivery_state = 'pending'
-                    ORDER BY seq ASC
-                    """,
-                    (rt.agent_id,),
-                )
-            ).fetchall()
+    rows = await rt.services.inbox.fetch_pending(
+        rt.agent_id, include_previewed=(rt.is_root and is_turn_start)
+    )
 
     if not rows:
         return {}
@@ -257,7 +258,7 @@ async def inbox_node(
         deliver_full = (
             not rt.is_root
             or is_turn_start
-            or kind in ("agent", "hitl")
+            or kind in ("agent", "hitl", "reaction")
             or (reply_addr in rt.active_channels)
             or (kind == "notification" and len(content) <= 300)
         )
@@ -296,6 +297,7 @@ async def inbox_node(
             list[JSON], list(cast(list[object], r.get("attachments") or []))
         )
         sender_dict = cast(dict[str, JSON], dict(enriched_sender))
+        display_content = _inbox_display_content(kind, content, meta_dict)
         activity_items.append(
             {
                 "seq": seq,
@@ -303,8 +305,8 @@ async def inbox_node(
                 "channel": r.get("channel"),
                 "sender": sender_dict,
                 "reply_address": reply_addr or None,
-                "content": content[:4000],
-                "preview": content[:200],
+                "content": display_content[:4000],
+                "preview": display_content[:200],
                 "attachments": raw_atts,
                 "attachments_count": len(raw_atts),
                 "metadata": meta_dict,
@@ -312,25 +314,11 @@ async def inbox_node(
             }
         )
 
-    async with rt.services.db.connection() as conn, conn.transaction():
-        if delivered_seqs:
-            await conn.execute(
-                """
-                UPDATE inbox_items
-                SET delivery_state = 'delivered'
-                WHERE agent_id = %s AND seq = ANY(%s)
-                """,
-                (rt.agent_id, delivered_seqs),
-            )
-        if previewed_seqs:
-            await conn.execute(
-                """
-                UPDATE inbox_items
-                SET delivery_state = 'previewed'
-                WHERE agent_id = %s AND seq = ANY(%s)
-                """,
-                (rt.agent_id, previewed_seqs),
-            )
+    await rt.services.inbox.mark_delivery_states(
+        rt.agent_id,
+        delivered_seqs=delivered_seqs,
+        previewed_seqs=previewed_seqs,
+    )
 
     caller = _caller(rt)
     for addr, msg_seq in read_seqs.items():

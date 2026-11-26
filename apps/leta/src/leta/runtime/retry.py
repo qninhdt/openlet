@@ -5,7 +5,7 @@ import math
 import random
 from collections.abc import Awaitable, Callable
 from email.utils import parsedate_to_datetime
-from time import monotonic
+from time import monotonic, time
 from typing import cast
 
 from ..config import ModelConfig, ModelRetryConfig, ModelSpec
@@ -125,7 +125,7 @@ def parse_retry_after(exc: BaseException, max_seconds: float) -> float | None:
         pass
     try:
         dt = parsedate_to_datetime(ra)
-        return min(max_seconds, max(0.0, dt.timestamp() - monotonic()))
+        return min(max_seconds, max(0.0, dt.timestamp() - time()))
     except Exception:
         return None
 

@@ -16,13 +16,13 @@ from langgraph.types import Command
 from openlet_sdk.config import JSON
 from pydantic import BaseModel
 
+from ...truncation import format_head_truncated, truncate_head
 from ..state import AgentState, RuntimeContext
 from ..tool_repair import (
     format_tool_error,
     repair_tool_args_with_notes,
     resolve_tool_alias,
 )
-from ..truncation import format_head_truncated, truncate_head
 
 logger = logging.getLogger(__name__)
 

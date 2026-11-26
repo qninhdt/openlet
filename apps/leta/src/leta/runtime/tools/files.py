@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import bisect
 import difflib
 import errno
 import posixpath
 import re
 import unicodedata
+from contextlib import ExitStack
 from typing import cast
 
 from langchain_core.tools import BaseTool, ToolException
@@ -15,9 +17,10 @@ from openlet_sdk.config import JSON
 from pydantic import Field
 
 from ...filesystem.workspace import canonical_path, path_spec
+from ...observability import build_rag_baggage
+from ...truncation import clip_line
 from ..media import detect_media_type, optimize_image_bytes
 from ..state import AgentState, RuntimeContext
-from ..truncation import clip_line
 from .base import ToolArgs, ToolResult, make_tool
 
 _KNOWN_MOUNT_ROOTS = frozenset({"shared", "chat", "user", "letfs", "home"})
@@ -36,76 +39,57 @@ def normalize_workspace_path(raw: str) -> str:
     return canonical_path(stripped)
 
 
+_UNICODE_TRANSLATION = str.maketrans(
+    {
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201a": "'",
+        "\u201b": "'",
+        "\u201c": '"',
+        "\u201d": '"',
+        "\u201e": '"',
+        "\u201f": '"',
+        "\u2010": "-",
+        "\u2011": "-",
+        "\u2012": "-",
+        "\u2013": "-",
+        "\u2014": "-",
+        "\u2015": "-",
+        "\u2212": "-",
+        "\u00a0": " ",
+        "\u202f": " ",
+        "\u205f": " ",
+        "\u3000": " ",
+    }
+)
+
+
 def _normalize_unicode_text(s: str) -> str:
-    s = unicodedata.normalize("NFC", s)
-    return (
-        s.replace("\u2018", "'")
-        .replace("\u2019", "'")
-        .replace("\u201a", "'")
-        .replace("\u201b", "'")
-        .replace("\u201c", '"')
-        .replace("\u201d", '"')
-        .replace("\u201e", '"')
-        .replace("\u201f", '"')
-        .replace("\u2010", "-")
-        .replace("\u2011", "-")
-        .replace("\u2012", "-")
-        .replace("\u2013", "-")
-        .replace("\u2014", "-")
-        .replace("\u2015", "-")
-        .replace("\u2212", "-")
-        .replace("\u00a0", " ")
-        .replace("\u202f", " ")
-        .replace("\u205f", " ")
-        .replace("\u3000", " ")
-    )
-
-
-def _levenshtein(a: str, b: str, limit: int = 3) -> int:
-    if abs(len(a) - len(b)) >= limit:
-        return limit
-    if not a:
-        return len(b)
-    if not b:
-        return len(a)
-    prev = list(range(len(b) + 1))
-    for i, ca in enumerate(a, 1):
-        curr = [i]
-        row_min = i
-        for j, cb in enumerate(b, 1):
-            cost = 0 if ca == cb else 1
-            v = min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost)
-            curr.append(v)
-            if v < row_min:
-                row_min = v
-        if row_min >= limit:
-            return limit
-        prev = curr
-    return prev[-1]
+    return unicodedata.normalize("NFC", s).translate(_UNICODE_TRANSLATION)
 
 
 def _rank_similar_names(target_name: str, siblings: list[str]) -> list[str]:
     low = target_name.lower()
     stem = posixpath.splitext(low)[0]
-    scored: list[tuple[int, int, str]] = []
+    scored: list[tuple[int, float, str]] = []
     for name in siblings:
         n_low = name.lower()
         n_stem = posixpath.splitext(n_low)[0]
         if n_low == low:
-            scored.append((0, 0, name))
+            scored.append((0, 0.0, name))
         elif stem and n_stem == stem:
-            scored.append((1, 0, name))
+            scored.append((1, 0.0, name))
         elif len(low) >= 3 and (low in n_low or n_low in low):
-            scored.append((2, abs(len(n_low) - len(low)), name))
+            scored.append((2, float(abs(len(n_low) - len(low))), name))
         else:
-            dist = _levenshtein(low, n_low, limit=3)
-            if dist <= 2:
-                scored.append((3, dist, name))
+            ratio = difflib.SequenceMatcher(None, low, n_low, autojunk=False).ratio()
+            if ratio >= 0.6:
+                scored.append((3, -ratio, name))
     scored.sort(key=lambda t: (t[0], t[1], t[2]))
     return [name for _, _, name in scored[:3]]
 
 
-# --- OpenCode v2 LF-view + LCS line-ending edit engine ---
+# --- OpenCode v2 LF-view + SequenceMatcher line-ending edit engine ---
 
 
 def _dominant_line_ending(text: str, fallback: str = "\n") -> str:
@@ -117,47 +101,13 @@ def _dominant_line_ending(text: str, fallback: str = "\n") -> str:
 
 
 def _align_lines(before: list[str], after: list[str]) -> list[int | None]:
-    """LCS alignment mapping each `after` line to the `before` line it keeps or replaces."""
-    n, m = len(before), len(after)
-    dp = [[0] * (m + 1) for _ in range(n + 1)]
-    for i in range(n - 1, -1, -1):
-        for j in range(m - 1, -1, -1):
-            if before[i] == after[j]:
-                dp[i][j] = dp[i + 1][j + 1] + 1
-            else:
-                dp[i][j] = max(dp[i + 1][j], dp[i][j + 1])
-
-    result: list[int | None] = [None] * m
-    gap_b: list[int] = []
-    gap_a: list[int] = []
-
-    def _flush() -> None:
-        for k, aj in enumerate(gap_a):
-            if k < len(gap_b):
-                result[aj] = gap_b[k]
-        gap_b.clear()
-        gap_a.clear()
-
-    i = j = 0
-    while i < n and j < m:
-        if before[i] == after[j]:
-            _flush()
-            result[j] = i
-            i += 1
-            j += 1
-        elif dp[i + 1][j] >= dp[i][j + 1]:
-            gap_b.append(i)
-            i += 1
-        else:
-            gap_a.append(j)
-            j += 1
-    while i < n:
-        gap_b.append(i)
-        i += 1
-    while j < m:
-        gap_a.append(j)
-        j += 1
-    _flush()
+    """Map each `after` line to the `before` line it keeps or replaces via difflib."""
+    result: list[int | None] = [None] * len(after)
+    matcher = difflib.SequenceMatcher(None, before, after, autojunk=False)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag in ("equal", "replace"):
+            for k in range(min(i2 - i1, j2 - j1)):
+                result[j1 + k] = i1 + k
     return result
 
 
@@ -1222,26 +1172,53 @@ async def handle_semantic_search(
                 raise
             continue
 
+    baggage = build_rag_baggage(
+        session_id=str(rt.leta_id),
+        agent_id=str(rt.agent_id),
+        workspace_id=str(rt.workspace_id),
+    )
     all_hits: list[dict[str, JSON]] = []
     valid_count = 0
     missing_paths: list[str] = []
-    for abs_p in expanded:
-        try:
-            hits_val, _ = await session.vfs.dispatch(
-                "semantic_search",
-                path_spec(abs_p),
-                query=query,
-                limit=min(limit, 25),
+    with ExitStack() as stack:
+        obs = None
+        if rt.services.langfuse is not None:
+            obs = stack.enter_context(
+                rt.services.langfuse.start_as_current_observation(
+                    name="leta.semantic_search",
+                    as_type="retriever",
+                    input={"query": query, "paths": raw_paths[:5], "limit": limit},
+                )
             )
-            valid_count += 1
-            all_hits.extend(cast(list[dict[str, JSON]], hits_val))
-        except FileNotFoundError:
-            missing_paths.append(abs_p)
-        except OSError as exc:
-            if exc.errno == errno.EOPNOTSUPP:
+
+        async def _search_one(
+            abs_p: str,
+        ) -> tuple[str, list[dict[str, JSON]] | None]:
+            try:
+                hits_val, _ = await session.vfs.dispatch(
+                    "semantic_search",
+                    path_spec(abs_p),
+                    query=query,
+                    limit=min(limit, 25),
+                    baggage=baggage,
+                )
+                return abs_p, cast(list[dict[str, JSON]], hits_val)
+            except FileNotFoundError:
+                return abs_p, None
+            except OSError as exc:
+                if exc.errno == errno.EOPNOTSUPP:
+                    return abs_p, None
+                raise
+
+        results = await asyncio.gather(*(_search_one(abs_p) for abs_p in expanded))
+        for abs_p, hits in results:
+            if hits is None:
                 missing_paths.append(abs_p)
             else:
-                raise
+                valid_count += 1
+                all_hits.extend(hits)
+        if obs is not None:
+            obs.update(output={"hit_count": len(all_hits)})
 
     if valid_count == 0 and missing_paths:
         _, err_msg = await missing_path_recovery(

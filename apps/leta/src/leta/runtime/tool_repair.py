@@ -11,6 +11,8 @@ from langgraph.prebuilt.tool_node import ToolInvocationError
 from pydantic import ValidationError
 from pydantic_core import ErrorDetails
 
+from ..channels.base import ChannelError
+
 TOOL_ALIASES: dict[str, str] = {
     "execute": "bash",
     "shell": "bash",
@@ -450,7 +452,7 @@ def format_tool_error(
         return format_input_issues(
             exc, {}, valid_params=valid_params, excerpt_limit=excerpt_limit
         )
-    if isinstance(exc, ToolException):
+    if isinstance(exc, (ToolException, ChannelError)):
         return str(exc)
     if isinstance(exc, ZoneInfoNotFoundError):
         key = str(exc).removeprefix("No time zone found with key ").strip("'\"")

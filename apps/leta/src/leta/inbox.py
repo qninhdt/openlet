@@ -10,9 +10,11 @@ from pydantic import BaseModel, Field
 from temporalio.client import Client as TemporalClient
 
 from .activity import ActivityEmitter
-from .db import Pool
+from .db import Pool, Row
 
-type InboxKind = Literal["channel", "agent", "hitl", "schedule", "notification"]
+type InboxKind = Literal[
+    "channel", "reaction", "agent", "hitl", "schedule", "notification"
+]
 
 
 class InboxSender(BaseModel):
@@ -160,3 +162,114 @@ class InboxGateway:
             )
 
         return DeliveryResult(delivered=True, skipped=False, seq=seq)
+
+    async def fetch_pending(
+        self, agent_id: UUID, *, include_previewed: bool
+    ) -> list[Row]:
+        async with self.db.connection() as conn:
+            if include_previewed:
+                rows = await (
+                    await conn.execute(
+                        """
+                        SELECT seq, kind, channel, reply_address, sender, content,
+                               attachments, metadata, silent, delivery_state, created_at
+                        FROM inbox_items
+                        WHERE agent_id = %s AND delivery_state IN ('pending', 'previewed')
+                        ORDER BY seq ASC
+                        """,
+                        (agent_id,),
+                    )
+                ).fetchall()
+            else:
+                rows = await (
+                    await conn.execute(
+                        """
+                        SELECT seq, kind, channel, reply_address, sender, content,
+                               attachments, metadata, silent, delivery_state, created_at
+                        FROM inbox_items
+                        WHERE agent_id = %s AND delivery_state = 'pending'
+                        ORDER BY seq ASC
+                        """,
+                        (agent_id,),
+                    )
+                ).fetchall()
+        return [dict(r) for r in rows]
+
+    async def mark_delivery_states(
+        self,
+        agent_id: UUID,
+        *,
+        delivered_seqs: list[int],
+        previewed_seqs: list[int],
+    ) -> None:
+        if not delivered_seqs and not previewed_seqs:
+            return
+        async with self.db.connection() as conn, conn.transaction():
+            if delivered_seqs:
+                await conn.execute(
+                    """
+                    UPDATE inbox_items
+                    SET delivery_state = 'delivered'
+                    WHERE agent_id = %s AND seq = ANY(%s)
+                    """,
+                    (agent_id, delivered_seqs),
+                )
+            if previewed_seqs:
+                await conn.execute(
+                    """
+                    UPDATE inbox_items
+                    SET delivery_state = 'previewed'
+                    WHERE agent_id = %s AND seq = ANY(%s)
+                    """,
+                    (agent_id, previewed_seqs),
+                )
+
+    async def has_pending(self, agent_id: UUID) -> bool:
+        async with self.db.connection() as conn:
+            row = await (
+                await conn.execute(
+                    """
+                    SELECT 1
+                    FROM inbox_items
+                    WHERE agent_id = %s AND delivery_state = 'pending'
+                    LIMIT 1
+                    """,
+                    (agent_id,),
+                )
+            ).fetchone()
+        return row is not None
+
+    async def mark_channel_delivered(self, agent_id: UUID, reply_address: str) -> None:
+        async with self.db.connection() as conn:
+            await conn.execute(
+                """
+                UPDATE inbox_items
+                SET delivery_state = 'delivered'
+                WHERE agent_id = %s AND reply_address = %s AND delivery_state = 'previewed'
+                """,
+                (agent_id, reply_address),
+            )
+
+    async def compute_wake_cursors(
+        self, agent_id: UUID, final_cursor: int
+    ) -> tuple[int, int]:
+        async with self.db.connection() as conn:
+            row = await (
+                await conn.execute(
+                    """
+                    SELECT
+                        COALESCE(MAX(seq), 0) AS latest_wake_seq,
+                        MIN(seq) FILTER (WHERE delivery_state IN ('pending', 'previewed')) AS min_undelivered
+                    FROM inbox_items
+                    WHERE agent_id = %s AND NOT silent
+                    """,
+                    (agent_id,),
+                )
+            ).fetchone()
+        latest_wake_seq = int(row["latest_wake_seq"]) if row else 0
+        min_undelivered = row["min_undelivered"] if row else None
+        if min_undelivered is not None:
+            reported_cursor = min(final_cursor, int(min_undelivered) - 1)
+        else:
+            reported_cursor = max(final_cursor, latest_wake_seq)
+        return reported_cursor, latest_wake_seq

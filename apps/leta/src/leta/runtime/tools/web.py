@@ -3,15 +3,16 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import socket
-from html.parser import HTMLParser
 from typing import Literal, cast
 from urllib.parse import urljoin, urlparse
 
+import html_to_markdown as h2m
 import httpx
 from langchain_core.tools import BaseTool, ToolException
 from langgraph.prebuilt import ToolRuntime
 from openlet_sdk.config import JSON
 from pydantic import Field
+from tinyfish import AsyncTinyFish, FetchFormat, SDKError
 
 from ..state import AgentState, RuntimeContext
 from .base import ToolArgs, ToolResult, make_tool
@@ -79,81 +80,23 @@ async def assert_public_url(url: str) -> None:
             raise ToolException(f"Host {host} resolved to non-public IP {ip}")
 
 
-class _SimpleHTMLConverter(HTMLParser):
-    def __init__(self, *, markdown: bool) -> None:
-        super().__init__()
-        self._markdown = markdown
-        self._skip_depth = 0
-        self._out: list[str] = []
-        self._href_stack: list[str] = []
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        t = tag.lower()
-        if t in ("script", "style", "noscript", "svg"):
-            self._skip_depth += 1
-            return
-        if self._skip_depth:
-            return
-        if t in ("h1", "h2", "h3", "h4"):
-            level = int(t[1])
-            self._out.append("\n\n" + ("#" * level + " " if self._markdown else ""))
-        elif t in ("p", "div", "section", "article", "tr"):
-            self._out.append("\n")
-        elif t == "br":
-            self._out.append("\n")
-        elif t == "li":
-            self._out.append("\n- " if self._markdown else "\n* ")
-        elif t == "a" and self._markdown:
-            href = dict(attrs).get("href") or ""
-            self._href_stack.append(href)
-            self._out.append("[")
-
-    def handle_endtag(self, tag: str) -> None:
-        t = tag.lower()
-        if t in ("script", "style", "noscript", "svg"):
-            self._skip_depth = max(0, self._skip_depth - 1)
-            return
-        if self._skip_depth:
-            return
-        if t == "a" and self._markdown and self._href_stack:
-            href = self._href_stack.pop()
-            self._out.append(f"]({href})" if href else "]")
-        elif t in ("h1", "h2", "h3", "h4", "p", "tr"):
-            self._out.append("\n")
-
-    def handle_data(self, data: str) -> None:
-        if self._skip_depth:
-            return
-        text = " ".join(data.split())
-        if text:
-            self._out.append(text + " ")
-
-    def result(self) -> str:
-        raw = "".join(self._out)
-        lines = [ln.strip() for ln in raw.splitlines()]
-        cleaned: list[str] = []
-        blank = False
-        for ln in lines:
-            if not ln:
-                if not blank:
-                    cleaned.append("")
-                blank = True
-            else:
-                cleaned.append(ln)
-                blank = False
-        return "\n".join(cleaned).strip()
+_H2M_PREPROCESSING = h2m.PreprocessingOptions(
+    enabled=True, remove_navigation=True, remove_forms=True
+)
+_H2M_MARKDOWN_OPTIONS = h2m.ConversionOptions(
+    output_format=h2m.OutputFormat.MARKDOWN, preprocessing=_H2M_PREPROCESSING
+)
+_H2M_PLAIN_OPTIONS = h2m.ConversionOptions(
+    output_format=h2m.OutputFormat.PLAIN, preprocessing=_H2M_PREPROCESSING
+)
 
 
 def html_to_markdown(html: str) -> str:
-    parser = _SimpleHTMLConverter(markdown=True)
-    parser.feed(html)
-    return parser.result()
+    return (h2m.convert(html, _H2M_MARKDOWN_OPTIONS).content or "").strip()
 
 
 def html_to_text(html: str) -> str:
-    parser = _SimpleHTMLConverter(markdown=False)
-    parser.feed(html)
-    return parser.result()
+    return (h2m.convert(html, _H2M_PLAIN_OPTIONS).content or "").strip()
 
 
 def _looks_like_empty_js_shell(text: str) -> bool:
@@ -190,15 +133,54 @@ class WebSearchArgs(ToolArgs):
     query: str = Field(min_length=1, max_length=500)
 
 
-async def _tinyfish_fetch(api_key: str, url: str) -> str:
-    from tinyfish import AsyncTinyFish
+_CONTENT_TYPES: dict[Literal["markdown", "text", "html"], str] = {
+    "markdown": "text/markdown",
+    "text": "text/plain",
+    "html": "text/html",
+}
 
-    client = AsyncTinyFish(api_key=api_key)
-    res = await client.agent.run(
-        url=url,
-        goal="Extract the main readable text/markdown content of this webpage verbatim.",
+
+async def _tinyfish_fetch(
+    api_key: str,
+    url: str,
+    *,
+    norm_url: str,
+    fmt: Literal["markdown", "text", "html"],
+    timeout: float,
+) -> ToolResult:
+    tf_format: FetchFormat = "html" if fmt in ("html", "text") else "markdown"
+    timeout_ms = max(1, min(int(timeout * 1000), 110_000))
+    try:
+        async with AsyncTinyFish(api_key=api_key, timeout=timeout) as client:
+            resp = await client.fetch.get_contents(
+                urls=[url],
+                format=tf_format,
+                per_url_timeout_ms=timeout_ms,
+            )
+    except SDKError as exc:
+        raise ToolException(f"Web fetch failed for {url}: {exc}") from None
+
+    if not resp.results:
+        detail = resp.errors[0].error if resp.errors else "no content returned"
+        raise ToolException(f"Web fetch failed for {url}: {detail}")
+
+    item = resp.results[0]
+    body = item.text or ""
+    if fmt == "text" and body:
+        body = html_to_text(body)
+    final_url = item.final_url or item.url or url
+    return (
+        body or "(empty response)",
+        {
+            "url": norm_url,
+            "final_url": final_url,
+            "title": item.title or "",
+            "published_at": item.published_date or "",
+            "format": fmt,
+            "content_type": _CONTENT_TYPES[fmt],
+            "source": "tinyfish",
+        },
     )
-    return str(getattr(res, "result", res))
 
 
 async def _direct_fetch(
@@ -276,15 +258,12 @@ async def handle_webfetch(
                 "Web fetch provider is unavailable in this environment."
             )
         await assert_public_url(norm_url)
-        body = await _tinyfish_fetch(api_key, norm_url)
-        return (
-            body,
-            {
-                "url": norm_url,
-                "final_url": norm_url,
-                "content_type": "text/markdown",
-                "source": "tinyfish",
-            },
+        return await _tinyfish_fetch(
+            api_key,
+            norm_url,
+            norm_url=norm_url,
+            fmt=format,
+            timeout=eff_timeout,
         )
 
     body, final_url, ctype, status_code = await _direct_fetch(
@@ -299,15 +278,12 @@ async def handle_webfetch(
         and api_key
         and (status_code == 403 or _looks_like_empty_js_shell(body))
     ):
-        body = await _tinyfish_fetch(api_key, final_url)
-        return (
-            body,
-            {
-                "url": norm_url,
-                "final_url": final_url,
-                "content_type": "text/markdown",
-                "source": "tinyfish",
-            },
+        return await _tinyfish_fetch(
+            api_key,
+            final_url,
+            norm_url=norm_url,
+            fmt=format,
+            timeout=eff_timeout,
         )
     if status_code >= 400:
         hint = (
@@ -321,25 +297,11 @@ async def handle_webfetch(
         {
             "url": norm_url,
             "final_url": final_url,
+            "format": format,
             "content_type": ctype,
             "source": "direct",
         },
     )
-
-
-def _item_field(item: object, *keys: str) -> str:
-    if isinstance(item, dict):
-        d = cast(dict[str, object], item)
-        for k in keys:
-            val = d.get(k)
-            if val:
-                return str(val)
-        return ""
-    for k in keys:
-        val = getattr(item, k, None)
-        if val:
-            return str(val)
-    return ""
 
 
 async def handle_websearch(
@@ -348,25 +310,34 @@ async def handle_websearch(
     runtime: ToolRuntime[RuntimeContext, AgentState],
 ) -> ToolResult:
     rt = runtime.context
+    web_cfg = rt.services.settings.web
     api_key = rt.services.settings.web_search_api_key
-    max_results = rt.services.settings.web.search_max_results
     if not api_key:
         raise ToolException("Web search is unavailable in this environment.")
 
-    from tinyfish import AsyncTinyFish
+    try:
+        async with AsyncTinyFish(
+            api_key=api_key,
+            timeout=float(web_cfg.fetch_default_timeout_seconds),
+        ) as client:
+            resp = await client.search.query(query=query)
+    except SDKError as exc:
+        raise ToolException(f"Web search failed: {exc}") from None
 
-    client = AsyncTinyFish(api_key=api_key)
-    resp = await client.search.query(query=query)
-    raw_items: list[object] = list(getattr(resp, "results", []) or [])
     results: list[dict[str, JSON]] = []
     md_blocks: list[str] = []
-    for item in raw_items[:max_results]:
-        title = _item_field(item, "title")
-        url = _item_field(item, "url")
-        snippet = _item_field(item, "snippet", "content")
-        published = _item_field(item, "published_date")
+    for item in resp.results[: web_cfg.search_max_results]:
+        title = item.title
+        url = item.url
+        snippet = item.snippet
+        published = item.date or ""
         results.append(
-            {"title": title, "url": url, "published": published, "snippet": snippet}
+            {
+                "title": title,
+                "url": url,
+                "published_at": published,
+                "snippet": snippet,
+            }
         )
         block = f"## [{title or url}]({url})"
         if published:

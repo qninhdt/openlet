@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from functools import lru_cache
 from pathlib import Path
 
@@ -17,6 +18,20 @@ def _jinja_env(root: Path) -> Environment:
         trim_blocks=True,
         lstrip_blocks=True,
     )
+
+
+@lru_cache(maxsize=4)
+def prompt_version_hash(is_root: bool) -> str:
+    """Short content hash of Git-tracked Jinja2 prompt sources for trace attribution."""
+    root = prompts_dir()
+    h = hashlib.sha256()
+    for name in ("common.j2", "leta.j2" if is_root else "leti.j2"):
+        path = root / name
+        if path.is_file():
+            h.update(name.encode("utf-8"))
+            h.update(b"\0")
+            h.update(path.read_bytes())
+    return h.hexdigest()[:12]
 
 
 def render_system_prompt(rt: RuntimeContext) -> str:

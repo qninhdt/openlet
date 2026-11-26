@@ -6,10 +6,13 @@ import logging
 import signal
 from typing import Literal
 
+from openlet_sdk.config import load
+from temporalio.contrib.opentelemetry import TracingInterceptor
 from temporalio.worker import Worker
 
 from ..config import Services
 from ..hitl.workflow import HitlWorkflow
+from ..observability import setup_observability
 from ..schedules.workflow import ScheduleFireWorkflow
 from .activities import OrchestrationActivities, RuntimeActivities
 from .agent_workflow import AgentWorkflow
@@ -19,7 +22,9 @@ logger = logging.getLogger(__name__)
 
 
 async def run_worker(role: Literal["all", "orchestration", "runtime"] = "all") -> None:
-    services = await Services.create()
+    cfg = load()
+    shutdown_obs, lf = setup_observability("openlet-leta-worker", cfg)
+    services = await Services.create(cfg, langfuse=lf)
     orch_acts = OrchestrationActivities(services)
     run_acts = RuntimeActivities(services)
     workers: list[Worker] = []
@@ -52,6 +57,7 @@ async def run_worker(role: Literal["all", "orchestration", "runtime"] = "all") -
                     orch_acts.deliver_hitl_result,
                     orch_acts.fire_schedule,
                 ],
+                interceptors=[TracingInterceptor()],
                 max_concurrent_activities=services.settings.orchestration.max_concurrent_orchestration_activities,
             )
         )
@@ -62,6 +68,7 @@ async def run_worker(role: Literal["all", "orchestration", "runtime"] = "all") -
                 services.temporal,
                 task_queue=services.queues.runtime,
                 activities=[run_acts.run_agent_turn],
+                interceptors=[TracingInterceptor()],
                 max_concurrent_activities=services.settings.orchestration.max_concurrent_runtime_activities,
             )
         )
@@ -80,6 +87,7 @@ async def run_worker(role: Literal["all", "orchestration", "runtime"] = "all") -
             await w.shutdown()
         await asyncio.gather(*tasks, return_exceptions=True)
         await services.close()
+        shutdown_obs()
 
 
 def main() -> None:

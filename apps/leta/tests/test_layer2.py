@@ -52,7 +52,7 @@ from leta.runtime.tool_repair import (
 from leta.runtime.tools.base import ToolArgs, ToolResult, make_tool
 from leta.runtime.tools.files import apply_file_edit
 from leta.runtime.tools.messaging import validate_citations
-from leta.runtime.truncation import truncate_head, truncate_tail
+from leta.truncation import truncate_head, truncate_tail
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -471,12 +471,34 @@ def test_citations_inbox_xml_orphans_and_end_turn_router() -> None:
                     "media_type": "application/vnd.ms-excel",
                 }
             ],
-            "metadata": {"message_id": "m1"},
+            "metadata": {"message_id": "m1", "reply_to_message_id": "m0"},
             "created_at": "2026-11-26T10:00:00Z",
         }
     )
     assert "&lt;Q3&gt; &amp; totals" in full_xml
     assert "/letfs/s1/n1" in full_xml
+    assert '<reply-to id="m0" />' in full_xml
+
+    react_xml = format_inbox_item_full(
+        {
+            "seq": 9,
+            "kind": "reaction",
+            "channel": "chat",
+            "reply_address": "chat:11111111-1111-1111-1111-111111111111",
+            "sender": {"type": "user", "id": "u1", "name": "Alice", "handle": "alice"},
+            "content": "",
+            "metadata": {
+                "target_message_id": "m1",
+                "emoji": "👍",
+                "action": "added",
+            },
+            "created_at": "2026-11-26T10:02:00Z",
+        }
+    )
+    assert '<reaction seq="9"' in react_xml
+    assert 'target_message_id="m1"' in react_xml
+    assert 'emoji="👍"' in react_xml
+    assert 'action="added"' in react_xml
 
     preview_xml = format_inbox_notification_preview(
         {
@@ -616,15 +638,11 @@ def test_schedule_timing_parser_and_simplified_tool_schemas() -> None:
         timezone="Asia/Ho_Chi_Minh",
         ends_at="2026-12-31T23:59:00+07:00",
     )
-    assert t_cron.calendar == {
-        "minute": [0],
-        "hour": [9],
-        "day_of_week": [1, 2, 3, 4, 5],
-    }
+    assert t_cron.cron == "0 9 * * 1-5"
     assert t_cron.ends_at is not None
 
     t_step = parse_schedule_timing(run_at=None, repeat="*/15 * * * mon,sun")
-    assert t_step.calendar == {"minute": [0, 15, 30, 45], "day_of_week": [0, 1]}
+    assert t_step.cron == "*/15 * * * mon,sun"
 
     with pytest.raises(ValueError, match="not both"):
         parse_schedule_timing(run_at="+5m", repeat="every 5m")
@@ -769,14 +787,10 @@ def test_native_structured_tools_and_ergonomics() -> None:
     assert parse_schedule_timing(run_at=None, repeat="15m").every_seconds == 900
     daily = parse_schedule_timing(run_at=None, repeat="daily", timezone="UTC+7")
     assert daily.timezone == "Asia/Ho_Chi_Minh"
-    assert daily.calendar == {"minute": [0], "hour": [9]}
+    assert daily.cron == "0 9 * * *"
     weekdays = parse_schedule_timing(run_at=None, repeat="weekdays", timezone="EST")
     assert weekdays.timezone == "America/New_York"
-    assert weekdays.calendar == {
-        "minute": [0],
-        "hour": [9],
-        "day_of_week": [1, 2, 3, 4, 5],
-    }
+    assert weekdays.cron == "0 9 * * 1-5"
 
     # 8. Tail truncation per-line clipping & clean error formatting
     tail_clipped = truncate_tail(
@@ -928,7 +942,7 @@ async def test_native_langgraph_tool_node_pipeline() -> None:
 
 
 def test_clean_utf8_formatting_for_hitl_schedule_and_agent_status() -> None:
-    from leta.hitl.service import (
+    from leta.runtime.formatting import (
         format_hitl_outcome,
         format_hitl_outcome_attr,
         format_hitl_response,
@@ -1025,3 +1039,191 @@ def test_clean_utf8_formatting_for_hitl_schedule_and_agent_status() -> None:
     )
     assert 'send_message({"to": "ethan", "content": "Xin chào 👋"})' == ev_tool
     assert "\\u" not in ev_tool
+
+
+@pytest.mark.asyncio
+async def test_tinyfish_fetch_and_search_use_fetch_and_search_apis(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from langchain_core.tools import ToolException
+    from leta.config import WebConfig
+    from leta.runtime.tools import web as web_tools
+    from tinyfish import FetchResponse, SDKError, SearchQueryResponse
+
+    calls: list[tuple[str, dict[str, object]]] = []
+    next_fetch: list[FetchResponse | Exception] = []
+    next_search: list[SearchQueryResponse | Exception] = []
+
+    class _FakeFetch:
+        async def get_contents(
+            self,
+            urls: list[str],
+            *,
+            format: str | None = None,
+            per_url_timeout_ms: int | None = None,
+        ) -> FetchResponse:
+            calls.append(
+                (
+                    "fetch",
+                    {
+                        "urls": urls,
+                        "format": format,
+                        "per_url_timeout_ms": per_url_timeout_ms,
+                    },
+                )
+            )
+            outcome = next_fetch.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+    class _FakeSearch:
+        async def query(self, query: str) -> SearchQueryResponse:
+            calls.append(("search", {"query": query}))
+            outcome = next_search.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+    class _FakeTinyFish:
+        def __init__(self, *, api_key: str, timeout: float = 30.0) -> None:
+            self.api_key = api_key
+            self.timeout = timeout
+            self.fetch = _FakeFetch()
+            self.search = _FakeSearch()
+
+        async def __aenter__(self) -> _FakeTinyFish:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    async def _allow_public(_url: str) -> None:
+        return None
+
+    monkeypatch.setattr(web_tools, "AsyncTinyFish", _FakeTinyFish)
+    monkeypatch.setattr(web_tools, "assert_public_url", _allow_public)
+
+    rt = cast(
+        ToolRuntime[RuntimeContext, AgentState],
+        SimpleNamespace(
+            context=SimpleNamespace(
+                services=SimpleNamespace(
+                    settings=SimpleNamespace(
+                        web=WebConfig(fetch_mode="tinyfish", search_max_results=2),
+                        web_search_api_key="tf-test-key",
+                    )
+                )
+            )
+        ),
+    )
+
+    next_fetch.append(
+        FetchResponse.model_validate(
+            {
+                "results": [
+                    {
+                        "url": "https://example.com/a",
+                        "final_url": "https://example.com/final",
+                        "title": "Example",
+                        "published_date": "2026-11-01",
+                        "text": "# Hello\nWorld",
+                        "format": "markdown",
+                    }
+                ],
+                "errors": [],
+            }
+        )
+    )
+    body, artifact = await web_tools.handle_webfetch(
+        "https://example.com/a", format="markdown", timeout=15, runtime=rt
+    )
+    assert body == "# Hello\nWorld"
+    assert artifact["final_url"] == "https://example.com/final"
+    assert artifact["source"] == "tinyfish"
+    assert calls[-1] == (
+        "fetch",
+        {
+            "urls": ["https://example.com/a"],
+            "format": "markdown",
+            "per_url_timeout_ms": 15_000,
+        },
+    )
+
+    next_fetch.append(
+        FetchResponse.model_validate(
+            {
+                "results": [
+                    {
+                        "url": "https://example.com/b",
+                        "text": "<h1>Heading</h1><p>Plain body</p>",
+                        "format": "html",
+                    }
+                ],
+                "errors": [],
+            }
+        )
+    )
+    plain, plain_meta = await web_tools.handle_webfetch(
+        "https://example.com/b", format="text", runtime=rt
+    )
+    assert "Heading" in plain and "Plain body" in plain and "<h1>" not in plain
+    assert plain_meta["content_type"] == "text/plain"
+
+    next_fetch.append(
+        FetchResponse.model_validate(
+            {
+                "results": [],
+                "errors": [{"url": "https://example.com/err", "error": "blocked"}],
+            }
+        )
+    )
+    with pytest.raises(ToolException, match="blocked"):
+        await web_tools.handle_webfetch("https://example.com/err", runtime=rt)
+
+    next_fetch.append(SDKError("rate limited"))
+    with pytest.raises(ToolException, match="rate limited"):
+        await web_tools.handle_webfetch("https://example.com/err2", runtime=rt)
+
+    next_search.append(
+        SearchQueryResponse.model_validate(
+            {
+                "query": "openlet",
+                "total_results": 3,
+                "results": [
+                    {
+                        "position": 1,
+                        "site_name": "example.com",
+                        "title": "Doc 1",
+                        "url": "https://example.com/1",
+                        "snippet": "Snippet 1",
+                        "date": "2026-10-01",
+                    },
+                    {
+                        "position": 2,
+                        "site_name": "example.com",
+                        "title": "Doc 2",
+                        "url": "https://example.com/2",
+                        "snippet": "Snippet 2",
+                    },
+                    {
+                        "position": 3,
+                        "site_name": "example.com",
+                        "title": "Doc 3",
+                        "url": "https://example.com/3",
+                        "snippet": "Snippet 3",
+                    },
+                ],
+            }
+        )
+    )
+    md, search_meta = await web_tools.handle_websearch("openlet", runtime=rt)
+    assert "Doc 1" in md and "2026-10-01" in md and "Doc 3" not in md
+    assert search_meta["provider"] == "tinyfish"
+    assert isinstance(search_meta["results"], list) and len(search_meta["results"]) == 2
+    assert search_meta["results"][0] == {
+        "title": "Doc 1",
+        "url": "https://example.com/1",
+        "published_at": "2026-10-01",
+        "snippet": "Snippet 1",
+    }

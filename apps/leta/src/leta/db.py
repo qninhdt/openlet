@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 from collections.abc import Mapping
@@ -9,8 +8,7 @@ from typing import Any, cast
 from urllib.parse import quote
 from uuid import UUID
 
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from openlet_sdk.config import JSON, Config, load, secret
+from openlet_sdk.config import JSON, Config, secret
 from psycopg.rows import DictRow, dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
@@ -51,19 +49,6 @@ async def open_pool(cfg: Config, *, min_size: int = 2, max_size: int = 24) -> Po
     )
     await pool.open(wait=True)
     return pool
-
-
-def make_checkpointer(pool: Pool) -> AsyncPostgresSaver:
-    return AsyncPostgresSaver(pool)
-
-
-async def setup_checkpointer(cfg: Config | None = None) -> None:
-    pool = await open_pool(cfg or load(), min_size=1, max_size=2)
-    try:
-        saver = make_checkpointer(pool)
-        await saver.setup()
-    finally:
-        await pool.close()
 
 
 async def acquire_lease(
@@ -193,7 +178,3 @@ def json_value(value: object) -> JSON:
 
 def json_row(row: Mapping[str, object]) -> dict[str, JSON]:
     return {str(k): json_value(v) for k, v in row.items()}
-
-
-if __name__ == "__main__":
-    asyncio.run(setup_checkpointer())

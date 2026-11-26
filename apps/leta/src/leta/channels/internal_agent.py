@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from langchain_core.tools import ToolException
-
 from ..db import Pool
 from ..inbox import InboxGateway, InboxItem, InboxSender
 from .base import (
     CallerContext,
+    ChannelError,
     ChannelMessage,
     ChannelSummary,
     OutboundMessage,
@@ -94,16 +93,16 @@ class InternalAgentAdapter:
                 opts = ", ".join(
                     f"agent:{p['handle']} ({p['name']})" for p in peers[:10]
                 )
-                raise ToolException(
+                raise ChannelError(
                     f"Active agent {target!r} not found in this Leta tree. Available agents: {opts}"
                 )
-            raise ToolException(
+            raise ChannelError(
                 f"Active agent {target!r} not found in this Leta tree (no other active agents)."
             )
         target_id = UUID(str(row["id"]))
         handle = str(row["handle"])
         if target_id == caller.agent_id:
-            raise ToolException("Cannot send an internal message to yourself.")
+            raise ChannelError("Cannot send an internal message to yourself.")
 
         result = await self.inbox.deliver(
             InboxItem(
@@ -123,7 +122,7 @@ class InternalAgentAdapter:
             )
         )
         if not result.delivered:
-            raise ToolException(f"Agent {handle!r} is no longer active.")
+            raise ChannelError(f"Agent {handle!r} is no longer active.")
         return OutboundReceipt(
             channel="agent",
             target=handle,
@@ -139,7 +138,7 @@ class InternalAgentAdapter:
     async def react(
         self, caller: CallerContext, target: str, message_id: str, emoji: str
     ) -> None:
-        raise ToolException("Reactions are not supported on internal agent channels.")
+        raise ChannelError("Reactions are not supported on internal agent channels.")
 
     async def read_history(
         self,

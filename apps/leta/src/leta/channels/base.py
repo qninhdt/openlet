@@ -7,6 +7,10 @@ from uuid import UUID
 from openlet_sdk.config import JSON
 
 
+class ChannelError(ValueError):
+    """Domain error raised by channel adapters and router for invalid targets or operations."""
+
+
 @dataclass(frozen=True, slots=True)
 class OutboundAttachment:
     storage_id: str

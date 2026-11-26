@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import asyncio
+import re
 import secrets
 from typing import Literal
 from uuid import UUID, uuid4
 
-import regex as re
 from openlet_sdk.config import JSON, ReasoningEffort
+from psycopg import AsyncConnection
+from psycopg.rows import DictRow
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field
 from temporalio.client import Client as TemporalClient
@@ -91,24 +94,23 @@ def root_handle_base(name: str, title: str) -> str:
 
 
 async def allocate_unique_root_handle(
-    db: Pool, workspace_id: UUID, name: str, title: str
+    conn: AsyncConnection[DictRow], workspace_id: UUID, name: str, title: str
 ) -> str:
     base = root_handle_base(name, title)
-    async with db.connection() as conn:
-        rows = await (
-            await conn.execute(
-                """
-                SELECT a.handle
-                FROM agents a
-                JOIN letas l ON l.id = a.leta_id
-                WHERE l.workspace_id = %s
-                  AND l.state IN ('provisioning', 'active')
-                  AND a.parent_agent_id IS NULL
-                  AND (a.handle = %s OR a.handle LIKE %s)
-                """,
-                (workspace_id, base, f"{base}-%"),
-            )
-        ).fetchall()
+    rows = await (
+        await conn.execute(
+            """
+            SELECT a.handle
+            FROM agents a
+            JOIN letas l ON l.id = a.leta_id
+            WHERE l.workspace_id = %s
+              AND l.state IN ('provisioning', 'active')
+              AND a.parent_agent_id IS NULL
+              AND (a.handle = %s OR a.handle LIKE %s)
+            """,
+            (workspace_id, base, f"{base}-%"),
+        )
+    ).fetchall()
     taken = {str(r["handle"]) for r in rows}
     if base not in taken:
         return base
@@ -120,21 +122,20 @@ async def allocate_unique_root_handle(
 
 
 async def allocate_unique_subagent_handle(
-    db: Pool, leta_id: UUID, name: str, title: str = ""
+    conn: AsyncConnection[DictRow], leta_id: UUID, name: str, title: str = ""
 ) -> str:
     base = slugify_handle(name if not title else f"{name}-{title}", fallback="subagent")
-    async with db.connection() as conn:
-        rows = await (
-            await conn.execute(
-                """
-                SELECT handle
-                FROM agents
-                WHERE leta_id = %s AND state = 'active'
-                  AND (handle = %s OR handle LIKE %s)
-                """,
-                (leta_id, base, f"{base}-%"),
-            )
-        ).fetchall()
+    rows = await (
+        await conn.execute(
+            """
+            SELECT handle
+            FROM agents
+            WHERE leta_id = %s AND state = 'active'
+              AND (handle = %s OR handle LIKE %s)
+            """,
+            (leta_id, base, f"{base}-%"),
+        )
+    ).fetchall()
     taken = {str(r["handle"]) for r in rows}
     if base not in taken:
         return base
@@ -328,7 +329,7 @@ async def spawn_subagent(
                 f"maximum active subagents per Leta ({max_active_per_leta}) reached"
             )
 
-        handle = await allocate_unique_subagent_handle(db, leta_id, name, title)
+        handle = await allocate_unique_subagent_handle(conn, leta_id, name, title)
         sub_id = uuid4()
         appearance = random_appearance()
         eff_model = model_id if model_id is not None else parent["model_id"]
@@ -433,7 +434,7 @@ async def stop_agent_tree(
                 (stopped_ids,),
             )
 
-    for r in rows:
+    async def _stop_one(r: dict[str, object]) -> None:
         aid = UUID(str(r["id"]))
         leta_id = UUID(str(r["leta_id"]))
         if temporal is not None:
@@ -450,6 +451,9 @@ async def stop_agent_tree(
                 event_type="subagent.stopped",
                 data={"agent_id": str(aid), "handle": str(r["handle"])},
             )
+
+    if rows:
+        await asyncio.gather(*(_stop_one(r) for r in rows))
     return stopped_ids
 
 
@@ -483,10 +487,110 @@ async def notify_parent_failure(
                 name=str(row["name"]),
                 handle=str(row["handle"]),
             ),
-            content=(
-                f"Subagent {row['handle']} ({row['name']}) failed with error: "
-                f"{error_message or 'unknown error'}"
-            ),
-            metadata={"subagent_id": str(agent_id), "event": "subagent_failed"},
+            content="",
+            metadata={
+                "subagent_id": str(agent_id),
+                "subagent_handle": str(row["handle"]),
+                "subagent_name": str(row["name"]),
+                "error": error_message or "unknown error",
+                "event": "subagent_failed",
+            },
         )
     )
+
+
+async def list_workspace_root_agents(
+    db: Pool, workspace_id: UUID, *, limit: int | None = None
+) -> list[dict[str, JSON]]:
+    async with db.connection() as conn:
+        if limit is not None:
+            rows = await (
+                await conn.execute(
+                    """
+                    SELECT a.id, a.name, a.title, a.handle, a.description
+                    FROM agents a JOIN letas l ON l.id = a.leta_id
+                    WHERE l.workspace_id = %s AND l.state = 'active' AND a.parent_agent_id IS NULL
+                    ORDER BY a.created_at ASC LIMIT %s
+                    """,
+                    (workspace_id, limit),
+                )
+            ).fetchall()
+        else:
+            rows = await (
+                await conn.execute(
+                    """
+                    SELECT a.id, a.name, a.title, a.handle, a.description
+                    FROM agents a JOIN letas l ON l.id = a.leta_id
+                    WHERE l.workspace_id = %s AND l.state = 'active' AND a.parent_agent_id IS NULL
+                    ORDER BY a.created_at ASC
+                    """,
+                    (workspace_id,),
+                )
+            ).fetchall()
+    return [json_row(r) for r in rows]
+
+
+async def resolve_leta_agent(
+    db: Pool,
+    leta_id: UUID,
+    raw_ref: str,
+    *,
+    active_only: bool = True,
+) -> dict[str, object] | None:
+    cleaned = raw_ref.strip().removeprefix("agent:").lstrip("@").strip()
+    if not cleaned:
+        return None
+    uid: UUID | None = None
+    try:
+        uid = UUID(cleaned)
+    except ValueError:
+        uid = None
+    low = cleaned.lower()
+    state_clause = "AND a.state = 'active'" if active_only else ""
+    async with db.connection() as conn:
+        if uid is not None:
+            row = await (
+                await conn.execute(
+                    f"""
+                    SELECT a.id, a.parent_agent_id, a.name, a.title, a.handle, a.state,
+                           EXISTS(SELECT 1 FROM runs r WHERE r.agent_id = a.id AND r.status = 'running') AS running
+                    FROM agents a
+                    WHERE a.leta_id = %s AND a.id = %s {state_clause}
+                    ORDER BY a.created_at DESC LIMIT 1
+                    """,
+                    (leta_id, uid),
+                )
+            ).fetchone()
+        else:
+            row = await (
+                await conn.execute(
+                    f"""
+                    SELECT a.id, a.parent_agent_id, a.name, a.title, a.handle, a.state,
+                           EXISTS(SELECT 1 FROM runs r WHERE r.agent_id = a.id AND r.status = 'running') AS running
+                    FROM agents a
+                    WHERE a.leta_id = %s AND lower(a.handle) = %s {state_clause}
+                    ORDER BY a.created_at DESC LIMIT 1
+                    """,
+                    (leta_id, low),
+                )
+            ).fetchone()
+    return dict(row) if row is not None else None
+
+
+async def list_active_subagents_status(
+    db: Pool, leta_id: UUID
+) -> list[dict[str, object]]:
+    async with db.connection() as conn:
+        rows = await (
+            await conn.execute(
+                """
+                SELECT a.handle, a.name, a.title, a.state,
+                       EXISTS(SELECT 1 FROM runs r WHERE r.agent_id = a.id AND r.status = 'running') AS running
+                FROM agents a
+                WHERE a.leta_id = %s AND a.parent_agent_id IS NOT NULL AND a.state = 'active'
+                ORDER BY running DESC, a.created_at DESC
+                """,
+                (leta_id,),
+            )
+        ).fetchall()
+    return [dict(r) for r in rows]

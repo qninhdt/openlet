@@ -5,7 +5,6 @@ from uuid import UUID
 
 import grpc
 from google.protobuf.struct_pb2 import Struct
-from langchain_core.tools import ToolException
 from openlet_api.chat.v1 import chat_pb2 as chat_pb
 from openlet_api.platform.v1 import internal_pb2 as plat_int_pb
 from openlet_sdk.config import JSON
@@ -14,6 +13,7 @@ from ..auth import Actor
 from ..db import Pool
 from .base import (
     CallerContext,
+    ChannelError,
     ChannelMessage,
     ChannelSummary,
     OutboundMessage,
@@ -56,7 +56,7 @@ class OpenletChatAdapter:
     async def _dm_with_user(self, caller: CallerContext, user_ref: str) -> str:
         cleaned = user_ref.strip().lstrip("@").strip()
         if not cleaned:
-            raise ToolException("User target cannot be empty.")
+            raise ChannelError("User target cannot be empty.")
         user_id: str | None = None
         try:
             user_id = str(UUID(cleaned))
@@ -68,7 +68,7 @@ class OpenletChatAdapter:
                 user_id = str(user.id)
             except grpc.aio.AioRpcError as exc:
                 if exc.code() == grpc.StatusCode.NOT_FOUND:
-                    raise ToolException(
+                    raise ChannelError(
                         f"User {cleaned!r} not found. Call list_members to see workspace handles."
                     ) from None
                 raise
@@ -85,7 +85,7 @@ class OpenletChatAdapter:
     async def _dm_with_peer_agent(self, caller: CallerContext, agent_ref: str) -> str:
         cleaned = agent_ref.strip().lstrip("@").strip()
         if not cleaned:
-            raise ToolException("Agent target cannot be empty.")
+            raise ChannelError("Agent target cannot be empty.")
         uid: UUID | None = None
         try:
             uid = UUID(cleaned)
@@ -125,7 +125,7 @@ class OpenletChatAdapter:
                     )
                 ).fetchone()
         if row is None:
-            raise ToolException(
+            raise ChannelError(
                 f"Peer agent {cleaned!r} not found in this workspace. Call list_members(kind='agent') to see peer agents."
             )
         conv = await self.chat.CreateOrGetDM(
@@ -224,11 +224,11 @@ class OpenletChatAdapter:
             return await self._resolve_conversation_id(caller, addr)
         if len(matches) > 1:
             opts = ", ".join(f"{a} [{lbl}]" for a, lbl in matches)
-            raise ToolException(
+            raise ChannelError(
                 f"Chat target {target!r} matches multiple destinations. Specify one of: {opts}"
             )
 
-        raise ToolException(
+        raise ChannelError(
             f"Chat destination {target!r} not found. Use a conversation ID ('chat:<conv_id>'), "
             "a handle ('ethan', 'chat:user:ethan', 'chat:agent:nora'), or call list_channels / list_members."
         )

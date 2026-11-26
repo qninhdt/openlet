@@ -394,15 +394,7 @@ async def handle_read_messages(
         pass
 
     # Mark any previewed inbox rows for this channel as delivered.
-    async with rt.services.db.connection() as conn:
-        await conn.execute(
-            """
-            UPDATE inbox_items
-            SET delivery_state = 'delivered'
-            WHERE agent_id = %s AND reply_address = %s AND delivery_state = 'previewed'
-            """,
-            (rt.agent_id, to),
-        )
+    await rt.services.inbox.mark_channel_delivered(rt.agent_id, to)
     max_seq = max((m.seq for m in msgs if m.seq and m.seq > 0), default=0)
     if max_seq > 0:
         await rt.router.mark_read(caller, to, max_seq)
