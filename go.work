@@ -1,6 +1,7 @@
 go 1.27.4
 
 use (
+	./apps/chat
 	./apps/letfs
 	./apps/platform
 	./packages/sdk-go
