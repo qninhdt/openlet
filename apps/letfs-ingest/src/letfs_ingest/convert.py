@@ -579,7 +579,7 @@ def convert_xlsx(source: Path, output: Path, config: Config) -> None:
     max_output = limits["max_output_bytes"]
 
     wb: Any = openpyxl.load_workbook(source, read_only=False, data_only=True)
-    wb_formulas: Any = openpyxl.load_workbook(source, read_only=False, data_only=False)
+    wb_formulas: Any = None
     output.mkdir(parents=True, exist_ok=True)
     writer = ImageArtifactWriter(output, max_blob=max_blob, max_output=max_output)
     readme_lines: list[str] = ["# Workbook Index\n"]
@@ -588,17 +588,26 @@ def convert_xlsx(source: Path, output: Path, config: Config) -> None:
     try:
         for sheet_name in wb.sheetnames:
             ws: Any = wb[sheet_name]
-            ws_f: Any = wb_formulas[sheet_name]
             readme_lines.append(f"\n## Sheet: {sheet_name}\n")
 
             cells: dict[tuple[int, int], str] = {}
             cached_cells: dict[tuple[int, int], Any] = getattr(ws, "_cells", {})
-            formula_cells: dict[tuple[int, int], Any] = getattr(ws_f, "_cells", {})
+            needs_formulas = any(
+                not _cell_str(getattr(c, "value", None)) for c in cached_cells.values()
+            )
+            formula_cells: dict[tuple[int, int], Any] = {}
+            if needs_formulas:
+                if wb_formulas is None:
+                    wb_formulas = openpyxl.load_workbook(
+                        source, read_only=False, data_only=False
+                    )
+                ws_f: Any = wb_formulas[sheet_name]
+                formula_cells = getattr(ws_f, "_cells", {})
             for coord in set(cached_cells) | set(formula_cells):
                 r1, c1 = int(coord[0]), int(coord[1])
                 c_cell = cached_cells.get(coord)
                 txt = _cell_str(getattr(c_cell, "value", None))
-                if not txt and coord in formula_cells:
+                if not txt and wb_formulas is not None and coord in formula_cells:
                     txt = _resolve_formula_fallback(wb, wb_formulas, sheet_name, r1, c1)
                 if txt:
                     cells[(r1 - 1, c1 - 1)] = txt
@@ -709,7 +718,8 @@ def convert_xlsx(source: Path, output: Path, config: Config) -> None:
                     )
     finally:
         wb.close()
-        wb_formulas.close()
+        if wb_formulas is not None:
+            wb_formulas.close()
 
     readme = _fit_utf8_bytes("\n".join(readme_lines).strip() + "\n", max_text)
     (output / "README.md").write_text(readme, encoding="utf-8")

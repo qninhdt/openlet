@@ -460,7 +460,6 @@ def configure(
         refs["leta-api"] = [
             svc["leta"]["database"]["password"],
             dep["spicedb"]["key"],
-            dep["redis"]["password"],
             c["models"]["gateway"]["api_key"],
             lf["public_key"],
             lf["secret_key"],
@@ -505,9 +504,7 @@ def configure(
                 "QDRANT_METRICS_ADDRESS": dep["qdrant"]["address"].rsplit(":", 1)[0]
                 + ":6333",
                 "REDIS_ADDRESS": dep["redis"]["address"],
-                "REDIS_PASSWORD": resolve(dep["redis"]["password"])
-                if leta_enabled
-                else "",
+                "REDIS_PASSWORD": resolve(dep["redis"]["password"]),
                 "POSTGRES_METRICS_DSN": f"postgresql://{quote(cloud['postgres_user'], safe='')}:{quote(resolve(cloud['postgres_password']), safe='')}@{pg['host']}:{pg['port']}/postgres?sslmode={pg['sslmode']}",
             }
         }
@@ -579,11 +576,10 @@ def configure(
     output.mkdir(parents=True, exist_ok=True)
     output.chmod(0o700)
     alloy = (ROOT / "infra/config/observability/alloy.alloy").read_text()
-    if leta_enabled:
-        alloy = alloy.replace(
-            "targets = [] // Redis targets are enabled by configure.py with the Leta profile.",
-            "targets = prometheus.exporter.redis.cache.targets",
-        )
+    alloy = alloy.replace(
+        "targets = [] // Redis targets are enabled by configure.py with the Leta profile.",
+        "targets = prometheus.exporter.redis.cache.targets",
+    )
     (output / "alloy.alloy").write_text(alloy)
     centrifugo_config: dict[str, object] = {
         "client": {

@@ -1144,6 +1144,11 @@ def unseed_workspace(
     services.platform.execute("DELETE FROM workspaces WHERE id = %s", (wid,))
     if services.chat is not None:
         with services.chat.transaction():
+            if conv_ids:
+                services.chat.execute(
+                    "DELETE FROM outbox_events WHERE conversation_id = ANY(%s)",
+                    (conv_ids,),
+                )
             services.chat.execute(
                 "DELETE FROM conversations WHERE workspace_id = %s", (wid,)
             )

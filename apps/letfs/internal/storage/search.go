@@ -153,11 +153,25 @@ func regexOp(caseSensitive bool) string {
 }
 
 // pgSafeRegex converts common RE2 patterns into Postgres POSIX ERE for pg_trgm GIN pre-filtering.
-// Returns ("", false) when the pattern uses Go-specific constructs that may differ in Postgres,
-// allowing the query to safely pre-filter by tree/glob and perform exact Go regex matching.
+// Returns ("", false) when the pattern uses line anchors or Go/RE2 constructs that differ in
+// Postgres (whole-text ^/$, PCRE flags, or RE2 shorthand escapes like \d/\w/\s/\b), allowing
+// the query to safely pre-filter by tree/glob and perform exact Go regex matching line-by-line.
 func pgSafeRegex(pattern string) (string, bool) {
-	if strings.Contains(pattern, "(?") || strings.Contains(pattern, `\b`) || strings.Contains(pattern, `\B`) || strings.Contains(pattern, `\A`) || strings.Contains(pattern, `\z`) {
+	if strings.Contains(pattern, "(?") || strings.Contains(pattern, "[:") || strings.ContainsAny(pattern, "^$") {
 		return "", false
+	}
+	for i := 0; i < len(pattern); i++ {
+		if pattern[i] != '\\' {
+			continue
+		}
+		if i+1 >= len(pattern) {
+			return "", false
+		}
+		next := pattern[i+1]
+		if (next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z') || (next >= '0' && next <= '9') {
+			return "", false
+		}
+		i++
 	}
 	return pattern, true
 }
@@ -456,7 +470,7 @@ func (s *Server) Grep(ctx context.Context, r *pb.GrepRequest) (*pb.GrepResponse,
 	var rows pgx.Rows
 	switch {
 	case root.Artifact != nil:
-		rows, err = s.DB.Query(ctx, `SELECT trim(leading $4 from a.path) AS rel_path,a.id::text,a.path,a.text_content
+		rows, err = s.DB.Query(ctx, `SELECT substring(a.path from char_length($4) + 1) AS rel_path,a.id::text,a.path,a.text_content
 			FROM blob_artifacts a
 			WHERE a.blob_id=$1 AND a.path LIKE $2 ESCAPE '\' AND a.text_content IS NOT NULL AND a.`+filterClause+`
 			ORDER BY a.path`,

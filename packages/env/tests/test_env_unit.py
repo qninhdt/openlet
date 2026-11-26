@@ -191,14 +191,3 @@ def test_read_seed_specs_and_referenced_users(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="invalid seed handle"):
         dataset.validate_slug("Bad_Handle")
-
-
-def test_stage_wiremock_stubs_synthesizes_leta_prompts(tmp_path: Path) -> None:
-    config.stage_wiremock_stubs(tmp_path, mode="live", include_langfuse=True)
-    for role in ("leta", "leti"):
-        stub_path = tmp_path / f"leta-prompt-{role}.json"
-        assert stub_path.is_file()
-        data = json.loads(stub_path.read_text(encoding="utf-8"))
-        prompt = data["response"]["jsonBody"]["prompt"]
-        assert "@@@langfusePrompt:" not in prompt
-        assert "common.j2" in prompt

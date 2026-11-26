@@ -52,7 +52,7 @@ services:
 
   centrifugo:
     logging: *logging
-    image: centrifugo/centrifugo:v6
+    image: centrifugo/centrifugo:v6@sha256:33fdbbce7d195dde316cbde17bc1d2a17b9e345de82799d1ec3c2bb8916e3803
     command: [centrifugo, -c, /centrifugo/config.json]
     volumes: ['${OPENLET_GENERATED:?required}/centrifugo.json:/centrifugo/config.json:ro']
     healthcheck:
@@ -94,7 +94,7 @@ services:
     image: openlet/leta:local
     build: {context: .., dockerfile: apps/leta/Dockerfile}
     entrypoint: [/bin/sh, -ec]
-    command: ['goose up && /app/.venv/bin/python -m leta.db']
+    command: ['goose up && /app/.venv/bin/python -m leta.runtime.checkpoint']
     volumes: ['${OPENLET_CONFIG:?required}:/etc/openlet/openlet.yaml:ro']
     depends_on:
       databases: {condition: service_completed_successfully}
@@ -115,7 +115,6 @@ services:
     depends_on:
       litellm: {condition: service_healthy}
       leta-migrate: {condition: service_completed_successfully}
-      redis: {condition: service_healthy}
       centrifugo: {condition: service_healthy}
       chat: {condition: service_healthy}
       resources: {condition: service_completed_successfully}
@@ -131,7 +130,7 @@ services:
     depends_on:
       litellm: {condition: service_healthy}
       leta-migrate: {condition: service_completed_successfully}
-      redis: {condition: service_healthy}
+      centrifugo: {condition: service_healthy}
       resources: {condition: service_completed_successfully}
 
   alloy:

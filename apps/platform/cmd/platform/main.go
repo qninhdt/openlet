@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -38,6 +39,19 @@ func main() {
 		slog.Error("platform stopped", "error", err)
 		os.Exit(1)
 	}
+}
+
+func profileEnabled(name string) bool {
+	raw, ok := os.LookupEnv("COMPOSE_PROFILES")
+	if !ok {
+		return true
+	}
+	for _, p := range strings.Split(raw, ",") {
+		if strings.TrimSpace(p) == name {
+			return true
+		}
+	}
+	return false
 }
 func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -145,7 +159,7 @@ func run() error {
 		chatInternal = chatpb.NewChatInternalServiceClient(chatConn)
 	}
 	var letaInternal letapb.LetaInternalServiceClient
-	if letaGRPCTarget != "" {
+	if letaGRPCTarget != "" && profileEnabled("leta") {
 		letaConn, err := sdk.Dial(letaGRPCTarget)
 		if err != nil {
 			return err

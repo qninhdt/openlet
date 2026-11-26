@@ -178,10 +178,12 @@ func TestGlobAndGrepHelpers(t *testing.T) {
 		t.Fatal("matchesIncludeGlob path mismatch")
 	}
 	if _, ok := pgSafeRegex(`foo|bar[0-9]+`); !ok {
-		t.Fatal("expected basic regex to be pg-safe")
+		t.Fatal("expected simple alternation to be pg-safe")
 	}
-	if _, ok := pgSafeRegex(`\bword\b`); ok {
-		t.Fatal("expected \\b regex to bypass pg pre-filter")
+	for _, unsafe := range []string{`^heading`, `end$`, `\d+`, `\w+`, `\s+`, `(?i)foo`, `\bword\b`} {
+		if _, ok := pgSafeRegex(unsafe); ok {
+			t.Fatalf("expected %q to bypass pg regex pre-filter", unsafe)
+		}
 	}
 
 	m, err := newLineMatcher(`rev\d+`, false, false)
