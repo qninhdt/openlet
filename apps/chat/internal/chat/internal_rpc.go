@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"sync"
 
 	az "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	pb "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/chat/v1"
@@ -47,15 +48,24 @@ func (s *Server) DeleteWorkspaceData(ctx context.Context, r *pb.DeleteWorkspaceD
 		return nil, err
 	}
 
-	if s.Graph != nil {
+	if s.Graph != nil && len(convIDs) > 0 {
+		sem := make(chan struct{}, 8)
+		var wg sync.WaitGroup
 		for _, cid := range convIDs {
-			_, _ = s.Graph.DeleteRelationships(ctx, &az.DeleteRelationshipsRequest{
-				RelationshipFilter: &az.RelationshipFilter{
-					ResourceType:       "conversation",
-					OptionalResourceId: cid,
-				},
-			})
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(id string) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				_, _ = s.Graph.DeleteRelationships(ctx, &az.DeleteRelationshipsRequest{
+					RelationshipFilter: &az.RelationshipFilter{
+						ResourceType:       "conversation",
+						OptionalResourceId: id,
+					},
+				})
+			}(cid)
 		}
+		wg.Wait()
 	}
 	return &emptypb.Empty{}, nil
 }
@@ -105,19 +115,28 @@ func (s *Server) RemoveAgent(ctx context.Context, r *pb.RemoveAgentRequest) (*em
 		return nil, err
 	}
 
-	if s.Graph != nil {
+	if s.Graph != nil && len(convIDs) > 0 {
+		sem := make(chan struct{}, 8)
+		var wg sync.WaitGroup
 		for _, cid := range convIDs {
-			_, _ = s.Graph.DeleteRelationships(ctx, &az.DeleteRelationshipsRequest{
-				RelationshipFilter: &az.RelationshipFilter{
-					ResourceType:       "conversation",
-					OptionalResourceId: cid,
-					OptionalSubjectFilter: &az.SubjectFilter{
-						SubjectType:       "agent",
-						OptionalSubjectId: r.AgentId,
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(id string) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				_, _ = s.Graph.DeleteRelationships(ctx, &az.DeleteRelationshipsRequest{
+					RelationshipFilter: &az.RelationshipFilter{
+						ResourceType:       "conversation",
+						OptionalResourceId: id,
+						OptionalSubjectFilter: &az.SubjectFilter{
+							SubjectType:       "agent",
+							OptionalSubjectId: r.AgentId,
+						},
 					},
-				},
-			})
+				})
+			}(cid)
 		}
+		wg.Wait()
 	}
 	return &emptypb.Empty{}, nil
 }

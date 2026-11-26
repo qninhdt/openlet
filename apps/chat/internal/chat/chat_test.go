@@ -75,6 +75,7 @@ func TestValidateSidebarLayout(t *testing.T) {
 
 func TestOutboxBuildDeliverInboxRequest(t *testing.T) {
 	wsID, convID, msgID, senderID, agentID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
+	storageID, nodeID := uuid.NewString(), uuid.NewString()
 	msgPayload, _ := json.Marshal(map[string]any{
 		"workspace_id":      wsID,
 		"conversation_id":   convID,
@@ -83,8 +84,9 @@ func TestOutboxBuildDeliverInboxRequest(t *testing.T) {
 		"seq":               7,
 		"sender_type":       "user",
 		"sender_id":         senderID,
-		"content":           "Check [report](/letfs/s1/n1)",
-		"attachments":       []map[string]any{{"storage_id": "s1", "node_id": "n1", "name": "r.pdf"}},
+		"content":           "Check [report](/letfs/" + storageID + "/" + nodeID + ")",
+		"attachments":       []map[string]any{{"storage_id": storageID, "node_id": nodeID, "name": "r.pdf", "media_type": "application/pdf"}},
+		"mentions":          []map[string]any{{"kind": "file", "id": nodeID, "storage_id": storageID, "node_id": nodeID, "label": "report"}},
 	})
 	req, err := buildDeliverInboxRequest(outboxRow{
 		ID:             1,
@@ -98,7 +100,11 @@ func TestOutboxBuildDeliverInboxRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if req.Silent || req.Kind != "channel" || req.ReplyAddress != "chat:"+convID || req.IdempotencyKey != "chat:msg:"+msgID {
+	if err := protovalidate.Validate(req); err != nil {
+		t.Fatalf("message inbox req failed validation: %v", err)
+	}
+	msgEv := req.GetChatMessage()
+	if msgEv == nil || msgEv.ConversationId != convID || req.IdempotencyKey != "chat:msg:"+msgID || len(msgEv.Attachments) != 1 || msgEv.Attachments[0].NodeId != nodeID || len(msgEv.Mentions) != 1 || msgEv.Mentions[0].Kind != "file" || msgEv.Mentions[0].NodeId != nodeID {
 		t.Fatalf("unexpected message inbox req: %+v", req)
 	}
 
@@ -123,7 +129,11 @@ func TestOutboxBuildDeliverInboxRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reactReq.Silent || reactReq.Kind != "notification" || reactReq.IdempotencyKey != "chat:react:42" {
+	if err := protovalidate.Validate(reactReq); err != nil {
+		t.Fatalf("reaction inbox req failed validation: %v", err)
+	}
+	reactEv := reactReq.GetChatReaction()
+	if reactEv == nil || reactEv.Emoji != "👍" || reactEv.Action != "added" || reactReq.IdempotencyKey != "chat:react:42" {
 		t.Fatalf("unexpected reaction inbox req: %+v", reactReq)
 	}
 }

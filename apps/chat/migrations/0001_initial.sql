@@ -45,7 +45,7 @@ CREATE TABLE messages (
     sender_type     TEXT NOT NULL CHECK (sender_type IN ('user', 'agent', 'system')),
     sender_id       UUID NOT NULL,
     content         TEXT NOT NULL DEFAULT '',
-    reply_to_id     UUID REFERENCES messages(id),
+    reply_to_id     UUID REFERENCES messages(id) ON DELETE SET NULL,
     attachments     JSONB NOT NULL DEFAULT '[]',
     mentions        JSONB NOT NULL DEFAULT '[]',
     metadata        JSONB NOT NULL DEFAULT '{}',

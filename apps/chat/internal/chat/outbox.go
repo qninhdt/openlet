@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"math"
 	"strings"
+	"sync"
 	"time"
 
 	letapb "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/leta/v1"
@@ -127,19 +128,19 @@ func (s *Server) cleanupOutbox(ctx context.Context) {
 }
 
 func (s *Server) processOutboxBatch(ctx context.Context) (int, error) {
-	tx, err := s.DB.Begin(ctx)
-	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback(ctx)
-
-	rows, err := tx.Query(ctx,
-		`SELECT id, destination, conversation_id::text, message_id::text, target_id, event_type, payload, attempts
-		 FROM outbox_events
-		 WHERE delivered_at IS NULL AND next_attempt_at <= now()
-		 ORDER BY id ASC
-		 LIMIT $1
-		 FOR UPDATE SKIP LOCKED`,
+	// Phase 1: Claim a batch with a 120s visibility timeout in a single short statement.
+	rows, err := s.DB.Query(ctx,
+		`UPDATE outbox_events
+		 SET next_attempt_at = now() + interval '120 seconds'
+		 WHERE id IN (
+			SELECT id
+			FROM outbox_events
+			WHERE delivered_at IS NULL AND next_attempt_at <= now()
+			ORDER BY id ASC
+			LIMIT $1
+			FOR UPDATE SKIP LOCKED
+		 )
+		 RETURNING id, destination, conversation_id::text, message_id::text, target_id, event_type, payload, attempts`,
 		s.outboxBatchSize(),
 	)
 	if err != nil {
@@ -159,28 +160,81 @@ func (s *Server) processOutboxBatch(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	if len(batch) == 0 {
-		return 0, tx.Commit(ctx)
+		return 0, nil
 	}
 
-	for _, ev := range batch {
-		dispatchCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		err := s.dispatchOutboxEvent(dispatchCtx, ev)
-		cancel()
-		if err == nil {
-			_, _ = tx.Exec(ctx, `UPDATE outbox_events SET delivered_at=now(), attempts=attempts+1 WHERE id=$1`, ev.ID)
+	// Phase 2: Dispatch outside any DB transaction, keeping FIFO order per (destination, conversation, target).
+	type dispatchResult struct {
+		ev  outboxRow
+		err error
+	}
+	type groupKey struct {
+		dest, conv, target string
+	}
+	type indexedRow struct {
+		idx int
+		row outboxRow
+	}
+	grouped := make(map[groupKey][]indexedRow, len(batch))
+	var keys []groupKey
+	for i, ev := range batch {
+		k := groupKey{ev.Destination, ev.ConversationID, ev.TargetID}
+		if _, ok := grouped[k]; !ok {
+			keys = append(keys, k)
+		}
+		grouped[k] = append(grouped[k], indexedRow{idx: i, row: ev})
+	}
+	results := make([]dispatchResult, len(batch))
+	sem := make(chan struct{}, 8)
+	var wg sync.WaitGroup
+	for _, k := range keys {
+		items := grouped[k]
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(seq []indexedRow) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			for _, it := range seq {
+				dispatchCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				err := s.dispatchOutboxEvent(dispatchCtx, it.row)
+				cancel()
+				results[it.idx] = dispatchResult{ev: it.row, err: err}
+			}
+		}(items)
+	}
+	wg.Wait()
+
+	// Phase 3: Ack outcomes in a single short transaction.
+	tx, err := s.DB.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+
+	var settledIDs []int64
+	for _, res := range results {
+		if res.err == nil {
+			settledIDs = append(settledIDs, res.ev.ID)
 			continue
 		}
-		if isPermanentOutboxError(err) {
-			slog.Warn("settling permanently failed outbox event", "id", ev.ID, "destination", ev.Destination, "target", ev.TargetID, "error", err)
-			_, _ = tx.Exec(ctx, `UPDATE outbox_events SET delivered_at=now(), attempts=attempts+1 WHERE id=$1`, ev.ID)
+		if isPermanentOutboxError(res.err) {
+			slog.Warn("settling permanently failed outbox event", "id", res.ev.ID, "destination", res.ev.Destination, "target", res.ev.TargetID, "error", res.err)
+			settledIDs = append(settledIDs, res.ev.ID)
 			continue
 		}
-		nextDelay := time.Duration(math.Min(float64(s.outboxMaxBackoff()/time.Second), math.Pow(2, float64(ev.Attempts+1)))) * time.Second
+		nextDelay := time.Duration(math.Min(float64(s.outboxMaxBackoff()/time.Second), math.Pow(2, float64(res.ev.Attempts+1)))) * time.Second
 		if nextDelay < 2*time.Second {
 			nextDelay = 2 * time.Second
 		}
-		slog.Warn("outbox dispatch failed, scheduling retry", "id", ev.ID, "destination", ev.Destination, "attempts", ev.Attempts+1, "delay", nextDelay, "error", err)
-		_, _ = tx.Exec(ctx, `UPDATE outbox_events SET attempts=attempts+1, next_attempt_at=now()+$2::interval WHERE id=$1`, ev.ID, fmt.Sprintf("%d seconds", int(nextDelay.Seconds())))
+		slog.Warn("outbox dispatch failed, scheduling retry", "id", res.ev.ID, "destination", res.ev.Destination, "attempts", res.ev.Attempts+1, "delay", nextDelay, "error", res.err)
+		if _, err = tx.Exec(ctx, `UPDATE outbox_events SET attempts=attempts+1, next_attempt_at=now()+$2::interval WHERE id=$1`, res.ev.ID, fmt.Sprintf("%d seconds", int(nextDelay.Seconds()))); err != nil {
+			return 0, err
+		}
+	}
+	if len(settledIDs) > 0 {
+		if _, err = tx.Exec(ctx, `UPDATE outbox_events SET delivered_at=now(), attempts=attempts+1 WHERE id = ANY($1::bigint[])`, settledIDs); err != nil {
+			return 0, err
+		}
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return 0, err
@@ -243,71 +297,88 @@ func buildDeliverInboxRequest(ev outboxRow) (*letapb.DeliverInboxRequest, error)
 		if err := json.Unmarshal(ev.Payload, &p); err != nil {
 			return nil, err
 		}
-		meta, _ := json.Marshal(map[string]any{
-			"workspace_id":    p.WorkspaceID,
-			"conversation_id": p.ConversationID,
-			"message_id":      p.MessageID,
-			"emoji":           p.Emoji,
-			"action":          p.Action,
-		})
 		return &letapb.DeliverInboxRequest{
 			AgentId:        ev.TargetID,
 			IdempotencyKey: fmt.Sprintf("chat:react:%d", ev.ID),
-			Kind:           "notification",
-			Channel:        "chat",
-			ReplyAddress:   "chat:" + ev.ConversationID,
-			Sender:         &letapb.SenderRef{Type: p.ActorType, Id: p.ActorID},
-			Content:        fmt.Sprintf("Reaction %s: %s on message %s", p.Action, p.Emoji, p.MessageID),
-			MetadataJson:   meta,
-			Silent:         true,
+			Event: &letapb.DeliverInboxRequest_ChatReaction{
+				ChatReaction: &letapb.ChatReactionEvent{
+					WorkspaceId:    p.WorkspaceID,
+					ConversationId: p.ConversationID,
+					MessageId:      p.MessageID,
+					Actor:          &letapb.ActorRef{Type: p.ActorType, Id: p.ActorID},
+					Emoji:          p.Emoji,
+					Action:         p.Action,
+				},
+			},
 		}, nil
 	}
 
 	var p struct {
-		WorkspaceID      string          `json:"workspace_id"`
-		ConversationID   string          `json:"conversation_id"`
-		ConversationType string          `json:"conversation_type"`
-		Title            string          `json:"title"`
-		Handle           *string         `json:"handle"`
-		MessageID        string          `json:"message_id"`
-		Seq              int64           `json:"seq"`
-		SenderType       string          `json:"sender_type"`
-		SenderID         string          `json:"sender_id"`
-		Content          string          `json:"content"`
-		ReplyToID        *string         `json:"reply_to_id"`
-		Attachments      json.RawMessage `json:"attachments"`
-		Mentions         json.RawMessage `json:"mentions"`
-		Metadata         json.RawMessage `json:"metadata"`
+		WorkspaceID      string           `json:"workspace_id"`
+		ConversationID   string           `json:"conversation_id"`
+		ConversationType string           `json:"conversation_type"`
+		Title            string           `json:"title"`
+		Handle           string           `json:"handle"`
+		MessageID        string           `json:"message_id"`
+		Seq              int64            `json:"seq"`
+		SenderType       string           `json:"sender_type"`
+		SenderID         string           `json:"sender_id"`
+		Content          string           `json:"content"`
+		ReplyToID        string           `json:"reply_to_id"`
+		Attachments      []attachmentJSON `json:"attachments"`
+		Mentions         []mentionJSON    `json:"mentions"`
+		Metadata         json.RawMessage  `json:"metadata"`
 	}
 	if err := json.Unmarshal(ev.Payload, &p); err != nil {
 		return nil, err
 	}
-	meta, _ := json.Marshal(map[string]any{
-		"workspace_id":      p.WorkspaceID,
-		"conversation_id":   p.ConversationID,
-		"conversation_type": p.ConversationType,
-		"title":             p.Title,
-		"handle":            p.Handle,
-		"message_id":        p.MessageID,
-		"seq":               p.Seq,
-		"reply_to_id":       p.ReplyToID,
-		"mentions":          p.Mentions,
-		"metadata":          p.Metadata,
-	})
+	atts := make([]*letapb.ChatAttachment, 0, len(p.Attachments))
+	for _, a := range p.Attachments {
+		atts = append(atts, &letapb.ChatAttachment{
+			StorageId: a.StorageID,
+			NodeId:    a.NodeID,
+			Name:      a.Name,
+			MediaType: a.MediaType,
+		})
+	}
+	mentions := make([]*letapb.ChatMention, 0, len(p.Mentions))
+	for _, m := range p.Mentions {
+		cm := &letapb.ChatMention{
+			Kind:  m.Kind,
+			Id:    m.ID,
+			Label: m.Label,
+		}
+		if m.StorageID != nil {
+			cm.StorageId = *m.StorageID
+		}
+		if m.NodeID != nil {
+			cm.NodeId = *m.NodeID
+		}
+		mentions = append(mentions, cm)
+	}
 	idemp := fmt.Sprintf("chat:msg:%s", p.MessageID)
 	if p.MessageID == "" {
 		idemp = fmt.Sprintf("chat:outbox:%d", ev.ID)
 	}
 	return &letapb.DeliverInboxRequest{
-		AgentId:         ev.TargetID,
-		IdempotencyKey:  idemp,
-		Kind:            "channel",
-		Channel:         "chat",
-		ReplyAddress:    "chat:" + ev.ConversationID,
-		Sender:          &letapb.SenderRef{Type: p.SenderType, Id: p.SenderID},
-		Content:         p.Content,
-		AttachmentsJson: p.Attachments,
-		MetadataJson:    meta,
-		Silent:          false,
+		AgentId:        ev.TargetID,
+		IdempotencyKey: idemp,
+		Event: &letapb.DeliverInboxRequest_ChatMessage{
+			ChatMessage: &letapb.ChatMessageEvent{
+				WorkspaceId:      p.WorkspaceID,
+				ConversationId:   p.ConversationID,
+				ConversationType: p.ConversationType,
+				Title:            p.Title,
+				Handle:           p.Handle,
+				MessageId:        p.MessageID,
+				Seq:              p.Seq,
+				Sender:           &letapb.ActorRef{Type: p.SenderType, Id: p.SenderID},
+				Content:          p.Content,
+				ReplyToMessageId: p.ReplyToID,
+				Attachments:      atts,
+				Mentions:         mentions,
+				MetadataJson:     p.Metadata,
+			},
+		},
 	}, nil
 }

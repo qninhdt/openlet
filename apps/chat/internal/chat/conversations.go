@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	az "github.com/authzed/authzed-go/proto/authzed/api/v1"
@@ -235,16 +236,34 @@ func (s *Server) CreateOrGetDM(ctx context.Context, r *pb.CreateOrGetDMRequest) 
 }
 
 func (s *Server) allocateUniqueGroupHandle(ctx context.Context, tx pgx.Tx, workspaceID, base string) (string, error) {
-	candidate := base
-	for suffix := 2; suffix <= 1000; suffix++ {
-		var exists bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM conversations WHERE workspace_id=$1 AND type='group' AND handle=$2)`, workspaceID, candidate).Scan(&exists); err != nil {
+	rows, err := tx.Query(ctx,
+		`SELECT handle FROM conversations
+		 WHERE workspace_id=$1 AND type='group' AND (handle=$2 OR handle LIKE $3)`,
+		workspaceID, base, base+"-%",
+	)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	taken := make(map[string]struct{})
+	for rows.Next() {
+		var h string
+		if err = rows.Scan(&h); err != nil {
 			return "", err
 		}
-		if !exists {
+		taken[h] = struct{}{}
+	}
+	if err = rows.Err(); err != nil {
+		return "", err
+	}
+	if _, ok := taken[base]; !ok {
+		return base, nil
+	}
+	for suffix := 2; suffix <= 1000; suffix++ {
+		candidate := fmt.Sprintf("%s-%d", base, suffix)
+		if _, ok := taken[candidate]; !ok {
 			return candidate, nil
 		}
-		candidate = fmt.Sprintf("%s-%d", base, suffix)
 	}
 	return base + "-" + newUUIDv7()[:8], nil
 }
@@ -267,19 +286,38 @@ func (s *Server) CreateGroup(ctx context.Context, r *pb.CreateGroupRequest) (*pb
 		role  string
 	}{{caller, "admin"}}
 	seen := map[sdk.Actor]bool{caller: true}
+	var toVerify []sdk.Actor
 	for _, m := range r.Members {
 		act := sdk.Actor{Type: m.Type, ID: m.Id}
 		if seen[act] {
 			continue
 		}
-		if err = s.verifyTargetAccessible(ctx, caller, r.WorkspaceId, act); err != nil {
-			return nil, err
-		}
 		seen[act] = true
+		toVerify = append(toVerify, act)
 		members = append(members, struct {
 			actor sdk.Actor
 			role  string
 		}{act, "member"})
+	}
+	if len(toVerify) > 0 {
+		errs := make([]error, len(toVerify))
+		var wg sync.WaitGroup
+		sem := make(chan struct{}, 8)
+		for i, act := range toVerify {
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(idx int, target sdk.Actor) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				errs[idx] = s.verifyTargetAccessible(ctx, caller, r.WorkspaceId, target)
+			}(i, act)
+		}
+		wg.Wait()
+		for _, verr := range errs {
+			if verr != nil {
+				return nil, verr
+			}
+		}
 	}
 
 	tx, err := s.DB.Begin(ctx)

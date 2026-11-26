@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path"
 	"strings"
+	"sync"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -29,15 +30,9 @@ func (s *Server) ensureStorageInternal(ctx context.Context, workspaceID, convID 
 		return "", "", err
 	}
 
-	tx, err := s.DB.Begin(ctx)
-	if err != nil {
-		return "", "", err
-	}
-	defer tx.Rollback(ctx)
-
 	var existingID *string
 	var ready bool
-	err = tx.QueryRow(ctx, `SELECT storage_id::text, storage_ready FROM conversations WHERE id=$1 AND workspace_id=$2 FOR UPDATE`, convID, workspaceID).Scan(&existingID, &ready)
+	err = s.DB.QueryRow(ctx, `SELECT storage_id::text, storage_ready FROM conversations WHERE id=$1 AND workspace_id=$2`, convID, workspaceID).Scan(&existingID, &ready)
 	if err == pgx.ErrNoRows {
 		return "", "", notFound("conversation")
 	}
@@ -45,11 +40,12 @@ func (s *Server) ensureStorageInternal(ctx context.Context, workspaceID, convID 
 		return "", "", err
 	}
 	if ready && existingID != nil && *existingID != "" {
-		return *existingID, rootID, tx.Commit(ctx)
+		return *existingID, rootID, nil
 	}
 	if s.LetFSInternal == nil {
 		return "", "", status.Error(codes.FailedPrecondition, "letfs internal client not configured")
 	}
+	// Deterministic storageID/rootID makes CreateStorage idempotent outside any DB lock.
 	_, err = s.LetFSInternal.CreateStorage(ctx, &letfspb.CreateStorageRequest{
 		WorkspaceId: workspaceID,
 		StorageId:   storageID,
@@ -65,10 +61,10 @@ func (s *Server) ensureStorageInternal(ctx context.Context, workspaceID, convID 
 	if err != nil && status.Code(err) != codes.AlreadyExists {
 		return "", "", err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE conversations SET storage_id=$2, storage_ready=true WHERE id=$1`, convID, storageID); err != nil {
+	if _, err = s.DB.Exec(ctx, `UPDATE conversations SET storage_id=$2, storage_ready=true WHERE id=$1 AND workspace_id=$3`, convID, storageID, workspaceID); err != nil {
 		return "", "", err
 	}
-	return storageID, rootID, tx.Commit(ctx)
+	return storageID, rootID, nil
 }
 
 func (s *Server) EnsureConversationStorage(ctx context.Context, r *pb.ConversationRequest) (*pb.EnsureConversationStorageResponse, error) {
@@ -136,66 +132,84 @@ func (s *Server) copyForwardAttachments(ctx context.Context, caller sdk.Actor, w
 	}
 
 	out := make([]*pb.MessageAttachment, len(atts))
+	errs := make([]error, len(atts))
+	sem := make(chan struct{}, 6)
+	var wg sync.WaitGroup
 	for i, a := range atts {
 		if a.StorageId == destStorageID {
 			out[i] = a
 			continue
 		}
-		name := a.Name
-		if name == "" {
-			if st, err := s.LetFS.Stat(callCtx, &letfspb.NodeRequest{
-				WorkspaceId: workspaceID,
-				StorageId:   a.StorageId,
-				Target:      &letfspb.NodeLocator{Locator: &letfspb.NodeLocator_NodeId{NodeId: a.NodeId}},
-			}); err == nil && st.Name != "" {
-				name = st.Name
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(idx int, att *pb.MessageAttachment) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			name := att.Name
+			if name == "" {
+				if st, statErr := s.LetFS.Stat(callCtx, &letfspb.NodeRequest{
+					WorkspaceId: workspaceID,
+					StorageId:   att.StorageId,
+					Target:      &letfspb.NodeLocator{Locator: &letfspb.NodeLocator_NodeId{NodeId: att.NodeId}},
+				}); statErr == nil && st.Name != "" {
+					name = st.Name
+				}
 			}
-		}
-		stem, ext := splitFilename(name)
-		var copied *letfspb.Node
-		for attempt := 1; attempt <= 50; attempt++ {
-			candidate := stem + ext
-			if attempt > 1 {
-				candidate = fmt.Sprintf("%s-%d%s", stem, attempt, ext)
+			stem, ext := splitFilename(name)
+			var copied *letfspb.Node
+			var copyErr error
+			for attempt := 1; attempt <= 50; attempt++ {
+				candidate := stem + ext
+				if attempt > 1 {
+					candidate = fmt.Sprintf("%s-%d%s", stem, attempt, ext)
+				}
+				copied, copyErr = s.LetFS.CopyNode(callCtx, &letfspb.TransferNodeRequest{
+					WorkspaceId:          workspaceID,
+					StorageId:            att.StorageId,
+					Source:               &letfspb.NodeLocator{Locator: &letfspb.NodeLocator_NodeId{NodeId: att.NodeId}},
+					DestinationStorageId: destStorageID,
+					Parent:               &letfspb.NodeLocator{Locator: &letfspb.NodeLocator_NodeId{NodeId: attDir.Id}},
+					Name:                 candidate,
+					RequestId:            uuid.NewString(),
+				})
+				if copyErr == nil {
+					break
+				}
+				if status.Code(copyErr) != codes.AlreadyExists {
+					errs[idx] = copyErr
+					return
+				}
 			}
-			copied, err = s.LetFS.CopyNode(callCtx, &letfspb.TransferNodeRequest{
-				WorkspaceId:          workspaceID,
-				StorageId:            a.StorageId,
-				Source:               &letfspb.NodeLocator{Locator: &letfspb.NodeLocator_NodeId{NodeId: a.NodeId}},
-				DestinationStorageId: destStorageID,
-				Parent:               &letfspb.NodeLocator{Locator: &letfspb.NodeLocator_NodeId{NodeId: attDir.Id}},
-				Name:                 candidate,
-				RequestId:            uuid.NewString(),
-			})
-			if err == nil {
-				break
+			if copyErr != nil || copied == nil {
+				errs[idx] = fmt.Errorf("failed to copy attachment %q: %w", name, copyErr)
+				return
 			}
-			if status.Code(err) != codes.AlreadyExists {
-				return nil, err
+			kind := "file"
+			if copied.Kind == letfspb.NodeKind_NODE_KIND_DIRECTORY {
+				kind = "folder"
 			}
-		}
-		if err != nil || copied == nil {
-			return nil, fmt.Errorf("failed to copy attachment %q: %w", name, err)
-		}
-		kind := "file"
-		if copied.Kind == letfspb.NodeKind_NODE_KIND_DIRECTORY {
-			kind = "folder"
-		}
-		mediaType := a.MediaType
-		sizeBytes := a.SizeBytes
-		if copied.File != nil {
-			if copied.File.MediaType != "" {
-				mediaType = copied.File.MediaType
+			mediaType := att.MediaType
+			sizeBytes := att.SizeBytes
+			if copied.File != nil {
+				if copied.File.MediaType != "" {
+					mediaType = copied.File.MediaType
+				}
+				sizeBytes = copied.File.SizeBytes
 			}
-			sizeBytes = copied.File.SizeBytes
-		}
-		out[i] = &pb.MessageAttachment{
-			StorageId: destStorageID,
-			NodeId:    copied.Id,
-			Kind:      kind,
-			Name:      copied.Name,
-			MediaType: mediaType,
-			SizeBytes: sizeBytes,
+			out[idx] = &pb.MessageAttachment{
+				StorageId: destStorageID,
+				NodeId:    copied.Id,
+				Kind:      kind,
+				Name:      copied.Name,
+				MediaType: mediaType,
+				SizeBytes: sizeBytes,
+			}
+		}(i, a)
+	}
+	wg.Wait()
+	for _, e := range errs {
+		if e != nil {
+			return nil, e
 		}
 	}
 	return out, nil

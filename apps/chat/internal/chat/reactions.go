@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
+	sdk "github.com/qninhdt/openlet/packages/sdk-go"
 	pb "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/chat/v1"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
@@ -38,33 +40,7 @@ func (s *Server) AddReaction(ctx context.Context, r *pb.ReactionRequest) (*empty
 	if tag.RowsAffected() == 0 {
 		return &emptypb.Empty{}, tx.Commit(ctx)
 	}
-
-	humanChannels, agentIDs, err := s.loadMemberChannels(ctx, tx, r.ConversationId)
-	if err != nil {
-		return nil, err
-	}
-	payload := map[string]any{
-		"workspace_id":    r.WorkspaceId,
-		"conversation_id": r.ConversationId,
-		"message_id":      r.MessageId,
-		"actor_type":      caller.Type,
-		"actor_id":        caller.ID,
-		"emoji":           r.Emoji,
-		"action":          "added",
-	}
-	channels := append(humanChannels, convChannel(r.ConversationId))
-	if err = insertOutbox(ctx, tx, "centrifugo", r.ConversationId, &r.MessageId, strings.Join(channels, ","), "reaction.added", payload); err != nil {
-		return nil, err
-	}
-	for _, agentID := range agentIDs {
-		if caller.Type == "agent" && caller.ID == agentID {
-			continue
-		}
-		if err = insertOutbox(ctx, tx, "leta", r.ConversationId, &r.MessageId, agentID, "agent.reaction", payload); err != nil {
-			return nil, err
-		}
-	}
-	if err = notifyOutbox(ctx, tx); err != nil {
+	if err = s.emitReactionOutbox(ctx, tx, r, caller, "added"); err != nil {
 		return nil, err
 	}
 	return &emptypb.Empty{}, tx.Commit(ctx)
@@ -91,10 +67,16 @@ func (s *Server) RemoveReaction(ctx context.Context, r *pb.ReactionRequest) (*em
 	if tag.RowsAffected() == 0 {
 		return &emptypb.Empty{}, tx.Commit(ctx)
 	}
+	if err = s.emitReactionOutbox(ctx, tx, r, caller, "removed"); err != nil {
+		return nil, err
+	}
+	return &emptypb.Empty{}, tx.Commit(ctx)
+}
 
+func (s *Server) emitReactionOutbox(ctx context.Context, tx pgx.Tx, r *pb.ReactionRequest, caller sdk.Actor, action string) error {
 	humanChannels, agentIDs, err := s.loadMemberChannels(ctx, tx, r.ConversationId)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	payload := map[string]any{
 		"workspace_id":    r.WorkspaceId,
@@ -103,22 +85,19 @@ func (s *Server) RemoveReaction(ctx context.Context, r *pb.ReactionRequest) (*em
 		"actor_type":      caller.Type,
 		"actor_id":        caller.ID,
 		"emoji":           r.Emoji,
-		"action":          "removed",
+		"action":          action,
 	}
 	channels := append(humanChannels, convChannel(r.ConversationId))
-	if err = insertOutbox(ctx, tx, "centrifugo", r.ConversationId, &r.MessageId, strings.Join(channels, ","), "reaction.removed", payload); err != nil {
-		return nil, err
+	if err = insertOutbox(ctx, tx, "centrifugo", r.ConversationId, &r.MessageId, strings.Join(channels, ","), "reaction."+action, payload); err != nil {
+		return err
 	}
 	for _, agentID := range agentIDs {
 		if caller.Type == "agent" && caller.ID == agentID {
 			continue
 		}
 		if err = insertOutbox(ctx, tx, "leta", r.ConversationId, &r.MessageId, agentID, "agent.reaction", payload); err != nil {
-			return nil, err
+			return err
 		}
 	}
-	if err = notifyOutbox(ctx, tx); err != nil {
-		return nil, err
-	}
-	return &emptypb.Empty{}, tx.Commit(ctx)
+	return notifyOutbox(ctx, tx)
 }
