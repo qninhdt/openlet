@@ -42,6 +42,8 @@ def databases(c: Config) -> None:
         c["services"]["platform"]["database"],
         c["services"]["letfs"]["database"],
     ]
+    if chat_cfg := c["services"].get("chat"):
+        targets.append(chat_cfg["database"])
     targets += [
         c["deployment"]["temporal"]["database"],
         c["deployment"]["spicedb"]["database"],

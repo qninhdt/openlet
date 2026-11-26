@@ -30,12 +30,13 @@ from .runner import DEFAULT_PROMPT_TEMPLATE, TrialArtifact, run_trials
 
 DEFAULT_TOOLS: dict[str, bool] = {
     "hitl": False,
-    "multi_agent": False,
+    "subagents": False,
     "schedule": False,
     "web": False,
-    "execute": True,
+    "bash": True,
     "semantic_search": True,
-    "activity": True,
+    "todo": False,
+    "react": False,
 }
 
 
@@ -333,6 +334,7 @@ def aggregate_results(
         tool_counts.update(a.tool_stats.by_tool)
     total_tools = sum(a.tool_stats.total for a in arts)
     total_errors = sum(a.tool_stats.errors for a in arts)
+    total_compactions = sum(a.tool_stats.compactions for a in arts)
     lats = sorted(a.latency_s for a in arts)
     p95 = (
         round(lats[max(0, min(len(lats) - 1, math.ceil(0.95 * len(lats)) - 1))], 3)
@@ -356,6 +358,7 @@ def aggregate_results(
         "avg_tool_calls": round(total_tools / n_trials, 2),
         "tool_errors": total_errors,
         "tool_error_rate": round(total_errors / max(1, total_tools), 4),
+        "total_compactions": total_compactions,
         "avg_latency_s": round(sum(lats) / n_trials, 2),
         "p95_latency_s": p95,
         "tool_calls_by_tool": dict(sorted(tool_counts.items())),

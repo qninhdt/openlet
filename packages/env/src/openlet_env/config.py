@@ -26,6 +26,7 @@ STUBS_PACKAGE_DIR = Path(__file__).resolve().parent / "wiremock_stubs"
 INTERNAL_SECRET_KEYS: tuple[str, ...] = (
     "POSTGRES_ADMIN_PASSWORD",
     "PLATFORM_DB_PASSWORD",
+    "CHAT_DB_PASSWORD",
     "LETFS_DB_PASSWORD",
     "LETA_DB_PASSWORD",
     "TEMPORAL_DB_PASSWORD",
@@ -34,6 +35,8 @@ INTERNAL_SECRET_KEYS: tuple[str, ...] = (
     "SPICEDB_KEY",
     "QDRANT_API_KEY",
     "REDIS_PASSWORD",
+    "CENTRIFUGO_API_KEY",
+    "CENTRIFUGO_TOKEN_SECRET",
     "LITELLM_MASTER_KEY",
     "S3_ACCESS_KEY_ID",
     "S3_SECRET_ACCESS_KEY",
@@ -280,7 +283,6 @@ _LANGFUSE_REF_PATTERN = re.compile(r"@@@langfusePrompt:name=leta/([^|@]+)\|[^@]+
 _LETA_PROMPT_SPECS: tuple[tuple[str, dict[str, object]], ...] = (
     ("leta", {"model": "openai/gpt-4.1-mini", "max_tokens": 8192}),
     ("leti", {"model": "openai/gpt-4.1-mini", "max_tokens": 8192}),
-    ("compaction", {}),
 )
 
 
@@ -318,6 +320,10 @@ def stage_wiremock_stubs(
     if mode == "mock" or include_langfuse:
         prompts_dir = find_repo_root(repo_root) / "apps/leta/prompts"
         for role, prompt_config in _LETA_PROMPT_SPECS:
+            try:
+                expanded = _expand_leta_prompt(prompts_dir, role)
+            except FileNotFoundError:
+                continue
             mapping = {
                 "request": {
                     "method": "GET",
@@ -330,7 +336,7 @@ def stage_wiremock_stubs(
                         "name": f"leta/{role}",
                         "version": 1,
                         "type": "text",
-                        "prompt": _expand_leta_prompt(prompts_dir, role),
+                        "prompt": expanded,
                         "labels": ["production"],
                         "tags": [],
                         "config": prompt_config,
@@ -452,6 +458,7 @@ def render_compose_overlay(
         }
         services["ingest-io"] = {"stop_grace_period": "5s"}
         services["platform"]["stop_grace_period"] = "5s"
+        services["chat"] = {"stop_grace_period": "5s"}
         services["letfs"] = {"stop_grace_period": "5s"}
         services["litellm"]["stop_grace_period"] = "5s"
         if "leta" in profiles:

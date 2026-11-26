@@ -207,6 +207,20 @@ def configure(
     host, port = svc["gateway"]["http_listen"].rsplit(":", 1)
     ph, pp = svc["platform"]["grpc_target"].rsplit(":", 1)
     fh, fp = svc["letfs"]["grpc_target"].rsplit(":", 1)
+    chat_cfg = svc.get("chat")
+    ch, cp = (
+        chat_cfg["grpc_target"].rsplit(":", 1)
+        if chat_cfg is not None
+        else ("chat", "9090")
+    )
+    centrifugo_cfg = dep.get("centrifugo")
+    centrifugo_url = urlparse(
+        centrifugo_cfg["api_url"]
+        if centrifugo_cfg is not None
+        else "http://centrifugo:8000/api"
+    )
+    cen_h = centrifugo_url.hostname or "centrifugo"
+    cen_p = centrifugo_url.port or (443 if centrifugo_url.scheme == "https" else 80)
     auth = c["auth"]["clerk"]
     user_id_key = auth.get("user_id_metadata_key", "openlet_user_id")
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", user_id_key):
@@ -227,6 +241,10 @@ def configure(
                 PLATFORM_PORT=int(pp),
                 LETFS_HOST=fh,
                 LETFS_PORT=int(fp),
+                CHAT_HOST=ch,
+                CHAT_PORT=int(cp),
+                CENTRIFUGO_HOST=cen_h,
+                CENTRIFUGO_PORT=int(cen_p),
                 ISSUER=auth["issuer"],
                 USER_ID_CLAIM="public_metadata." + user_id_key,
                 AUDIENCE=auth["audience"],
@@ -237,7 +255,12 @@ def configure(
         ),
     )
     if jwks.scheme == "https":
-        envoy["static_resources"]["clusters"][2]["transport_socket"] = {
+        jwks_cluster = next(
+            cl
+            for cl in envoy["static_resources"]["clusters"]
+            if cl["name"] == "clerk_jwks"
+        )
+        jwks_cluster["transport_socket"] = {
             "name": "envoy.transport_sockets.tls",
             "typed_config": {
                 "@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
@@ -296,7 +319,7 @@ def configure(
                 "match": {
                     "safe_regex": {
                         "google_re2": {},
-                        "regex": "/v1/(workspaces/[^/]+/letas|hitl-requests)(/.*)?",
+                        "regex": "/v1/(workspaces/[^/]+/(letas|models)|hitl-requests)(/.*)?",
                     }
                 },
                 "route": {"cluster": "leta", "timeout": "0s", "idle_timeout": "0s"},
@@ -375,6 +398,11 @@ def configure(
             svc["platform"]["database"]["password"],
             dep["spicedb"]["key"],
             auth["secret_key"],
+            *(
+                [centrifugo_cfg["token_hmac_secret"]]
+                if centrifugo_cfg is not None
+                else []
+            ),
         ],
         "letfs": [
             svc["letfs"]["database"]["password"],
@@ -410,6 +438,20 @@ def configure(
             dep["s3"]["secret_access_key"],
         ],
     }
+    runtime["services"]["redis"] = {
+        "environment": {"REDIS_PASSWORD": resolve(dep["redis"]["password"])}
+    }
+    if chat_cfg is not None:
+        refs["databases"].append(chat_cfg["database"]["password"])
+        refs["chat"] = [
+            chat_cfg["database"]["password"],
+            dep["spicedb"]["key"],
+            *(
+                [centrifugo_cfg["api_key"], centrifugo_cfg["token_hmac_secret"]]
+                if centrifugo_cfg is not None
+                else []
+            ),
+        ]
     if leta_enabled:
         refs["databases"].append(svc["leta"]["database"]["password"])
         lf = c.get("langfuse")
@@ -422,14 +464,16 @@ def configure(
             c["models"]["gateway"]["api_key"],
             lf["public_key"],
             lf["secret_key"],
+            *(
+                [centrifugo_cfg["api_key"], centrifugo_cfg["token_hmac_secret"]]
+                if centrifugo_cfg is not None
+                else []
+            ),
         ]
         if web_search := svc["leta"].get("web_search"):
             refs["leta-api"].append(web_search["api_key"])
         refs["leta-worker"] = refs["leta-api"]
         refs["leta-migrate"] = [svc["leta"]["database"]["password"]]
-        runtime["services"]["redis"] = {
-            "environment": {"REDIS_PASSWORD": resolve(dep["redis"]["password"])}
-        }
     if "langfuse" in c:
         refs["ingest-io"].extend(
             [c["langfuse"]["public_key"], c["langfuse"]["secret_key"]]
@@ -490,6 +534,11 @@ def configure(
     for owner, database, listen in [
         ("platform", svc["platform"]["database"], svc["platform"]["grpc_listen"]),
         ("letfs", svc["letfs"]["database"], svc["letfs"]["grpc_listen"]),
+        *(
+            [("chat", chat_cfg["database"], chat_cfg["grpc_listen"])]
+            if chat_cfg is not None
+            else []
+        ),
         *([("leta", svc["leta"]["database"], None)] if leta_enabled else []),
     ]:
         dsn = f"postgres://{quote(database['user'], safe='')}:{quote(resolve(database['password']), safe='')}@{pg['host']}:{pg['port']}/{database['name']}?sslmode={pg['sslmode']}"
@@ -536,6 +585,60 @@ def configure(
             "targets = prometheus.exporter.redis.cache.targets",
         )
     (output / "alloy.alloy").write_text(alloy)
+    centrifugo_config: dict[str, object] = {
+        "client": {
+            "allowed_origins": ["*"],
+            "token": {
+                "hmac_secret_key": resolve(centrifugo_cfg["token_hmac_secret"])
+                if centrifugo_cfg is not None
+                else "dev-secret",
+            },
+        },
+        "http_api": {
+            "key": resolve(centrifugo_cfg["api_key"])
+            if centrifugo_cfg is not None
+            else "dev-api-key",
+        },
+        "health": {"enabled": True},
+        "engine": {
+            "type": "redis",
+            "redis": {
+                "address": dep["redis"]["address"],
+                "password": resolve(dep["redis"]["password"]),
+                "db": dep["redis"]["database"],
+            },
+        },
+        "channel": {
+            "namespaces": [
+                {
+                    "name": "chat",
+                    "allow_user_limited_channels": True,
+                    "allow_subscribe_for_client": False,
+                    "history_size": 200,
+                    "history_ttl": "300s",
+                    "force_recovery": True,
+                },
+                {
+                    "name": "leta",
+                    "allow_user_limited_channels": True,
+                    "allow_subscribe_for_client": False,
+                    "history_size": 200,
+                    "history_ttl": "300s",
+                    "force_recovery": True,
+                },
+                {
+                    "name": "letfs",
+                    "allow_subscribe_for_client": False,
+                    "history_size": 100,
+                    "history_ttl": "120s",
+                    "force_recovery": True,
+                },
+            ]
+        },
+    }
+    cen_target = output / "centrifugo.json"
+    cen_target.write_text(json.dumps(centrifugo_config, indent=2) + "\n")
+    cen_target.chmod(0o644)
     outputs: list[tuple[str, object]] = [
         ("envoy", envoy),
         ("temporal", native),

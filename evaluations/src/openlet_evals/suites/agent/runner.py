@@ -26,14 +26,17 @@ DEFAULT_PROMPT_TEMPLATE = """{{ task }}
 Instructions:
 - Ground all company, transaction, and document facts in `/shared`; do not invent unsupported facts or figures, and explicitly flag any missing or conflicting information.
 - Complete the task autonomously without asking clarifying questions.
-- Save your final deliverable(s) as file(s) in your conversation storage (`/chat`), choosing whatever structure and formats best fit the work.
-- Send only ONE inbox message when the work is completely finished (do not send interim progress updates).
+- Save your final deliverable(s) as file(s) in your conversation storage (`/chat/<handle>`), choosing whatever structure and formats best fit the work.
+- Send only ONE message via `send_message` when the work is completely finished (do not send interim progress updates).
 - In that final message, put ONLY the final deliverable/result file(s) in `attachments` (not inline mentions in text, and do not attach scratch files, scripts, intermediate drafts, or `/shared` source files).
 - Keep the final message text to a brief summary of what was completed; do not put the detailed analysis or findings in the message text."""
 
 _JINJA = jinja2.Environment(trim_blocks=True, lstrip_blocks=True, autoescape=False)
 _MENTION_RE = re.compile(
     r":(?:file|folder)\[((?:\\.|[^\]\\\n]){1,1024})\]\{name=([\w:-]+/[\w:-]+)\}"
+)
+_LETFS_LINK_RE = re.compile(
+    r"(?<!!)\[((?:\\.|[^\]\\\n]){1,1024})\]\(/letfs/([\w-]+)/([\w-]+)(?:/[^)\s]*)?\)"
 )
 _TERMINAL_STATES = frozenset({"completed", "failed", "cancelled", "paused"})
 
@@ -57,6 +60,7 @@ class ToolCallRecord(BaseModel):
 class ToolStats(BaseModel):
     total: int = 0
     errors: int = 0
+    compactions: int = 0
     by_tool: dict[str, int] = Field(default_factory=dict)
 
 
@@ -111,34 +115,43 @@ def _json_list(obj: Mapping[str, Any], key: str) -> list[dict[str, Any]]:
 def resolve_inline_mentions(
     content: str, path_map: Mapping[tuple[str, str], str]
 ) -> str:
-    def _sub(m: re.Match[str]) -> str:
-        label = re.sub(r"\\(.)", r"\1", m.group(1))
-        sid, _, nid = m.group(2).partition("/")
+    def _format(label: str, sid: str, nid: str) -> str:
         path = path_map.get((sid, nid))
         if not path:
             return label
         target = f"<{path}>" if any(c.isspace() or c in "()" for c in path) else path
         return f"[{label}]({target})"
 
-    return _MENTION_RE.sub(_sub, content)
+    def _sub_legacy(m: re.Match[str]) -> str:
+        label = re.sub(r"\\(.)", r"\1", m.group(1))
+        sid, _, nid = m.group(2).partition("/")
+        return _format(label, sid, nid)
+
+    def _sub_letfs(m: re.Match[str]) -> str:
+        label = re.sub(r"\\(.)", r"\1", m.group(1))
+        return _format(label, m.group(2), m.group(3))
+
+    return _MENTION_RE.sub(_sub_legacy, _LETFS_LINK_RE.sub(_sub_letfs, content))
 
 
 def parse_history(
     entries: Sequence[Mapping[str, Any]],
 ) -> tuple[list[ToolCallRecord], ToolStats]:
-    """Pair tool_call and tool_result activity rows into ToolCallRecord list + ToolStats."""
+    """Pair tool_call and tool_result activity rows (v2 and legacy v1 schemas) + count compactions."""
     by_id: dict[str, ToolCallRecord] = {}
     calls: list[ToolCallRecord] = []
     counts: Counter[str] = Counter()
     errors = 0
+    compactions = 0
 
     for entry in sorted(entries, key=lambda e: int(e.get("seq", 0))):
-        payload = entry.get("payload")
-        if not isinstance(payload, Mapping):
+        ev_type = str(entry.get("type") or entry.get("kind") or "")
+        raw_payload = entry.get("data") if "data" in entry else entry.get("payload")
+        if not isinstance(raw_payload, Mapping):
             continue
-        p = cast(Mapping[str, Any], payload)
+        p = cast(Mapping[str, Any], raw_payload)
         cid = str(p.get("tool_call_id") or "")
-        if entry.get("kind") == "tool_call":
+        if ev_type in ("activity.tool_call", "tool_call"):
             name = str(p.get("name") or "unknown")
             counts[name] += 1
             raw_args = p.get("args")
@@ -151,15 +164,25 @@ def parse_history(
             if cid:
                 by_id[cid] = rec
             calls.append(rec)
-        elif entry.get("kind") == "tool_result":
+        elif ev_type in ("activity.tool_result", "tool_result"):
             status = str(p.get("status") or "success")
             errors += int(status == "error")
             if cid in by_id:
-                by_id[cid].output = None if p.get("text") is None else str(p["text"])
+                out_val = (
+                    p.get("content")
+                    if "content" in p
+                    else (p.get("preview") if "preview" in p else p.get("text"))
+                )
+                by_id[cid].output = None if out_val is None else str(out_val)
                 by_id[cid].status = status
+        elif ev_type in ("activity.compacted", "compaction"):
+            compactions += 1
 
     return calls, ToolStats(
-        total=len(calls), errors=errors, by_tool=dict(sorted(counts.items()))
+        total=len(calls),
+        errors=errors,
+        compactions=compactions,
+        by_tool=dict(sorted(counts.items())),
     )
 
 
@@ -222,15 +245,19 @@ async def _wait_for_run(
     run_row: dict[str, Any] = {}
     while time.monotonic() < deadline:
         if run_id is None:
-            proc = await client.get(f"{root_path}/processing")
-            rid = _json_obj(proc).get("run_id") if proc.is_success else None
-            if not isinstance(rid, str):
-                act = await client.get(
-                    f"{root_path}/agents/{agent_id}/activity", params={"after": 0}
-                )
-                items = _json_list(_json_obj(act), "items") if act.is_success else []
-                rid = items[-1].get("run_id") if items else None
-            run_id = rid if isinstance(rid, str) else None
+            runs_resp = await client.get(
+                f"{root_path}/agents/{agent_id}/runs", params={"limit": 5}
+            )
+            if runs_resp.is_success:
+                items = _json_list(_json_obj(runs_resp), "items")
+                if items:
+                    latest = items[0]
+                    rid = latest.get("id")
+                    if isinstance(rid, str):
+                        run_id = rid
+                        run_row = latest
+                        if run_row.get("status") in _TERMINAL_STATES:
+                            return run_row, False
         if run_id:
             resp = await client.get(f"{root_path}/agents/{agent_id}/runs/{run_id}")
             if resp.is_success:
@@ -242,7 +269,9 @@ async def _wait_for_run(
     if run_id:
         try:
             await client.post(
-                f"{root_path}/agents/{agent_id}/runs/{run_id}/cancel", timeout=15.0
+                f"{root_path}/agents/{agent_id}/cancel",
+                json={"run_id": run_id},
+                timeout=15.0,
             )
         except httpx.HTTPError:
             pass
@@ -263,43 +292,53 @@ async def _collect_outputs(
     wid: str,
     root_path: str,
     leta_id: str,
+    conv_id: str,
     storage_prefixes: Mapping[str, str],
     path_cache: dict[tuple[str, str], str],
 ) -> tuple[list[AssistantMessage], list[Attachment], list[ToolCallRecord], ToolStats]:
     prefixes = dict(storage_prefixes)
     conv_sid: str | None = None
-    conv = await client.post(f"{root_path}/conversation-storage")
+    conv = await client.post(
+        f"/v1/workspaces/{wid}/conversations/{conv_id}:ensureStorage", json={}
+    )
     if conv.is_success:
         cd = _json_obj(conv)
-        conv_sid = str(cd["storage_id"])
-        prefixes[conv_sid] = "/chat"
-        path_cache[(conv_sid, str(cd["root_node_id"]))] = "/chat"
+        conv_sid = str(cd.get("storageId") or cd.get("storage_id") or "")
+        conv_root = str(cd.get("rootNodeId") or cd.get("root_node_id") or "")
+        if conv_sid and conv_root:
+            prefixes[conv_sid] = "/chat"
+            path_cache[(conv_sid, conv_root)] = "/chat"
 
     raw_msgs: list[dict[str, Any]] = []
-    params: dict[str, str] = {}
+    before_seq: int | None = None
     while True:
-        r = await client.get(f"{root_path}/messages", params=params)
+        params: dict[str, str] = {"limit": "100"}
+        if before_seq is not None:
+            params["beforeSeq"] = str(before_seq)
+        r = await client.get(
+            f"/v1/workspaces/{wid}/conversations/{conv_id}/messages", params=params
+        )
         r.raise_for_status()
         data = _json_obj(r)
-        items = _json_list(data, "items")
-        raw_msgs.extend(m for m in items if m.get("role") == "assistant")
-        cur = _sub_obj(data, "next_cursor")
-        if not cur or not items:
+        items = _json_list(data, "messages")
+        if not items:
             break
-        params = {
-            "before": str(cur["before"]),
-            "cursor": str(cur["cursor"]),
-            "role": str(cur["role"]),
-        }
-    raw_msgs.sort(
-        key=lambda m: (str(m.get("created_at") or ""), str(m.get("id") or ""))
-    )
+        raw_msgs.extend(m for m in items if m.get("senderType") == "agent")
+        if not data.get("hasMore"):
+            break
+        seqs = [int(m.get("seq", 0)) for m in items if int(m.get("seq", 0)) > 0]
+        if not seqs or min(seqs) <= 1:
+            break
+        before_seq = min(seqs)
+
+    raw_msgs.sort(key=lambda m: (int(m.get("seq", 0)), str(m.get("id") or "")))
 
     activity: list[dict[str, Any]] = []
     after = 0
     while True:
         r = await client.get(
-            f"{root_path}/agents/{leta_id}/activity", params={"after": after}
+            f"{root_path}/agents/{leta_id}/activity",
+            params={"after": after, "limit": 100},
         )
         r.raise_for_status()
         data = _json_obj(r)
@@ -307,9 +346,10 @@ async def _collect_outputs(
         if not items:
             break
         activity.extend(items)
-        if not data.get("next_cursor"):
+        max_seq = max(int(it.get("seq", 0)) for it in items)
+        if len(items) < 100 or max_seq <= after:
             break
-        after = int(data["next_cursor"])
+        after = max_seq
 
     tool_calls, tool_stats = parse_history(activity)
     messages: list[AssistantMessage] = []
@@ -323,22 +363,32 @@ async def _collect_outputs(
         for match in _MENTION_RE.finditer(raw_content):
             sid, _, nid = match.group(2).partition("/")
             await _resolve_path(client, wid, prefixes, path_cache, sid, nid)
+        for match in _LETFS_LINK_RE.finditer(raw_content):
+            await _resolve_path(
+                client, wid, prefixes, path_cache, match.group(2), match.group(3)
+            )
 
+        meta = _sub_obj(m, "metadata")
         sources: list[dict[str, Any]] = []
-        for s in _json_list(m, "sources"):
+        for s in _json_list(meta, "sources"):
             if s.get("kind") == "web":
                 sources.append(s)
                 continue
-            sid, nid = str(s.get("storage_id") or ""), str(s.get("node_id") or "")
+            sid = str(s.get("storage_id") or s.get("storageId") or "")
+            nid = str(s.get("node_id") or s.get("nodeId") or "")
             resolved = await _resolve_path(client, wid, prefixes, path_cache, sid, nid)
-            sources.append({**s, "path": resolved or str(s.get("label") or "")})
+            sources.append(
+                {**s, "path": resolved or str(s.get("path") or s.get("label") or "")}
+            )
 
         att_paths: list[str] = []
-        for ref in _json_list(m, "file_refs"):
-            sid, nid = str(ref.get("storage_id") or ""), str(ref.get("node_id") or "")
+        for ref in _json_list(m, "attachments"):
+            sid = str(ref.get("storageId") or ref.get("storage_id") or "")
+            nid = str(ref.get("nodeId") or ref.get("node_id") or "")
+            name = str(ref.get("name") or nid)
             path = (
                 await _resolve_path(client, wid, prefixes, path_cache, sid, nid)
-                or f"/chat/{ref.get('name') or nid}"
+                or f"/chat/{name}"
             )
             att_paths.append(path)
             if is_final and conv_sid and sid == conv_sid and (sid, nid) not in seen_att:
@@ -346,15 +396,19 @@ async def _collect_outputs(
                 text: str | None = None
                 if ref.get("kind") != "folder":
                     tr = await client.get(
-                        f"/v1/workspaces/{wid}/storages/{sid}/nodes/{nid}/text"
+                        f"/v1/workspaces/{wid}/storages/{sid}/nodes/{nid}:download"
                     )
                     if tr.is_success:
-                        text = str(_json_obj(tr).get("content") or "")
+                        dl = _json_obj(tr)
+                        txt_obj = _sub_obj(dl, "text")
+                        if "content" in txt_obj:
+                            text = str(txt_obj.get("content") or "")
+                raw_sz = ref.get("sizeBytes") or ref.get("size")
                 attachments.append(
                     Attachment(
                         path=path,
-                        mime=ref.get("mime"),
-                        size=ref.get("size"),
+                        mime=str(ref.get("mediaType") or ref.get("mime") or "") or None,
+                        size=int(raw_sz) if raw_sz is not None else None,
                         text=text,
                     )
                 )
@@ -390,7 +444,7 @@ async def _execute_trial(
                     "request_id": str(uuid4()),
                     "name": _agent_name(idx),
                     "title": "Evaluation Agent",
-                    "system_prompt": "",
+                    "custom_instructions": "",
                     "model_id": cfg.model,
                     "reasoning_effort": cfg.reasoning_effort,
                 },
@@ -408,11 +462,19 @@ async def _execute_trial(
             else:
                 raise TimeoutError(f"Leta {leta_id} did not become active within 60s")
 
+            dm_resp = await client.post(
+                f"/v1/workspaces/{wid}/conversations:dm",
+                json={"target": {"type": "agent", "id": leta_id}},
+            )
+            dm_resp.raise_for_status()
+            conv_id = str(_json_obj(dm_resp)["id"])
+
             prompt = (
                 _JINJA.from_string(cfg.prompt_template).render(task=task.task).strip()
             )
             sent = await client.post(
-                f"{root}/messages", json={"message_id": str(uuid4()), "content": prompt}
+                f"/v1/workspaces/{wid}/conversations/{conv_id}/messages",
+                json={"idempotencyKey": str(uuid4()), "content": prompt},
             )
             sent.raise_for_status()
 
@@ -421,7 +483,7 @@ async def _execute_trial(
             )
             latency_s = round(time.perf_counter() - t0, 3)
             messages, attachments, tool_calls, tool_stats = await _collect_outputs(
-                client, wid, root, leta_id, storage_prefixes, path_cache
+                client, wid, root, leta_id, conv_id, storage_prefixes, path_cache
             )
             return TrialArtifact(
                 task_id=task.id,

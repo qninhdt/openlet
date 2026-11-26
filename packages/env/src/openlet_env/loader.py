@@ -146,6 +146,8 @@ class ServiceConnections:
 
         self.platform = connect(config["services"]["platform"]["database"])
         self.letfs = connect(config["services"]["letfs"]["database"])
+        chat_cfg = config["services"].get("chat")
+        self.chat = connect(chat_cfg["database"]) if chat_cfg is not None else None
         self.leta = (
             connect(config["services"]["leta"]["database"]) if has_leta else None
         )
@@ -225,6 +227,7 @@ class _SeedBatch:
     letas: list[Row] = field(default_factory=list[Row])
     agents: list[Row] = field(default_factory=list[Row])
     conversations: list[Row] = field(default_factory=list[Row])
+    conversation_members: list[Row] = field(default_factory=list[Row])
     relations: list[Relationship] = field(default_factory=list[Relationship])
     objects: dict[str, Path] = field(default_factory=dict[str, Path])
     points: list[models.PointStruct] = field(default_factory=list[models.PointStruct])
@@ -361,13 +364,28 @@ class _SeedBatch:
                 conversation,
             )
             conversations_out[handle] = str(conversation)
+            dm_pair = sorted((f"agent:{agent_id}", f"user:{user_id}"))
+            dm_key = f"{dm_pair[0]}|{dm_pair[1]}"
             self.conversations.append(
-                (conversation, agent_id, user_id, storage_id, True)
+                (conversation, workspace, "dm", dm_key, storage_id, True, user_id)
+            )
+            self.conversation_members.extend(
+                (
+                    (conversation, workspace, "agent", agent_id, "member"),
+                    (conversation, workspace, "user", user_id, "member"),
+                )
             )
             self.relations.extend(
                 (
                     _graph_relation(
-                        "conversation", conversation, "agent", "agent", agent_id
+                        "conversation",
+                        conversation,
+                        "workspace",
+                        "workspace",
+                        workspace,
+                    ),
+                    _graph_relation(
+                        "conversation", conversation, "agent_member", "agent", agent_id
                     ),
                     _graph_relation(
                         "conversation", conversation, "member", "agent", agent_id
@@ -726,14 +744,23 @@ class _SeedBatch:
                 if self.agents:
                     with s.leta.cursor() as cursor:
                         cursor.executemany(
-                            "INSERT INTO agents(id,leta_id,name,title,description,system_prompt,model_id,reasoning_effort,handle,appearance) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                            "INSERT INTO agents(id,leta_id,parent_agent_id,depth,name,title,description,custom_instructions,model_id,reasoning_effort,handle,appearance,state) "
+                            "VALUES (%s,%s,NULL,0,%s,%s,%s,%s,%s,%s,%s,%s,'active')",
                             self.agents,
                         )
+        if s.chat is not None and self.conversations:
+            with s.chat.transaction():
                 _copy_rows(
-                    s.leta,
+                    s.chat,
                     "conversations",
-                    "id leta_id user_id storage_id ready",
+                    "id workspace_id type dm_key storage_id storage_ready created_by",
                     self.conversations,
+                )
+                _copy_rows(
+                    s.chat,
+                    "conversation_members",
+                    "conversation_id workspace_id actor_type actor_id role",
+                    self.conversation_members,
                 )
 
         for chunk in _batches(self.points, 128):
@@ -1077,13 +1104,13 @@ def unseed_workspace(
                 "SELECT id FROM letas WHERE workspace_id = %s", (wid,)
             ).fetchall()
         ]
-        if agent_ids:
-            conv_ids = [
-                cast(UUID, row[0])
-                for row in services.leta.execute(
-                    "SELECT id FROM conversations WHERE leta_id = ANY(%s)", (agent_ids,)
-                ).fetchall()
-            ]
+    if services.chat is not None:
+        conv_ids = [
+            cast(UUID, row[0])
+            for row in services.chat.execute(
+                "SELECT id FROM conversations WHERE workspace_id = %s", (wid,)
+            ).fetchall()
+        ]
 
     if delete_graph:
         filters = [
@@ -1115,6 +1142,14 @@ def unseed_workspace(
             )
 
     services.platform.execute("DELETE FROM workspaces WHERE id = %s", (wid,))
+    if services.chat is not None:
+        with services.chat.transaction():
+            services.chat.execute(
+                "DELETE FROM conversations WHERE workspace_id = %s", (wid,)
+            )
+            services.chat.execute(
+                "DELETE FROM sidebar_layouts WHERE workspace_id = %s", (wid,)
+            )
     if services.leta is not None and agent_ids:
         with services.leta.transaction():
             services.leta.execute(
@@ -1168,6 +1203,12 @@ def reset_all_data(services: ServiceConnections) -> None:
         services.platform.execute("DELETE FROM invitations")
         services.platform.execute("DELETE FROM workspaces")
         services.platform.execute("DELETE FROM users")
+
+    if services.chat is not None:
+        with services.chat.transaction():
+            services.chat.execute("DELETE FROM outbox_events")
+            services.chat.execute("DELETE FROM sidebar_layouts")
+            services.chat.execute("DELETE FROM conversations")
 
     if services.leta is not None:
         with services.leta.transaction():

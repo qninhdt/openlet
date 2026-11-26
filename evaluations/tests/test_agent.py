@@ -369,8 +369,10 @@ def test_wait_for_run_survives_cancel_read_timeout(
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(f"{request.method} {request.url.path}")
-        if request.url.path.endswith("/processing"):
-            return httpx.Response(200, json={"run_id": "run-1"})
+        if request.url.path.endswith("/runs"):
+            return httpx.Response(
+                200, json={"items": [{"id": "run-1", "status": "running"}]}
+            )
         if request.url.path.endswith("/cancel"):
             raise httpx.ReadTimeout("blocking cancel_current timed out")
         if request.url.path.endswith("/runs/run-1"):
@@ -430,51 +432,54 @@ def test_execute_trial_isolates_http_error(monkeypatch: pytest.MonkeyPatch) -> N
 def test_collect_outputs_keeps_only_final_message_chat_attachments() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         p = request.url.path
-        if p.endswith("/conversation-storage"):
+        if p.endswith(":ensureStorage"):
             return httpx.Response(
-                200, json={"storage_id": "conv", "root_node_id": "croot"}
+                200, json={"storageId": "conv", "rootNodeId": "croot"}
             )
         if p.endswith("/messages"):
             return httpx.Response(
                 200,
                 json={
-                    "items": [
+                    "messages": [
                         {
                             "id": "m1",
-                            "role": "assistant",
-                            "created_at": "2026-01-01T00:00:01Z",
+                            "seq": 1,
+                            "senderType": "agent",
+                            "createdAt": "2026-01-01T00:00:01Z",
                             "content": "Draft",
-                            "file_refs": [
+                            "attachments": [
                                 {
-                                    "storage_id": "conv",
-                                    "node_id": "n-old",
+                                    "storageId": "conv",
+                                    "nodeId": "n-old",
                                     "name": "draft.md",
-                                    "mime": "text/markdown",
-                                    "size": 10,
+                                    "mediaType": "text/markdown",
+                                    "sizeBytes": 10,
                                 }
                             ],
                         },
                         {
                             "id": "m2",
-                            "role": "assistant",
-                            "created_at": "2026-01-01T00:00:02Z",
-                            "content": "Done",
-                            "file_refs": [
+                            "seq": 2,
+                            "senderType": "agent",
+                            "createdAt": "2026-01-01T00:00:02Z",
+                            "content": "Done [Source](/letfs/shared/n-src)",
+                            "attachments": [
                                 {
-                                    "storage_id": "shared",
-                                    "node_id": "n-src",
+                                    "storageId": "shared",
+                                    "nodeId": "n-src",
                                     "name": "source.pdf",
                                 },
                                 {
-                                    "storage_id": "conv",
-                                    "node_id": "n-final",
+                                    "storageId": "conv",
+                                    "nodeId": "n-final",
                                     "name": "report.md",
-                                    "mime": "text/markdown",
-                                    "size": 20,
+                                    "mediaType": "text/markdown",
+                                    "sizeBytes": 20,
                                 },
                             ],
                         },
-                    ]
+                    ],
+                    "hasMore": False,
                 },
             )
         if p.endswith("/activity"):
@@ -491,8 +496,8 @@ def test_collect_outputs_keeps_only_final_message_chat_attachments() -> None:
             return httpx.Response(
                 200, json={"id": "n-src", "parentId": "sroot", "name": "source.pdf"}
             )
-        if p.endswith("/nodes/n-final/text"):
-            return httpx.Response(200, json={"content": "# Final Report"})
+        if p.endswith("/nodes/n-final:download"):
+            return httpx.Response(200, json={"text": {"content": "# Final Report"}})
         return httpx.Response(404)
 
     async def _run() -> list[Attachment]:
@@ -504,6 +509,7 @@ def test_collect_outputs_keeps_only_final_message_chat_attachments() -> None:
                 "w1",
                 "/v1/workspaces/w1/letas/a1",
                 "a1",
+                "conv-1",
                 {"shared": "/shared"},
                 {("shared", "sroot"): "/shared"},
             )
