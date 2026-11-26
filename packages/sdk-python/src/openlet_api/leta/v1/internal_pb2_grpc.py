@@ -3,7 +3,6 @@
 import grpc
 import warnings
 
-from google.protobuf import empty_pb2 as google_dot_protobuf_dot_empty__pb2
 from openlet_api.leta.v1 import internal_pb2 as openlet__api_dot_leta_dot_v1_dot_internal__pb2
 
 GRPC_GENERATED_VERSION = '1.85.1'
@@ -38,12 +37,12 @@ class LetaInternalServiceStub:
         self.DeliverInbox = channel.unary_unary(
                 '/openlet.leta.v1.LetaInternalService/DeliverInbox',
                 request_serializer=openlet__api_dot_leta_dot_v1_dot_internal__pb2.DeliverInboxRequest.SerializeToString,
-                response_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
+                response_deserializer=openlet__api_dot_leta_dot_v1_dot_internal__pb2.DeliverInboxResponse.FromString,
                 _registered_method=True)
         self.DeleteWorkspaceAgents = channel.unary_unary(
                 '/openlet.leta.v1.LetaInternalService/DeleteWorkspaceAgents',
                 request_serializer=openlet__api_dot_leta_dot_v1_dot_internal__pb2.DeleteWorkspaceAgentsRequest.SerializeToString,
-                response_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
+                response_deserializer=openlet__api_dot_leta_dot_v1_dot_internal__pb2.DeleteWorkspaceAgentsResponse.FromString,
                 _registered_method=True)
 
 
@@ -68,12 +67,12 @@ def add_LetaInternalServiceServicer_to_server(servicer, server):
             'DeliverInbox': grpc.unary_unary_rpc_method_handler(
                     servicer.DeliverInbox,
                     request_deserializer=openlet__api_dot_leta_dot_v1_dot_internal__pb2.DeliverInboxRequest.FromString,
-                    response_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
+                    response_serializer=openlet__api_dot_leta_dot_v1_dot_internal__pb2.DeliverInboxResponse.SerializeToString,
             ),
             'DeleteWorkspaceAgents': grpc.unary_unary_rpc_method_handler(
                     servicer.DeleteWorkspaceAgents,
                     request_deserializer=openlet__api_dot_leta_dot_v1_dot_internal__pb2.DeleteWorkspaceAgentsRequest.FromString,
-                    response_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
+                    response_serializer=openlet__api_dot_leta_dot_v1_dot_internal__pb2.DeleteWorkspaceAgentsResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -102,7 +101,7 @@ class LetaInternalService:
             target,
             '/openlet.leta.v1.LetaInternalService/DeliverInbox',
             openlet__api_dot_leta_dot_v1_dot_internal__pb2.DeliverInboxRequest.SerializeToString,
-            google_dot_protobuf_dot_empty__pb2.Empty.FromString,
+            openlet__api_dot_leta_dot_v1_dot_internal__pb2.DeliverInboxResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -129,7 +128,7 @@ class LetaInternalService:
             target,
             '/openlet.leta.v1.LetaInternalService/DeleteWorkspaceAgents',
             openlet__api_dot_leta_dot_v1_dot_internal__pb2.DeleteWorkspaceAgentsRequest.SerializeToString,
-            google_dot_protobuf_dot_empty__pb2.Empty.FromString,
+            openlet__api_dot_leta_dot_v1_dot_internal__pb2.DeleteWorkspaceAgentsResponse.FromString,
             options,
             channel_credentials,
             insecure,

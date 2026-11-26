@@ -4,7 +4,6 @@ isort:skip_file
 """
 
 from collections import abc as _abc
-from google.protobuf import empty_pb2 as _empty_pb2
 from grpc import aio as _aio
 from openlet_api.leta.v1 import internal_pb2 as _internal_pb2
 import abc as _abc_1
@@ -32,26 +31,26 @@ class LetaInternalServiceStub:
     def __new__(cls, channel: _grpc.Channel) -> _Self: ...
     @_typing.overload
     def __new__(cls, channel: _aio.Channel) -> LetaInternalServiceAsyncStub: ...
-    DeliverInbox: _grpc.UnaryUnaryMultiCallable[_internal_pb2.DeliverInboxRequest, _empty_pb2.Empty]
-    DeleteWorkspaceAgents: _grpc.UnaryUnaryMultiCallable[_internal_pb2.DeleteWorkspaceAgentsRequest, _empty_pb2.Empty]
+    DeliverInbox: _grpc.UnaryUnaryMultiCallable[_internal_pb2.DeliverInboxRequest, _internal_pb2.DeliverInboxResponse]
+    DeleteWorkspaceAgents: _grpc.UnaryUnaryMultiCallable[_internal_pb2.DeleteWorkspaceAgentsRequest, _internal_pb2.DeleteWorkspaceAgentsResponse]
 
 @_typing.type_check_only
 class LetaInternalServiceAsyncStub(LetaInternalServiceStub):
     def __init__(self, channel: _aio.Channel) -> None: ...
-    DeliverInbox: _aio.UnaryUnaryMultiCallable[_internal_pb2.DeliverInboxRequest, _empty_pb2.Empty]  # type: ignore[assignment]
-    DeleteWorkspaceAgents: _aio.UnaryUnaryMultiCallable[_internal_pb2.DeleteWorkspaceAgentsRequest, _empty_pb2.Empty]  # type: ignore[assignment]
+    DeliverInbox: _aio.UnaryUnaryMultiCallable[_internal_pb2.DeliverInboxRequest, _internal_pb2.DeliverInboxResponse]  # type: ignore[assignment]
+    DeleteWorkspaceAgents: _aio.UnaryUnaryMultiCallable[_internal_pb2.DeleteWorkspaceAgentsRequest, _internal_pb2.DeleteWorkspaceAgentsResponse]  # type: ignore[assignment]
 
 class LetaInternalServiceServicer:
     def DeliverInbox(
         self,
         request: _internal_pb2.DeliverInboxRequest,
         context: _ServicerContext,
-    ) -> _typing.Union[_empty_pb2.Empty, _abc.Awaitable[_empty_pb2.Empty]]: ...
+    ) -> _typing.Union[_internal_pb2.DeliverInboxResponse, _abc.Awaitable[_internal_pb2.DeliverInboxResponse]]: ...
 
     def DeleteWorkspaceAgents(
         self,
         request: _internal_pb2.DeleteWorkspaceAgentsRequest,
         context: _ServicerContext,
-    ) -> _typing.Union[_empty_pb2.Empty, _abc.Awaitable[_empty_pb2.Empty]]: ...
+    ) -> _typing.Union[_internal_pb2.DeleteWorkspaceAgentsResponse, _abc.Awaitable[_internal_pb2.DeleteWorkspaceAgentsResponse]]: ...
 
 def add_LetaInternalServiceServicer_to_server(servicer: LetaInternalServiceServicer, server: _typing.Union[_grpc.Server, _aio.Server]) -> None: ...

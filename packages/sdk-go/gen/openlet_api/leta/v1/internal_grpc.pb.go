@@ -11,7 +11,6 @@ import (
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
-	emptypb "google.golang.org/protobuf/types/known/emptypb"
 )
 
 // This is a compile-time assertion to ensure that this generated file
@@ -28,8 +27,8 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type LetaInternalServiceClient interface {
-	DeliverInbox(ctx context.Context, in *DeliverInboxRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
-	DeleteWorkspaceAgents(ctx context.Context, in *DeleteWorkspaceAgentsRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	DeliverInbox(ctx context.Context, in *DeliverInboxRequest, opts ...grpc.CallOption) (*DeliverInboxResponse, error)
+	DeleteWorkspaceAgents(ctx context.Context, in *DeleteWorkspaceAgentsRequest, opts ...grpc.CallOption) (*DeleteWorkspaceAgentsResponse, error)
 }
 
 type letaInternalServiceClient struct {
@@ -40,9 +39,9 @@ func NewLetaInternalServiceClient(cc grpc.ClientConnInterface) LetaInternalServi
 	return &letaInternalServiceClient{cc}
 }
 
-func (c *letaInternalServiceClient) DeliverInbox(ctx context.Context, in *DeliverInboxRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+func (c *letaInternalServiceClient) DeliverInbox(ctx context.Context, in *DeliverInboxRequest, opts ...grpc.CallOption) (*DeliverInboxResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(emptypb.Empty)
+	out := new(DeliverInboxResponse)
 	err := c.cc.Invoke(ctx, LetaInternalService_DeliverInbox_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -50,9 +49,9 @@ func (c *letaInternalServiceClient) DeliverInbox(ctx context.Context, in *Delive
 	return out, nil
 }
 
-func (c *letaInternalServiceClient) DeleteWorkspaceAgents(ctx context.Context, in *DeleteWorkspaceAgentsRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+func (c *letaInternalServiceClient) DeleteWorkspaceAgents(ctx context.Context, in *DeleteWorkspaceAgentsRequest, opts ...grpc.CallOption) (*DeleteWorkspaceAgentsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(emptypb.Empty)
+	out := new(DeleteWorkspaceAgentsResponse)
 	err := c.cc.Invoke(ctx, LetaInternalService_DeleteWorkspaceAgents_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -64,8 +63,8 @@ func (c *letaInternalServiceClient) DeleteWorkspaceAgents(ctx context.Context, i
 // All implementations should embed UnimplementedLetaInternalServiceServer
 // for forward compatibility.
 type LetaInternalServiceServer interface {
-	DeliverInbox(context.Context, *DeliverInboxRequest) (*emptypb.Empty, error)
-	DeleteWorkspaceAgents(context.Context, *DeleteWorkspaceAgentsRequest) (*emptypb.Empty, error)
+	DeliverInbox(context.Context, *DeliverInboxRequest) (*DeliverInboxResponse, error)
+	DeleteWorkspaceAgents(context.Context, *DeleteWorkspaceAgentsRequest) (*DeleteWorkspaceAgentsResponse, error)
 }
 
 // UnimplementedLetaInternalServiceServer should be embedded to have
@@ -75,10 +74,10 @@ type LetaInternalServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedLetaInternalServiceServer struct{}
 
-func (UnimplementedLetaInternalServiceServer) DeliverInbox(context.Context, *DeliverInboxRequest) (*emptypb.Empty, error) {
+func (UnimplementedLetaInternalServiceServer) DeliverInbox(context.Context, *DeliverInboxRequest) (*DeliverInboxResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeliverInbox not implemented")
 }
-func (UnimplementedLetaInternalServiceServer) DeleteWorkspaceAgents(context.Context, *DeleteWorkspaceAgentsRequest) (*emptypb.Empty, error) {
+func (UnimplementedLetaInternalServiceServer) DeleteWorkspaceAgents(context.Context, *DeleteWorkspaceAgentsRequest) (*DeleteWorkspaceAgentsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteWorkspaceAgents not implemented")
 }
 func (UnimplementedLetaInternalServiceServer) testEmbeddedByValue() {}

@@ -7,6 +7,7 @@ from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
 from langfuse import Langfuse, is_default_export_span
+from langfuse.types import MaskFunction
 from opentelemetry import metrics, trace
 from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
@@ -181,7 +182,10 @@ def langfuse_span(span: ReadableSpan) -> bool:
 
 
 def initialize_langfuse(
-    settings: LangfuseSettings, runtime: RuntimeSettings
+    settings: LangfuseSettings,
+    runtime: RuntimeSettings,
+    *,
+    mask: MaskFunction | None = None,
 ) -> Langfuse:
     return Langfuse(
         base_url=settings["base_url"],
@@ -189,4 +193,5 @@ def initialize_langfuse(
         secret_key=secret(settings["secret_key"]),
         environment=runtime["environment"],
         should_export_span=langfuse_span,
+        mask=mask,
     )

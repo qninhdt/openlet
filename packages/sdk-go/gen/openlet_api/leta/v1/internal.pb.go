@@ -10,7 +10,6 @@ import (
 	_ "buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go/buf/validate"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
-	emptypb "google.golang.org/protobuf/types/known/emptypb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -23,7 +22,7 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-type SenderRef struct {
+type ActorRef struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Type          string                 `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"`
 	Id            string                 `protobuf:"bytes,2,opt,name=id,proto3" json:"id,omitempty"`
@@ -33,20 +32,20 @@ type SenderRef struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *SenderRef) Reset() {
-	*x = SenderRef{}
+func (x *ActorRef) Reset() {
+	*x = ActorRef{}
 	mi := &file_openlet_api_leta_v1_internal_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *SenderRef) String() string {
+func (x *ActorRef) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*SenderRef) ProtoMessage() {}
+func (*ActorRef) ProtoMessage() {}
 
-func (x *SenderRef) ProtoReflect() protoreflect.Message {
+func (x *ActorRef) ProtoReflect() protoreflect.Message {
 	mi := &file_openlet_api_leta_v1_internal_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -58,58 +57,423 @@ func (x *SenderRef) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use SenderRef.ProtoReflect.Descriptor instead.
-func (*SenderRef) Descriptor() ([]byte, []int) {
+// Deprecated: Use ActorRef.ProtoReflect.Descriptor instead.
+func (*ActorRef) Descriptor() ([]byte, []int) {
 	return file_openlet_api_leta_v1_internal_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *SenderRef) GetType() string {
+func (x *ActorRef) GetType() string {
 	if x != nil {
 		return x.Type
 	}
 	return ""
 }
 
-func (x *SenderRef) GetId() string {
+func (x *ActorRef) GetId() string {
 	if x != nil {
 		return x.Id
 	}
 	return ""
 }
 
-func (x *SenderRef) GetName() string {
+func (x *ActorRef) GetName() string {
 	if x != nil {
 		return x.Name
 	}
 	return ""
 }
 
-func (x *SenderRef) GetHandle() string {
+func (x *ActorRef) GetHandle() string {
 	if x != nil {
 		return x.Handle
 	}
 	return ""
 }
 
+type ChatAttachment struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	StorageId     string                 `protobuf:"bytes,1,opt,name=storage_id,json=storageId,proto3" json:"storage_id,omitempty"`
+	NodeId        string                 `protobuf:"bytes,2,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	Name          string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	MediaType     string                 `protobuf:"bytes,4,opt,name=media_type,json=mediaType,proto3" json:"media_type,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChatAttachment) Reset() {
+	*x = ChatAttachment{}
+	mi := &file_openlet_api_leta_v1_internal_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChatAttachment) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChatAttachment) ProtoMessage() {}
+
+func (x *ChatAttachment) ProtoReflect() protoreflect.Message {
+	mi := &file_openlet_api_leta_v1_internal_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChatAttachment.ProtoReflect.Descriptor instead.
+func (*ChatAttachment) Descriptor() ([]byte, []int) {
+	return file_openlet_api_leta_v1_internal_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *ChatAttachment) GetStorageId() string {
+	if x != nil {
+		return x.StorageId
+	}
+	return ""
+}
+
+func (x *ChatAttachment) GetNodeId() string {
+	if x != nil {
+		return x.NodeId
+	}
+	return ""
+}
+
+func (x *ChatAttachment) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *ChatAttachment) GetMediaType() string {
+	if x != nil {
+		return x.MediaType
+	}
+	return ""
+}
+
+type ChatMention struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Kind          string                 `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`
+	Id            string                 `protobuf:"bytes,2,opt,name=id,proto3" json:"id,omitempty"`
+	StorageId     string                 `protobuf:"bytes,3,opt,name=storage_id,json=storageId,proto3" json:"storage_id,omitempty"`
+	NodeId        string                 `protobuf:"bytes,4,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	Label         string                 `protobuf:"bytes,5,opt,name=label,proto3" json:"label,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChatMention) Reset() {
+	*x = ChatMention{}
+	mi := &file_openlet_api_leta_v1_internal_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChatMention) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChatMention) ProtoMessage() {}
+
+func (x *ChatMention) ProtoReflect() protoreflect.Message {
+	mi := &file_openlet_api_leta_v1_internal_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChatMention.ProtoReflect.Descriptor instead.
+func (*ChatMention) Descriptor() ([]byte, []int) {
+	return file_openlet_api_leta_v1_internal_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *ChatMention) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *ChatMention) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *ChatMention) GetStorageId() string {
+	if x != nil {
+		return x.StorageId
+	}
+	return ""
+}
+
+func (x *ChatMention) GetNodeId() string {
+	if x != nil {
+		return x.NodeId
+	}
+	return ""
+}
+
+func (x *ChatMention) GetLabel() string {
+	if x != nil {
+		return x.Label
+	}
+	return ""
+}
+
+type ChatMessageEvent struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	WorkspaceId      string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
+	ConversationId   string                 `protobuf:"bytes,2,opt,name=conversation_id,json=conversationId,proto3" json:"conversation_id,omitempty"`
+	ConversationType string                 `protobuf:"bytes,3,opt,name=conversation_type,json=conversationType,proto3" json:"conversation_type,omitempty"`
+	Title            string                 `protobuf:"bytes,4,opt,name=title,proto3" json:"title,omitempty"`
+	Handle           string                 `protobuf:"bytes,5,opt,name=handle,proto3" json:"handle,omitempty"`
+	MessageId        string                 `protobuf:"bytes,6,opt,name=message_id,json=messageId,proto3" json:"message_id,omitempty"`
+	Seq              int64                  `protobuf:"varint,7,opt,name=seq,proto3" json:"seq,omitempty"`
+	Sender           *ActorRef              `protobuf:"bytes,8,opt,name=sender,proto3" json:"sender,omitempty"`
+	Content          string                 `protobuf:"bytes,9,opt,name=content,proto3" json:"content,omitempty"`
+	ReplyToMessageId string                 `protobuf:"bytes,10,opt,name=reply_to_message_id,json=replyToMessageId,proto3" json:"reply_to_message_id,omitempty"`
+	Attachments      []*ChatAttachment      `protobuf:"bytes,11,rep,name=attachments,proto3" json:"attachments,omitempty"`
+	Mentions         []*ChatMention         `protobuf:"bytes,12,rep,name=mentions,proto3" json:"mentions,omitempty"`
+	MetadataJson     []byte                 `protobuf:"bytes,13,opt,name=metadata_json,json=metadataJson,proto3" json:"metadata_json,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *ChatMessageEvent) Reset() {
+	*x = ChatMessageEvent{}
+	mi := &file_openlet_api_leta_v1_internal_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChatMessageEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChatMessageEvent) ProtoMessage() {}
+
+func (x *ChatMessageEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_openlet_api_leta_v1_internal_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChatMessageEvent.ProtoReflect.Descriptor instead.
+func (*ChatMessageEvent) Descriptor() ([]byte, []int) {
+	return file_openlet_api_leta_v1_internal_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *ChatMessageEvent) GetWorkspaceId() string {
+	if x != nil {
+		return x.WorkspaceId
+	}
+	return ""
+}
+
+func (x *ChatMessageEvent) GetConversationId() string {
+	if x != nil {
+		return x.ConversationId
+	}
+	return ""
+}
+
+func (x *ChatMessageEvent) GetConversationType() string {
+	if x != nil {
+		return x.ConversationType
+	}
+	return ""
+}
+
+func (x *ChatMessageEvent) GetTitle() string {
+	if x != nil {
+		return x.Title
+	}
+	return ""
+}
+
+func (x *ChatMessageEvent) GetHandle() string {
+	if x != nil {
+		return x.Handle
+	}
+	return ""
+}
+
+func (x *ChatMessageEvent) GetMessageId() string {
+	if x != nil {
+		return x.MessageId
+	}
+	return ""
+}
+
+func (x *ChatMessageEvent) GetSeq() int64 {
+	if x != nil {
+		return x.Seq
+	}
+	return 0
+}
+
+func (x *ChatMessageEvent) GetSender() *ActorRef {
+	if x != nil {
+		return x.Sender
+	}
+	return nil
+}
+
+func (x *ChatMessageEvent) GetContent() string {
+	if x != nil {
+		return x.Content
+	}
+	return ""
+}
+
+func (x *ChatMessageEvent) GetReplyToMessageId() string {
+	if x != nil {
+		return x.ReplyToMessageId
+	}
+	return ""
+}
+
+func (x *ChatMessageEvent) GetAttachments() []*ChatAttachment {
+	if x != nil {
+		return x.Attachments
+	}
+	return nil
+}
+
+func (x *ChatMessageEvent) GetMentions() []*ChatMention {
+	if x != nil {
+		return x.Mentions
+	}
+	return nil
+}
+
+func (x *ChatMessageEvent) GetMetadataJson() []byte {
+	if x != nil {
+		return x.MetadataJson
+	}
+	return nil
+}
+
+type ChatReactionEvent struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	WorkspaceId    string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
+	ConversationId string                 `protobuf:"bytes,2,opt,name=conversation_id,json=conversationId,proto3" json:"conversation_id,omitempty"`
+	MessageId      string                 `protobuf:"bytes,3,opt,name=message_id,json=messageId,proto3" json:"message_id,omitempty"`
+	Actor          *ActorRef              `protobuf:"bytes,4,opt,name=actor,proto3" json:"actor,omitempty"`
+	Emoji          string                 `protobuf:"bytes,5,opt,name=emoji,proto3" json:"emoji,omitempty"`
+	Action         string                 `protobuf:"bytes,6,opt,name=action,proto3" json:"action,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *ChatReactionEvent) Reset() {
+	*x = ChatReactionEvent{}
+	mi := &file_openlet_api_leta_v1_internal_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChatReactionEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChatReactionEvent) ProtoMessage() {}
+
+func (x *ChatReactionEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_openlet_api_leta_v1_internal_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChatReactionEvent.ProtoReflect.Descriptor instead.
+func (*ChatReactionEvent) Descriptor() ([]byte, []int) {
+	return file_openlet_api_leta_v1_internal_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *ChatReactionEvent) GetWorkspaceId() string {
+	if x != nil {
+		return x.WorkspaceId
+	}
+	return ""
+}
+
+func (x *ChatReactionEvent) GetConversationId() string {
+	if x != nil {
+		return x.ConversationId
+	}
+	return ""
+}
+
+func (x *ChatReactionEvent) GetMessageId() string {
+	if x != nil {
+		return x.MessageId
+	}
+	return ""
+}
+
+func (x *ChatReactionEvent) GetActor() *ActorRef {
+	if x != nil {
+		return x.Actor
+	}
+	return nil
+}
+
+func (x *ChatReactionEvent) GetEmoji() string {
+	if x != nil {
+		return x.Emoji
+	}
+	return ""
+}
+
+func (x *ChatReactionEvent) GetAction() string {
+	if x != nil {
+		return x.Action
+	}
+	return ""
+}
+
 type DeliverInboxRequest struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	AgentId         string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
-	IdempotencyKey  string                 `protobuf:"bytes,2,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
-	Kind            string                 `protobuf:"bytes,3,opt,name=kind,proto3" json:"kind,omitempty"`
-	Channel         string                 `protobuf:"bytes,4,opt,name=channel,proto3" json:"channel,omitempty"`
-	ReplyAddress    string                 `protobuf:"bytes,5,opt,name=reply_address,json=replyAddress,proto3" json:"reply_address,omitempty"`
-	Sender          *SenderRef             `protobuf:"bytes,6,opt,name=sender,proto3" json:"sender,omitempty"`
-	Content         string                 `protobuf:"bytes,7,opt,name=content,proto3" json:"content,omitempty"`
-	AttachmentsJson []byte                 `protobuf:"bytes,8,opt,name=attachments_json,json=attachmentsJson,proto3" json:"attachments_json,omitempty"`
-	MetadataJson    []byte                 `protobuf:"bytes,9,opt,name=metadata_json,json=metadataJson,proto3" json:"metadata_json,omitempty"`
-	Silent          bool                   `protobuf:"varint,10,opt,name=silent,proto3" json:"silent,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	AgentId        string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	IdempotencyKey string                 `protobuf:"bytes,2,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
+	// Types that are valid to be assigned to Event:
+	//
+	//	*DeliverInboxRequest_ChatMessage
+	//	*DeliverInboxRequest_ChatReaction
+	Event         isDeliverInboxRequest_Event `protobuf_oneof:"event"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *DeliverInboxRequest) Reset() {
 	*x = DeliverInboxRequest{}
-	mi := &file_openlet_api_leta_v1_internal_proto_msgTypes[1]
+	mi := &file_openlet_api_leta_v1_internal_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -121,7 +485,7 @@ func (x *DeliverInboxRequest) String() string {
 func (*DeliverInboxRequest) ProtoMessage() {}
 
 func (x *DeliverInboxRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_leta_v1_internal_proto_msgTypes[1]
+	mi := &file_openlet_api_leta_v1_internal_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -134,7 +498,7 @@ func (x *DeliverInboxRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeliverInboxRequest.ProtoReflect.Descriptor instead.
 func (*DeliverInboxRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_leta_v1_internal_proto_rawDescGZIP(), []int{1}
+	return file_openlet_api_leta_v1_internal_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *DeliverInboxRequest) GetAgentId() string {
@@ -151,60 +515,105 @@ func (x *DeliverInboxRequest) GetIdempotencyKey() string {
 	return ""
 }
 
-func (x *DeliverInboxRequest) GetKind() string {
+func (x *DeliverInboxRequest) GetEvent() isDeliverInboxRequest_Event {
 	if x != nil {
-		return x.Kind
-	}
-	return ""
-}
-
-func (x *DeliverInboxRequest) GetChannel() string {
-	if x != nil {
-		return x.Channel
-	}
-	return ""
-}
-
-func (x *DeliverInboxRequest) GetReplyAddress() string {
-	if x != nil {
-		return x.ReplyAddress
-	}
-	return ""
-}
-
-func (x *DeliverInboxRequest) GetSender() *SenderRef {
-	if x != nil {
-		return x.Sender
+		return x.Event
 	}
 	return nil
 }
 
-func (x *DeliverInboxRequest) GetContent() string {
+func (x *DeliverInboxRequest) GetChatMessage() *ChatMessageEvent {
 	if x != nil {
-		return x.Content
-	}
-	return ""
-}
-
-func (x *DeliverInboxRequest) GetAttachmentsJson() []byte {
-	if x != nil {
-		return x.AttachmentsJson
+		if x, ok := x.Event.(*DeliverInboxRequest_ChatMessage); ok {
+			return x.ChatMessage
+		}
 	}
 	return nil
 }
 
-func (x *DeliverInboxRequest) GetMetadataJson() []byte {
+func (x *DeliverInboxRequest) GetChatReaction() *ChatReactionEvent {
 	if x != nil {
-		return x.MetadataJson
+		if x, ok := x.Event.(*DeliverInboxRequest_ChatReaction); ok {
+			return x.ChatReaction
+		}
 	}
 	return nil
 }
 
-func (x *DeliverInboxRequest) GetSilent() bool {
+type isDeliverInboxRequest_Event interface {
+	isDeliverInboxRequest_Event()
+}
+
+type DeliverInboxRequest_ChatMessage struct {
+	ChatMessage *ChatMessageEvent `protobuf:"bytes,3,opt,name=chat_message,json=chatMessage,proto3,oneof"`
+}
+
+type DeliverInboxRequest_ChatReaction struct {
+	ChatReaction *ChatReactionEvent `protobuf:"bytes,4,opt,name=chat_reaction,json=chatReaction,proto3,oneof"`
+}
+
+func (*DeliverInboxRequest_ChatMessage) isDeliverInboxRequest_Event() {}
+
+func (*DeliverInboxRequest_ChatReaction) isDeliverInboxRequest_Event() {}
+
+type DeliverInboxResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Delivered     bool                   `protobuf:"varint,1,opt,name=delivered,proto3" json:"delivered,omitempty"`
+	Skipped       bool                   `protobuf:"varint,2,opt,name=skipped,proto3" json:"skipped,omitempty"`
+	Seq           int64                  `protobuf:"varint,3,opt,name=seq,proto3" json:"seq,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeliverInboxResponse) Reset() {
+	*x = DeliverInboxResponse{}
+	mi := &file_openlet_api_leta_v1_internal_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeliverInboxResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeliverInboxResponse) ProtoMessage() {}
+
+func (x *DeliverInboxResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_openlet_api_leta_v1_internal_proto_msgTypes[6]
 	if x != nil {
-		return x.Silent
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeliverInboxResponse.ProtoReflect.Descriptor instead.
+func (*DeliverInboxResponse) Descriptor() ([]byte, []int) {
+	return file_openlet_api_leta_v1_internal_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *DeliverInboxResponse) GetDelivered() bool {
+	if x != nil {
+		return x.Delivered
 	}
 	return false
+}
+
+func (x *DeliverInboxResponse) GetSkipped() bool {
+	if x != nil {
+		return x.Skipped
+	}
+	return false
+}
+
+func (x *DeliverInboxResponse) GetSeq() int64 {
+	if x != nil {
+		return x.Seq
+	}
+	return 0
 }
 
 type DeleteWorkspaceAgentsRequest struct {
@@ -216,7 +625,7 @@ type DeleteWorkspaceAgentsRequest struct {
 
 func (x *DeleteWorkspaceAgentsRequest) Reset() {
 	*x = DeleteWorkspaceAgentsRequest{}
-	mi := &file_openlet_api_leta_v1_internal_proto_msgTypes[2]
+	mi := &file_openlet_api_leta_v1_internal_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -228,7 +637,7 @@ func (x *DeleteWorkspaceAgentsRequest) String() string {
 func (*DeleteWorkspaceAgentsRequest) ProtoMessage() {}
 
 func (x *DeleteWorkspaceAgentsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openlet_api_leta_v1_internal_proto_msgTypes[2]
+	mi := &file_openlet_api_leta_v1_internal_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -241,7 +650,7 @@ func (x *DeleteWorkspaceAgentsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteWorkspaceAgentsRequest.ProtoReflect.Descriptor instead.
 func (*DeleteWorkspaceAgentsRequest) Descriptor() ([]byte, []int) {
-	return file_openlet_api_leta_v1_internal_proto_rawDescGZIP(), []int{2}
+	return file_openlet_api_leta_v1_internal_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *DeleteWorkspaceAgentsRequest) GetWorkspaceId() string {
@@ -251,33 +660,106 @@ func (x *DeleteWorkspaceAgentsRequest) GetWorkspaceId() string {
 	return ""
 }
 
+type DeleteWorkspaceAgentsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteWorkspaceAgentsResponse) Reset() {
+	*x = DeleteWorkspaceAgentsResponse{}
+	mi := &file_openlet_api_leta_v1_internal_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteWorkspaceAgentsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteWorkspaceAgentsResponse) ProtoMessage() {}
+
+func (x *DeleteWorkspaceAgentsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_openlet_api_leta_v1_internal_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteWorkspaceAgentsResponse.ProtoReflect.Descriptor instead.
+func (*DeleteWorkspaceAgentsResponse) Descriptor() ([]byte, []int) {
+	return file_openlet_api_leta_v1_internal_proto_rawDescGZIP(), []int{8}
+}
+
 var File_openlet_api_leta_v1_internal_proto protoreflect.FileDescriptor
 
 const file_openlet_api_leta_v1_internal_proto_rawDesc = "" +
 	"\n" +
-	"\"openlet_api/leta/v1/internal.proto\x12\x0fopenlet.leta.v1\x1a\x1bbuf/validate/validate.proto\x1a\x1bgoogle/protobuf/empty.proto\"\x81\x01\n" +
-	"\tSenderRef\x12.\n" +
-	"\x04type\x18\x01 \x01(\tB\x1a\xbaH\x17r\x15R\x04userR\x05agentR\x06systemR\x04type\x12\x18\n" +
-	"\x02id\x18\x02 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x02id\x12\x12\n" +
+	"\"openlet_api/leta/v1/internal.proto\x12\x0fopenlet.leta.v1\x1a\x1bbuf/validate/validate.proto\"\x7f\n" +
+	"\bActorRef\x12.\n" +
+	"\x04type\x18\x01 \x01(\tB\x1a\xbaH\x17r\x15R\x04userR\x05agentR\x06systemR\x04type\x12\x17\n" +
+	"\x02id\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x02id\x12\x12\n" +
 	"\x04name\x18\x03 \x01(\tR\x04name\x12\x16\n" +
-	"\x06handle\x18\x04 \x01(\tR\x06handle\"\x9c\x03\n" +
+	"\x06handle\x18\x04 \x01(\tR\x06handle\"\x8f\x01\n" +
+	"\x0eChatAttachment\x12'\n" +
+	"\n" +
+	"storage_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\tstorageId\x12!\n" +
+	"\anode_id\x18\x02 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x06nodeId\x12\x12\n" +
+	"\x04name\x18\x03 \x01(\tR\x04name\x12\x1d\n" +
+	"\n" +
+	"media_type\x18\x04 \x01(\tR\tmediaType\"\xa1\x01\n" +
+	"\vChatMention\x124\n" +
+	"\x04kind\x18\x01 \x01(\tB \xbaH\x1dr\x1bR\x04userR\x05agentR\x04fileR\x06folderR\x04kind\x12\x0e\n" +
+	"\x02id\x18\x02 \x01(\tR\x02id\x12\x1d\n" +
+	"\n" +
+	"storage_id\x18\x03 \x01(\tR\tstorageId\x12\x17\n" +
+	"\anode_id\x18\x04 \x01(\tR\x06nodeId\x12\x14\n" +
+	"\x05label\x18\x05 \x01(\tR\x05label\"\xc9\x04\n" +
+	"\x10ChatMessageEvent\x12+\n" +
+	"\fworkspace_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\vworkspaceId\x121\n" +
+	"\x0fconversation_id\x18\x02 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x0econversationId\x12=\n" +
+	"\x11conversation_type\x18\x03 \x01(\tB\x10\xbaH\rr\vR\x02dmR\x05groupR\x10conversationType\x12\x14\n" +
+	"\x05title\x18\x04 \x01(\tR\x05title\x12\x16\n" +
+	"\x06handle\x18\x05 \x01(\tR\x06handle\x12'\n" +
+	"\n" +
+	"message_id\x18\x06 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\tmessageId\x12\x19\n" +
+	"\x03seq\x18\a \x01(\x03B\a\xbaH\x04\"\x02 \x00R\x03seq\x129\n" +
+	"\x06sender\x18\b \x01(\v2\x19.openlet.leta.v1.ActorRefB\x06\xbaH\x03\xc8\x01\x01R\x06sender\x12\x18\n" +
+	"\acontent\x18\t \x01(\tR\acontent\x12-\n" +
+	"\x13reply_to_message_id\x18\n" +
+	" \x01(\tR\x10replyToMessageId\x12A\n" +
+	"\vattachments\x18\v \x03(\v2\x1f.openlet.leta.v1.ChatAttachmentR\vattachments\x128\n" +
+	"\bmentions\x18\f \x03(\v2\x1c.openlet.leta.v1.ChatMentionR\bmentions\x12#\n" +
+	"\rmetadata_json\x18\r \x01(\fR\fmetadataJson\"\xa3\x02\n" +
+	"\x11ChatReactionEvent\x12+\n" +
+	"\fworkspace_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\vworkspaceId\x121\n" +
+	"\x0fconversation_id\x18\x02 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\x0econversationId\x12'\n" +
+	"\n" +
+	"message_id\x18\x03 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\tmessageId\x127\n" +
+	"\x05actor\x18\x04 \x01(\v2\x19.openlet.leta.v1.ActorRefB\x06\xbaH\x03\xc8\x01\x01R\x05actor\x12\x1d\n" +
+	"\x05emoji\x18\x05 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x05emoji\x12-\n" +
+	"\x06action\x18\x06 \x01(\tB\x15\xbaH\x12r\x10R\x05addedR\aremovedR\x06action\"\x8f\x02\n" +
 	"\x13DeliverInboxRequest\x12#\n" +
 	"\bagent_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\aagentId\x120\n" +
-	"\x0fidempotency_key\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x0eidempotencyKey\x120\n" +
-	"\x04kind\x18\x03 \x01(\tB\x1c\xbaH\x19r\x17R\achannelR\fnotificationR\x04kind\x12!\n" +
-	"\achannel\x18\x04 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\achannel\x12#\n" +
-	"\rreply_address\x18\x05 \x01(\tR\freplyAddress\x122\n" +
-	"\x06sender\x18\x06 \x01(\v2\x1a.openlet.leta.v1.SenderRefR\x06sender\x12\x18\n" +
-	"\acontent\x18\a \x01(\tR\acontent\x12)\n" +
-	"\x10attachments_json\x18\b \x01(\fR\x0fattachmentsJson\x12#\n" +
-	"\rmetadata_json\x18\t \x01(\fR\fmetadataJson\x12\x16\n" +
-	"\x06silent\x18\n" +
-	" \x01(\bR\x06silent\"K\n" +
+	"\x0fidempotency_key\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x0eidempotencyKey\x12F\n" +
+	"\fchat_message\x18\x03 \x01(\v2!.openlet.leta.v1.ChatMessageEventH\x00R\vchatMessage\x12I\n" +
+	"\rchat_reaction\x18\x04 \x01(\v2\".openlet.leta.v1.ChatReactionEventH\x00R\fchatReactionB\x0e\n" +
+	"\x05event\x12\x05\xbaH\x02\b\x01\"`\n" +
+	"\x14DeliverInboxResponse\x12\x1c\n" +
+	"\tdelivered\x18\x01 \x01(\bR\tdelivered\x12\x18\n" +
+	"\askipped\x18\x02 \x01(\bR\askipped\x12\x10\n" +
+	"\x03seq\x18\x03 \x01(\x03R\x03seq\"K\n" +
 	"\x1cDeleteWorkspaceAgentsRequest\x12+\n" +
-	"\fworkspace_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\vworkspaceId2\xc3\x01\n" +
-	"\x13LetaInternalService\x12L\n" +
-	"\fDeliverInbox\x12$.openlet.leta.v1.DeliverInboxRequest\x1a\x16.google.protobuf.Empty\x12^\n" +
-	"\x15DeleteWorkspaceAgents\x12-.openlet.leta.v1.DeleteWorkspaceAgentsRequest\x1a\x16.google.protobuf.EmptyBKZIgithub.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/leta/v1;letav1b\x06proto3"
+	"\fworkspace_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\vworkspaceId\"\x1f\n" +
+	"\x1dDeleteWorkspaceAgentsResponse2\xea\x01\n" +
+	"\x13LetaInternalService\x12[\n" +
+	"\fDeliverInbox\x12$.openlet.leta.v1.DeliverInboxRequest\x1a%.openlet.leta.v1.DeliverInboxResponse\x12v\n" +
+	"\x15DeleteWorkspaceAgents\x12-.openlet.leta.v1.DeleteWorkspaceAgentsRequest\x1a..openlet.leta.v1.DeleteWorkspaceAgentsResponseBKZIgithub.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/leta/v1;letav1b\x06proto3"
 
 var (
 	file_openlet_api_leta_v1_internal_proto_rawDescOnce sync.Once
@@ -291,24 +773,34 @@ func file_openlet_api_leta_v1_internal_proto_rawDescGZIP() []byte {
 	return file_openlet_api_leta_v1_internal_proto_rawDescData
 }
 
-var file_openlet_api_leta_v1_internal_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_openlet_api_leta_v1_internal_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_openlet_api_leta_v1_internal_proto_goTypes = []any{
-	(*SenderRef)(nil),                    // 0: openlet.leta.v1.SenderRef
-	(*DeliverInboxRequest)(nil),          // 1: openlet.leta.v1.DeliverInboxRequest
-	(*DeleteWorkspaceAgentsRequest)(nil), // 2: openlet.leta.v1.DeleteWorkspaceAgentsRequest
-	(*emptypb.Empty)(nil),                // 3: google.protobuf.Empty
+	(*ActorRef)(nil),                      // 0: openlet.leta.v1.ActorRef
+	(*ChatAttachment)(nil),                // 1: openlet.leta.v1.ChatAttachment
+	(*ChatMention)(nil),                   // 2: openlet.leta.v1.ChatMention
+	(*ChatMessageEvent)(nil),              // 3: openlet.leta.v1.ChatMessageEvent
+	(*ChatReactionEvent)(nil),             // 4: openlet.leta.v1.ChatReactionEvent
+	(*DeliverInboxRequest)(nil),           // 5: openlet.leta.v1.DeliverInboxRequest
+	(*DeliverInboxResponse)(nil),          // 6: openlet.leta.v1.DeliverInboxResponse
+	(*DeleteWorkspaceAgentsRequest)(nil),  // 7: openlet.leta.v1.DeleteWorkspaceAgentsRequest
+	(*DeleteWorkspaceAgentsResponse)(nil), // 8: openlet.leta.v1.DeleteWorkspaceAgentsResponse
 }
 var file_openlet_api_leta_v1_internal_proto_depIdxs = []int32{
-	0, // 0: openlet.leta.v1.DeliverInboxRequest.sender:type_name -> openlet.leta.v1.SenderRef
-	1, // 1: openlet.leta.v1.LetaInternalService.DeliverInbox:input_type -> openlet.leta.v1.DeliverInboxRequest
-	2, // 2: openlet.leta.v1.LetaInternalService.DeleteWorkspaceAgents:input_type -> openlet.leta.v1.DeleteWorkspaceAgentsRequest
-	3, // 3: openlet.leta.v1.LetaInternalService.DeliverInbox:output_type -> google.protobuf.Empty
-	3, // 4: openlet.leta.v1.LetaInternalService.DeleteWorkspaceAgents:output_type -> google.protobuf.Empty
-	3, // [3:5] is the sub-list for method output_type
-	1, // [1:3] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	0, // 0: openlet.leta.v1.ChatMessageEvent.sender:type_name -> openlet.leta.v1.ActorRef
+	1, // 1: openlet.leta.v1.ChatMessageEvent.attachments:type_name -> openlet.leta.v1.ChatAttachment
+	2, // 2: openlet.leta.v1.ChatMessageEvent.mentions:type_name -> openlet.leta.v1.ChatMention
+	0, // 3: openlet.leta.v1.ChatReactionEvent.actor:type_name -> openlet.leta.v1.ActorRef
+	3, // 4: openlet.leta.v1.DeliverInboxRequest.chat_message:type_name -> openlet.leta.v1.ChatMessageEvent
+	4, // 5: openlet.leta.v1.DeliverInboxRequest.chat_reaction:type_name -> openlet.leta.v1.ChatReactionEvent
+	5, // 6: openlet.leta.v1.LetaInternalService.DeliverInbox:input_type -> openlet.leta.v1.DeliverInboxRequest
+	7, // 7: openlet.leta.v1.LetaInternalService.DeleteWorkspaceAgents:input_type -> openlet.leta.v1.DeleteWorkspaceAgentsRequest
+	6, // 8: openlet.leta.v1.LetaInternalService.DeliverInbox:output_type -> openlet.leta.v1.DeliverInboxResponse
+	8, // 9: openlet.leta.v1.LetaInternalService.DeleteWorkspaceAgents:output_type -> openlet.leta.v1.DeleteWorkspaceAgentsResponse
+	8, // [8:10] is the sub-list for method output_type
+	6, // [6:8] is the sub-list for method input_type
+	6, // [6:6] is the sub-list for extension type_name
+	6, // [6:6] is the sub-list for extension extendee
+	0, // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_openlet_api_leta_v1_internal_proto_init() }
@@ -316,13 +808,17 @@ func file_openlet_api_leta_v1_internal_proto_init() {
 	if File_openlet_api_leta_v1_internal_proto != nil {
 		return
 	}
+	file_openlet_api_leta_v1_internal_proto_msgTypes[5].OneofWrappers = []any{
+		(*DeliverInboxRequest_ChatMessage)(nil),
+		(*DeliverInboxRequest_ChatReaction)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_openlet_api_leta_v1_internal_proto_rawDesc), len(file_openlet_api_leta_v1_internal_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   3,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
