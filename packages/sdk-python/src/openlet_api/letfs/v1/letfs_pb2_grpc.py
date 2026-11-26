@@ -156,15 +156,15 @@ class LetFSServiceStub:
                 request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.DownloadArchiveRequest.SerializeToString,
                 response_deserializer=google_dot_api_dot_httpbody__pb2.HttpBody.FromString,
                 _registered_method=True)
-        self.SearchFiles = channel.unary_unary(
-                '/openlet.letfs.v1.LetFSService/SearchFiles',
-                request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.SearchFilesRequest.SerializeToString,
-                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.SearchFilesResponse.FromString,
+        self.Glob = channel.unary_unary(
+                '/openlet.letfs.v1.LetFSService/Glob',
+                request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.GlobRequest.SerializeToString,
+                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.GlobResponse.FromString,
                 _registered_method=True)
-        self.TextSearch = channel.unary_unary(
-                '/openlet.letfs.v1.LetFSService/TextSearch',
-                request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.TextSearchRequest.SerializeToString,
-                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.TextSearchResponse.FromString,
+        self.Grep = channel.unary_unary(
+                '/openlet.letfs.v1.LetFSService/Grep',
+                request_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.GrepRequest.SerializeToString,
+                response_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.GrepResponse.FromString,
                 _registered_method=True)
         self.SemanticSearch = channel.unary_unary(
                 '/openlet.letfs.v1.LetFSService/SemanticSearch',
@@ -365,13 +365,13 @@ class LetFSServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def SearchFiles(self, request, context):
+    def Glob(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def TextSearch(self, request, context):
+    def Grep(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -560,15 +560,15 @@ def add_LetFSServiceServicer_to_server(servicer, server):
                     request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.DownloadArchiveRequest.FromString,
                     response_serializer=google_dot_api_dot_httpbody__pb2.HttpBody.SerializeToString,
             ),
-            'SearchFiles': grpc.unary_unary_rpc_method_handler(
-                    servicer.SearchFiles,
-                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.SearchFilesRequest.FromString,
-                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.SearchFilesResponse.SerializeToString,
+            'Glob': grpc.unary_unary_rpc_method_handler(
+                    servicer.Glob,
+                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.GlobRequest.FromString,
+                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.GlobResponse.SerializeToString,
             ),
-            'TextSearch': grpc.unary_unary_rpc_method_handler(
-                    servicer.TextSearch,
-                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.TextSearchRequest.FromString,
-                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.TextSearchResponse.SerializeToString,
+            'Grep': grpc.unary_unary_rpc_method_handler(
+                    servicer.Grep,
+                    request_deserializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.GrepRequest.FromString,
+                    response_serializer=openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.GrepResponse.SerializeToString,
             ),
             'SemanticSearch': grpc.unary_unary_rpc_method_handler(
                     servicer.SemanticSearch,
@@ -1280,7 +1280,7 @@ class LetFSService:
             _registered_method=True)
 
     @staticmethod
-    def SearchFiles(request,
+    def Glob(request,
             target,
             options=(),
             channel_credentials=None,
@@ -1293,9 +1293,9 @@ class LetFSService:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/openlet.letfs.v1.LetFSService/SearchFiles',
-            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.SearchFilesRequest.SerializeToString,
-            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.SearchFilesResponse.FromString,
+            '/openlet.letfs.v1.LetFSService/Glob',
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.GlobRequest.SerializeToString,
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.GlobResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -1307,7 +1307,7 @@ class LetFSService:
             _registered_method=True)
 
     @staticmethod
-    def TextSearch(request,
+    def Grep(request,
             target,
             options=(),
             channel_credentials=None,
@@ -1320,9 +1320,9 @@ class LetFSService:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/openlet.letfs.v1.LetFSService/TextSearch',
-            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.TextSearchRequest.SerializeToString,
-            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.TextSearchResponse.FromString,
+            '/openlet.letfs.v1.LetFSService/Grep',
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.GrepRequest.SerializeToString,
+            openlet__api_dot_letfs_dot_v1_dot_letfs__pb2.GrepResponse.FromString,
             options,
             channel_credentials,
             insecure,

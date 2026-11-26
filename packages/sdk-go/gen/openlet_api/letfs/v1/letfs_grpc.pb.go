@@ -45,8 +45,8 @@ const (
 	LetFSService_CreateArchiveDownload_FullMethodName = "/openlet.letfs.v1.LetFSService/CreateArchiveDownload"
 	LetFSService_DownloadArchiveTicket_FullMethodName = "/openlet.letfs.v1.LetFSService/DownloadArchiveTicket"
 	LetFSService_DownloadArchive_FullMethodName       = "/openlet.letfs.v1.LetFSService/DownloadArchive"
-	LetFSService_SearchFiles_FullMethodName           = "/openlet.letfs.v1.LetFSService/SearchFiles"
-	LetFSService_TextSearch_FullMethodName            = "/openlet.letfs.v1.LetFSService/TextSearch"
+	LetFSService_Glob_FullMethodName                  = "/openlet.letfs.v1.LetFSService/Glob"
+	LetFSService_Grep_FullMethodName                  = "/openlet.letfs.v1.LetFSService/Grep"
 	LetFSService_SemanticSearch_FullMethodName        = "/openlet.letfs.v1.LetFSService/SemanticSearch"
 	LetFSService_TrashNode_FullMethodName             = "/openlet.letfs.v1.LetFSService/TrashNode"
 	LetFSService_ListTrash_FullMethodName             = "/openlet.letfs.v1.LetFSService/ListTrash"
@@ -87,8 +87,8 @@ type LetFSServiceClient interface {
 	CreateArchiveDownload(ctx context.Context, in *DownloadArchiveRequest, opts ...grpc.CallOption) (*ArchiveDownloadTicket, error)
 	DownloadArchiveTicket(ctx context.Context, in *ArchiveDownloadTicketRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[httpbody.HttpBody], error)
 	DownloadArchive(ctx context.Context, in *DownloadArchiveRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[httpbody.HttpBody], error)
-	SearchFiles(ctx context.Context, in *SearchFilesRequest, opts ...grpc.CallOption) (*SearchFilesResponse, error)
-	TextSearch(ctx context.Context, in *TextSearchRequest, opts ...grpc.CallOption) (*TextSearchResponse, error)
+	Glob(ctx context.Context, in *GlobRequest, opts ...grpc.CallOption) (*GlobResponse, error)
+	Grep(ctx context.Context, in *GrepRequest, opts ...grpc.CallOption) (*GrepResponse, error)
 	SemanticSearch(ctx context.Context, in *SemanticSearchRequest, opts ...grpc.CallOption) (*SemanticSearchResponse, error)
 	TrashNode(ctx context.Context, in *TrashNodeRequest, opts ...grpc.CallOption) (*TrashEntry, error)
 	ListTrash(ctx context.Context, in *ListTrashRequest, opts ...grpc.CallOption) (*ListTrashResponse, error)
@@ -367,20 +367,20 @@ func (c *letFSServiceClient) DownloadArchive(ctx context.Context, in *DownloadAr
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type LetFSService_DownloadArchiveClient = grpc.ServerStreamingClient[httpbody.HttpBody]
 
-func (c *letFSServiceClient) SearchFiles(ctx context.Context, in *SearchFilesRequest, opts ...grpc.CallOption) (*SearchFilesResponse, error) {
+func (c *letFSServiceClient) Glob(ctx context.Context, in *GlobRequest, opts ...grpc.CallOption) (*GlobResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SearchFilesResponse)
-	err := c.cc.Invoke(ctx, LetFSService_SearchFiles_FullMethodName, in, out, cOpts...)
+	out := new(GlobResponse)
+	err := c.cc.Invoke(ctx, LetFSService_Glob_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *letFSServiceClient) TextSearch(ctx context.Context, in *TextSearchRequest, opts ...grpc.CallOption) (*TextSearchResponse, error) {
+func (c *letFSServiceClient) Grep(ctx context.Context, in *GrepRequest, opts ...grpc.CallOption) (*GrepResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(TextSearchResponse)
-	err := c.cc.Invoke(ctx, LetFSService_TextSearch_FullMethodName, in, out, cOpts...)
+	out := new(GrepResponse)
+	err := c.cc.Invoke(ctx, LetFSService_Grep_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -515,8 +515,8 @@ type LetFSServiceServer interface {
 	CreateArchiveDownload(context.Context, *DownloadArchiveRequest) (*ArchiveDownloadTicket, error)
 	DownloadArchiveTicket(*ArchiveDownloadTicketRequest, grpc.ServerStreamingServer[httpbody.HttpBody]) error
 	DownloadArchive(*DownloadArchiveRequest, grpc.ServerStreamingServer[httpbody.HttpBody]) error
-	SearchFiles(context.Context, *SearchFilesRequest) (*SearchFilesResponse, error)
-	TextSearch(context.Context, *TextSearchRequest) (*TextSearchResponse, error)
+	Glob(context.Context, *GlobRequest) (*GlobResponse, error)
+	Grep(context.Context, *GrepRequest) (*GrepResponse, error)
 	SemanticSearch(context.Context, *SemanticSearchRequest) (*SemanticSearchResponse, error)
 	TrashNode(context.Context, *TrashNodeRequest) (*TrashEntry, error)
 	ListTrash(context.Context, *ListTrashRequest) (*ListTrashResponse, error)
@@ -608,11 +608,11 @@ func (UnimplementedLetFSServiceServer) DownloadArchiveTicket(*ArchiveDownloadTic
 func (UnimplementedLetFSServiceServer) DownloadArchive(*DownloadArchiveRequest, grpc.ServerStreamingServer[httpbody.HttpBody]) error {
 	return status.Error(codes.Unimplemented, "method DownloadArchive not implemented")
 }
-func (UnimplementedLetFSServiceServer) SearchFiles(context.Context, *SearchFilesRequest) (*SearchFilesResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method SearchFiles not implemented")
+func (UnimplementedLetFSServiceServer) Glob(context.Context, *GlobRequest) (*GlobResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Glob not implemented")
 }
-func (UnimplementedLetFSServiceServer) TextSearch(context.Context, *TextSearchRequest) (*TextSearchResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method TextSearch not implemented")
+func (UnimplementedLetFSServiceServer) Grep(context.Context, *GrepRequest) (*GrepResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Grep not implemented")
 }
 func (UnimplementedLetFSServiceServer) SemanticSearch(context.Context, *SemanticSearchRequest) (*SemanticSearchResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SemanticSearch not implemented")
@@ -1082,38 +1082,38 @@ func _LetFSService_DownloadArchive_Handler(srv interface{}, stream grpc.ServerSt
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type LetFSService_DownloadArchiveServer = grpc.ServerStreamingServer[httpbody.HttpBody]
 
-func _LetFSService_SearchFiles_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(SearchFilesRequest)
+func _LetFSService_Glob_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GlobRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(LetFSServiceServer).SearchFiles(ctx, in)
+		return srv.(LetFSServiceServer).Glob(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: LetFSService_SearchFiles_FullMethodName,
+		FullMethod: LetFSService_Glob_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(LetFSServiceServer).SearchFiles(ctx, req.(*SearchFilesRequest))
+		return srv.(LetFSServiceServer).Glob(ctx, req.(*GlobRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _LetFSService_TextSearch_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(TextSearchRequest)
+func _LetFSService_Grep_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GrepRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(LetFSServiceServer).TextSearch(ctx, in)
+		return srv.(LetFSServiceServer).Grep(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: LetFSService_TextSearch_FullMethodName,
+		FullMethod: LetFSService_Grep_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(LetFSServiceServer).TextSearch(ctx, req.(*TextSearchRequest))
+		return srv.(LetFSServiceServer).Grep(ctx, req.(*GrepRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1394,12 +1394,12 @@ var LetFSService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _LetFSService_CreateArchiveDownload_Handler,
 		},
 		{
-			MethodName: "SearchFiles",
-			Handler:    _LetFSService_SearchFiles_Handler,
+			MethodName: "Glob",
+			Handler:    _LetFSService_Glob_Handler,
 		},
 		{
-			MethodName: "TextSearch",
-			Handler:    _LetFSService_TextSearch_Handler,
+			MethodName: "Grep",
+			Handler:    _LetFSService_Grep_Handler,
 		},
 		{
 			MethodName: "SemanticSearch",

@@ -1,0 +1,35 @@
+syntax = "proto3";
+package openlet.leta.v1;
+option go_package = "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/leta/v1;letav1";
+
+import "buf/validate/validate.proto";
+import "google/protobuf/empty.proto";
+
+message SenderRef {
+  string type = 1 [(buf.validate.field).string = {in: ["user", "agent", "system"]}];
+  string id = 2 [(buf.validate.field).string.uuid = true];
+  string name = 3;
+  string handle = 4;
+}
+
+message DeliverInboxRequest {
+  string agent_id = 1 [(buf.validate.field).string.uuid = true];
+  string idempotency_key = 2 [(buf.validate.field).string.min_len = 1];
+  string kind = 3 [(buf.validate.field).string = {in: ["channel", "notification"]}];
+  string channel = 4 [(buf.validate.field).string.min_len = 1];
+  string reply_address = 5;
+  SenderRef sender = 6;
+  string content = 7;
+  bytes attachments_json = 8;
+  bytes metadata_json = 9;
+  bool silent = 10;
+}
+
+message DeleteWorkspaceAgentsRequest {
+  string workspace_id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+service LetaInternalService {
+  rpc DeliverInbox(DeliverInboxRequest) returns (google.protobuf.Empty);
+  rpc DeleteWorkspaceAgents(DeleteWorkspaceAgentsRequest) returns (google.protobuf.Empty);
+}

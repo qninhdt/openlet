@@ -41,10 +41,12 @@ message ListInvitationsRequest { string workspace_id = 1 [(buf.validate.field).s
 message ListInvitationsResponse { repeated Invitation invitations = 1; string next_page_token = 2; }
 message RevokeInvitationRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string invitation_id = 2 [(buf.validate.field).string.uuid = true]; }
 message AcceptInvitationRequest { string token = 1 [(buf.validate.field).string.min_len = 1]; }
+message RealtimeConnectToken { string token = 1; google.protobuf.Timestamp expires_at = 2; string user_id = 3; }
 service PlatformService {
   rpc Onboard(google.protobuf.Empty) returns (User) { option (google.api.http) = { post: "/v1/me:onboard" body: "*" }; }
   rpc GetMe(google.protobuf.Empty) returns (User) { option (google.api.http) = { get: "/v1/me" }; }
   rpc UpdateMe(UpdateMeRequest) returns (User) { option (google.api.http) = { patch: "/v1/me" body: "*" }; }
+  rpc GetRealtimeConnectToken(google.protobuf.Empty) returns (RealtimeConnectToken) { option (google.api.http) = { post: "/v1/realtime:connectToken" body: "*" }; }
   rpc ListWorkspaces(ListWorkspacesRequest) returns (ListWorkspacesResponse) { option (google.api.http) = { get: "/v1/workspaces" }; }
   rpc CreateMyWorkspace(CreateMyWorkspaceRequest) returns (Workspace) { option (google.api.http) = { post: "/v1/workspaces" body: "*" }; }
   rpc GetWorkspace(WorkspaceRequest) returns (Workspace) { option (google.api.http) = { get: "/v1/workspaces/{workspace_id}" }; }

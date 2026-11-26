@@ -1,0 +1,20 @@
+syntax = "proto3";
+package openlet.chat.v1;
+option go_package = "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/chat/v1;chatv1";
+
+import "buf/validate/validate.proto";
+import "google/protobuf/empty.proto";
+
+message DeleteWorkspaceDataRequest {
+  string workspace_id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+message RemoveAgentRequest {
+  string workspace_id = 1 [(buf.validate.field).string.uuid = true];
+  string agent_id = 2 [(buf.validate.field).string.uuid = true];
+}
+
+service ChatInternalService {
+  rpc DeleteWorkspaceData(DeleteWorkspaceDataRequest) returns (google.protobuf.Empty);
+  rpc RemoveAgent(RemoveAgentRequest) returns (google.protobuf.Empty);
+}
