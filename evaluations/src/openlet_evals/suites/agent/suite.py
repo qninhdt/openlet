@@ -9,7 +9,7 @@ from collections import Counter, defaultdict
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
 from deepeval import evaluate  # pyright: ignore[reportUnknownVariableType]
 from deepeval.dataset import Expectations, Golden
@@ -19,12 +19,20 @@ from deepeval.evaluate.configs import (
     DisplayConfig,
     ErrorConfig,
 )
+from deepeval.evaluate.types import TestResult
 from deepeval.test_case import LLMTestCase
 from openlet_env.config import read_user_env
+from openlet_sdk.types import is_str_mapping
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from openlet_evals.core.judge import make_judge
-from openlet_evals.core.report import build_run, render_markdown, save_run
+from openlet_evals.core.report import (
+    EvalRun,
+    EvalSample,
+    build_run,
+    render_markdown,
+    save_run,
+)
 
 from .runner import DEFAULT_PROMPT_TEMPLATE, TrialArtifact, run_trials
 
@@ -40,7 +48,7 @@ DEFAULT_TOOLS: dict[str, bool] = {
 }
 
 
-ToneKind = Literal["informal", "semi-formal", "formal"]
+type ToneKind = Literal["informal", "semi-formal", "formal"]
 
 
 class TaskMetadata(BaseModel):
@@ -115,7 +123,7 @@ def load_tasks(path: Path) -> list[AgentTask]:
             raise ValueError(f"sample[{idx}]: Golden.name is required")
         if g.expectations is None or not g.expectations.must:
             raise ValueError(f"{g.name}: Golden.expectations.must is required")
-        raw_meta: Any = g.additional_metadata  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        raw_meta: object = g.additional_metadata  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
         if raw_meta is None:
             raise ValueError(f"{g.name}: Golden.additional_metadata is required")
         meta = TaskMetadata.model_validate(raw_meta)
@@ -176,10 +184,10 @@ def validate_agent(
 
 def parse_expectation_verdicts(verbose_logs: str | None) -> list[Verdict]:
     try:
-        data: Any = json.loads(verbose_logs or "")
+        data: object = json.loads(verbose_logs or "")
         return (
             _VERDICTS_ADAPTER.validate_python(data["verdicts"])
-            if isinstance(data, dict) and "verdicts" in data
+            if is_str_mapping(data) and "verdicts" in data
             else []
         )
     except ValueError, TypeError:
@@ -197,7 +205,7 @@ def grade_trials(
     if not artifacts:
         return []
     non_empty = [a for a in artifacts if a.attachments]
-    by_name: dict[str, Any] = {}
+    by_name: dict[str, TestResult] = {}
     if non_empty:
         judge = make_judge(
             model=cfg.judge_model,
@@ -233,9 +241,7 @@ def grade_trials(
             error_config=ErrorConfig(ignore_errors=True),
             display_config=DisplayConfig(show_indicator=False, print_results=False),
         )
-        by_name = {
-            tr.name: tr for tr in result.test_results if getattr(tr, "name", None)
-        }
+        by_name = {tr.name: tr for tr in result.test_results if tr.name}
 
     graded: list[GradedTrial] = []
     for art in artifacts:
@@ -276,13 +282,13 @@ def grade_trials(
 
 def aggregate_results(
     cfg: AgentEvalConfig, graded: Sequence[GradedTrial], *, wall_s: float
-) -> dict[str, Any]:
+) -> EvalRun:
     """Aggregate pass_at_1/pass_at_k/pass_pow_k, mean_rubric_score, and telemetry."""
     by_task: dict[str, list[GradedTrial]] = defaultdict(list)
     for row in graded:
         by_task[row.artifact.task_id].append(row)
 
-    samples: list[dict[str, Any]] = []
+    samples: list[EvalSample] = []
     for tid, rows in by_task.items():
         n = max(1, len(rows))
         passes = sum(r.passed for r in rows)
@@ -299,26 +305,28 @@ def aggregate_results(
             ),
         }
         samples.append(
-            {
-                "id": tid,
-                "group": rows[0].artifact.workspace,
-                "scores": scores,
-                "trials": [
-                    {
-                        "trial": r.artifact.trial,
-                        "status": r.artifact.status,
-                        "passed": r.passed,
-                        "rubric_score": r.rubric_score,
-                        "latency_s": r.artifact.latency_s,
-                        "usage": r.artifact.usage.model_dump(),
-                        "tool_stats": r.artifact.tool_stats.model_dump(),
-                        "judge_reason": r.judge_reason,
-                        "judge_error": r.judge_error,
-                        "verdicts": [v.model_dump() for v in r.verdicts],
-                    }
-                    for r in sorted(rows, key=lambda item: item.artifact.trial)
-                ],
-            }
+            EvalSample.model_validate(
+                {
+                    "id": tid,
+                    "group": rows[0].artifact.workspace,
+                    "scores": scores,
+                    "trials": [
+                        {
+                            "trial": r.artifact.trial,
+                            "status": r.artifact.status,
+                            "passed": r.passed,
+                            "rubric_score": r.rubric_score,
+                            "latency_s": r.artifact.latency_s,
+                            "usage": r.artifact.usage.model_dump(),
+                            "tool_stats": r.artifact.tool_stats.model_dump(),
+                            "judge_reason": r.judge_reason,
+                            "judge_error": r.judge_error,
+                            "verdicts": [v.model_dump() for v in r.verdicts],
+                        }
+                        for r in sorted(rows, key=lambda item: item.artifact.trial)
+                    ],
+                }
+            )
         )
 
     n_trials = max(1, len(graded))
@@ -342,7 +350,7 @@ def aggregate_results(
         else 0.0
     )
 
-    telemetry: dict[str, Any] = {
+    telemetry: dict[str, object] = {
         "completion_rate": round(
             sum(a.status == "completed" for a in arts) / n_trials, 4
         ),
@@ -380,7 +388,7 @@ def _grade_and_save(
     *,
     started_at: float,
     json_out: Path,
-) -> tuple[dict[str, Any], Path, Path]:
+) -> tuple[EvalRun, Path, Path]:
     env = read_user_env(repo_root)
     graded = grade_trials(
         artifacts,
@@ -402,7 +410,7 @@ def run_agent(
     limit: int | None = None,
     keep_stack: bool = False,
     output_path: Path | None = None,
-) -> tuple[dict[str, Any], Path, Path, Path]:
+) -> tuple[EvalRun, Path, Path, Path]:
     tasks = load_tasks(repo_root / cfg.dataset_file)
     _, _, errors = validate_agent(repo_root, cfg)
     if errors:
@@ -432,7 +440,7 @@ def grade_artifacts(
     artifacts_path: Path,
     *,
     output_path: Path | None = None,
-) -> tuple[dict[str, Any], Path, Path]:
+) -> tuple[EvalRun, Path, Path]:
     artifacts = _ARTIFACTS_ADAPTER.validate_json(
         artifacts_path.read_text(encoding="utf-8")
     )

@@ -11,8 +11,6 @@ from .base import (
     OutboundMessage,
     OutboundReceipt,
 )
-from .internal_agent import InternalAgentAdapter
-from .openlet_chat import OpenletChatAdapter
 
 
 def parse_address(to: str) -> tuple[str, str]:
@@ -82,30 +80,24 @@ class ChannelRouter:
         # Bare UUID -> check own subagent tree first, otherwise treat as chat conversation UUID.
         try:
             UUID(cleaned)
-            if isinstance(agent_adapter, InternalAgentAdapter):
-                found = await agent_adapter.resolve_target(caller, cleaned)
+            if agent_adapter is not None:
+                found = await agent_adapter.resolve_uuid_target(caller, cleaned)
                 if found is not None:
-                    return agent_adapter, str(found["handle"])
+                    return agent_adapter, found
             if chat_adapter is not None:
-                return chat_adapter, cleaned
+                found = await chat_adapter.resolve_uuid_target(caller, cleaned)
+                if found is not None:
+                    return chat_adapter, found
         except ValueError:
             pass
 
         # Plain handle (e.g. 'ethan', 'nora', 'general', 'orion-analyst'):
         candidates: list[tuple[ChannelAdapter, str, str, str]] = []
-        if isinstance(agent_adapter, InternalAgentAdapter):
-            sub = await agent_adapter.resolve_target(caller, cleaned)
-            if sub is not None:
-                h = str(sub["handle"])
-                candidates.append(
-                    (agent_adapter, h, f"agent:{h}", f"{sub['name']} (subagent)")
-                )
-
-        if isinstance(chat_adapter, OpenletChatAdapter):
-            for addr, label in await chat_adapter.find_plain_matches(caller, cleaned):
-                candidates.append(
-                    (chat_adapter, addr.removeprefix("chat:"), addr, label)
-                )
+        for adapter in (agent_adapter, chat_adapter):
+            if adapter is None:
+                continue
+            for m in await adapter.resolve_plain_targets(caller, cleaned):
+                candidates.append((adapter, m.target, m.address, m.label))
 
         if len(candidates) == 1:
             return candidates[0][0], candidates[0][1]

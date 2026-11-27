@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
-from typing import cast
 from zoneinfo import ZoneInfoNotFoundError
 
 import grpc
 from langchain_core.tools import ToolException
 from langgraph.prebuilt.tool_node import ToolInvocationError
+from openlet_sdk.types import is_object_list, is_str_mapping
 from pydantic import ValidationError
 from pydantic_core import ErrorDetails
 
@@ -110,12 +110,8 @@ def resolve_tool_alias(
 
 def _is_nullable(schema: Mapping[str, object]) -> bool:
     any_of = schema.get("anyOf")
-    if isinstance(any_of, list):
-        return any(
-            isinstance(b, Mapping)
-            and cast(Mapping[str, object], b).get("type") == "null"
-            for b in cast(list[object], any_of)
-        )
+    if is_object_list(any_of):
+        return any(is_str_mapping(b) and b.get("type") == "null" for b in any_of)
     return schema.get("type") == "null"
 
 
@@ -133,10 +129,10 @@ def _coerce_value(
     ref = schema.get("$ref")
     if isinstance(ref, str) and ref.startswith("#/$defs/"):
         target = defs.get(ref.removeprefix("#/$defs/"))
-        if isinstance(target, Mapping):
+        if is_str_mapping(target):
             return _coerce_value(
                 value,
-                cast(Mapping[str, object], target),
+                target,
                 defs,
                 depth + 1,
                 max_depth,
@@ -144,12 +140,8 @@ def _coerce_value(
             )
 
     any_of = schema.get("anyOf")
-    if isinstance(any_of, list):
-        branches = [
-            cast(Mapping[str, object], b)
-            for b in cast(list[object], any_of)
-            if isinstance(b, Mapping)
-        ]
+    if is_object_list(any_of):
+        branches = [b for b in any_of if is_str_mapping(b)]
         non_null = [b for b in branches if b.get("type") != "null"]
         nullable = len(non_null) < len(branches)
         if value is None:
@@ -180,30 +172,25 @@ def _coerce_value(
         if isinstance(value, str):
             try:
                 parsed: object = json.loads(value)
-                if isinstance(parsed, dict):
-                    value = cast(dict[str, object], parsed)
+                if is_str_mapping(parsed):
+                    value = dict(parsed)
             except Exception:
                 return value
-        if not isinstance(value, Mapping):
+        if not is_str_mapping(value):
             return value
         props_raw = schema.get("properties")
-        props: Mapping[str, object] = (
-            cast(Mapping[str, object], props_raw)
-            if isinstance(props_raw, Mapping)
-            else {}
-        )
-        required = set(
-            cast(list[str], schema.get("required"))
-            if isinstance(schema.get("required"), list)
-            else []
+        props: Mapping[str, object] = props_raw if is_str_mapping(props_raw) else {}
+        raw_req = schema.get("required")
+        required: set[str] = (
+            {str(item) for item in raw_req} if is_object_list(raw_req) else set()
         )
         tool_aliases = TOOL_PARAM_ALIASES.get(tool_name, {}) if depth == 0 else {}
 
-        raw_items = list(cast(Mapping[str, object], value).items())
-        present_keys = {str(k) for k, _ in raw_items}
+        raw_items = list(value.items())
+        present_keys = {k for k, _ in raw_items}
         out: dict[str, object] = {}
         for k, v in raw_items:
-            key = str(k)
+            key = k
             if key not in props:
                 mapped = tool_aliases.get(key) or (
                     GLOBAL_PARAM_ALIASES.get(key) if depth == 0 else None
@@ -219,10 +206,9 @@ def _coerce_value(
                     # Preserve unknown keys so Pydantic surfaces a clear error listing valid params.
                     out[key] = v
                     continue
+            prop_raw = props[key]
             prop_schema: Mapping[str, object] = (
-                cast(Mapping[str, object], props[key])
-                if isinstance(props[key], Mapping)
-                else {}
+                prop_raw if is_str_mapping(prop_raw) else {}
             )
             if key not in required:
                 if v is None or (v == {} and prop_schema.get("type") != "object"):
@@ -243,22 +229,18 @@ def _coerce_value(
         if isinstance(value, str):
             try:
                 parsed_arr: object = json.loads(value)
-                if isinstance(parsed_arr, list):
-                    items_list = cast(list[object], parsed_arr)
-                else:
-                    items_list = [value]
+                items_list = parsed_arr if is_object_list(parsed_arr) else [value]
             except Exception:
                 items_list = [value]
-        elif isinstance(value, list):
-            items_list = cast(list[object], value)
+        elif is_object_list(value):
+            items_list = value
         else:
             items_list = [value]
         items_schema = schema.get("items")
-        if isinstance(items_schema, Mapping):
-            item_map = cast(Mapping[str, object], items_schema)
+        if is_str_mapping(items_schema):
             return [
                 _coerce_value(
-                    item, item_map, defs, depth + 1, max_depth, tool_name=tool_name
+                    item, items_schema, defs, depth + 1, max_depth, tool_name=tool_name
                 )
                 for item in items_list
             ]
@@ -316,11 +298,12 @@ def _apply_domain_auto_heals(
             )
 
     # 2. hitl_ask: coerce empty options=[] to None for free-text questions.
-    if tool_name == "hitl_ask" and isinstance(out.get("questions"), list):
+    raw_qs = out.get("questions")
+    if tool_name == "hitl_ask" and is_object_list(raw_qs):
         fixed_qs: list[object] = []
-        for q in cast(list[object], out["questions"]):
-            if isinstance(q, Mapping):
-                qd = dict(cast(Mapping[str, object], q))
+        for q in raw_qs:
+            if is_str_mapping(q):
+                qd = dict(q)
                 if qd.get("options") == []:
                     qd["options"] = None
                 fixed_qs.append(qd)
@@ -375,19 +358,12 @@ def repair_tool_args_with_notes(
             raw = json.loads(raw)
         except Exception:
             return {}, []
-    if not isinstance(raw, Mapping):
+    if not is_str_mapping(raw):
         return {}, []
-    raw_map = cast(Mapping[str, object], raw)
     defs_raw = json_schema.get("$defs")
-    defs: Mapping[str, object] = (
-        cast(Mapping[str, object], defs_raw) if isinstance(defs_raw, Mapping) else {}
-    )
-    coerced = _coerce_value(
-        raw_map, json_schema, defs, 0, max_depth, tool_name=tool_name
-    )
-    repaired = (
-        cast(dict[str, object], coerced) if isinstance(coerced, dict) else dict(raw_map)
-    )
+    defs: Mapping[str, object] = defs_raw if is_str_mapping(defs_raw) else {}
+    coerced = _coerce_value(raw, json_schema, defs, 0, max_depth, tool_name=tool_name)
+    repaired = dict(coerced) if is_str_mapping(coerced) else dict(raw)
     return _apply_domain_auto_heals(tool_name, repaired)
 
 
@@ -436,53 +412,58 @@ def format_tool_error(
     excerpt_limit: int = 2048,
 ) -> str:
     """Clean model-facing error boundary; never dumps raw gRPC debug strings or errno boilerplate."""
-    if isinstance(exc, ToolInvocationError):
-        errs = (
-            exc.filtered_errors
-            if exc.filtered_errors is not None
-            else exc.source.errors()
-        )
-        return format_input_issues(
-            errs,
-            exc.tool_kwargs,
-            valid_params=valid_params,
-            excerpt_limit=excerpt_limit,
-        )
-    if isinstance(exc, ValidationError):
-        return format_input_issues(
-            exc, {}, valid_params=valid_params, excerpt_limit=excerpt_limit
-        )
-    if isinstance(exc, (ToolException, ChannelError)):
-        return str(exc)
-    if isinstance(exc, ZoneInfoNotFoundError):
-        key = str(exc).removeprefix("No time zone found with key ").strip("'\"")
-        return (
-            f"Invalid timezone {key!r}. Use an IANA timezone name such as "
-            "'UTC', 'Asia/Ho_Chi_Minh', or 'America/New_York'."
-        )
-    if isinstance(exc, grpc.aio.AioRpcError):
-        code = exc.code()
-        details = (exc.details() or "").strip()
-        if code == grpc.StatusCode.NOT_FOUND:
-            return f"Not found: {details or 'requested resource does not exist'}"
-        if code == grpc.StatusCode.PERMISSION_DENIED:
-            return f"Permission denied: {details or 'insufficient access'}"
-        if code == grpc.StatusCode.INVALID_ARGUMENT:
-            return f"Invalid request: {details or 'check arguments and try again'}"
-        if code in (grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.DEADLINE_EXCEEDED):
-            return f"Service temporarily unavailable ({code.name}): {details or 'retry shortly'}"
-        return f"Service error ({code.name}): {details or 'operation failed'}"
-    if isinstance(exc, FileNotFoundError):
-        msg = exc.strerror or str(exc)
-        return msg if msg else "File or directory not found."
-    if isinstance(exc, PermissionError):
-        msg = exc.strerror or str(exc)
-        return (
-            f"Permission denied: {msg}"
-            if not msg.lower().startswith("permission")
-            else msg
-        )
-    if isinstance(exc, OSError):
-        msg = exc.strerror or str(exc)
-        return f"Filesystem error: {msg}"
-    return f"Error: {exc}"
+    match exc:
+        case ToolInvocationError():
+            errs = (
+                exc.filtered_errors
+                if exc.filtered_errors is not None
+                else exc.source.errors()
+            )
+            return format_input_issues(
+                errs,
+                exc.tool_kwargs,
+                valid_params=valid_params,
+                excerpt_limit=excerpt_limit,
+            )
+        case ValidationError():
+            return format_input_issues(
+                exc, {}, valid_params=valid_params, excerpt_limit=excerpt_limit
+            )
+        case ToolException() | ChannelError():
+            return str(exc)
+        case ZoneInfoNotFoundError():
+            key = str(exc).removeprefix("No time zone found with key ").strip("'\"")
+            return (
+                f"Invalid timezone {key!r}. Use an IANA timezone name such as "
+                "'UTC', 'Asia/Ho_Chi_Minh', or 'America/New_York'."
+            )
+        case grpc.aio.AioRpcError():
+            code = exc.code()
+            details = (exc.details() or "").strip()
+            if code == grpc.StatusCode.NOT_FOUND:
+                return f"Not found: {details or 'requested resource does not exist'}"
+            if code == grpc.StatusCode.PERMISSION_DENIED:
+                return f"Permission denied: {details or 'insufficient access'}"
+            if code == grpc.StatusCode.INVALID_ARGUMENT:
+                return f"Invalid request: {details or 'check arguments and try again'}"
+            if code in (
+                grpc.StatusCode.UNAVAILABLE,
+                grpc.StatusCode.DEADLINE_EXCEEDED,
+            ):
+                return f"Service temporarily unavailable ({code.name}): {details or 'retry shortly'}"
+            return f"Service error ({code.name}): {details or 'operation failed'}"
+        case FileNotFoundError():
+            msg = exc.strerror or str(exc)
+            return msg if msg else "File or directory not found."
+        case PermissionError():
+            msg = exc.strerror or str(exc)
+            return (
+                f"Permission denied: {msg}"
+                if not msg.lower().startswith("permission")
+                else msg
+            )
+        case OSError():
+            msg = exc.strerror or str(exc)
+            return f"Filesystem error: {msg}"
+        case _:
+            return f"Error: {exc}"

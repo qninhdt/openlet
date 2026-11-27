@@ -4,7 +4,7 @@ import json
 import re
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
-from typing import Literal, cast
+from typing import Literal
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -15,7 +15,7 @@ from openlet_api.chat.v1 import chat_pb2 as chat_pb
 from openlet_api.platform.v1 import internal_pb2 as plat_int_pb
 from openlet_api.platform.v1 import platform_pb2 as plat_pb
 from openlet_sdk.config import JSON
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ...auth import Actor
 from ...hitl.service import (
@@ -27,7 +27,15 @@ from ...hitl.service import (
     list_leta_hitl,
     start_hitl_workflow,
 )
-from ...runs import list_recent_activity
+from ...runs import (
+    AgentMessageEventData,
+    InboxReceivedEventData,
+    MessageEventData,
+    RunFinishedEventData,
+    ToolCallEventData,
+    ToolResultEventData,
+    list_recent_activity,
+)
 from ...schedules.service import (
     Timing,
     create_schedule,
@@ -37,6 +45,7 @@ from ...schedules.service import (
     update_schedule,
 )
 from ...subagents.service import (
+    ResolvedAgent,
     list_leta_agents,
     list_workspace_root_agents,
     resolve_leta_agent,
@@ -93,9 +102,7 @@ async def handle_get_context(
     s = rt.services
     agents = await list_leta_agents(s.db, rt.leta_id)
     subagents = [
-        a
-        for a in agents
-        if a.get("parent_agent_id") is not None and a.get("state") == "active"
+        a for a in agents if a.parent_agent_id is not None and a.state == "active"
     ]
 
     if not rt.is_root:
@@ -106,21 +113,21 @@ async def handle_get_context(
         ]
         for a in agents[:20]:
             lines.append(
-                f"- {a['handle']} (agent:{a['handle']}) | {a['name']} ({a['title']}) | {'running' if a.get('running') else a['state']}"
+                f"- {a.handle} (agent:{a.handle}) | {a.name} ({a.title}) | {'running' if a.running else a.state}"
             )
-        return "\n".join(lines), {"subagents": cast(JSON, subagents)}
+        return "\n".join(lines), {
+            "subagents": [a.model_dump(mode="json") for a in subagents]
+        }
 
     ws_info = await s.platform_internal.GetWorkspaceInfo(
         plat_pb.WorkspaceRequest(workspace_id=str(rt.workspace_id)), timeout=15
     )
     all_users = await _fetch_workspace_human_users(rt)
-    users_list: list[dict[str, JSON]] = [
-        cast(dict[str, JSON], dict(u)) for u in all_users[:30]
-    ]
+    users_list = all_users[:30]
 
     peers = await list_workspace_root_agents(s.db, rt.workspace_id, limit=20)
 
-    groups: list[dict[str, JSON]] = []
+    groups: list[dict[str, str]] = []
     try:
         c_resp = await s.chat.ListConversations(
             chat_pb.ListConversationsRequest(
@@ -156,7 +163,7 @@ async def handle_get_context(
         "",
         f"### Peer Agents ({len(peers)})",
         *[
-            f"- {p['name']} — {p['title']} | {p['handle']} | /chat/{p['handle']} | {p['description']}"
+            f"- {p.name} — {p.title} | {p.handle} | /chat/{p.handle} | {p.description}"
             for p in peers
         ],
         "",
@@ -168,16 +175,16 @@ async def handle_get_context(
         "",
         f"### Active Subagents ({len(subagents)})",
         *[
-            f"- {a['handle']} (agent:{a['handle']}) | {a['name']} ({a['title']}) | {'running' if a.get('running') else 'idle'}"
+            f"- {a.handle} (agent:{a.handle}) | {a.name} ({a.title}) | {'running' if a.running else 'idle'}"
             for a in subagents
         ],
         "",
         f"### Pending HITL Requests ({len(open_hitl)})",
-        *[f"- {h['id']} | {h['type']} | {h['title']}" for h in open_hitl],
+        *[f"- {h.id} | {h.type} | {h.title}" for h in open_hitl],
         "",
         f"### Active Schedules ({len(schedules)})",
         *[
-            f"- {sc['id']} | {sc['title']} | {sc['type']} | paused={sc['paused']}"
+            f"- {sc.id} | {sc.title} | {sc.type} | paused={sc.paused}"
             for sc in schedules[:20]
         ],
     ]
@@ -185,12 +192,12 @@ async def handle_get_context(
         "\n".join(lines),
         {
             "workspace": {"id": ws_info.id, "name": ws_info.name},
-            "members": cast(JSON, users_list),
-            "letas": cast(JSON, peers),
-            "groups": cast(JSON, groups[:20]),
-            "subagents": cast(JSON, subagents),
-            "open_hitl": cast(JSON, open_hitl),
-            "schedules": cast(JSON, schedules[:20]),
+            "members": users_list,
+            "letas": [p.model_dump(mode="json") for p in peers],
+            "groups": groups[:20],
+            "subagents": [a.model_dump(mode="json") for a in subagents],
+            "open_hitl": [h.model_dump(mode="json") for h in open_hitl],
+            "schedules": [sc.model_dump(mode="json") for sc in schedules[:20]],
         },
     )
 
@@ -205,7 +212,7 @@ async def handle_list_members(
     rt = runtime.context
     s = rt.services
     needle = query.strip().lstrip("@").lower()
-    items: list[dict[str, JSON]] = []
+    items: list[dict[str, str]] = []
 
     if kind in ("all", "user"):
         for u in await _fetch_workspace_human_users(rt):
@@ -228,21 +235,20 @@ async def handle_list_members(
     if kind in ("all", "agent"):
         rows = await list_workspace_root_agents(s.db, rt.workspace_id)
         for r in rows:
-            name, handle, title = str(r["name"]), str(r["handle"]), str(r["title"])
             if (
                 needle
-                and needle not in name.lower()
-                and needle not in handle.lower()
-                and needle not in title.lower()
+                and needle not in r.name.lower()
+                and needle not in r.handle.lower()
+                and needle not in r.title.lower()
             ):
                 continue
             items.append(
                 {
                     "kind": "agent",
-                    "id": str(r["id"]),
-                    "name": name,
-                    "handle": handle,
-                    "role": title,
+                    "id": str(r.id),
+                    "name": r.name,
+                    "handle": r.handle,
+                    "role": r.title,
                 }
             )
 
@@ -253,7 +259,7 @@ async def handle_list_members(
     ]
     return (
         "\n".join(lines) if lines else "No matching members found.",
-        {"items": cast(JSON, page), "total": len(items)},
+        {"items": page, "total": len(items)},
     )
 
 
@@ -307,7 +313,7 @@ async def _resolve_leta_agent(
     raw_ref: str,
     *,
     active_only: bool = True,
-) -> dict[str, object]:
+) -> ResolvedAgent:
     cleaned = raw_ref.strip().removeprefix("agent:").lstrip("@").strip()
     if not cleaned:
         raise ToolException("Agent handle or UUID cannot be empty.")
@@ -318,11 +324,9 @@ async def _resolve_leta_agent(
         return row
 
     agents = await list_leta_agents(rt.services.db, rt.leta_id)
-    active = [a for a in agents if a.get("state") == "active"]
+    active = [a for a in agents if a.state == "active"]
     if active:
-        opts = ", ".join(
-            f"{a['handle']} ({a['name']} — {a['title']})" for a in active[:10]
-        )
+        opts = ", ".join(f"{a.handle} ({a.name} — {a.title})" for a in active[:10])
         raise ToolException(
             f"Agent {raw_ref!r} not found. Active agents in this Leta: {opts}"
         )
@@ -360,16 +364,16 @@ async def handle_spawn_agent(
         " It works asynchronously in the background and will report back to your <inbox> when done. "
         "Do not poll agent_status repeatedly; continue independent work or end your turn."
         if task
-        else f" Send it a task via send_message(to={created['handle']!r}, content=...)."
+        else f" Send it a task via send_message(to={created.handle!r}, content=...)."
     )
     return (
-        f"Spawned {created['name']} The {created['title']} "
-        f"(handle: {created['handle']}, address: agent:{created['handle']}, id: {created['id']}, status: {status_label}).{guidance}",
+        f"Spawned {created.name} The {created.title} "
+        f"(handle: {created.handle}, address: agent:{created.handle}, id: {created.id}, status: {status_label}).{guidance}",
         {
-            "agent_id": created["id"],
-            "handle": created["handle"],
-            "name": created["name"],
-            "title": created["title"],
+            "agent_id": str(created.id),
+            "handle": created.handle,
+            "name": created.name,
+            "title": created.title,
             "status": status_label,
         },
     )
@@ -380,15 +384,15 @@ async def handle_list_agents(
 ) -> ToolResult:
     rt = runtime.context
     agents = await list_leta_agents(rt.services.db, rt.leta_id)
-    active = [a for a in agents if a.get("state") == "active"]
+    active = [a for a in agents if a.state == "active"]
     lines = [
-        f"- {a['handle']} (agent:{a['handle']}) | {a['name']} The {a['title']} | "
-        f"{'running' if a.get('running') else 'idle'} | {a.get('description', '')}"
+        f"- {a.handle} (agent:{a.handle}) | {a.name} The {a.title} | "
+        f"{'running' if a.running else 'idle'} | {a.description}"
         for a in active
     ]
     return (
         "\n".join(lines) if lines else "No active agents.",
-        {"agents": cast(JSON, active)},
+        {"agents": [a.model_dump(mode="json") for a in active]},
     )
 
 
@@ -397,60 +401,54 @@ def _clip_inline(text: str, limit: int = 200) -> str:
     return single if len(single) <= limit else single[: limit - 1] + "…"
 
 
-def format_activity_event_summary(event_type: str, data: object) -> str:
+def format_activity_event_summary(event_type: str, data: Mapping[str, JSON]) -> str:
     """Format a subagent activity_events payload into clean readable text (no Python dict repr)."""
-    if not isinstance(data, Mapping):
-        return _clip_inline(str(data or ""))
-    d = cast(Mapping[str, object], data)
-    if event_type == "activity.message":
-        text = str(d.get("text") or d.get("reasoning") or "").strip()
-        return _clip_inline(text) if text else "(empty message)"
-    if event_type == "activity.tool_call":
-        name = str(d.get("name") or "tool")
-        args_json = json.dumps(d.get("args") or {}, ensure_ascii=False, default=str)
-        return _clip_inline(f"{name}({args_json})")
-    if event_type == "activity.tool_result":
-        name = str(d.get("name") or "tool")
-        status = str(d.get("status") or "ok")
-        preview = str(d.get("preview") or d.get("content") or "").strip()
-        return _clip_inline(
-            f"{name} [{status}]: {preview}" if preview else f"{name} [{status}]"
-        )
-    if event_type == "activity.agent_message":
-        sender = d.get("from")
-        sender_lbl = (
-            str(
-                cast(Mapping[str, object], sender).get("handle")
-                or cast(Mapping[str, object], sender).get("name")
-                or ""
-            )
-            if isinstance(sender, Mapping)
-            else ""
-        )
-        content = str(d.get("content") or "").strip()
-        prefix = f"from {sender_lbl}: " if sender_lbl else ""
-        return _clip_inline(prefix + content)
-    if event_type == "activity.inbox_received":
-        raw_items = d.get("items")
-        if isinstance(raw_items, list) and raw_items:
-            items = cast(list[object], raw_items)
-            last = items[-1]
-            preview = (
-                str(cast(Mapping[str, object], last).get("preview") or "")
-                if isinstance(last, Mapping)
-                else ""
-            )
-            return _clip_inline(
-                f"{len(items)} item(s): {preview}"
-                if preview
-                else f"{len(items)} item(s)"
-            )
-        return "inbox batch"
-    if event_type == "run.finished":
-        status = str(d.get("status") or "done")
-        err = str(d.get("error") or "").strip()
-        return _clip_inline(f"{status}: {err}" if err else status)
-    return _clip_inline(json.dumps(dict(d), ensure_ascii=False, default=str))
+    try:
+        match event_type:
+            case "activity.message":
+                ev = MessageEventData.model_validate(data)
+                text = (ev.text or ev.reasoning or "").strip()
+                return _clip_inline(text) if text else "(empty message)"
+            case "activity.tool_call":
+                ev = ToolCallEventData.model_validate(data)
+                args_json = json.dumps(ev.args, ensure_ascii=False, default=str)
+                return _clip_inline(f"{ev.name}({args_json})")
+            case "activity.tool_result":
+                ev = ToolResultEventData.model_validate(data)
+                preview = (ev.preview or ev.content).strip()
+                return _clip_inline(
+                    f"{ev.name} [{ev.status}]: {preview}"
+                    if preview
+                    else f"{ev.name} [{ev.status}]"
+                )
+            case "activity.agent_message":
+                ev = AgentMessageEventData.model_validate(data)
+                sender_lbl = (
+                    (ev.sender.handle or ev.sender.name)
+                    if ev.sender is not None
+                    else ""
+                )
+                prefix = f"from {sender_lbl}: " if sender_lbl else ""
+                return _clip_inline(prefix + ev.content.strip())
+            case "activity.inbox_received":
+                ev = InboxReceivedEventData.model_validate(data)
+                if ev.items:
+                    preview = ev.items[-1].preview
+                    return _clip_inline(
+                        f"{len(ev.items)} item(s): {preview}"
+                        if preview
+                        else f"{len(ev.items)} item(s)"
+                    )
+                return "inbox batch"
+            case "run.finished":
+                ev = RunFinishedEventData.model_validate(data)
+                err = (ev.error_code or "").strip()
+                return _clip_inline(f"{ev.status}: {err}" if err else ev.status)
+            case _:
+                pass
+    except ValidationError:
+        pass
+    return _clip_inline(json.dumps(dict(data), ensure_ascii=False, default=str))
 
 
 async def handle_agent_status(
@@ -461,25 +459,20 @@ async def handle_agent_status(
 ) -> ToolResult:
     rt = runtime.context
     row = await _resolve_leta_agent(rt, agent, active_only=False)
-    events = await list_recent_activity(
-        rt.services.db, UUID(str(row["id"])), activity_limit
-    )
-    st = "running" if row["running"] else str(row["state"])
-    lines = [
-        f"{row['handle']} (agent:{row['handle']}, {row['name']} — {row['title']}): {st}"
-    ]
+    events = await list_recent_activity(rt.services.db, row.id, activity_limit)
+    st = "running" if row.running else row.state
+    lines = [f"{row.handle} (agent:{row.handle}, {row.name} — {row.title}): {st}"]
     recent: list[dict[str, JSON]] = []
     for ev in reversed(events):
-        ev_type = str(ev["type"])
-        summary = format_activity_event_summary(ev_type, ev["data"])
-        lines.append(f"  - [{ev['seq']}] {ev_type}: {summary}")
-        recent.append({"seq": int(ev["seq"]), "type": ev_type})
+        summary = format_activity_event_summary(ev.type, ev.data)
+        lines.append(f"  - [{ev.seq}] {ev.type}: {summary}")
+        recent.append({"seq": ev.seq, "type": ev.type})
     return (
         "\n".join(lines),
         {
-            "agent_id": str(row["id"]),
+            "agent_id": str(row.id),
             "status": st,
-            "recent_activity": cast(JSON, recent),
+            "recent_activity": recent,
         },
     )
 
@@ -491,21 +484,19 @@ async def handle_stop_agent(
 ) -> ToolResult:
     rt = runtime.context
     row = await _resolve_leta_agent(rt, agent, active_only=True)
-    if row["parent_agent_id"] is None:
+    if row.parent_agent_id is None:
         raise ToolException("Cannot stop the Root Leta.")
-    aid = UUID(str(row["id"]))
-    handle = str(row["handle"])
     stopped = await stop_agent_tree(
         db=rt.services.db,
         temporal=rt.services.temporal,
         activity=rt.emitter,
-        agent_id=aid,
+        agent_id=row.id,
         include_self=True,
     )
     children = max(0, len(stopped) - 1)
     return (
-        f"Stopped {handle} (and {children} child subagent(s)).",
-        {"agent_id": str(aid), "handle": handle, "stopped_children": children},
+        f"Stopped {row.handle} (and {children} child subagent(s)).",
+        {"agent_id": str(row.id), "handle": row.handle, "stopped_children": children},
     )
 
 
@@ -628,7 +619,7 @@ async def handle_hitl_ask(
             recipient_user_id=recipient_id,
             type="ask",
             title=title,
-            payload=payload,
+            payload=payload.model_dump(mode="json"),
             expires_at=expires,
         ),
     )
@@ -688,7 +679,7 @@ async def handle_hitl_cancel(
             rt.services.db, rt.leta_id, status="pending", limit=10
         )
         if pending:
-            opts = ", ".join(f"{h['id']} ({h['title']})" for h in pending)
+            opts = ", ".join(f"{h.id} ({h.title})" for h in pending)
             raise ToolException(
                 f"Active HITL request {request_id} not found (may already be resolved). Pending requests: {opts}"
             )
@@ -715,23 +706,19 @@ async def handle_hitl_list(
         except LookupError:
             items = await list_leta_hitl(rt.services.db, rt.leta_id, limit=10)
             if items:
-                opts = ", ".join(
-                    f"{h['id']} ({h['title']}, {h['status']})" for h in items
-                )
+                opts = ", ".join(f"{h.id} ({h.title}, {h.status})" for h in items)
                 raise ToolException(
                     f"HITL request {request_id} not found. Recent requests: {opts}"
                 ) from None
             raise ToolException(f"HITL request {request_id} not found.") from None
-        detail_lines = [
-            f"HITL {item['id']} | {item['type']} | {item['status']} | {item['title']}"
-        ]
-        resp_text = format_hitl_response(item.get("payload"), item.get("response"))
+        detail_lines = [f"HITL {item.id} | {item.type} | {item.status} | {item.title}"]
+        resp_text = format_hitl_response(item.payload, item.response)
         if resp_text:
             detail_lines.append(resp_text)
-        outcome_text = format_hitl_outcome(item.get("outcome"))
+        outcome_text = format_hitl_outcome(item.outcome)
         if outcome_text:
             detail_lines.append(f"Outcome: {outcome_text}")
-        return ("\n".join(detail_lines), {"request": item})
+        return ("\n".join(detail_lines), {"request": item.model_dump(mode="json")})
     items = await list_leta_hitl(
         rt.services.db,
         rt.leta_id,
@@ -740,8 +727,8 @@ async def handle_hitl_list(
     )
     if not items:
         return "No HITL requests found.", {"items": []}
-    lines = [f"- {h['id']} | {h['type']} | {h['status']} | {h['title']}" for h in items]
-    return "\n".join(lines), {"items": cast(JSON, items)}
+    lines = [f"- {h.id} | {h.type} | {h.status} | {h.title}" for h in items]
+    return "\n".join(lines), {"items": [h.model_dump(mode="json") for h in items]}
 
 
 # --- Schedules ---
@@ -994,7 +981,7 @@ async def _resolve_target_agent(
     if target_agent is None or not target_agent.strip():
         return None
     row = await _resolve_leta_agent(rt, target_agent, active_only=True)
-    return UUID(str(row["id"]))
+    return row.id
 
 
 async def _schedule_not_found_error(
@@ -1002,7 +989,7 @@ async def _schedule_not_found_error(
 ) -> ToolException:
     items = await list_schedules(rt.services.db, rt.leta_id)
     if items:
-        opts = ", ".join(f"{sc['id']} ({sc['title']})" for sc in items[:10])
+        opts = ", ".join(f"{sc.id} ({sc.title})" for sc in items[:10])
         return ToolException(
             f"Schedule {schedule_id} not found. Active schedules: {opts}"
         )
@@ -1011,10 +998,8 @@ async def _schedule_not_found_error(
     )
 
 
-def _format_upcoming(raw: object) -> str:
-    if isinstance(raw, list) and raw:
-        return ", ".join(str(t) for t in cast(list[object], raw))
-    return "none"
+def _format_upcoming(upcoming: list[str]) -> str:
+    return ", ".join(upcoming) if upcoming else "none"
 
 
 async def handle_schedule_create(
@@ -1054,8 +1039,8 @@ async def handle_schedule_create(
         request_id=idempotency_key(runtime),
     )
     return (
-        f"Created schedule {created['id']} ('{created['title']}', type={created['type']}, tz={timing.timezone}). Upcoming: {_format_upcoming(created.get('upcoming'))}",
-        {"schedule_id": created["id"], "schedule": created},
+        f"Created schedule {created.id} ('{created.title}', type={created.type}, tz={timing.timezone}). Upcoming: {_format_upcoming(created.upcoming)}",
+        {"schedule_id": str(created.id), "schedule": created.model_dump(mode="json")},
     )
 
 
@@ -1105,8 +1090,8 @@ async def handle_schedule_update(
     except LookupError:
         raise await _schedule_not_found_error(rt, schedule_id) from None
     return (
-        f"Updated schedule {updated['id']} ('{updated['title']}'). Upcoming: {_format_upcoming(updated.get('upcoming'))}",
-        {"schedule_id": updated["id"], "schedule": updated},
+        f"Updated schedule {updated.id} ('{updated.title}'). Upcoming: {_format_upcoming(updated.upcoming)}",
+        {"schedule_id": str(updated.id), "schedule": updated.model_dump(mode="json")},
     )
 
 
@@ -1146,8 +1131,8 @@ async def handle_schedule_list(
         except LookupError:
             raise await _schedule_not_found_error(rt, schedule_id) from None
         return (
-            f"Schedule {item['id']} | {item['title']} | {item['type']} | paused={item['paused']}\nUpcoming: {_format_upcoming(item.get('upcoming'))}\nContent: {item['content']}",
-            {"schedule": item},
+            f"Schedule {item.id} | {item.title} | {item.type} | paused={item.paused}\nUpcoming: {_format_upcoming(item.upcoming)}\nContent: {item.content}",
+            {"schedule": item.model_dump(mode="json")},
         )
     items = await list_schedules(
         rt.services.db,
@@ -1156,11 +1141,8 @@ async def handle_schedule_list(
     )
     if not items:
         return "No active schedules.", {"items": []}
-    lines = [
-        f"- {sc['id']} | {sc['title']} | {sc['type']} | paused={sc['paused']}"
-        for sc in items
-    ]
-    return "\n".join(lines), {"items": cast(JSON, items)}
+    lines = [f"- {sc.id} | {sc.title} | {sc.type} | paused={sc.paused}" for sc in items]
+    return "\n".join(lines), {"items": [sc.model_dump(mode="json") for sc in items]}
 
 
 # --- Optional Todo (opt-in flag tools.todo: false) ---
@@ -1189,7 +1171,7 @@ async def handle_todowrite(
     summary = f"Todos updated: {done}/{total} completed, {len(in_prog)} in progress, {pending} pending."
     if in_prog:
         summary += f' In progress: "{in_prog[0]}"'
-    return summary, {"todos": [cast(JSON, t.model_dump()) for t in todos]}
+    return summary, {"todos": [t.model_dump() for t in todos]}
 
 
 def build_domain_tools(

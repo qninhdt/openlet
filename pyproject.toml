@@ -30,6 +30,7 @@ dev = [
     "ruff",
     "types-grpcio>=1.85.0.20261028",
     "types-lxml>=2026.2.16",
+    "types-openpyxl",
     "types-protobuf>=7.35.1.20260906",
     "types-pyyaml>=6.0.12.20261113",
 ]
@@ -38,7 +39,23 @@ dev = [
 target-version = "py314"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "ANN"]
+select = [
+    "E",
+    "F",
+    "I",
+    "ANN",
+    "PGH003",
+    "UP",
+    "PYI",
+    "TC006",
+    "TC010",
+    "B006",
+    "B009",
+    "B023",
+    "RUF012",
+    "RUF013",
+    "RUF100",
+]
 ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
@@ -68,6 +85,10 @@ extraPaths = ["packages/sdk-python/src", "packages/env/src", "apps/leta/src", "a
 reportMissingParameterType = "error"
 reportMissingTypeArgument = "error"
 reportUnnecessaryTypeIgnoreComment = "error"
+reportImplicitOverride = "error"
+reportUninitializedInstanceVariable = "error"
+reportPropertyTypeMismatch = "error"
+reportDeprecated = "error"
 
 [tool.uv.sources]
 openlet-sdk = { workspace = true }

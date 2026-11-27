@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from .activity import ActivityEmitter
-from .db import Pool, Row
+from openlet_sdk.config import JSON, ReasoningEffort
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from .activity import ActivityEmitter, ActivityType
+from .db import Pool, hydrate
 
 
 @dataclass(frozen=True, slots=True)
@@ -14,7 +18,97 @@ class RunOutcome:
     latest_wake_seq: int
 
 
-async def load_agent_runtime_record(db: Pool, agent_id: UUID) -> dict[str, object]:
+class AgentRuntimeRecord(BaseModel):
+    id: UUID
+    leta_id: UUID
+    parent_agent_id: UUID | None = None
+    depth: int = 0
+    name: str
+    title: str
+    description: str = ""
+    handle: str
+    custom_instructions: str = ""
+    model_id: str | None = None
+    reasoning_effort: ReasoningEffort = None
+    state: str = "active"
+    workspace_id: UUID
+    storage_id: UUID
+    parent_handle: str | None = None
+
+    @field_validator("description", "custom_instructions", mode="before")
+    @classmethod
+    def _none_to_empty(cls, v: object) -> object:
+        return "" if v is None else v
+
+
+class MessageEventData(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    text: str = ""
+    reasoning: str | None = None
+
+
+class ToolCallEventData(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    name: str = "tool"
+    args: dict[str, JSON] = Field(default_factory=dict[str, JSON])
+    tool_call_id: str = ""
+
+
+class ToolResultEventData(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    name: str = "tool"
+    status: str = "ok"
+    preview: str = ""
+    content: str = ""
+    tool_call_id: str = ""
+
+
+class AgentMessageSender(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    handle: str = ""
+    name: str = ""
+
+
+class AgentMessageEventData(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    sender: AgentMessageSender | None = Field(default=None, alias="from")
+    content: str = ""
+
+
+class InboxBatchItemSummary(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    preview: str = ""
+
+
+class InboxReceivedEventData(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    items: list[InboxBatchItemSummary] = Field(
+        default_factory=list[InboxBatchItemSummary]
+    )
+
+
+class RunFinishedEventData(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    status: str = "done"
+    error_code: str | None = None
+
+
+class ActivityEventRecord(BaseModel):
+    seq: int
+    type: ActivityType
+    data: dict[str, JSON] = Field(default_factory=dict[str, JSON])
+    created_at: datetime
+
+
+async def load_agent_runtime_record(db: Pool, agent_id: UUID) -> AgentRuntimeRecord:
     async with db.connection() as conn:
         row = await (
             await conn.execute(
@@ -33,7 +127,7 @@ async def load_agent_runtime_record(db: Pool, agent_id: UUID) -> dict[str, objec
         ).fetchone()
     if row is None:
         raise LookupError(f"agent {agent_id} not found")
-    return dict(row)
+    return hydrate(row, AgentRuntimeRecord)
 
 
 async def start_run(db: Pool, run_id: UUID, agent_id: UUID) -> int:
@@ -151,7 +245,9 @@ async def finish_run(
         )
 
 
-async def list_recent_activity(db: Pool, agent_id: UUID, limit: int) -> list[Row]:
+async def list_recent_activity(
+    db: Pool, agent_id: UUID, limit: int
+) -> list[ActivityEventRecord]:
     async with db.connection() as conn:
         rows = await (
             await conn.execute(
@@ -165,4 +261,4 @@ async def list_recent_activity(db: Pool, agent_id: UUID, limit: int) -> list[Row
                 (agent_id, limit),
             )
         ).fetchall()
-    return [dict(r) for r in rows]
+    return [hydrate(r, ActivityEventRecord) for r in rows]

@@ -10,11 +10,11 @@ import shutil
 import socket
 from collections.abc import Mapping
 from pathlib import Path
-from typing import cast
 
 import yaml
 from dotenv import dotenv_values
-from openlet_sdk.config import Config
+from openlet_sdk.config import Config, parse_config
+from openlet_sdk.types import is_str_mapping
 
 from .models import EnvMode
 
@@ -89,11 +89,8 @@ def deep_merge(
     merged: dict[str, object] = copy.deepcopy(dict(base))
     for key, value in override.items():
         current = merged.get(key)
-        if isinstance(current, dict) and isinstance(value, Mapping):
-            merged[key] = deep_merge(
-                cast(Mapping[str, object], current),
-                cast(Mapping[str, object], value),
-            )
+        if is_str_mapping(current) and is_str_mapping(value):
+            merged[key] = deep_merge(current, value)
         else:
             merged[key] = copy.deepcopy(value)
     return merged
@@ -217,9 +214,9 @@ def build_openlet_config(
     """Load `infra/config/openlet.example.yaml` as base and merge non-production overrides."""
     example_path = find_repo_root(repo_root) / "infra/config/openlet.example.yaml"
     raw_base: object = yaml.safe_load(example_path.read_text(encoding="utf-8"))
-    if not isinstance(raw_base, dict):
+    if not is_str_mapping(raw_base):
         raise ValueError(f"expected YAML mapping in {example_path}")
-    base = cast(dict[str, object], raw_base)
+    base: dict[str, object] = dict(raw_base)
     base.pop("observability", None)
 
     langfuse_base = (
@@ -275,7 +272,7 @@ def build_openlet_config(
     merged = deep_merge(base, nonprod)
     if override:
         merged = deep_merge(merged, override)
-    return cast(Config, merged)
+    return parse_config(merged)
 
 
 def stage_wiremock_stubs(

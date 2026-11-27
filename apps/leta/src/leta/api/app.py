@@ -3,10 +3,11 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Literal, cast
+from typing import Literal
 from uuid import UUID, uuid4
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
+from langfuse import Langfuse
 from openlet_api.platform.v1 import internal_pb2 as plat_int_pb
 from openlet_sdk.centrifugo import sign_centrifugo_token
 from openlet_sdk.config import JSON, ReasoningEffort
@@ -20,6 +21,8 @@ from ..config import Services
 from ..db import get_receipt, hash_request, json_row, save_receipt
 from ..hitl.service import (
     HitlDecisionInput,
+    HitlRecord,
+    RecipientHitlList,
     get_hitl,
     list_leta_hitl,
     list_recipient_hitl,
@@ -31,6 +34,7 @@ from ..orchestration.lifecycle_workflow import (
     LetaLifecycleWorkflow,
 )
 from ..schedules.service import (
+    ScheduleRecord,
     Timing,
     calendar_occurrences,
     create_schedule,
@@ -41,6 +45,7 @@ from ..schedules.service import (
 )
 from ..subagents.service import (
     AgentPatch,
+    AgentSummary,
     Appearance,
     list_leta_agents,
     random_appearance,
@@ -93,10 +98,6 @@ class UpdateScheduleBody(Timing):
     paused: bool | None = None
 
 
-def _services(request: Request) -> Services:
-    return cast(Services, request.app.state.services)
-
-
 def _caller(
     x_openlet_user_id: str | None = Header(default=None),
     x_openlet_agent_id: str | None = Header(default=None),
@@ -136,7 +137,7 @@ async def _require(
 
 async def _ensure_leta_in_workspace(
     s: Services, workspace_id: UUID, leta_id: UUID
-) -> dict[str, object]:
+) -> dict[str, JSON]:
     async with s.db.connection() as conn:
         row = await (
             await conn.execute(
@@ -157,23 +158,32 @@ async def _ensure_leta_in_workspace(
         ).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail="leta not found")
-    return dict(row)
+    return json_row(row)
 
 
 def create_app(
     *,
     services: Services | None = None,
-    langfuse: object | None = None,
+    langfuse: Langfuse | None = None,
     start_grpc: bool = True,
 ) -> FastAPI:
+    active_services: Services | None = services
+
+    def _services() -> Services:
+        if active_services is None:
+            raise RuntimeError("Leta services are not initialized")
+        return active_services
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
+        nonlocal active_services
         owned = services is None
         svc = (
             services
             if services is not None
-            else await Services.create(langfuse=langfuse)  # pyright: ignore[reportArgumentType]
+            else await Services.create(langfuse=langfuse)
         )
+        active_services = svc
         app.state.services = svc
         grpc_server = await start_internal_grpc(svc) if start_grpc else None
         try:
@@ -183,6 +193,7 @@ def create_app(
                 await grpc_server.stop(grace=5)
             if owned:
                 await svc.close()
+                active_services = None
 
     app = FastAPI(title="Openlet Leta API", lifespan=lifespan)
     instrument_fastapi(app)
@@ -202,10 +213,10 @@ def create_app(
         actor: Actor = Depends(_caller),
         zed: str | None = Depends(_zed_token),
         s: Services = Depends(_services),
-    ) -> dict[str, object]:
+    ) -> dict[str, list[dict[str, JSON]]]:
         await _require(s, actor, "workspace", wid, "participate", zed)
         cat = await s.models.catalog()
-        return {"items": [m.model_dump() for m in cat.values()]}
+        return {"items": [json_row(m.model_dump()) for m in cat.values()]}
 
     @app.get("/v1/workspaces/{wid}/letas")
     async def list_letas(
@@ -213,7 +224,7 @@ def create_app(
         actor: Actor = Depends(_caller),
         zed: str | None = Depends(_zed_token),
         s: Services = Depends(_services),
-    ) -> dict[str, object]:
+    ) -> dict[str, JSON]:
         await _require(s, actor, "workspace", wid, "participate", zed)
         can_create = await s.auth.allowed(
             actor, "workspace", wid, "create_agent", zed_token=zed
@@ -384,7 +395,7 @@ def create_app(
         actor: Actor = Depends(_caller),
         zed: str | None = Depends(_zed_token),
         s: Services = Depends(_services),
-    ) -> dict[str, object]:
+    ) -> dict[str, list[AgentSummary]]:
         await _require(s, actor, "agent", lid, "manage", zed)
         await _ensure_leta_in_workspace(s, wid, lid)
         return {"items": await list_leta_agents(s.db, lid)}
@@ -425,7 +436,7 @@ def create_app(
         actor: Actor = Depends(_caller),
         zed: str | None = Depends(_zed_token),
         s: Services = Depends(_services),
-    ) -> dict[str, JSON]:
+    ) -> AgentSummary:
         await _require(s, actor, "agent", lid, "manage", zed)
         await _ensure_leta_in_workspace(s, wid, lid)
         if body.model_id is not None:
@@ -448,7 +459,7 @@ def create_app(
         actor: Actor = Depends(_caller),
         zed: str | None = Depends(_zed_token),
         s: Services = Depends(_services),
-    ) -> dict[str, object]:
+    ) -> dict[str, list[str]]:
         await _require(s, actor, "agent", lid, "manage", zed)
         await _ensure_leta_in_workspace(s, wid, lid)
         if aid == lid:
@@ -475,7 +486,7 @@ def create_app(
         actor: Actor = Depends(_caller),
         zed: str | None = Depends(_zed_token),
         s: Services = Depends(_services),
-    ) -> dict[str, object]:
+    ) -> dict[str, bool]:
         await _require(s, actor, "agent", lid, "manage", zed)
         await _ensure_leta_in_workspace(s, wid, lid)
         cancel_active = body.cancel_active if body is not None else False
@@ -504,7 +515,7 @@ def create_app(
         actor: Actor = Depends(_caller),
         zed: str | None = Depends(_zed_token),
         s: Services = Depends(_services),
-    ) -> dict[str, object]:
+    ) -> dict[str, bool]:
         await _require(s, actor, "agent", lid, "manage", zed)
         await _ensure_leta_in_workspace(s, wid, lid)
         async with s.db.connection() as conn:
@@ -537,7 +548,7 @@ def create_app(
         actor: Actor = Depends(_caller),
         zed: str | None = Depends(_zed_token),
         s: Services = Depends(_services),
-    ) -> dict[str, object]:
+    ) -> dict[str, bool]:
         await _require(s, actor, "agent", lid, "manage", zed)
         await _ensure_leta_in_workspace(s, wid, lid)
         run_id = body.run_id if body is not None else None
@@ -559,7 +570,7 @@ def create_app(
         actor: Actor = Depends(_caller),
         zed: str | None = Depends(_zed_token),
         s: Services = Depends(_services),
-    ) -> dict[str, object]:
+    ) -> dict[str, list[dict[str, JSON]]]:
         await _require(s, actor, "agent", lid, "manage", zed)
         await _ensure_leta_in_workspace(s, wid, lid)
         async with s.db.connection() as conn:
@@ -615,7 +626,7 @@ def create_app(
         actor: Actor = Depends(_caller),
         zed: str | None = Depends(_zed_token),
         s: Services = Depends(_services),
-    ) -> dict[str, object]:
+    ) -> dict[str, list[dict[str, str | None]]]:
         await _require(s, actor, "agent", lid, "manage", zed)
         await _ensure_leta_in_workspace(s, wid, lid)
         rels = await s.auth.read_relationships("agent", lid, zed_token=zed)
@@ -630,7 +641,7 @@ def create_app(
             elif rel.relation == "operator":
                 operator_ids.append(uid)
         all_ids = list(dict.fromkeys([*owner_ids, *operator_ids]))
-        users_by_id: dict[str, dict[str, object]] = {}
+        users_by_id: dict[str, dict[str, str | None]] = {}
         if all_ids:
             resp = await s.platform_internal.BatchGetUsers(
                 plat_int_pb.BatchGetUsersRequest(user_ids=all_ids), timeout=15
@@ -655,7 +666,7 @@ def create_app(
         actor: Actor = Depends(_caller),
         zed: str | None = Depends(_zed_token),
         s: Services = Depends(_services),
-    ) -> dict[str, object]:
+    ) -> dict[str, str]:
         await _require(s, actor, "agent", lid, "manage", zed)
         await _ensure_leta_in_workspace(s, wid, lid)
         if not await s.auth.allowed(
@@ -702,7 +713,7 @@ def create_app(
         actor: Actor = Depends(_caller),
         zed: str | None = Depends(_zed_token),
         s: Services = Depends(_services),
-    ) -> dict[str, object]:
+    ) -> dict[str, list[dict[str, JSON]]]:
         await _require(s, actor, "agent", lid, "manage", zed)
         await _ensure_leta_in_workspace(s, wid, lid)
         async with s.db.connection() as conn:
@@ -828,7 +839,7 @@ def create_app(
         limit: int = Query(default=50, ge=1, le=100),
         actor: Actor = Depends(_caller),
         s: Services = Depends(_services),
-    ) -> dict[str, JSON]:
+    ) -> RecipientHitlList:
         if actor.type != "user":
             raise HTTPException(status_code=403, detail="human user required")
         return await list_recipient_hitl(
@@ -846,16 +857,14 @@ def create_app(
         actor: Actor = Depends(_caller),
         zed: str | None = Depends(_zed_token),
         s: Services = Depends(_services),
-    ) -> dict[str, JSON]:
+    ) -> HitlRecord:
         try:
             row = await get_hitl(s.db, rid)
         except LookupError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        is_recipient = actor.type == "user" and str(actor.id) == str(
-            row["recipient_user_id"]
-        )
+        is_recipient = actor.type == "user" and actor.id == row.recipient_user_id
         is_owner = await s.auth.allowed(
-            actor, "agent", str(row["leta_id"]), "manage", zed_token=zed
+            actor, "agent", row.leta_id, "manage", zed_token=zed
         )
         if not is_recipient and not is_owner:
             raise HTTPException(status_code=403, detail="hitl access denied")
@@ -867,17 +876,17 @@ def create_app(
         body: DecideHitlBody,
         actor: Actor = Depends(_caller),
         s: Services = Depends(_services),
-    ) -> dict[str, JSON]:
+    ) -> HitlRecord:
         if actor.type != "user":
             raise HTTPException(status_code=403, detail="human user required")
         try:
             row = await get_hitl(s.db, rid)
         except LookupError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        if str(row["recipient_user_id"]) != str(actor.id):
+        if row.recipient_user_id != actor.id:
             raise HTTPException(status_code=403, detail="only recipient can decide")
-        if row["status"] != "pending":
-            raise HTTPException(status_code=409, detail=f"already {row['status']}")
+        if row.status != "pending":
+            raise HTTPException(status_code=409, detail=f"already {row.status}")
 
         decision = HitlDecisionInput(
             request_id=rid,
@@ -889,8 +898,8 @@ def create_app(
         try:
             from ..hitl.workflow import HitlWorkflow
 
-            handle = s.temporal.get_workflow_handle(f"hitl/{rid}")
-            return await handle.execute_update(  # pyright: ignore[reportUnknownMemberType]
+            handle = s.temporal.get_workflow_handle_for(HitlWorkflow.run, f"hitl/{rid}")
+            return await handle.execute_update(  # pyright: ignore[reportUnknownMemberType]  # temporalio overload #3 leaves args untyped.
                 HitlWorkflow.decide, decision
             )
         except Exception as exc:
@@ -907,7 +916,7 @@ def create_app(
         actor: Actor = Depends(_caller),
         zed: str | None = Depends(_zed_token),
         s: Services = Depends(_services),
-    ) -> dict[str, object]:
+    ) -> dict[str, list[HitlRecord]]:
         await _require(s, actor, "agent", lid, "manage", zed)
         await _ensure_leta_in_workspace(s, wid, lid)
         items = await list_leta_hitl(s.db, lid, status=status_filter, limit=limit)
@@ -921,14 +930,14 @@ def create_app(
         actor: Actor = Depends(_caller),
         zed: str | None = Depends(_zed_token),
         s: Services = Depends(_services),
-    ) -> dict[str, object]:
+    ) -> dict[str, bool]:
         await _require(s, actor, "agent", lid, "manage", zed)
         await _ensure_leta_in_workspace(s, wid, lid)
         try:
             row = await get_hitl(s.db, rid)
         except LookupError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        if str(row["leta_id"]) != str(lid):
+        if row.leta_id != lid:
             raise HTTPException(status_code=404, detail="hitl request not found")
         try:
             await s.temporal.get_workflow_handle(f"hitl/{rid}").signal(
@@ -948,7 +957,7 @@ def create_app(
         actor: Actor = Depends(_caller),
         zed: str | None = Depends(_zed_token),
         s: Services = Depends(_services),
-    ) -> dict[str, object]:
+    ) -> dict[str, list[ScheduleRecord]]:
         await _require(s, actor, "agent", lid, "manage", zed)
         await _ensure_leta_in_workspace(s, wid, lid)
         return {"items": await list_schedules(s.db, lid)}
@@ -964,7 +973,7 @@ def create_app(
         actor: Actor = Depends(_caller),
         zed: str | None = Depends(_zed_token),
         s: Services = Depends(_services),
-    ) -> dict[str, JSON]:
+    ) -> ScheduleRecord:
         await _require(s, actor, "agent", lid, "manage", zed)
         await _ensure_leta_in_workspace(s, wid, lid)
         timing = Timing(
@@ -1004,7 +1013,7 @@ def create_app(
         actor: Actor = Depends(_caller),
         zed: str | None = Depends(_zed_token),
         s: Services = Depends(_services),
-    ) -> dict[str, JSON]:
+    ) -> ScheduleRecord:
         await _require(s, actor, "agent", lid, "manage", zed)
         await _ensure_leta_in_workspace(s, wid, lid)
         try:
@@ -1022,7 +1031,7 @@ def create_app(
         actor: Actor = Depends(_caller),
         zed: str | None = Depends(_zed_token),
         s: Services = Depends(_services),
-    ) -> dict[str, object]:
+    ) -> dict[str, list[str]]:
         await _require(s, actor, "agent", lid, "manage", zed)
         await _ensure_leta_in_workspace(s, wid, lid)
         try:
@@ -1043,7 +1052,7 @@ def create_app(
         actor: Actor = Depends(_caller),
         zed: str | None = Depends(_zed_token),
         s: Services = Depends(_services),
-    ) -> dict[str, JSON]:
+    ) -> ScheduleRecord:
         await _require(s, actor, "agent", lid, "manage", zed)
         await _ensure_leta_in_workspace(s, wid, lid)
         has_timing = any(

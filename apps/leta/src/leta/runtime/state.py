@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Annotated, TypedDict
 from uuid import UUID
@@ -23,6 +24,13 @@ class AgentState(TypedDict):
     """Minimal persisted LangGraph checkpoint state (no turn_ended flag)."""
 
     messages: Annotated[list[BaseMessage], add_messages]
+    inbox_cursor: int
+
+
+class AgentStateUpdate(TypedDict, total=False):
+    """Partial state patch returned by LangGraph runtime nodes."""
+
+    messages: Sequence[BaseMessage]
     inbox_cursor: int
 
 

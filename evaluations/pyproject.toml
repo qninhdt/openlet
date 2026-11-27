@@ -43,7 +43,23 @@ openlet-sdk = { path = "../packages/sdk-python", editable = true }
 target-version = "py314"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "ANN"]
+select = [
+    "E",
+    "F",
+    "I",
+    "ANN",
+    "PGH003",
+    "UP",
+    "PYI",
+    "TC006",
+    "TC010",
+    "B006",
+    "B009",
+    "B023",
+    "RUF012",
+    "RUF013",
+    "RUF100",
+]
 ignore = ["E501"]
 
 [tool.pytest.ini_options]
@@ -63,3 +79,7 @@ extraPaths = ["src", "../packages/env/src", "../packages/sdk-python/src"]
 reportMissingParameterType = "error"
 reportMissingTypeArgument = "error"
 reportUnnecessaryTypeIgnoreComment = "error"
+reportImplicitOverride = "error"
+reportUninitializedInstanceVariable = "error"
+reportPropertyTypeMismatch = "error"
+reportDeprecated = "error"

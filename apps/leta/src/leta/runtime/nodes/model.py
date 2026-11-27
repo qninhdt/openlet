@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Literal, cast
+from typing import Literal
 from uuid import uuid4
 
 from langchain_core.messages import (
@@ -13,19 +13,21 @@ from langchain_core.messages import (
     SystemMessage,
 )
 from langgraph.runtime import Runtime
-from openlet_sdk.config import JSON
 
 from ...activity import StreamCoalescer
+from ...db import json_value
 from ...runs import record_run_usage
 from ..compaction import (
     estimate_prompt_tokens,
     maybe_start_background_compaction,
 )
+from ..content import extract_chunk_reasoning_delta, extract_chunk_text_delta
 from ..media import bound_history_images
 from ..prompts import render_system_prompt
 from ..retry import ContextOverflowError, compute_output_limit, invoke_with_retry
 from ..state import (
     AgentState,
+    AgentStateUpdate,
     RuntimeContext,
     UsageTotals,
     build_chat_model,
@@ -42,36 +44,6 @@ LENGTH_CONTINUATION_PROMPT = (
 
 class ContextLimitError(RuntimeError):
     """Non-retryable Temporal error when context still overflows after compaction."""
-
-
-def _chunk_reasoning_delta(chunk: AIMessageChunk) -> str:
-    parts: list[str] = []
-    kw = chunk.additional_kwargs
-    for key in ("reasoning_content", "reasoning"):
-        val = kw.get(key)
-        if isinstance(val, str) and val:
-            parts.append(val)
-    if isinstance(chunk.content, list):
-        for blk in cast(list[object], chunk.content):
-            if isinstance(blk, dict):
-                d = cast(dict[str, object], blk)
-                if d.get("type") in ("thinking", "reasoning"):
-                    txt = d.get("thinking") or d.get("text")
-                    if isinstance(txt, str) and txt:
-                        parts.append(txt)
-    return "".join(parts)
-
-
-def _chunk_text_delta(chunk: AIMessageChunk) -> str:
-    if isinstance(chunk.content, str):
-        return chunk.content
-    parts: list[str] = []
-    for blk in chunk.content:
-        if isinstance(blk, str):
-            parts.append(blk)
-        elif blk.get("type") == "text" and isinstance(blk.get("text"), str):
-            parts.append(cast(str, blk["text"]))
-    return "".join(parts)
 
 
 async def _record_step_usage(rt: RuntimeContext, msg: AIMessage) -> None:
@@ -119,7 +91,7 @@ async def _record_step_usage(rt: RuntimeContext, msg: AIMessage) -> None:
 
 async def model_node(
     state: AgentState, runtime: Runtime[RuntimeContext]
-) -> dict[str, object]:
+) -> AgentStateUpdate:
     """Stream LiteLLM response -> 50ms Centrifugo deltas, persist activity & usage."""
     rt = runtime.context
     model_cfg = rt.services.settings.model
@@ -184,12 +156,12 @@ async def model_node(
         async for raw_chunk in runnable.astream(prompt_messages):
             if not isinstance(raw_chunk, AIMessageChunk):
                 continue
-            r_delta = _chunk_reasoning_delta(raw_chunk)
+            r_delta = extract_chunk_reasoning_delta(raw_chunk)
             if r_delta:
                 output_started = True
                 reasoning_buf.append(r_delta)
                 coalescer.push("stream.thinking_delta", r_delta)
-            t_delta = _chunk_text_delta(raw_chunk)
+            t_delta = extract_chunk_text_delta(raw_chunk)
             if t_delta:
                 output_started = True
                 coalescer.push("stream.text_delta", t_delta)
@@ -203,11 +175,7 @@ async def model_node(
                         str(args_delta),
                         tool_call_id=str(cid) if cid else None,
                     )
-            combined = (
-                raw_chunk
-                if combined is None
-                else cast(AIMessageChunk, combined + raw_chunk)
-            )
+            combined = raw_chunk if combined is None else combined + raw_chunk
 
         if combined is None:
             return AIMessage(content="", id=str(uuid4()))
@@ -279,7 +247,7 @@ async def model_node(
             data={
                 "tool_call_id": str(tc.get("id", "")),
                 "name": str(tc.get("name", "")),
-                "args": cast(JSON, tc.get("args", {})),
+                "args": json_value(tc.get("args", {})),
             },
         )
 

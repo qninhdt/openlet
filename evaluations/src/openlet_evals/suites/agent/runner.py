@@ -8,14 +8,14 @@ import time
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import httpx
 import jinja2
 from openlet_env import Environment
 from openlet_env.dataset import read_seed_specs
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
     from .suite import AgentEvalConfig, AgentTask
@@ -49,7 +49,7 @@ class RunUsage(BaseModel):
 
 class ToolCallRecord(BaseModel):
     name: str
-    input_parameters: dict[str, Any] = Field(default_factory=dict)
+    input_parameters: dict[str, object] = Field(default_factory=dict)
     output: str | None = None
     status: str = "unknown"
 
@@ -61,10 +61,20 @@ class ToolStats(BaseModel):
     by_tool: dict[str, int] = Field(default_factory=dict)
 
 
+class MessageSource(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    kind: str = ""
+    storage_id: str = ""
+    node_id: str = ""
+    path: str = ""
+    label: str = ""
+
+
 class AssistantMessage(BaseModel):
     id: str = ""
     content: str = ""
-    sources: list[dict[str, Any]] = Field(default_factory=list[dict[str, Any]])
+    sources: list[MessageSource] = Field(default_factory=list[MessageSource])
     attachments: list[str] = Field(default_factory=list[str])
 
 
@@ -94,19 +104,143 @@ class TrialArtifact(BaseModel):
     deliverable: str = ""
 
 
-def _json_obj(resp: httpx.Response) -> dict[str, Any]:
-    raw: Any = resp.json()
-    return cast(dict[str, Any], raw) if isinstance(raw, dict) else {}
+class _NodeResp(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    parentId: str | None = None
+    name: str = ""
 
 
-def _sub_obj(obj: Mapping[str, Any], key: str) -> dict[str, Any]:
-    raw = obj.get(key)
-    return cast(dict[str, Any], raw) if isinstance(raw, dict) else {}
+class RunStatusResp(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = ""
+    status: str = "unknown"
+    error_code: str | None = None
+    input_tokens: int = 0
+    cached_input_tokens: int = 0
+    output_tokens: int = 0
+    reasoning_tokens: int = 0
+    cost_usd: float = 0.0
+    llm_calls: int = 0
 
 
-def _json_list(obj: Mapping[str, Any], key: str) -> list[dict[str, Any]]:
-    raw = obj.get(key)
-    return cast(list[dict[str, Any]], raw) if isinstance(raw, list) else []
+class _RunsListResp(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    items: list[RunStatusResp] = Field(default_factory=list[RunStatusResp])
+
+
+class _EnsureStorageResp(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    storageId: str = ""
+    rootNodeId: str = ""
+
+
+class _ChatAttachmentRef(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    storageId: str = ""
+    nodeId: str = ""
+    name: str = ""
+    kind: str = ""
+    mediaType: str = ""
+    mime: str = ""
+    sizeBytes: int | str | None = None
+    size: int | str | None = None
+
+
+class _ChatMessageMetadata(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    sources: list[MessageSource] = Field(default_factory=list[MessageSource])
+
+
+class _ChatMessageItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = ""
+    seq: int = 0
+    senderType: str = ""
+    content: str = ""
+    metadata: _ChatMessageMetadata = Field(default_factory=_ChatMessageMetadata)
+    attachments: list[_ChatAttachmentRef] = Field(
+        default_factory=list[_ChatAttachmentRef]
+    )
+
+
+class _MessagesPageResp(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    messages: list[_ChatMessageItem] = Field(default_factory=list[_ChatMessageItem])
+    hasBefore: bool = False
+
+
+class _ActivityToolPayload(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    tool_call_id: str = ""
+    name: str = "unknown"
+    args: dict[str, object] = Field(default_factory=dict)
+    status: str = "success"
+    content: object | None = None
+    preview: object | None = None
+    text: object | None = None
+
+
+class ActivityEventItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    seq: int = 0
+    type: str = ""
+    kind: str = ""
+    data: _ActivityToolPayload | None = None
+    payload: _ActivityToolPayload | None = None
+
+
+class _ActivityPageResp(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    items: list[ActivityEventItem] = Field(default_factory=list[ActivityEventItem])
+
+
+class _DownloadTextResp(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    content: str | None = None
+
+
+class _DownloadResp(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    text: _DownloadTextResp | None = None
+
+
+class _IdResp(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str
+
+
+class _LetaStateResp(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    state: str = ""
+
+
+class _StorageSummary(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str
+    rootNodeId: str = ""
+    visibility: str = ""
+
+
+class _StoragesListResp(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    storages: list[_StorageSummary] = Field(default_factory=list[_StorageSummary])
 
 
 def resolve_inline_mentions(
@@ -124,43 +258,40 @@ def resolve_inline_mentions(
 
 
 def parse_history(
-    entries: Sequence[Mapping[str, Any]],
+    entries: Sequence[ActivityEventItem | Mapping[str, object]],
 ) -> tuple[list[ToolCallRecord], ToolStats]:
-    """Pair tool_call and tool_result activity rows (v2 and legacy v1 schemas) + count compactions."""
+    """Pair tool_call and tool_result activity rows + count compactions."""
+    normalized = [
+        e if isinstance(e, ActivityEventItem) else ActivityEventItem.model_validate(e)
+        for e in entries
+    ]
     by_id: dict[str, ToolCallRecord] = {}
     calls: list[ToolCallRecord] = []
     counts: Counter[str] = Counter()
     errors = 0
     compactions = 0
 
-    for entry in sorted(entries, key=lambda e: int(e.get("seq", 0))):
-        ev_type = str(entry.get("type") or entry.get("kind") or "")
-        raw_payload = entry.get("data") if "data" in entry else entry.get("payload")
-        if not isinstance(raw_payload, Mapping):
+    for entry in sorted(normalized, key=lambda e: e.seq):
+        ev_type = entry.type or entry.kind
+        p = entry.data if entry.data is not None else entry.payload
+        if p is None:
             continue
-        p = cast(Mapping[str, Any], raw_payload)
-        cid = str(p.get("tool_call_id") or "")
+        cid = p.tool_call_id
         if ev_type in ("activity.tool_call", "tool_call"):
-            name = str(p.get("name") or "unknown")
+            name = p.name or "unknown"
             counts[name] += 1
-            raw_args = p.get("args")
-            rec = ToolCallRecord(
-                name=name,
-                input_parameters=dict(cast(Mapping[str, Any], raw_args))
-                if isinstance(raw_args, Mapping)
-                else {},
-            )
+            rec = ToolCallRecord(name=name, input_parameters=dict(p.args))
             if cid:
                 by_id[cid] = rec
             calls.append(rec)
         elif ev_type in ("activity.tool_result", "tool_result"):
-            status = str(p.get("status") or "success")
+            status = p.status or "success"
             errors += int(status == "error")
             if cid in by_id:
                 out_val = (
-                    p.get("content")
-                    if "content" in p
-                    else (p.get("preview") if "preview" in p else p.get("text"))
+                    p.content
+                    if p.content is not None
+                    else (p.preview if p.preview is not None else p.text)
                 )
                 by_id[cid].output = None if out_val is None else str(out_val)
                 by_id[cid].status = status
@@ -215,43 +346,41 @@ async def _resolve_path(
     r = await client.get(f"/v1/workspaces/{wid}/storages/{sid}/nodes/{nid}")
     if not r.is_success:
         return None
-    node = _json_obj(r)
-    parent_id = node.get("parentId")
-    if not isinstance(parent_id, str) or not parent_id:
+    node = _NodeResp.model_validate(r.json())
+    if not node.parentId:
         path = prefix
     else:
-        parent_path = await _resolve_path(client, wid, prefixes, cache, sid, parent_id)
-        path = f"{(parent_path or prefix).rstrip('/')}/{node.get('name') or nid}"
+        parent_path = await _resolve_path(
+            client, wid, prefixes, cache, sid, node.parentId
+        )
+        path = f"{(parent_path or prefix).rstrip('/')}/{node.name or nid}"
     cache[(sid, nid)] = path
     return path
 
 
-async def _wait_for_run(
+async def wait_for_run(
     client: httpx.AsyncClient, root_path: str, agent_id: str, timeout_s: float
-) -> tuple[dict[str, Any], bool]:
+) -> tuple[RunStatusResp, bool]:
     deadline = time.monotonic() + timeout_s
     run_id: str | None = None
-    run_row: dict[str, Any] = {}
+    run_row = RunStatusResp()
     while time.monotonic() < deadline:
         if run_id is None:
             runs_resp = await client.get(
                 f"{root_path}/agents/{agent_id}/runs", params={"limit": 5}
             )
             if runs_resp.is_success:
-                items = _json_list(_json_obj(runs_resp), "items")
-                if items:
-                    latest = items[0]
-                    rid = latest.get("id")
-                    if isinstance(rid, str):
-                        run_id = rid
-                        run_row = latest
-                        if run_row.get("status") in _TERMINAL_STATES:
-                            return run_row, False
+                items = _RunsListResp.model_validate(runs_resp.json()).items
+                if items and items[0].id:
+                    run_id = items[0].id
+                    run_row = items[0]
+                    if run_row.status in _TERMINAL_STATES:
+                        return run_row, False
         if run_id:
             resp = await client.get(f"{root_path}/agents/{agent_id}/runs/{run_id}")
             if resp.is_success:
-                run_row = _json_obj(resp)
-                if run_row.get("status") in _TERMINAL_STATES:
+                run_row = RunStatusResp.model_validate(resp.json())
+                if run_row.status in _TERMINAL_STATES:
                     return run_row, False
         await asyncio.sleep(1.0)
 
@@ -270,13 +399,13 @@ async def _wait_for_run(
                 f"{root_path}/agents/{agent_id}/runs/{run_id}", timeout=15.0
             )
             if resp.is_success:
-                run_row = _json_obj(resp)
+                run_row = RunStatusResp.model_validate(resp.json())
         except httpx.HTTPError:
             pass
     return run_row, True
 
 
-async def _collect_outputs(
+async def collect_outputs(
     client: httpx.AsyncClient,
     wid: str,
     root_path: str,
@@ -291,14 +420,13 @@ async def _collect_outputs(
         f"/v1/workspaces/{wid}/conversations/{conv_id}:ensureStorage", json={}
     )
     if conv.is_success:
-        cd = _json_obj(conv)
-        conv_sid = str(cd.get("storageId") or "")
-        conv_root = str(cd.get("rootNodeId") or "")
-        if conv_sid and conv_root:
+        cd = _EnsureStorageResp.model_validate(conv.json())
+        conv_sid = cd.storageId
+        if conv_sid and cd.rootNodeId:
             prefixes[conv_sid] = "/chat"
-            path_cache[(conv_sid, conv_root)] = "/chat"
+            path_cache[(conv_sid, cd.rootNodeId)] = "/chat"
 
-    raw_msgs: list[dict[str, Any]] = []
+    raw_msgs: list[_ChatMessageItem] = []
     before_seq: int | None = None
     while True:
         params: dict[str, str] = {"limit": "100"}
@@ -308,21 +436,20 @@ async def _collect_outputs(
             f"/v1/workspaces/{wid}/conversations/{conv_id}/messages", params=params
         )
         r.raise_for_status()
-        data = _json_obj(r)
-        items = _json_list(data, "messages")
-        if not items:
+        page = _MessagesPageResp.model_validate(r.json())
+        if not page.messages:
             break
-        raw_msgs.extend(m for m in items if m.get("senderType") == "agent")
-        if not data.get("hasBefore"):
+        raw_msgs.extend(m for m in page.messages if m.senderType == "agent")
+        if not page.hasBefore:
             break
-        seqs = [int(m.get("seq", 0)) for m in items if int(m.get("seq", 0)) > 0]
+        seqs = [m.seq for m in page.messages if m.seq > 0]
         if not seqs or min(seqs) <= 1:
             break
         before_seq = min(seqs)
 
-    raw_msgs.sort(key=lambda m: (int(m.get("seq", 0)), str(m.get("id") or "")))
+    raw_msgs.sort(key=lambda m: (m.seq, m.id))
 
-    activity: list[dict[str, Any]] = []
+    activity: list[ActivityEventItem] = []
     after = 0
     while True:
         r = await client.get(
@@ -330,12 +457,11 @@ async def _collect_outputs(
             params={"after": after, "limit": 100},
         )
         r.raise_for_status()
-        data = _json_obj(r)
-        items = _json_list(data, "items")
+        items = _ActivityPageResp.model_validate(r.json()).items
         if not items:
             break
         activity.extend(items)
-        max_seq = max(int(it.get("seq", 0)) for it in items)
+        max_seq = max(it.seq for it in items)
         if len(items) < 100 or max_seq <= after:
             break
         after = max_seq
@@ -348,30 +474,26 @@ async def _collect_outputs(
     last_idx = len(raw_msgs) - 1
     for idx, m in enumerate(raw_msgs):
         is_final = idx == last_idx
-        raw_content = str(m.get("content") or "")
-        for match in _LETFS_LINK_RE.finditer(raw_content):
+        for match in _LETFS_LINK_RE.finditer(m.content):
             await _resolve_path(
                 client, wid, prefixes, path_cache, match.group(2), match.group(3)
             )
 
-        meta = _sub_obj(m, "metadata")
-        sources: list[dict[str, Any]] = []
-        for s in _json_list(meta, "sources"):
-            if s.get("kind") == "web":
+        sources: list[MessageSource] = []
+        for s in m.metadata.sources:
+            if s.kind == "web":
                 sources.append(s)
                 continue
-            sid = str(s.get("storage_id") or "")
-            nid = str(s.get("node_id") or "")
-            resolved = await _resolve_path(client, wid, prefixes, path_cache, sid, nid)
-            sources.append(
-                {**s, "path": resolved or str(s.get("path") or s.get("label") or "")}
+            resolved = await _resolve_path(
+                client, wid, prefixes, path_cache, s.storage_id, s.node_id
             )
+            sources.append(s.model_copy(update={"path": resolved or s.path or s.label}))
 
         att_paths: list[str] = []
-        for ref in _json_list(m, "attachments"):
-            sid = str(ref.get("storageId") or "")
-            nid = str(ref.get("nodeId") or "")
-            name = str(ref.get("name") or nid)
+        for ref in m.attachments:
+            sid = ref.storageId
+            nid = ref.nodeId
+            name = ref.name or nid
             path = (
                 await _resolve_path(client, wid, prefixes, path_cache, sid, nid)
                 or f"/chat/{name}"
@@ -380,28 +502,27 @@ async def _collect_outputs(
             if is_final and conv_sid and sid == conv_sid and (sid, nid) not in seen_att:
                 seen_att.add((sid, nid))
                 text: str | None = None
-                if ref.get("kind") != "folder":
+                if ref.kind != "folder":
                     tr = await client.get(
                         f"/v1/workspaces/{wid}/storages/{sid}/nodes/{nid}:download"
                     )
                     if tr.is_success:
-                        dl = _json_obj(tr)
-                        txt_obj = _sub_obj(dl, "text")
-                        if "content" in txt_obj:
-                            text = str(txt_obj.get("content") or "")
-                raw_sz = ref.get("sizeBytes") or ref.get("size")
+                        dl = _DownloadResp.model_validate(tr.json())
+                        if dl.text is not None and dl.text.content is not None:
+                            text = dl.text.content
+                raw_sz = ref.sizeBytes if ref.sizeBytes is not None else ref.size
                 attachments.append(
                     Attachment(
                         path=path,
-                        mime=str(ref.get("mediaType") or ref.get("mime") or "") or None,
+                        mime=(ref.mediaType or ref.mime) or None,
                         size=int(raw_sz) if raw_sz is not None else None,
                         text=text,
                     )
                 )
         messages.append(
             AssistantMessage(
-                id=str(m.get("id") or ""),
-                content=resolve_inline_mentions(raw_content, path_cache),
+                id=m.id,
+                content=resolve_inline_mentions(m.content, path_cache),
                 sources=sources,
                 attachments=att_paths,
             )
@@ -409,7 +530,7 @@ async def _collect_outputs(
     return messages, attachments, tool_calls, tool_stats
 
 
-async def _execute_trial(
+async def execute_trial(
     cfg: AgentEvalConfig,
     api_url: str,
     ws_ctx: tuple[str, dict[str, str], Mapping[str, str], dict[tuple[str, str], str]],
@@ -436,13 +557,16 @@ async def _execute_trial(
                 },
             )
             res.raise_for_status()
-            leta_id = str(_json_obj(res)["id"])
+            leta_id = _IdResp.model_validate(res.json()).id
             root = f"/v1/workspaces/{wid}/letas/{leta_id}"
 
             deadline = time.monotonic() + 60.0
             while time.monotonic() < deadline:
                 st = await client.get(root)
-                if st.is_success and _json_obj(st).get("state") == "active":
+                if (
+                    st.is_success
+                    and _LetaStateResp.model_validate(st.json()).state == "active"
+                ):
                     break
                 await asyncio.sleep(0.5)
             else:
@@ -453,7 +577,7 @@ async def _execute_trial(
                 json={"target": {"type": "agent", "id": leta_id}},
             )
             dm_resp.raise_for_status()
-            conv_id = str(_json_obj(dm_resp)["id"])
+            conv_id = _IdResp.model_validate(dm_resp.json()).id
 
             prompt = (
                 _JINJA.from_string(cfg.prompt_template).render(task=task.task).strip()
@@ -464,11 +588,11 @@ async def _execute_trial(
             )
             sent.raise_for_status()
 
-            run_row, timed_out = await _wait_for_run(
+            run_row, timed_out = await wait_for_run(
                 client, root, leta_id, cfg.sample_timeout_seconds
             )
             latency_s = round(time.perf_counter() - t0, 3)
-            messages, attachments, tool_calls, tool_stats = await _collect_outputs(
+            messages, attachments, tool_calls, tool_stats = await collect_outputs(
                 client, wid, root, leta_id, conv_id, storage_prefixes, path_cache
             )
             return TrialArtifact(
@@ -478,14 +602,17 @@ async def _execute_trial(
                 task=task.task,
                 must=task.must,
                 must_not=task.must_not,
-                run_id=str(run_row.get("id") or ""),
-                status="timeout"
-                if timed_out
-                else str(run_row.get("status") or "unknown"),
-                error_code=run_row.get("error_code"),
+                run_id=run_row.id,
+                status="timeout" if timed_out else run_row.status,
+                error_code=run_row.error_code,
                 latency_s=latency_s,
-                usage=RunUsage.model_validate(
-                    {k: v for k, v in run_row.items() if v is not None}
+                usage=RunUsage(
+                    input_tokens=run_row.input_tokens,
+                    cached_input_tokens=run_row.cached_input_tokens,
+                    output_tokens=run_row.output_tokens,
+                    reasoning_tokens=run_row.reasoning_tokens,
+                    cost_usd=run_row.cost_usd,
+                    llm_calls=run_row.llm_calls,
                 ),
                 tool_stats=tool_stats,
                 tools_called=tool_calls,
@@ -547,7 +674,7 @@ def run_trials(
         )
         api_url = env.endpoints.api_url
         _, specs = read_seed_specs(datasets_dir, workspaces)
-        owners = {s.handle: str(s.manifest["owner"]) for s in specs}
+        owners = {s.handle: s.manifest.owner for s in specs}
 
         async def _run_all() -> list[TrialArtifact]:
             ws_ctx: dict[
@@ -569,11 +696,10 @@ def run_trials(
                 ) as c:
                     r = await c.get(f"/v1/workspaces/{wid}/storages")
                     r.raise_for_status()
-                    for st in _json_list(_json_obj(r), "storages"):
-                        if st.get("visibility") == "STORAGE_VISIBILITY_PUBLIC":
-                            sid = str(st["id"])
-                            prefixes[sid] = "/shared"
-                            cache[(sid, str(st["rootNodeId"]))] = "/shared"
+                    for st in _StoragesListResp.model_validate(r.json()).storages:
+                        if st.visibility == "STORAGE_VISIBILITY_PUBLIC":
+                            prefixes[st.id] = "/shared"
+                            cache[(st.id, st.rootNodeId)] = "/shared"
                 ws_ctx[slug] = (wid, headers, prefixes, cache)
 
             sem = asyncio.Semaphore(cfg.concurrency)
@@ -586,7 +712,7 @@ def run_trials(
 
             async def _bounded(t: AgentTask, tr: int, i: int) -> TrialArtifact:
                 async with sem:
-                    return await _execute_trial(
+                    return await execute_trial(
                         cfg, api_url, ws_ctx[t.workspace], t, tr, i
                     )
 

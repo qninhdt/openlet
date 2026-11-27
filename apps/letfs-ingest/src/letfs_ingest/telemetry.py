@@ -3,13 +3,11 @@ import random
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 from contextlib import asynccontextmanager, contextmanager
 from time import perf_counter
-from typing import TypedDict, TypeVar
+from typing import TypedDict
 
 from opentelemetry import metrics, trace
 from opentelemetry.trace import StatusCode
 from temporalio import activity
-
-_T = TypeVar("_T")
 
 
 class ProcessingIdentity(TypedDict):
@@ -22,8 +20,8 @@ duration = metrics.get_meter(__name__).create_histogram(
 tracer = trace.get_tracer(__name__)
 
 
-async def retry_transient(
-    op: Callable[[], Awaitable[_T]],
+async def retry_transient[T](
+    op: Callable[[], Awaitable[T]],
     *,
     should_retry: Callable[[BaseException], bool],
     attempts: int = 4,
@@ -31,7 +29,7 @@ async def retry_transient(
     max_delay: float = 8.0,
     on_attempt: Callable[[int], None] | None = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
-) -> _T:
+) -> T:
     """Retry transient failures with exponential backoff and bounded jitter."""
     delay = base_delay
     for attempt in range(1, attempts + 1):

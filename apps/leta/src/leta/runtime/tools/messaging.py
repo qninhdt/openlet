@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import xml.sax.saxutils as sax
 from time import monotonic
-from typing import cast
+from typing import Literal
 
 import regex as re
 from langchain_core.tools import BaseTool, ToolException
@@ -17,6 +17,7 @@ from ...channels.base import (
     OutboundMessage,
 )
 from ...filesystem.workspace import Filesystem
+from ...inbox import InboxSender
 from ..state import AgentState, RuntimeContext
 from .base import ToolArgs, ToolResult, idempotency_key, make_tool
 from .files import missing_path_recovery, normalize_workspace_path
@@ -78,16 +79,15 @@ async def normalize_outbound_links(
                 ref = await fs.resolve_ref(href)
             except Exception:
                 continue
-            sid, nid = str(ref["storage_id"]), str(ref["node_id"])
-            if sid and nid:
-                canonical = f"/letfs/{sid}/{nid}"
+            if ref.storage_id and ref.node_id:
+                canonical = f"/letfs/{ref.storage_id}/{ref.node_id}"
                 replacements.append((m.start(), m.end(), f"[{label}]({canonical})"))
                 mentions.append(
                     OutboundMention(
-                        kind=str(ref["kind"]),
-                        id=nid,
-                        storage_id=sid,
-                        node_id=nid,
+                        kind=ref.kind,
+                        id=ref.node_id,
+                        storage_id=ref.storage_id,
+                        node_id=ref.node_id,
                         label=label,
                     )
                 )
@@ -185,9 +185,12 @@ def _caller(rt: RuntimeContext) -> CallerContext:
 
 
 def _format_sender_label(rt: RuntimeContext, sender_type: str, sender_id: str) -> str:
-    enriched = rt.fs.enrich_sender({"type": sender_type, "id": sender_id})
-    handle = str(enriched.get("handle") or "").lstrip("@").strip()
-    name = str(enriched.get("name") or "").strip()
+    stype: Literal["user", "agent", "system"] = (
+        sender_type if sender_type in ("user", "agent", "system") else "system"
+    )
+    enriched = rt.fs.enrich_sender(InboxSender(type=stype, id=sender_id))
+    handle = enriched.handle.lstrip("@").strip()
+    name = enriched.name.strip()
     if handle and name:
         return f"{name} ({handle})"
     if handle:
@@ -236,17 +239,16 @@ async def _send_message_impl(
                     rt, abs_att, allow_alternate=False
                 )
                 raise ToolException(f"Cannot attach missing file: {err_msg}") from None
-            sid, nid = str(ref["storage_id"]), str(ref["node_id"])
-            if not sid or not nid:
+            if not ref.storage_id or not ref.node_id:
                 raise ToolException(f"Cannot attach unresolved path: {att_path}")
             attachments.append(
                 OutboundAttachment(
-                    storage_id=sid,
-                    node_id=nid,
-                    kind=str(ref["kind"]),
-                    name=str(ref["name"]),
-                    media_type=str(ref["media_type"]),
-                    size_bytes=int(cast(int, ref["size_bytes"])),
+                    storage_id=ref.storage_id,
+                    node_id=ref.node_id,
+                    kind=ref.kind,
+                    name=ref.name,
+                    media_type=ref.media_type,
+                    size_bytes=ref.size_bytes,
                 )
             )
         if sources:
@@ -259,10 +261,10 @@ async def _send_message_impl(
                         ref = await rt.fs.resolve_ref(normalize_workspace_path(src))
                         resolved_sources.append(
                             {
-                                "kind": str(ref["kind"]),
-                                "path": str(ref["path"]),
-                                "storage_id": str(ref["storage_id"]),
-                                "node_id": str(ref["node_id"]),
+                                "kind": ref.kind,
+                                "path": ref.path,
+                                "storage_id": ref.storage_id,
+                                "node_id": ref.node_id,
                             }
                         )
                     except Exception:

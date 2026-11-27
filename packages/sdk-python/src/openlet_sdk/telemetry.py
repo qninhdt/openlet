@@ -2,7 +2,8 @@ import json
 import logging
 import math
 from collections.abc import Callable, Mapping
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import override
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
@@ -37,10 +38,11 @@ class JSONFormatter(logging.Formatter):
         super().__init__()
         self.identity = identity or {}
 
+    @override
     def format(self, record: logging.LogRecord) -> str:
         fields: dict[str, object] = {
             **self.identity,
-            "time": datetime.now(timezone.utc).isoformat(),
+            "time": datetime.now(UTC).isoformat(),
             "level": record.levelname.lower(),
             "logger": record.name,
             "message": record.getMessage(),

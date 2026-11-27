@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Literal, cast
+from typing import Annotated, Literal
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
@@ -26,25 +26,79 @@ from temporalio.client import (
     ScheduleSpec,
     ScheduleState,
     ScheduleUpdate,
-    ScheduleUpdateInput,
 )
 from temporalio.service import RPCError, RPCStatusCode
 
 from ..activity import ActivityEmitter
-from ..db import Pool, get_receipt, hash_request, json_row, save_receipt
+from ..db import Pool, get_receipt, hash_request, hydrate, save_receipt
 from ..inbox import InboxGateway, InboxItem, InboxSender
 
+type ScheduleType = Literal["at", "interval", "cron", "calendar"]
+type CalendarField = Literal[
+    "second", "minute", "hour", "day_of_month", "month", "year", "day_of_week"
+]
 type CalendarValues = Annotated[
-    dict[
-        Literal[
-            "second", "minute", "hour", "day_of_month", "month", "year", "day_of_week"
-        ],
-        list[int],
-    ],
+    dict[CalendarField, list[int]],
     Field(
         description="Calendar fields: second/minute 0-59, hour 0-23, day_of_month 1-31, month 1-12, year 1970-9999, day_of_week 0-6 (Sunday=0)."
     ),
 ]
+
+
+class AtSpec(BaseModel):
+    at: datetime
+
+
+class IntervalSpec(BaseModel):
+    every_seconds: int
+    anchor_at: datetime
+    timezone: str = "UTC"
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+
+
+class CronSpec(BaseModel):
+    cron: str
+    timezone: str = "UTC"
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+
+
+class CalendarSpec(BaseModel):
+    calendar: dict[CalendarField, list[int]]
+    timezone: str = "UTC"
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+
+
+type NormalizedScheduleSpec = AtSpec | IntervalSpec | CronSpec | CalendarSpec
+
+
+class ScheduleRecord(BaseModel):
+    id: UUID
+    leta_id: UUID
+    creator_agent_id: UUID
+    target_agent_id: UUID
+    title: str
+    content: str
+    type: ScheduleType
+    spec: dict[str, JSON] = Field(default_factory=dict[str, JSON])
+    paused: bool = False
+    created_at: datetime | None = None
+    deleted_at: datetime | None = None
+    upcoming: list[str] = Field(default_factory=list[str])
+
+
+def parse_schedule_spec(
+    sched_type: ScheduleType, raw_spec: dict[str, JSON]
+) -> NormalizedScheduleSpec:
+    if sched_type == "at":
+        return AtSpec.model_validate(raw_spec)
+    if sched_type == "interval":
+        return IntervalSpec.model_validate(raw_spec)
+    if sched_type == "cron":
+        return CronSpec.model_validate(raw_spec)
+    return CalendarSpec.model_validate(raw_spec)
 
 
 class Timing(BaseModel):
@@ -98,7 +152,7 @@ class Timing(BaseModel):
 
 def normalize_timing(
     timing: Timing, now: datetime
-) -> tuple[str, dict[str, JSON]] | None:
+) -> tuple[ScheduleType, dict[str, JSON]] | None:
     if timing.at is not None or timing.after_seconds is not None:
         at = (
             timing.at
@@ -116,7 +170,7 @@ def normalize_timing(
         spec["anchor_at"] = (timing.starts_at or now).isoformat()
         return "interval", spec
     if timing.calendar is not None:
-        spec["calendar"] = cast(dict[str, JSON], timing.calendar)
+        spec["calendar"] = {str(k): v for k, v in timing.calendar.items()}
         return "calendar", spec
     if timing.cron is not None:
         spec["cron"] = timing.cron
@@ -131,23 +185,14 @@ def temporal_schedule_id(schedule_id: UUID | str) -> str:
 def build_temporal_schedule(
     *,
     schedule_id: UUID,
-    sched_type: str,
+    sched_type: ScheduleType,
     spec: dict[str, JSON],
     paused: bool,
     orchestration_queue: str,
 ) -> Schedule:
-    start_at = (
-        datetime.fromisoformat(str(spec["starts_at"]))
-        if spec.get("starts_at")
-        else None
-    )
-    end_at = (
-        datetime.fromisoformat(str(spec["ends_at"])) if spec.get("ends_at") else None
-    )
-    tz = str(spec.get("timezone", "UTC"))
-
-    if sched_type == "at":
-        at = datetime.fromisoformat(str(spec["at"])).astimezone(UTC)
+    parsed = parse_schedule_spec(sched_type, spec)
+    if isinstance(parsed, AtSpec):
+        at = parsed.at.astimezone(UTC)
         t_spec = ScheduleSpec(
             calendars=[
                 ScheduleCalendarSpec(
@@ -162,28 +207,29 @@ def build_temporal_schedule(
             time_zone_name="UTC",
         )
         state = ScheduleState(paused=paused, limited_actions=True, remaining_actions=1)
-    elif sched_type == "interval":
-        every = timedelta(seconds=int(cast(int, spec["every_seconds"])))
+    elif isinstance(parsed, IntervalSpec):
         t_spec = ScheduleSpec(
-            intervals=[ScheduleIntervalSpec(every=every)],
-            start_at=start_at,
-            end_at=end_at,
-            time_zone_name=tz,
+            intervals=[
+                ScheduleIntervalSpec(every=timedelta(seconds=parsed.every_seconds))
+            ],
+            start_at=parsed.starts_at,
+            end_at=parsed.ends_at,
+            time_zone_name=parsed.timezone,
         )
         state = ScheduleState(paused=paused)
-    elif sched_type == "cron":
+    elif isinstance(parsed, CronSpec):
         t_spec = ScheduleSpec(
-            cron_expressions=[str(spec["cron"])],
-            start_at=start_at,
-            end_at=end_at,
-            time_zone_name=tz,
+            cron_expressions=[parsed.cron],
+            start_at=parsed.starts_at,
+            end_at=parsed.ends_at,
+            time_zone_name=parsed.timezone,
         )
         state = ScheduleState(paused=paused)
     else:
-        cal = cast(dict[str, list[int]], spec["calendar"])
+        cal = parsed.calendar
 
         def _ranges(
-            field: str, default: tuple[ScheduleRange, ...]
+            field: CalendarField, default: tuple[ScheduleRange, ...]
         ) -> tuple[ScheduleRange, ...]:
             vals = cal.get(field)
             if not vals:
@@ -202,9 +248,9 @@ def build_temporal_schedule(
                     day_of_week=_ranges("day_of_week", (ScheduleRange(0, 6),)),
                 )
             ],
-            start_at=start_at,
-            end_at=end_at,
-            time_zone_name=tz,
+            start_at=parsed.starts_at,
+            end_at=parsed.ends_at,
+            time_zone_name=parsed.timezone,
         )
         state = ScheduleState(paused=paused)
 
@@ -289,7 +335,7 @@ async def create_schedule(
     timing: Timing,
     paused: bool = False,
     request_id: UUID | None = None,
-) -> dict[str, JSON]:
+) -> ScheduleRecord:
     now = datetime.now(UTC)
     normalized = normalize_timing(timing, now)
     if normalized is None:
@@ -314,7 +360,7 @@ async def create_schedule(
             db, f"leta:{leta_id}", "schedule.create", request_id, req_hash
         )
         if cached is not None:
-            return cached
+            return ScheduleRecord.model_validate(cached)
 
     async with db.connection() as conn, conn.transaction():
         target = await (
@@ -378,20 +424,21 @@ async def create_schedule(
                     )
                 )
 
-    result = json_row(row)
-    result["upcoming"] = cast(JSON, await upcoming_times(temporal, schedule_id))
+    record = hydrate(row, ScheduleRecord)
+    record.upcoming = await upcoming_times(temporal, schedule_id)
+    serialized = record.model_dump(mode="json")
     if request_id is not None:
         await save_receipt(
-            db, f"leta:{leta_id}", "schedule.create", request_id, req_hash, result
+            db, f"leta:{leta_id}", "schedule.create", request_id, req_hash, serialized
         )
     if activity is not None:
         await activity.emit(
             leta_id=leta_id,
             agent_id=creator_agent_id,
             event_type="schedule.updated",
-            data={"action": "created", "schedule": result},
+            data={"action": "created", "schedule": serialized},
         )
-    return result
+    return record
 
 
 async def update_schedule(
@@ -407,19 +454,20 @@ async def update_schedule(
     target_agent_id: UUID | None = None,
     timing: Timing | None = None,
     paused: bool | None = None,
-) -> dict[str, JSON]:
+) -> ScheduleRecord:
     now = datetime.now(UTC)
     async with db.connection() as conn, conn.transaction():
-        current = await (
+        current_row = await (
             await conn.execute(
                 "SELECT * FROM schedules WHERE id = %s AND leta_id = %s AND deleted_at IS NULL FOR UPDATE",
                 (schedule_id, leta_id),
             )
         ).fetchone()
-        if current is None:
+        if current_row is None:
             raise LookupError("schedule not found")
+        current = hydrate(current_row, ScheduleRecord)
 
-        new_target = target_agent_id or UUID(str(current["target_agent_id"]))
+        new_target = target_agent_id or current.target_agent_id
         if target_agent_id is not None:
             ok = await (
                 await conn.execute(
@@ -430,18 +478,16 @@ async def update_schedule(
             if ok is None:
                 raise LookupError("target agent is not active in this Leta")
 
-        sched_type = str(current["type"])
-        spec = cast(dict[str, JSON], current["spec"])
+        sched_type: ScheduleType = current.type
+        spec: dict[str, JSON] = current.spec
         if timing is not None:
             normalized = normalize_timing(timing, now)
             if normalized is not None:
                 sched_type, spec = normalized
 
-        new_title = title.strip() if title is not None else str(current["title"])
-        new_content = (
-            content.strip() if content is not None else str(current["content"])
-        )
-        new_paused = paused if paused is not None else bool(current["paused"])
+        new_title = title.strip() if title is not None else current.title
+        new_content = content.strip() if content is not None else current.content
+        new_paused = paused if paused is not None else current.paused
 
         row = await (
             await conn.execute(
@@ -484,16 +530,16 @@ async def update_schedule(
             else:
                 raise
 
-    result = json_row(row)
-    result["upcoming"] = cast(JSON, await upcoming_times(temporal, schedule_id))
+    record = hydrate(row, ScheduleRecord)
+    record.upcoming = await upcoming_times(temporal, schedule_id)
     if activity is not None:
         await activity.emit(
             leta_id=leta_id,
-            agent_id=UUID(str(row["creator_agent_id"])),
+            agent_id=record.creator_agent_id,
             event_type="schedule.updated",
-            data={"action": "updated", "schedule": result},
+            data={"action": "updated", "schedule": record.model_dump(mode="json")},
         )
-    return result
+    return record
 
 
 async def delete_schedule(
@@ -538,7 +584,7 @@ async def delete_schedule(
 
 async def list_schedules(
     db: Pool, leta_id: UUID, *, target_agent_id: UUID | None = None
-) -> list[dict[str, JSON]]:
+) -> list[ScheduleRecord]:
     async with db.connection() as conn:
         rows = await (
             await conn.execute(
@@ -551,12 +597,12 @@ async def list_schedules(
                 (leta_id, target_agent_id, target_agent_id),
             )
         ).fetchall()
-    return [json_row(r) for r in rows]
+    return [hydrate(r, ScheduleRecord) for r in rows]
 
 
 async def get_schedule(
     db: Pool, temporal: TemporalClient | None, leta_id: UUID, schedule_id: UUID
-) -> dict[str, JSON]:
+) -> ScheduleRecord:
     async with db.connection() as conn:
         row = await (
             await conn.execute(
@@ -566,9 +612,9 @@ async def get_schedule(
         ).fetchone()
     if row is None:
         raise LookupError("schedule not found")
-    out = json_row(row)
-    out["upcoming"] = cast(JSON, await upcoming_times(temporal, schedule_id))
-    return out
+    record = hydrate(row, ScheduleRecord)
+    record.upcoming = await upcoming_times(temporal, schedule_id)
+    return record
 
 
 async def fire_schedule(
@@ -580,23 +626,20 @@ async def fire_schedule(
         ).fetchone()
     if row is None or row["deleted_at"] is not None or row["paused"]:
         return
-    target_id = UUID(str(row["target_agent_id"]))
+    record = hydrate(row, ScheduleRecord)
     await inbox.deliver(
         InboxItem(
-            agent_id=target_id,
+            agent_id=record.target_agent_id,
             idempotency_key=f"sched:{schedule_id}:{nominal_time.astimezone(UTC).isoformat()}",
             kind="schedule",
             channel="schedule",
             reply_address=None,
             sender=InboxSender(type="system", id=str(schedule_id), name="schedule"),
-            content=str(row["content"]),
+            content=record.content,
             metadata={
                 "schedule_id": str(schedule_id),
-                "title": str(row["title"]),
+                "title": record.title,
                 "scheduled_for": nominal_time.astimezone(UTC).isoformat(),
             },
         )
     )
-
-
-_ = ScheduleUpdateInput

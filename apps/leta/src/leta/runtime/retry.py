@@ -6,7 +6,6 @@ import random
 from collections.abc import Awaitable, Callable
 from email.utils import parsedate_to_datetime
 from time import monotonic, time
-from typing import cast
 
 from ..config import ModelConfig, ModelRetryConfig, ModelSpec
 
@@ -273,6 +272,3 @@ async def retry_one_shot[T](
             if ra is not None:
                 delay = max(delay, ra)
             await sleep(delay)
-
-
-_ = cast

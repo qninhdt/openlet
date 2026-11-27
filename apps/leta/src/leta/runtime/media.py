@@ -3,12 +3,12 @@ from __future__ import annotations
 import base64
 from dataclasses import dataclass
 from io import BytesIO
-from typing import cast
 
 from langchain_core.messages import BaseMessage
 from PIL import Image
 
 from ..config import MediaConfig
+from .content import image_block_data_url_bytes, parse_tool_artifact
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,20 +171,6 @@ def optimize_image_bytes(data: bytes, cfg: MediaConfig) -> PreparedImage | str:
     return "[Image could not be resized under base64 size limit; omitted]"
 
 
-def _image_block_bytes(block: object) -> int:
-    if not isinstance(block, dict):
-        return 0
-    b = cast(dict[str, object], block)
-    if b.get("type") != "image_url":
-        return 0
-    img = b.get("image_url")
-    if isinstance(img, dict):
-        url = cast(dict[str, object], img).get("url", "")
-        if isinstance(url, str) and url.startswith("data:image/"):
-            return len(url)
-    return 0
-
-
 def bound_history_images(
     messages: list[BaseMessage], cfg: MediaConfig
 ) -> list[BaseMessage]:
@@ -195,14 +181,9 @@ def bound_history_images(
         content = msg.content
         if not isinstance(content, list):
             continue
-        path_hint = ""
-        artifact = getattr(msg, "artifact", None)
-        if isinstance(artifact, dict):
-            raw_path = cast(dict[str, object], artifact).get("path")
-            if isinstance(raw_path, str):
-                path_hint = raw_path
+        path_hint = parse_tool_artifact(msg).path
         for bi, block in enumerate(content):
-            sz = _image_block_bytes(block)
+            sz = image_block_data_url_bytes(block)
             if sz > 0:
                 image_locs.append((mi, bi, sz, path_hint))
                 total += sz

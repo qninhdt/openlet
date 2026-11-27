@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Literal, cast
+from typing import Literal, override
 from uuid import UUID
 
 import grpc
@@ -14,6 +14,7 @@ from openlet_sdk.config import JSON
 from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
 
 from ..config import Services
+from ..db import json_value
 from ..inbox import InboxItem, InboxSender
 from ..orchestration.lifecycle_workflow import LetaLifecycleInput, LetaLifecycleWorkflow
 
@@ -36,6 +37,7 @@ class LetaInternalServicer(pb_grpc.LetaInternalServiceServicer):
     def __init__(self, services: Services) -> None:
         self.s = services
 
+    @override
     async def DeliverInbox(
         self,
         request: pb.DeliverInboxRequest,
@@ -74,8 +76,8 @@ class LetaInternalServicer(pb_grpc.LetaInternalServiceServicer):
             extra_meta: JSON = {}
             if ev.metadata_json:
                 try:
-                    extra_meta = cast(
-                        JSON, json.loads(ev.metadata_json.decode("utf-8"))
+                    extra_meta = json_value(
+                        json.loads(ev.metadata_json.decode("utf-8"))
                     )
                 except Exception:
                     await context.abort(
@@ -140,6 +142,7 @@ class LetaInternalServicer(pb_grpc.LetaInternalServiceServicer):
             seq=result.seq or 0,
         )
 
+    @override
     async def DeleteWorkspaceAgents(
         self,
         request: pb.DeleteWorkspaceAgentsRequest,

@@ -3,13 +3,13 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable
-from typing import cast
 from urllib.parse import quote
 
 from fastapi import FastAPI
 from langfuse import Langfuse
 from openlet_sdk.config import Config
 from openlet_sdk.telemetry import initialize, initialize_langfuse
+from openlet_sdk.types import is_mapping, is_object_list
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.psycopg import PsycopgInstrumentor
 
@@ -24,13 +24,10 @@ def mask_trace_data(*, data: object, **kwargs: object) -> object:
             prefix = data.split(";base64,", 1)[0]
             return f"{prefix};base64,[omitted {len(data)} chars]"
         return data
-    if isinstance(data, list):
-        return [mask_trace_data(data=item) for item in cast(list[object], data)]
-    if isinstance(data, dict):
-        return {
-            k: mask_trace_data(data=v)
-            for k, v in cast(dict[object, object], data).items()
-        }
+    if is_object_list(data):
+        return [mask_trace_data(data=item) for item in data]
+    if is_mapping(data):
+        return {k: mask_trace_data(data=v) for k, v in data.items()}
     return data
 
 

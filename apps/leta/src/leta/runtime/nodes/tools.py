@@ -7,17 +7,23 @@ from collections.abc import Awaitable, Callable, Sequence
 from time import monotonic
 from typing import Any, Literal, Protocol, cast
 
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, ToolCall, ToolMessage
 from langchain_core.tools import BaseTool
 from langgraph.prebuilt import ToolNode
 from langgraph.prebuilt.tool_node import ToolCallRequest, ToolInvocationError
 from langgraph.runtime import Runtime
 from langgraph.types import Command
 from openlet_sdk.config import JSON
+from openlet_sdk.types import is_object_list, is_str_mapping
 from pydantic import BaseModel
 
 from ...truncation import format_head_truncated, truncate_head
-from ..state import AgentState, RuntimeContext
+from ..content import (
+    extract_text_from_content,
+    message_artifact_dict,
+    parse_tool_artifact,
+)
+from ..state import AgentState, AgentStateUpdate, RuntimeContext
 from ..tool_repair import (
     format_tool_error,
     repair_tool_args_with_notes,
@@ -39,34 +45,19 @@ def _safe_artifact_for_event(artifact: dict[str, JSON]) -> dict[str, JSON]:
     return cleaned
 
 
-def _text_from_content(content: str | list[str | dict[Any, Any]]) -> str:
-    if isinstance(content, str):
-        return content
-    parts: list[str] = []
-    for blk in content:
-        if isinstance(blk, str):
-            parts.append(blk)
-        elif blk.get("type") == "text":
-            parts.append(str(blk.get("text", "")))
-        elif blk.get("type") == "image_url":
-            parts.append("[inline image attached]")
-    return "\n".join(parts)
-
-
 def _tool_schema_and_params(tool: BaseTool) -> tuple[dict[str, object], list[str]]:
     schema_cls = tool.tool_call_schema
     if isinstance(schema_cls, type) and issubclass(schema_cls, BaseModel):
-        schema = cast(dict[str, object], schema_cls.model_json_schema())
-    elif isinstance(schema_cls, dict):
-        schema = cast(dict[str, object], schema_cls)
+        raw_schema: object = schema_cls.model_json_schema()
+        schema: dict[str, object] = (
+            dict(raw_schema) if is_str_mapping(raw_schema) else {}
+        )
+    elif is_str_mapping(schema_cls):
+        schema = dict(schema_cls)
     else:
         schema = {}
     props = schema.get("properties")
-    valid = (
-        sorted(str(k) for k in cast(dict[str, object], props).keys())
-        if isinstance(props, dict)
-        else []
-    )
+    valid = sorted(props.keys()) if is_str_mapping(props) else []
     return schema, valid
 
 
@@ -78,6 +69,8 @@ async def _emit_tool_result(
     status: Literal["success", "error"],
     full_text: str,
     artifact: dict[str, JSON],
+    truncated: bool = False,
+    output_path: str | None = None,
     duration_ms: int,
 ) -> None:
     preview_limit = 2000
@@ -89,8 +82,8 @@ async def _emit_tool_result(
         "status": status,
         "preview": preview,
         "has_more_content": has_more,
-        "truncated": bool(artifact.get("truncated", False)),
-        "output_path": artifact.get("output_path"),
+        "truncated": truncated,
+        "output_path": output_path,
         "duration_ms": duration_ms,
         "artifact": artifact,
     }
@@ -106,12 +99,12 @@ async def _emit_tool_result(
 
 
 def _is_truncated_by_length(state: object) -> bool:
-    if not isinstance(state, dict):
+    if not is_str_mapping(state):
         return False
-    msgs = cast(dict[str, object], state).get("messages")
-    if not isinstance(msgs, list) or not msgs:
+    msgs = state.get("messages")
+    if not is_object_list(msgs) or not msgs:
         return False
-    last = cast(list[object], msgs)[-1]
+    last = msgs[-1]
     if not isinstance(last, AIMessage):
         return False
     return str(last.response_metadata.get("finish_reason") or "").lower() == "length"
@@ -122,7 +115,7 @@ class ToolsNodeFn(Protocol):
         self,
         state: AgentState,
         runtime: Runtime[RuntimeContext],
-    ) -> dict[str, object]: ...
+    ) -> AgentStateUpdate: ...
 
 
 def build_tools_node(tools: Sequence[BaseTool]) -> ToolsNodeFn:
@@ -143,8 +136,7 @@ def build_tools_node(tools: Sequence[BaseTool]) -> ToolsNodeFn:
         request: ToolCallRequest,
         execute: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
     ) -> ToolMessage | Command[Any]:
-        req_runtime: Any = getattr(request, "runtime")
-        rt = cast(RuntimeContext, req_runtime.context)
+        rt = cast("RuntimeContext", request.runtime.context)  # pyright: ignore[reportUnknownMemberType]
         to_cfg = rt.services.settings.tool_output
         call = request.tool_call
         call_id = str(call.get("id") or "")
@@ -206,8 +198,13 @@ def build_tools_node(tools: Sequence[BaseTool]) -> ToolsNodeFn:
                 tool_name=resolved_name,
                 max_depth=to_cfg.input_repair_max_depth,
             )
-            next_call = {**call, "name": resolved_name, "args": healed_args}
-            healed_request = request.override(tool=target_tool, tool_call=next_call)  # pyright: ignore[reportArgumentType]
+            next_call: ToolCall = {
+                "name": resolved_name,
+                "args": healed_args,
+                "id": call.get("id"),
+                "type": "tool_call",
+            }
+            healed_request = request.override(tool=target_tool, tool_call=next_call)
             result = await execute(healed_request)
 
         duration_ms = int((monotonic() - start) * 1000)
@@ -215,7 +212,7 @@ def build_tools_node(tools: Sequence[BaseTool]) -> ToolsNodeFn:
             return result
 
         if result.status == "error":
-            err_text = _text_from_content(result.content)
+            err_text = extract_text_from_content(result.content)
             await _emit_tool_result(
                 rt,
                 call_id=call_id,
@@ -232,24 +229,18 @@ def build_tools_node(tools: Sequence[BaseTool]) -> ToolsNodeFn:
                 status="error",
             )
 
-        raw_artifact = getattr(result, "artifact", None)
-        artifact: dict[str, JSON] = (
-            dict(cast(dict[str, JSON], raw_artifact))
-            if isinstance(raw_artifact, dict)
-            else {}
-        )
-        pre_truncated = bool(artifact.pop("_pre_truncated", False))
-        extra_note = artifact.pop("_note", None)
-        if isinstance(extra_note, str) and extra_note:
-            heal_notes.append(extra_note)
+        artifact = message_artifact_dict(result)
+        art_meta = parse_tool_artifact(result)
+        artifact.pop("_pre_truncated", None)
+        artifact.pop("_note", None)
+        if art_meta.note:
+            heal_notes.append(art_meta.note)
 
         content: str | list[str | dict[Any, Any]] = result.content
-        truncated = bool(artifact.get("truncated", False))
-        spill_path: str | None = (
-            str(artifact["output_path"]) if artifact.get("output_path") else None
-        )
+        truncated = art_meta.truncated
+        spill_path = art_meta.output_path
 
-        if isinstance(content, str) and not pre_truncated:
+        if isinstance(content, str) and not art_meta.pre_truncated:
             trunc = truncate_head(
                 content,
                 max_lines=to_cfg.max_lines,
@@ -277,7 +268,7 @@ def build_tools_node(tools: Sequence[BaseTool]) -> ToolsNodeFn:
                 content = [{"type": "text", "text": prefix}, *content]
 
         safe_artifact = _safe_artifact_for_event(artifact)
-        full_text = _text_from_content(content)
+        full_text = extract_text_from_content(content)
         await _emit_tool_result(
             rt,
             call_id=call_id,
@@ -289,6 +280,8 @@ def build_tools_node(tools: Sequence[BaseTool]) -> ToolsNodeFn:
                 "truncated": truncated,
                 "output_path": spill_path,
             },
+            truncated=truncated,
+            output_path=spill_path,
             duration_ms=duration_ms,
         )
         return ToolMessage(
@@ -308,7 +301,7 @@ def build_tools_node(tools: Sequence[BaseTool]) -> ToolsNodeFn:
     async def _tools_node(
         state: AgentState,
         runtime: Runtime[RuntimeContext],
-    ) -> dict[str, object]:
+    ) -> AgentStateUpdate:
         msgs = state["messages"]
         if not msgs or not isinstance(msgs[-1], AIMessage):
             return {}
@@ -317,10 +310,10 @@ def build_tools_node(tools: Sequence[BaseTool]) -> ToolsNodeFn:
 
         if ai_msg.tool_calls:
             res: object = await native_tool_node.ainvoke(state)
-            if isinstance(res, dict):
-                res_msgs = cast(dict[str, object], res).get("messages")
-                if isinstance(res_msgs, list):
-                    out_msgs.extend(cast(list[ToolMessage], res_msgs))
+            if is_str_mapping(res):
+                res_msgs = res.get("messages")
+                if is_object_list(res_msgs):
+                    out_msgs.extend(m for m in res_msgs if isinstance(m, ToolMessage))
 
         if ai_msg.invalid_tool_calls:
             rt = runtime.context
@@ -383,15 +376,7 @@ def after_tools_router(state: AgentState) -> Literal["end_turn", "inbox"]:
     if not batch:
         return "inbox"
     all_ok = all(tm.status != "error" for tm in batch)
-    any_end_turn = False
-    for tm in batch:
-        raw_art: object = getattr(tm, "artifact", None)
-        if (
-            isinstance(raw_art, dict)
-            and cast(dict[str, object], raw_art).get("end_turn") is True
-        ):
-            any_end_turn = True
-            break
+    any_end_turn = any(parse_tool_artifact(tm).end_turn for tm in batch)
     if all_ok and any_end_turn:
         return "end_turn"
     return "inbox"

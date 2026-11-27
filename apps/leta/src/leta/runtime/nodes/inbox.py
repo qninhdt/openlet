@@ -4,78 +4,84 @@ import xml.sax.saxutils as sax
 from collections.abc import Mapping
 from datetime import datetime
 from time import monotonic
-from typing import Literal, cast
+from typing import Literal
 
 from langchain_core.messages import HumanMessage, ToolMessage
 from langgraph.runtime import Runtime
 from openlet_sdk.config import JSON
 
 from ...channels.base import CallerContext
+from ...inbox import InboxMetadata, InboxRecord, InboxSender
 from ..formatting import (
     format_hitl_outcome,
     format_hitl_outcome_attr,
     format_hitl_response,
 )
-from ..state import AgentState, RuntimeContext
+from ..state import AgentState, AgentStateUpdate, RuntimeContext
 
 
-def _iso(val: object) -> str:
-    if isinstance(val, datetime):
-        return val.isoformat()
-    return str(val or "")
+def _iso(val: datetime) -> str:
+    return val.isoformat()
 
 
-def _sender_label(sender: Mapping[str, object]) -> str:
-    handle = str(sender.get("handle") or "").lstrip("@").strip()
-    name = str(sender.get("name") or "").strip()
-    sid = str(sender.get("id") or "")
-    stype = str(sender.get("type") or "")
+def _sender_label(sender: InboxSender) -> str:
+    handle = sender.handle.lstrip("@").strip()
+    name = sender.name.strip()
     if handle and name:
         return f"{name} ({handle})"
     if handle:
         return handle
-    return name or f"{stype}:{sid}"
+    return name or f"{sender.type}:{sender.id}"
 
 
-def _inbox_display_content(kind: str, content: str, meta: Mapping[str, object]) -> str:
+def _inbox_display_content(kind: str, content: str, meta: InboxMetadata) -> str:
     if content:
         return content
     if kind == "hitl":
-        req_id = str(meta.get("request_id") or "")
-        status = str(meta.get("status") or "")
-        title = str(meta.get("title") or "")
-        parts = [f"HITL request '{title}' ({req_id}) resolved with status: {status}."]
-        resp_text = format_hitl_response(meta.get("payload"), meta.get("response"))
+        parts = [
+            f"HITL request '{meta.title}' ({meta.request_id}) resolved with status: {meta.status}."
+        ]
+        resp_text = format_hitl_response(meta.payload, meta.response)
         if resp_text:
             parts.append(resp_text)
-        outcome_text = format_hitl_outcome(meta.get("outcome"))
+        outcome_text = format_hitl_outcome(meta.outcome)
         if outcome_text:
             parts.append(f"Outcome: {outcome_text}")
         return "\n".join(parts)
-    if kind == "notification" and meta.get("event") == "subagent_failed":
-        return str(meta.get("error") or "unknown error")
+    if kind == "notification" and meta.event == "subagent_failed":
+        return meta.error or "unknown error"
     return ""
 
 
+def _coerce_record(row: InboxRecord | Mapping[str, object]) -> InboxRecord:
+    if isinstance(row, InboxRecord):
+        return row
+    return InboxRecord.model_validate(row)
+
+
+def _coerce_sender(sender: InboxSender | Mapping[str, object]) -> InboxSender:
+    if isinstance(sender, InboxSender):
+        return sender
+    return InboxSender.model_validate(sender)
+
+
 def format_inbox_item_full(
-    row: Mapping[str, object],
+    row: InboxRecord | Mapping[str, object],
     *,
-    sender_override: Mapping[str, object] | None = None,
+    sender_override: InboxSender | Mapping[str, object] | None = None,
     chat_storage: str | None = None,
 ) -> str:
-    seq = int(cast(int, row["seq"]))
-    kind = str(row["kind"])
-    channel = str(row.get("channel") or "")
-    reply_to = str(row.get("reply_address") or "")
+    rec = _coerce_record(row)
+    seq = rec.seq
+    kind = rec.kind
+    channel = rec.channel or ""
+    reply_to = rec.reply_address or ""
     sender = (
-        sender_override
-        if sender_override is not None
-        else cast(Mapping[str, object], row.get("sender") or {})
+        _coerce_sender(sender_override) if sender_override is not None else rec.sender
     )
-    meta = cast(Mapping[str, object], row.get("metadata") or {})
-    attachments = cast(list[Mapping[str, object]], row.get("attachments") or [])
-    content = str(row.get("content") or "")
-    created_at = _iso(row.get("created_at"))
+    meta = rec.metadata
+    content = rec.content
+    created_at = _iso(rec.created_at)
     from_str = _sender_label(sender)
 
     if kind == "agent":
@@ -87,77 +93,65 @@ def format_inbox_item_full(
         )
 
     if kind == "schedule":
-        sched_id = str(meta.get("schedule_id") or "")
-        title = str(meta.get("title") or "")
-        scheduled_for = str(meta.get("scheduled_for") or created_at)
+        scheduled_for = meta.scheduled_for or created_at
         return (
-            f'  <schedule seq="{seq}" id={sax.quoteattr(sched_id)} '
-            f"title={sax.quoteattr(title)} scheduled_for={sax.quoteattr(scheduled_for)} "
+            f'  <schedule seq="{seq}" id={sax.quoteattr(meta.schedule_id)} '
+            f"title={sax.quoteattr(meta.title)} scheduled_for={sax.quoteattr(scheduled_for)} "
             f"delivered_at={sax.quoteattr(created_at)}>\n"
             f"    {sax.escape(content)}\n"
             f"  </schedule>"
         )
 
     if kind == "hitl":
-        req_id = str(meta.get("request_id") or "")
-        h_type = str(meta.get("type") or "")
-        status = str(meta.get("status") or "")
-        outcome = format_hitl_outcome_attr(meta.get("outcome"))
+        outcome = format_hitl_outcome_attr(meta.outcome)
         body = _inbox_display_content(kind, content, meta)
         return (
-            f'  <hitl-result seq="{seq}" request_id={sax.quoteattr(req_id)} '
-            f"type={sax.quoteattr(h_type)} status={sax.quoteattr(status)} "
+            f'  <hitl-result seq="{seq}" request_id={sax.quoteattr(meta.request_id)} '
+            f"type={sax.quoteattr(meta.type)} status={sax.quoteattr(meta.status)} "
             f"outcome={sax.quoteattr(outcome)} from={sax.quoteattr(from_str)}>\n"
             f"    {sax.escape(body)}\n"
             f"  </hitl-result>"
         )
 
-    if kind == "notification" and meta.get("event") == "subagent_failed":
-        sub_handle = str(meta.get("subagent_handle") or sender.get("handle") or "")
-        sub_name = str(meta.get("subagent_name") or sender.get("name") or "")
-        sub_id = str(meta.get("subagent_id") or "")
+    if kind == "notification" and meta.event == "subagent_failed":
+        sub_handle = meta.subagent_handle or sender.handle
+        sub_name = meta.subagent_name or sender.name
         err_text = _inbox_display_content(kind, content, meta)
         return (
             f'  <subagent-failed seq="{seq}" handle={sax.quoteattr(sub_handle)} '
-            f"name={sax.quoteattr(sub_name)} subagent_id={sax.quoteattr(sub_id)}>\n"
+            f"name={sax.quoteattr(sub_name)} subagent_id={sax.quoteattr(meta.subagent_id)}>\n"
             f"    {sax.escape(err_text)}\n"
             f"  </subagent-failed>"
         )
 
     if kind == "reaction":
-        target_msg = str(meta.get("target_message_id") or "")
-        emoji = str(meta.get("emoji") or "")
-        action = str(meta.get("action") or "added")
         return (
             f'  <reaction seq="{seq}" channel={sax.quoteattr(channel)} '
-            f"from={sax.quoteattr(from_str)} target_message_id={sax.quoteattr(target_msg)} "
-            f"emoji={sax.quoteattr(emoji)} action={sax.quoteattr(action)} />"
+            f"from={sax.quoteattr(from_str)} target_message_id={sax.quoteattr(meta.target_message_id)} "
+            f"emoji={sax.quoteattr(meta.emoji)} action={sax.quoteattr(meta.action)} />"
         )
 
-    msg_id = str(meta.get("message_id") or "")
     storage_attr = (
         f" chat_storage={sax.quoteattr(chat_storage)}" if chat_storage else ""
     )
     lines = [
-        f'  <message seq="{seq}" id={sax.quoteattr(msg_id)} channel={sax.quoteattr(channel)} '
+        f'  <message seq="{seq}" id={sax.quoteattr(meta.message_id)} channel={sax.quoteattr(channel)} '
         f"reply_address={sax.quoteattr(reply_to)}{storage_attr} from={sax.quoteattr(from_str)} "
         f"at={sax.quoteattr(created_at)}>"
     ]
-    if meta.get("reply_to_message_id"):
-        lines.append(
-            f"    <reply-to id={sax.quoteattr(str(meta['reply_to_message_id']))} />"
-        )
+    if meta.reply_to_message_id:
+        lines.append(f"    <reply-to id={sax.quoteattr(meta.reply_to_message_id)} />")
     lines.append(f"    <content>{sax.escape(content)}</content>")
-    if attachments:
+    if rec.attachments:
         lines.append("    <attachments>")
-        for att in attachments:
-            sid = str(att.get("storage_id") or "")
-            nid = str(att.get("node_id") or "")
-            name = str(att.get("name") or "")
-            mtype = str(att.get("media_type") or "")
-            letfs_path = f"/letfs/{sid}/{nid}" if sid and nid else ""
+        for att in rec.attachments:
+            letfs_path = (
+                f"/letfs/{att.storage_id}/{att.node_id}"
+                if att.storage_id and att.node_id
+                else ""
+            )
             lines.append(
-                f"      <attachment name={sax.quoteattr(name)} media_type={sax.quoteattr(mtype)} "
+                f"      <attachment name={sax.quoteattr(att.name)} media_type={sax.quoteattr(att.media_type)} "
                 f"path={sax.quoteattr(letfs_path)} />"
             )
         lines.append("    </attachments>")
@@ -166,20 +160,21 @@ def format_inbox_item_full(
 
 
 def format_inbox_notification_preview(
-    row: Mapping[str, object], *, preview_chars: int = 120, unread_in_channel: int = 1
+    row: InboxRecord | Mapping[str, object],
+    *,
+    preview_chars: int = 120,
+    unread_in_channel: int = 1,
 ) -> str:
-    seq = int(cast(int, row["seq"]))
-    channel = str(row.get("channel") or row.get("kind") or "")
-    reply_to = str(row.get("reply_address") or "")
-    sender = cast(Mapping[str, object], row.get("sender") or {})
-    meta = cast(Mapping[str, object], row.get("metadata") or {})
-    msg_id = str(meta.get("message_id") or meta.get("schedule_id") or "")
-    created_at = _iso(row.get("created_at"))
-    from_str = _sender_label(sender)
-    raw = " ".join(str(row.get("content") or "").split())
+    rec = _coerce_record(row)
+    channel = rec.channel or rec.kind
+    reply_to = rec.reply_address or ""
+    msg_id = rec.metadata.message_id or rec.metadata.schedule_id
+    created_at = _iso(rec.created_at)
+    from_str = _sender_label(rec.sender)
+    raw = " ".join(rec.content.split())
     snippet = raw[:preview_chars] + ("..." if len(raw) > preview_chars else "")
     return (
-        f'  <notification seq="{seq}" id={sax.quoteattr(msg_id)} channel={sax.quoteattr(channel)} '
+        f'  <notification seq="{rec.seq}" id={sax.quoteattr(msg_id)} channel={sax.quoteattr(channel)} '
         f"from={sax.quoteattr(from_str)} to={sax.quoteattr(reply_to)} at={sax.quoteattr(created_at)} "
         f'unread_in_channel="{unread_in_channel}">'
         f"{sax.escape(snippet)} "
@@ -209,7 +204,7 @@ def _caller(rt: RuntimeContext) -> CallerContext:
 
 async def inbox_node(
     state: AgentState, runtime: Runtime[RuntimeContext]
-) -> dict[str, object]:
+) -> AgentStateUpdate:
     """Drain inbox_items with pending -> previewed -> delivered policy and XML <inbox> framing."""
     rt = runtime.context
     _prune_expired_channels(rt)
@@ -228,43 +223,39 @@ async def inbox_node(
     delivered_seqs: list[int] = []
     previewed_seqs: list[int] = []
     xml_entries: list[str] = []
-    activity_items: list[JSON] = []
+    activity_items: list[dict[str, JSON]] = []
     typing_targets: set[str] = set()
     read_seqs: dict[str, int] = {}
 
     # Count per-channel batch sizes for unread_in_channel hints on mid-run previews.
     channel_counts: dict[str, int] = {}
     for r in rows:
-        addr = str(r.get("reply_address") or "")
+        addr = r.reply_address or ""
         if addr:
             channel_counts[addr] = channel_counts.get(addr, 0) + 1
 
-    if any(str(r.get("reply_address") or "").startswith("chat:") for r in rows):
+    if any((r.reply_address or "").startswith("chat:") for r in rows):
         try:
             await rt.fs.discover()
         except Exception:
             pass
 
     for r in rows:
-        seq = int(r["seq"])
-        kind = str(r["kind"])
-        reply_addr = str(r.get("reply_address") or "")
-        content = str(r.get("content") or "")
+        reply_addr = r.reply_address or ""
         is_external = bool(reply_addr) and not reply_addr.startswith("agent:")
-        raw_sender = cast(Mapping[str, object], r.get("sender") or {})
-        enriched_sender = rt.fs.enrich_sender(raw_sender) if is_external else raw_sender
+        enriched_sender = rt.fs.enrich_sender(r.sender) if is_external else r.sender
         chat_storage = rt.fs.chat_mount_for(reply_addr) if is_external else None
 
         deliver_full = (
             not rt.is_root
             or is_turn_start
-            or kind in ("agent", "hitl", "reaction")
+            or r.kind in ("agent", "hitl", "reaction")
             or (reply_addr in rt.active_channels)
-            or (kind == "notification" and len(content) <= 300)
+            or (r.kind == "notification" and len(r.content) <= 300)
         )
 
         if deliver_full:
-            delivered_seqs.append(seq)
+            delivered_seqs.append(r.seq)
             xml_entries.append(
                 format_inbox_item_full(
                     r, sender_override=enriched_sender, chat_storage=chat_storage
@@ -272,16 +263,14 @@ async def inbox_node(
             )
             if is_external:
                 rt.active_channels[reply_addr] = now
-                meta = cast(Mapping[str, object], r.get("metadata") or {})
-                raw_msg_seq = meta.get("seq")
-                if isinstance(raw_msg_seq, int) and raw_msg_seq > 0:
+                if r.metadata.seq is not None and r.metadata.seq > 0:
                     prev = read_seqs.get(reply_addr, 0)
-                    if raw_msg_seq > prev:
-                        read_seqs[reply_addr] = raw_msg_seq
-                if not bool(r.get("silent")):
+                    if r.metadata.seq > prev:
+                        read_seqs[reply_addr] = r.metadata.seq
+                if not r.silent:
                     typing_targets.add(reply_addr)
         else:
-            previewed_seqs.append(seq)
+            previewed_seqs.append(r.seq)
             xml_entries.append(
                 format_inbox_notification_preview(
                     r,
@@ -290,26 +279,21 @@ async def inbox_node(
                 )
             )
 
-        meta_dict = cast(
-            dict[str, JSON], dict(cast(Mapping[str, object], r.get("metadata") or {}))
-        )
-        raw_atts = cast(
-            list[JSON], list(cast(list[object], r.get("attachments") or []))
-        )
-        sender_dict = cast(dict[str, JSON], dict(enriched_sender))
-        display_content = _inbox_display_content(kind, content, meta_dict)
+        att_dicts = [a.model_dump() for a in r.attachments]
+        sender_dict: dict[str, JSON] = enriched_sender.model_dump()
+        display_content = _inbox_display_content(r.kind, r.content, r.metadata)
         activity_items.append(
             {
-                "seq": seq,
-                "kind": kind,
-                "channel": r.get("channel"),
+                "seq": r.seq,
+                "kind": r.kind,
+                "channel": r.channel,
                 "sender": sender_dict,
                 "reply_address": reply_addr or None,
                 "content": display_content[:4000],
                 "preview": display_content[:200],
-                "attachments": raw_atts,
-                "attachments_count": len(raw_atts),
-                "metadata": meta_dict,
+                "attachments": att_dicts,
+                "attachments_count": len(att_dicts),
+                "metadata": r.metadata.model_dump(mode="json", exclude_unset=True),
                 "delivery_state": "delivered" if deliver_full else "previewed",
             }
         )

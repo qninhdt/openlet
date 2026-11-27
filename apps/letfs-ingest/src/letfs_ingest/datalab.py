@@ -1,9 +1,12 @@
+from __future__ import annotations
+
 import base64
-import json
 import re
 from collections import Counter
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .convert import InvalidDocument, page_limit, validate_output
 from .filters import ImageArtifactWriter, ignored_repeated_digests, image_digest
@@ -14,29 +17,45 @@ if TYPE_CHECKING:
     from openlet_sdk.config import Config
 
 
-def response_object(value: object) -> dict[str, object]:
-    if isinstance(value, dict):
-        return {str(k): v for k, v in cast(dict[object, object], value).items()}
-    return {}
+class _DatalabBlock(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    block_type: str | None = None
+    images: dict[str, object] | None = None
 
 
-def _block_types(result: dict[str, object]) -> dict[str, str]:
+class _DatalabChunks(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    blocks: list[_DatalabBlock] = Field(default_factory=list[_DatalabBlock])
+
+
+class _DatalabMetadata(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    failed_pages: object = None
+
+
+class _DatalabPayload(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    success: bool | None = None
+    page_count: int | None = None
+    markdown: str | None = None
+    metadata: _DatalabMetadata | None = None
+    chunks: _DatalabChunks | None = None
+    images: dict[str, object] | None = None
+
+
+def _block_types(payload: _DatalabPayload) -> dict[str, str]:
     types: dict[str, str] = {}
-    chunks = result.get("chunks")
-    if not isinstance(chunks, dict):
+    if payload.chunks is None:
         return types
-    blocks = response_object(cast(object, chunks)).get("blocks")
-    if not isinstance(blocks, list):
-        return types
-    for block in cast(list[object], blocks):
-        obj = response_object(block)
-        btype = obj.get("block_type")
-        if not isinstance(btype, str):
+    for block in payload.chunks.blocks:
+        if block.block_type is None or block.images is None:
             continue
-        imgs = obj.get("images")
-        if isinstance(imgs, dict):
-            for key in cast(dict[object, object], imgs):
-                types[str(key)] = btype
+        for key in block.images:
+            types[key] = block.block_type
     return types
 
 
@@ -101,28 +120,32 @@ def _rewrite_image_links(body: str, renames: dict[str, str]) -> str:
 
 
 def export(source: Path, success: bool, output: Path, config: Config) -> None:
-    with source.open("rb") as stream:
-        result = response_object(json.load(stream))
-    result.setdefault("success", success)
+    try:
+        payload = _DatalabPayload.model_validate_json(source.read_bytes())
+    except ValidationError as exc:
+        raise InvalidDocument(f"Datalab returned invalid JSON payload: {exc}") from exc
+
+    effective_success = success if payload.success is None else payload.success
     parser = config["services"]["letfs_ingest"]["cpu"]
     limits = parser["limits"]
     storage = config["services"]["letfs"]
-    count, body = result.get("page_count"), result.get("markdown")
+    count = payload.page_count
+    body = payload.markdown
     limit = page_limit(config)
-    if type(count) is int and count > limit:
+    if count is not None and count > limit:
         raise InvalidDocument(f"Document exceeds the {limit}-page limit")
     if (
-        result.get("success") is not True
-        or type(count) is not int
+        effective_success is not True
+        or count is None
         or count <= 0
-        or not isinstance(body, str)
+        or body is None
         or not body.strip()
-        or response_object(result.get("metadata") or {}).get("failed_pages")
+        or (payload.metadata is not None and payload.metadata.failed_pages)
     ):
         raise InvalidDocument("Datalab returned incomplete content")
 
-    block_map = _block_types(result)
-    images = response_object(result.get("images") or {})
+    block_map = _block_types(payload)
+    images = payload.images or {}
     max_blob = storage["processing"]["max_artifact_blob_bytes"]
     max_artifacts = storage["processing"]["max_artifacts"]
 

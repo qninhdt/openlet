@@ -8,7 +8,6 @@ import sys
 from collections.abc import Sequence
 from dataclasses import asdict
 from pathlib import Path
-from typing import cast
 
 from .environment import Environment
 from .models import EnvMode
@@ -92,9 +91,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     if args.command == "up":
+        mode: EnvMode = "mock" if args.mode == "mock" else "live"
         env = Environment(
             project=args.project,
-            mode=cast(EnvMode, args.mode),
+            mode=mode,
             profiles=_parse_profiles(args.profiles),
             gateway_port=args.gateway_port,
             override_path=args.override,

@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
-from typing import cast
+from collections.abc import Mapping
 from uuid import uuid4
 
 import httpx
+from pydantic import BaseModel, Field
 
-from .models import JSONObject
+from .models import WireMockRequest
+
+
+class _WireMockFindResponse(BaseModel):
+    requests: list[WireMockRequest] = Field(default_factory=list[WireMockRequest])
 
 
 class WireMockClient:
@@ -17,7 +22,7 @@ class WireMockClient:
         self.base_url = base_url.rstrip("/")
         self._timeout = timeout
 
-    def register_mapping(self, mapping: dict[str, object]) -> None:
+    def register_mapping(self, mapping: Mapping[str, object]) -> None:
         response = httpx.post(
             f"{self.base_url}/__admin/mappings",
             json=mapping,
@@ -25,7 +30,7 @@ class WireMockClient:
         )
         response.raise_for_status()
 
-    def register_jwks(self, jwks: dict[str, object]) -> None:
+    def register_jwks(self, jwks: Mapping[str, object]) -> None:
         self.register_mapping(
             {
                 "priority": 1,
@@ -79,12 +84,12 @@ class WireMockClient:
                 }
             )
 
-    def find_requests(self, criteria: dict[str, object]) -> list[JSONObject]:
+    def find_requests(self, criteria: Mapping[str, object]) -> list[WireMockRequest]:
         response = httpx.post(
             f"{self.base_url}/__admin/requests/find",
             json=criteria,
             timeout=self._timeout,
         )
         response.raise_for_status()
-        body = cast(dict[str, object], response.json())
-        return cast(list[JSONObject], body.get("requests", []))
+        parsed = _WireMockFindResponse.model_validate(response.json())
+        return parsed.requests

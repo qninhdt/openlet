@@ -3,12 +3,9 @@ import mimetypes
 import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from datalab_sdk import (  # pyright: ignore[reportMissingTypeStubs]
-    AsyncDatalabClient,
-    ConversionResult,
     ConvertOptions,
     DatalabAPIError,
     DatalabAuthenticationError,
@@ -20,14 +17,10 @@ from datalab_sdk import (  # pyright: ignore[reportMissingTypeStubs]
     DatalabServerError,
     DatalabTimeoutError,
     DatalabValidationError,
-    FileResult,
 )
 from openlet_api.letfs.v1 import internal_pb2 as internal
 from openlet_api.letfs.v1 import letfs_pb2 as letfs
 from openlet_sdk.config import Config
-
-if TYPE_CHECKING:
-    from openlet_api.letfs.v1 import internal_pb2_grpc
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
@@ -40,7 +33,7 @@ from .convert import (
     preflight,
 )
 from .datalab import export
-from .storage import S3Store
+from .protocols import BlobStore, DatalabClient, DatalabResult, LetFSParseStub
 from .telemetry import ProcessingIdentity, heartbeats, retry_transient, stage
 
 REMOTE_MEDIA = {PDF_MEDIA, DOCX_MEDIA}
@@ -92,17 +85,17 @@ def _is_transient_datalab_error(exc: BaseException) -> bool:
 
 
 async def convert_with_retry(
-    datalab: AsyncDatalabClient,
+    datalab: DatalabClient,
     *,
     file_url: str | None,
     file_path: Path | None,
     options: ConvertOptions,
     stream_response_to: Path,
     attempts: int = 3,
-) -> ConversionResult | FileResult:
+) -> DatalabResult:
     """Retry transient network/5xx Datalab failures with exponential backoff + jitter."""
 
-    async def attempt() -> ConversionResult | FileResult:
+    async def attempt() -> DatalabResult:
         stream_response_to.unlink(missing_ok=True)
         return await datalab.convert(
             file_url=file_url,
@@ -143,10 +136,10 @@ async def run_child(arguments: list[str], timeout: float) -> int:
 class Parser:
     def __init__(
         self,
-        stub: "internal_pb2_grpc.LetFSInternalServiceAsyncStub",
-        s3: S3Store,
+        stub: LetFSParseStub,
+        s3: BlobStore,
         config: Config,
-        datalab: AsyncDatalabClient | None,
+        datalab: DatalabClient | None,
     ) -> None:
         self.stub = stub
         self.s3 = s3

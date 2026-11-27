@@ -1,7 +1,8 @@
 import asyncio
 import base64
+import struct
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import boto3
 import google_crc32c
@@ -15,9 +16,8 @@ if TYPE_CHECKING:
 
 
 def crc32c_base64(data: bytes) -> str:
-    checksum: Any = google_crc32c.Checksum()
-    checksum.update(data)
-    return base64.b64encode(cast(bytes, checksum.digest())).decode("ascii")
+    checksum = cast("int", google_crc32c.value(data))  # pyright: ignore[reportUnknownMemberType]
+    return base64.b64encode(struct.pack(">I", checksum)).decode("ascii")
 
 
 class S3Store:

@@ -1,28 +1,40 @@
-from typing import Any, cast
+from collections.abc import Sequence
 
 from letfs_ingest.index import index, points
-from letfs_ingest.providers import Models
 from openlet_api.letfs.v1 import internal_pb2 as internal
 from openlet_api.letfs.v1 import letfs_pb2 as letfs
 from openlet_sdk.config import Config
+from qdrant_client import models
 
 
 async def test_index_uses_content_scoped_payload_and_clears_old_blob_points(
     config: Config,
 ) -> None:
-    deleted: list[Any] = []
-    upserts: list[Any] = []
+    deleted: list[tuple[str, models.PointsSelector, bool]] = []
+    upserts: list[Sequence[models.PointStruct]] = []
 
     class FakeAI:
         async def embed(self, texts: list[str]) -> list[list[float]]:
             return [[0.1, 0.2] for _ in texts]
 
     class FakeQdrant:
-        async def delete(self, **kwargs: object) -> None:
-            deleted.append(kwargs)
+        async def delete(
+            self,
+            *,
+            collection_name: str,
+            points_selector: models.PointsSelector,
+            wait: bool = True,
+        ) -> None:
+            deleted.append((collection_name, points_selector, wait))
 
-        async def upsert(self, **kwargs: object) -> None:
-            upserts.append(kwargs["points"])
+        async def upsert(
+            self,
+            *,
+            collection_name: str,
+            points: Sequence[models.PointStruct],
+            wait: bool = True,
+        ) -> None:
+            upserts.append(points)
 
     info = internal.GetBlobArtifactsResponse(
         workspace_id="ws-1",
@@ -91,7 +103,7 @@ async def test_index_uses_content_scoped_payload_and_clears_old_blob_points(
     assert by_path["images/01-chart.png"][1]["kind"] == "image"
     assert "Columns: Region, Revenue" in by_path["tables/01-sales.csv"][1]["text"]
 
-    await index(info, cast(Models, FakeAI()), cast(Any, FakeQdrant()), config)
+    await index(info, FakeAI(), FakeQdrant(), config)
     assert len(deleted) == 1
     assert len(upserts) == 1 and len(upserts[0]) == 3
 

@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
-
 import httpx
 from openlet_env import Environment
 
-from .conftest import DATASET_DIR, poll
+from .conftest import DATASET_DIR, json_object, json_object_list, poll
 
 
 def test_seeded_workspace_acls_artifacts_search_and_unseed(
@@ -46,13 +44,12 @@ def test_seeded_workspace_acls_artifacts_search_and_unseed(
             assert bob_api.get(f"/v1/workspaces/{wid}").is_success
 
             shared = ws.storages["shared"]
-            shared_id = str(shared["id"])
-            shared_root = str(shared["root_node_id"])
-            shared_nodes = cast(dict[str, str], shared["nodes"])
-            overview_id = shared_nodes["overview.md"]
-            pdf_id = shared_nodes["sample.pdf"]
-            docx_id = shared_nodes["sample.docx"]
-            xlsx_id = shared_nodes["sample.xlsx"]
+            shared_id = shared.id
+            shared_root = shared.root_node_id
+            overview_id = shared.nodes["overview.md"]
+            pdf_id = shared.nodes["sample.pdf"]
+            docx_id = shared.nodes["sample.docx"]
+            xlsx_id = shared.nodes["sample.xlsx"]
 
             # Bob can read shared markdown file.
             overview = bob_api.get(
@@ -63,10 +60,8 @@ def test_seeded_workspace_acls_artifacts_search_and_unseed(
 
             # ACL isolation: Alice can read her private storage, Bob gets 403.
             alice_personal = ws.storages["personal/alice-chen"]
-            alice_storage_id = str(alice_personal["id"])
-            alice_note_id = cast(dict[str, str], alice_personal["nodes"])[
-                "private-notes.txt"
-            ]
+            alice_storage_id = alice_personal.id
+            alice_note_id = alice_personal.nodes["private-notes.txt"]
             assert alice_api.get(
                 f"/v1/workspaces/{wid}/storages/{alice_storage_id}/nodes/{alice_note_id}/text"
             ).is_success
@@ -90,11 +85,12 @@ def test_seeded_workspace_acls_artifacts_search_and_unseed(
                 json={"root": {"nodeId": pdf_id}, "maxDepth": 4, "maxNodes": 50},
             )
             assert tree.is_success, tree.text
-            entries = cast(list[dict[str, Any]], tree.json()["entries"])
+            entries = json_object_list(json_object(tree.json())["entries"])
             readme = next((e for e in entries if e.get("path") == "README.md"), None)
             assert readme is not None
+            readme_node = json_object(readme["node"])
             artifact_text = alice_api.get(
-                f"/v1/workspaces/{wid}/storages/{shared_id}/nodes/{readme['node']['id']}/text"
+                f"/v1/workspaces/{wid}/storages/{shared_id}/nodes/{readme_node['id']}/text"
             )
             assert "European expansion" in artifact_text.json()["content"]
 

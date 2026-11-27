@@ -9,17 +9,31 @@ import os
 import re
 from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import TypedDict, cast
+from typing import NotRequired, TypedDict, cast
 from urllib.parse import quote, urlparse
 
 import yaml
-from openlet_sdk.config import Config, TelemetrySettings, load, secret
+from openlet_sdk.config import Config, TelemetrySettings, load, load_path, secret
+from openlet_sdk.types import is_str_mapping
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
+class VirtualHost(TypedDict):
+    routes: list[dict[str, object]]
+
+
+class RouteConfig(TypedDict):
+    virtual_hosts: list[VirtualHost]
+
+
+class HttpConnectionManager(TypedDict):
+    route_config: RouteConfig
+    tracing: NotRequired[dict[str, object]]
+
+
 class ListenerFilter(TypedDict):
-    typed_config: dict[str, object]
+    typed_config: HttpConnectionManager
 
 
 class FilterChain(TypedDict):
@@ -43,17 +57,14 @@ def render(name: str, values: Mapping[str, object]) -> dict[str, object]:
     text = (ROOT / "infra/config" / f"{name}.template.yaml").read_text()
     for key, value in values.items():
         text = text.replace(f"@{key}@", json.dumps(value))
-    return cast(dict[str, object], yaml.safe_load(text))
+    loaded: object = yaml.safe_load(text)
+    if not is_str_mapping(loaded):
+        raise ValueError(f"rendered template {name} must be a YAML mapping")
+    return dict(loaded)
 
 
 def _load_config(config_path: Path | None) -> Config:
-    if config_path is None:
-        return load()
-    with config_path.open() as stream:
-        value: object = yaml.safe_load(stream)
-    if not isinstance(value, dict):
-        raise ValueError("configuration must be a YAML mapping")
-    return cast(Config, value)
+    return load() if config_path is None else load_path(config_path)
 
 
 def _resolve_secret(value: str, env: Mapping[str, str]) -> str:
@@ -231,7 +242,7 @@ def configure(
     if jwks.scheme not in ("http", "https") or not jwks.hostname:
         raise ValueError("JWKS URL must be HTTP(S)")
     envoy = cast(
-        EnvoyConfig,
+        "EnvoyConfig",
         render(
             "envoy",
             dict(
@@ -309,9 +320,7 @@ def configure(
         hcm = envoy["static_resources"]["listeners"][0]["filter_chains"][0]["filters"][
             0
         ]["typed_config"]
-        routing = cast(dict[str, object], hcm["route_config"])
-        hosts = cast(list[dict[str, object]], routing["virtual_hosts"])
-        routes = cast(list[dict[str, object]], hosts[0]["routes"])
+        routes = hcm["route_config"]["virtual_hosts"][0]["routes"]
         routes.insert(
             0,
             {
@@ -539,18 +548,16 @@ def configure(
         *([("leta", svc["leta"]["database"], None)] if leta_enabled else []),
     ]:
         dsn = f"postgres://{quote(database['user'], safe='')}:{quote(resolve(database['password']), safe='')}@{pg['host']}:{pg['port']}/{database['name']}?sslmode={pg['sslmode']}"
-        runtime["services"][f"{owner}-migrate"] = {
-            "environment": {
-                "GOOSE_DRIVER": "postgres",
-                "GOOSE_DBSTRING": dsn,
-                "GOOSE_MIGRATION_DIR": "/migrations",
-            }
+        migrate_env: dict[str, str] = {
+            "GOOSE_DRIVER": "postgres",
+            "GOOSE_DBSTRING": dsn,
+            "GOOSE_MIGRATION_DIR": "/migrations",
         }
         if listen is None:
-            cast(
-                dict[str, str], runtime["services"]["leta-migrate"]["environment"]
-            ).update(environment([database["password"]]))
+            migrate_env.update(environment([database["password"]]))
+            runtime["services"][f"{owner}-migrate"] = {"environment": migrate_env}
             continue
+        runtime["services"][f"{owner}-migrate"] = {"environment": migrate_env}
         runtime["services"][owner]["healthcheck"] = {
             "test": [
                 "CMD",

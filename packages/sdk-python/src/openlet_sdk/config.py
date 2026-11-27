@@ -1,9 +1,19 @@
 import os
+from pathlib import Path
 from typing import Literal, NotRequired, TypedDict, cast
 
 import yaml
 
-type JSON = None | bool | int | float | str | list[JSON] | dict[str, JSON]
+from .types import (
+    JSON as JSON,
+)
+from .types import (
+    JsonObject as JsonObject,
+)
+from .types import (
+    MutableJsonObject as MutableJsonObject,
+)
+
 type ReasoningEffort = (
     Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"] | None
 )
@@ -311,7 +321,7 @@ class LetaBashSettings(TypedDict):
     default_timeout_seconds: int
     max_timeout_seconds: int
     python_max_memory: str
-    network: Literal["public_only", False] | bool
+    network: Literal["public_only", False]
     shared_mount_read_policy: Literal["fresh", "bounded"]
 
 
@@ -438,13 +448,20 @@ class Config(TypedDict):
     observability: NotRequired[ObservabilitySettings]
 
 
-def load() -> Config:
-    with open(os.environ["OPENLET_CONFIG"]) as stream:
-        value: object = yaml.safe_load(stream)
+def parse_config(value: object) -> Config:
     if not isinstance(value, dict):
         raise ValueError("configuration must be a YAML mapping")
     # The owning process validates the settings it consumes, not other services.
-    return cast(Config, value)
+    return cast("Config", value)
+
+
+def load_path(path: Path) -> Config:
+    with path.open(encoding="utf-8") as stream:
+        return parse_config(yaml.safe_load(stream))
+
+
+def load() -> Config:
+    return load_path(Path(os.environ["OPENLET_CONFIG"]))
 
 
 def secret(value: str) -> str:

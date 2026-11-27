@@ -1,18 +1,14 @@
 import asyncio
-from typing import TYPE_CHECKING
 
 from openlet_api.letfs.v1 import internal_pb2 as internal
 from openlet_api.letfs.v1 import letfs_pb2 as letfs
 from openlet_sdk.config import Config
 
-if TYPE_CHECKING:
-    from openlet_api.letfs.v1 import internal_pb2_grpc
-
 from .naming import artifact_paths, rewrite_artifact_links, rich_csv_paths
+from .protocols import BlobReader, EnrichmentModels, LetFSEnrichStub
 from .providers import (
     ArtifactEnrichment,
     EnrichItem,
-    Models,
     adaptive_item_budget,
     evidence,
     pack_batches,
@@ -20,14 +16,13 @@ from .providers import (
 )
 from .readme import own_body
 from .readme import render as render_readme
-from .storage import S3Store
 
 
 async def enrich(
     info: internal.GetBlobArtifactsResponse,
-    stub: "internal_pb2_grpc.LetFSInternalServiceAsyncStub",
-    s3: S3Store,
-    ai: Models,
+    stub: LetFSEnrichStub,
+    s3: BlobReader,
+    ai: EnrichmentModels,
     config: Config,
 ) -> internal.BlobProcessingOutcome:
     """Enrich standalone images or parsed artifact trees using unified multimodal batches."""

@@ -11,14 +11,17 @@ import time
 from collections import Counter, defaultdict
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
 import httpx
 import numpy as np
 from openai import OpenAI
 from openlet_env.cache import CACHE_DIR
+from openlet_env.models import CacheMetadata
+from pydantic import TypeAdapter
 from qdrant_client import QdrantClient, models
+
+_EMBED_CACHE_ADAPTER = TypeAdapter(dict[str, list[float]])
 
 COLLECTION = "files"
 QDRANT_IMAGE = (
@@ -57,7 +60,9 @@ def load_shared_corpus(
             bid_to_path[bid] = bpath
             blobs_by_ws[ws_dir.name] += 1
 
-            meta: dict[str, Any] = json.loads(meta_path.read_text(encoding="utf-8"))
+            meta = CacheMetadata.model_validate_json(
+                meta_path.read_text(encoding="utf-8")
+            )
             with np.load(
                 meta_path.parent / "embeddings.npz", allow_pickle=False
             ) as npz:
@@ -68,14 +73,12 @@ def load_shared_corpus(
                         strict=True,
                     )
                 )
-            for idx, pt in enumerate(meta.get("points", [])):
-                txt = str(pt["text"])
-                ap = str(pt.get("path", ""))
+            for idx, pt in enumerate(meta.points):
+                txt = pt.text
+                ap = pt.path
                 canonical = posixpath.join(bpath, ap) if ap else bpath
                 indexed_by_ws[ws_dir.name].add(canonical)
-                pid = str(
-                    uuid5(NAMESPACE_URL, f"{bid}:{ap}:{pt.get('kind', '')}:{idx}")
-                )
+                pid = str(uuid5(NAMESPACE_URL, f"{bid}:{ap}:{pt.kind}:{idx}"))
                 points.append(
                     models.PointStruct(
                         id=pid,
@@ -105,7 +108,7 @@ def embed_queries(
     """Embed queries in batches of 20 using `openai.OpenAI` with SHA-256 disk caching."""
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cached: dict[str, list[float]] = (
-        json.loads(cache_path.read_text(encoding="utf-8"))
+        _EMBED_CACHE_ADAPTER.validate_json(cache_path.read_text(encoding="utf-8"))
         if cache_path.is_file()
         else {}
     )

@@ -3,10 +3,11 @@ from __future__ import annotations
 import asyncio
 import re
 import secrets
+from datetime import datetime
 from typing import Literal
 from uuid import UUID, uuid4
 
-from openlet_sdk.config import JSON, ReasoningEffort
+from openlet_sdk.config import ReasoningEffort
 from psycopg import AsyncConnection
 from psycopg.rows import DictRow
 from psycopg.types.json import Jsonb
@@ -15,7 +16,7 @@ from temporalio.client import Client as TemporalClient
 from temporalio.service import RPCError, RPCStatusCode
 
 from ..activity import ActivityEmitter
-from ..db import Pool, json_row
+from ..db import Pool, hydrate
 from ..inbox import InboxGateway, InboxItem, InboxSender
 
 AVATAR_SHAPES: tuple[str, ...] = (
@@ -156,7 +157,71 @@ class AgentPatch(BaseModel):
     reasoning_effort: ReasoningEffort = None
 
 
-async def get_agent_row(db: Pool, agent_id: UUID) -> dict[str, object]:
+class AgentSummary(BaseModel):
+    id: UUID
+    leta_id: UUID
+    parent_agent_id: UUID | None = None
+    depth: int = 0
+    name: str
+    title: str
+    description: str = ""
+    appearance: Appearance | dict[str, str] = Field(default_factory=dict[str, str])
+    handle: str
+    custom_instructions: str = ""
+    model_id: str | None = None
+    reasoning_effort: ReasoningEffort = None
+    state: str = "active"
+    created_at: datetime | None = None
+    running: bool = False
+
+
+class RootAgentBrief(BaseModel):
+    id: UUID
+    name: str
+    title: str
+    handle: str
+    description: str = ""
+
+
+class ResolvedAgent(BaseModel):
+    id: UUID
+    parent_agent_id: UUID | None = None
+    name: str
+    title: str
+    handle: str
+    state: str
+    running: bool = False
+
+
+class ActiveSubagentStatus(BaseModel):
+    handle: str
+    name: str
+    title: str
+    state: str
+    running: bool = False
+
+
+class AgentRow(BaseModel):
+    id: UUID
+    leta_id: UUID
+    parent_agent_id: UUID | None = None
+    depth: int = 0
+    name: str
+    title: str
+    description: str = ""
+    appearance: Appearance | dict[str, str] = Field(default_factory=dict[str, str])
+    handle: str
+    custom_instructions: str = ""
+    model_id: str | None = None
+    reasoning_effort: ReasoningEffort = None
+    state: str = "active"
+    workspace_id: UUID
+    storage_id: UUID
+    leta_state: str
+    paused: bool = False
+
+
+async def get_agent_row(db: Pool, agent_id: UUID) -> AgentRow:
     async with db.connection() as conn:
         row = await (
             await conn.execute(
@@ -171,10 +236,10 @@ async def get_agent_row(db: Pool, agent_id: UUID) -> dict[str, object]:
         ).fetchone()
     if row is None:
         raise LookupError("agent not found")
-    return dict(row)
+    return hydrate(row, AgentRow)
 
 
-async def list_leta_agents(db: Pool, leta_id: UUID) -> list[dict[str, JSON]]:
+async def list_leta_agents(db: Pool, leta_id: UUID) -> list[AgentSummary]:
     async with db.connection() as conn:
         rows = await (
             await conn.execute(
@@ -193,7 +258,7 @@ async def list_leta_agents(db: Pool, leta_id: UUID) -> list[dict[str, JSON]]:
                 (leta_id,),
             )
         ).fetchall()
-    return [json_row(r) for r in rows]
+    return [hydrate(r, AgentSummary) for r in rows]
 
 
 async def update_agent(
@@ -201,7 +266,7 @@ async def update_agent(
     leta_id: UUID,
     agent_id: UUID,
     patch: AgentPatch,
-) -> dict[str, JSON]:
+) -> AgentSummary:
     supplied = patch.model_fields_set
     async with db.connection() as conn, conn.transaction():
         current = await (
@@ -269,7 +334,7 @@ async def update_agent(
             )
         ).fetchone()
     assert row is not None
-    return json_row(row)
+    return hydrate(row, AgentSummary)
 
 
 async def spawn_subagent(
@@ -287,7 +352,7 @@ async def spawn_subagent(
     max_depth: int = 3,
     max_active_per_leta: int = 16,
     idempotency_key: str | None = None,
-) -> dict[str, JSON]:
+) -> AgentSummary:
     async with db.connection() as conn, conn.transaction():
         parent = await (
             await conn.execute(
@@ -397,7 +462,7 @@ async def spawn_subagent(
             metadata={"spawned_by": str(parent["handle"])},
         )
     )
-    return json_row(row)
+    return hydrate(row, AgentSummary)
 
 
 async def stop_agent_tree(
@@ -434,13 +499,11 @@ async def stop_agent_tree(
                 (stopped_ids,),
             )
 
-    async def _stop_one(r: dict[str, object]) -> None:
-        aid = UUID(str(r["id"]))
-        leta_id = UUID(str(r["leta_id"]))
+    async def _stop_one(aid: UUID, leta_id: UUID, handle: str) -> None:
         if temporal is not None:
             try:
-                handle = temporal.get_workflow_handle(f"agent/{aid}")
-                await handle.signal("stop")
+                handle_wf = temporal.get_workflow_handle(f"agent/{aid}")
+                await handle_wf.signal("stop")
             except RPCError as exc:
                 if exc.status != RPCStatusCode.NOT_FOUND:
                     raise
@@ -449,11 +512,16 @@ async def stop_agent_tree(
                 leta_id=leta_id,
                 agent_id=aid,
                 event_type="subagent.stopped",
-                data={"agent_id": str(aid), "handle": str(r["handle"])},
+                data={"agent_id": str(aid), "handle": handle},
             )
 
     if rows:
-        await asyncio.gather(*(_stop_one(r) for r in rows))
+        await asyncio.gather(
+            *(
+                _stop_one(UUID(str(r["id"])), UUID(str(r["leta_id"])), str(r["handle"]))
+                for r in rows
+            )
+        )
     return stopped_ids
 
 
@@ -501,7 +569,7 @@ async def notify_parent_failure(
 
 async def list_workspace_root_agents(
     db: Pool, workspace_id: UUID, *, limit: int | None = None
-) -> list[dict[str, JSON]]:
+) -> list[RootAgentBrief]:
     async with db.connection() as conn:
         if limit is not None:
             rows = await (
@@ -527,7 +595,7 @@ async def list_workspace_root_agents(
                     (workspace_id,),
                 )
             ).fetchall()
-    return [json_row(r) for r in rows]
+    return [hydrate(r, RootAgentBrief) for r in rows]
 
 
 async def resolve_leta_agent(
@@ -536,7 +604,7 @@ async def resolve_leta_agent(
     raw_ref: str,
     *,
     active_only: bool = True,
-) -> dict[str, object] | None:
+) -> ResolvedAgent | None:
     cleaned = raw_ref.strip().removeprefix("agent:").lstrip("@").strip()
     if not cleaned:
         return None
@@ -574,12 +642,12 @@ async def resolve_leta_agent(
                     (leta_id, low),
                 )
             ).fetchone()
-    return dict(row) if row is not None else None
+    return hydrate(row, ResolvedAgent) if row is not None else None
 
 
 async def list_active_subagents_status(
     db: Pool, leta_id: UUID
-) -> list[dict[str, object]]:
+) -> list[ActiveSubagentStatus]:
     async with db.connection() as conn:
         rows = await (
             await conn.execute(
@@ -593,4 +661,4 @@ async def list_active_subagents_status(
                 (leta_id,),
             )
         ).fetchall()
-    return [dict(r) for r in rows]
+    return [hydrate(r, ActiveSubagentStatus) for r in rows]

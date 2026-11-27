@@ -8,11 +8,12 @@ from collections.abc import Mapping, Sequence
 from contextlib import ExitStack
 from pathlib import Path
 from types import TracebackType
-from typing import cast
+from typing import Self
 from uuid import uuid4
 
 import httpx
 import psycopg
+from pydantic import BaseModel
 
 from .auth import LocalAuth
 from .dataset import ensure_dataset, read_seed_specs
@@ -23,11 +24,24 @@ from .loader import (
     seed_workspaces,
     unseed_workspace,
 )
-from .models import Account, Endpoints, EnvMode, EnvState, SeedResult
+from .models import (
+    Account,
+    Endpoints,
+    EnvMode,
+    EnvState,
+    EnvStatus,
+    PersistedAccount,
+    PrepareCacheReport,
+    SeedResult,
+)
 from .stack import ComposeStack
 from .wiremock import WireMockClient
 
 DEV_TOKEN_TTL_SECONDS = 7 * 24 * 3600
+
+
+class _IdResponse(BaseModel):
+    id: str
 
 
 class Environment:
@@ -117,11 +131,11 @@ class Environment:
         )
         for info in self.state.accounts.values():
             self.wiremock.register_clerk_user(
-                subject=info["clerk_user_id"],
-                email=info["email"],
-                first_name=info["first_name"],
-                last_name=info["last_name"],
-                user_id=info["user_id"],
+                subject=info.clerk_user_id,
+                email=info.email,
+                first_name=info.first_name,
+                last_name=info.last_name,
+                user_id=info.user_id,
                 user_id_claim=claim_key,
             )
 
@@ -130,18 +144,17 @@ class Environment:
         entries: list[dict[str, str]] = []
         for handle, info in sorted(self.state.accounts.items()):
             token = self.auth.sign(
-                info["clerk_user_id"],
-                info["user_id"],
+                info.clerk_user_id,
+                info.user_id,
                 ttl_seconds=DEV_TOKEN_TTL_SECONDS,
             )
             entries.append(
                 {
                     "handle": handle,
-                    "user_id": info["user_id"],
-                    "clerk_user_id": info["clerk_user_id"],
-                    "email": info["email"],
-                    "name": f"{info['first_name']} {info['last_name']}".strip()
-                    or handle,
+                    "user_id": info.user_id,
+                    "clerk_user_id": info.clerk_user_id,
+                    "email": info.email,
+                    "name": f"{info.first_name} {info.last_name}".strip() or handle,
                     "token": token,
                 }
             )
@@ -219,13 +232,13 @@ class Environment:
         for handle, ws in result.workspaces.items():
             state.seeded_workspaces[handle] = ws.workspace_id
         for handle, acct in result.users.items():
-            state.accounts[handle] = {
-                "user_id": acct.user_id,
-                "clerk_user_id": acct.clerk_user_id,
-                "email": acct.email,
-                "first_name": acct.first_name,
-                "last_name": acct.last_name,
-            }
+            state.accounts[handle] = PersistedAccount(
+                user_id=acct.user_id,
+                clerk_user_id=acct.clerk_user_id,
+                email=acct.email,
+                first_name=acct.first_name,
+                last_name=acct.last_name,
+            )
         self.stack.save_state(state)
         self._write_dev_accounts()
         return result
@@ -259,14 +272,14 @@ class Environment:
         for handle, info in self.state.accounts.items():
             out[handle] = Account(
                 handle=handle,
-                user_id=info["user_id"],
-                clerk_user_id=info["clerk_user_id"],
-                email=info["email"],
-                first_name=info["first_name"],
-                last_name=info["last_name"],
+                user_id=info.user_id,
+                clerk_user_id=info.clerk_user_id,
+                email=info.email,
+                first_name=info.first_name,
+                last_name=info.last_name,
                 token=self.auth.sign(
-                    info["clerk_user_id"],
-                    info["user_id"],
+                    info.clerk_user_id,
+                    info.user_id,
                     ttl_seconds=DEV_TOKEN_TTL_SECONDS,
                 ),
             )
@@ -274,7 +287,7 @@ class Environment:
 
     def prepare_cache(
         self, *, dataset_dir: Path, workspaces: Sequence[str] = ()
-    ) -> dict[str, object]:
+    ) -> PrepareCacheReport:
         """Run LetFS ingestion for uncached files in dataset_dir and save `.letfs-cache/`."""
         _, specs = read_seed_specs(dataset_dir, workspaces)
         with ExitStack() as scope:
@@ -329,8 +342,7 @@ class Environment:
                 json={},
             )
             resp.raise_for_status()
-            user = cast(dict[str, str], resp.json())
-            user_id = user["id"]
+            user_id = _IdResponse.model_validate(resp.json()).id
             token = self.auth.sign(subject, user_id)
 
             extra: dict[str, str] = {}
@@ -341,9 +353,9 @@ class Environment:
                     json={"name": "Test workspace", "requestId": str(uuid4())},
                 )
                 created.raise_for_status()
-                ws = cast(dict[str, str], created.json())
+                ws_id = _IdResponse.model_validate(created.json()).id
                 zed = created.headers.get("x-openlet-zed-token", "")
-                extra = {"workspace_id": ws["id"], "zed_token": zed}
+                extra = {"workspace_id": ws_id, "zed_token": zed}
 
         account = Account(
             handle=subject,
@@ -364,11 +376,9 @@ class Environment:
             raise KeyError(
                 f"unknown user handle {user_handle!r}; seeded users: {available}"
             )
-        return self.auth.sign(
-            info["clerk_user_id"], info["user_id"], ttl_seconds=ttl_seconds
-        )
+        return self.auth.sign(info.clerk_user_id, info.user_id, ttl_seconds=ttl_seconds)
 
-    def status(self) -> dict[str, object]:
+    def status(self) -> EnvStatus:
         state = self.state
         ep = self.endpoints
         return {
@@ -392,7 +402,7 @@ class Environment:
     def down(self, *, volumes: bool = False, remove_state: bool = False) -> None:
         self.stack.down(volumes=volumes, remove_state=remove_state)
 
-    def __enter__(self) -> Environment:
+    def __enter__(self) -> Self:
         self.up()
         return self
 

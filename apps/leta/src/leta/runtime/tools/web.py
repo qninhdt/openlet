@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import socket
-from typing import Literal, cast
+from typing import Literal
 from urllib.parse import urljoin, urlparse
 
 import html_to_markdown as h2m
@@ -347,7 +347,7 @@ async def handle_websearch(
         md_blocks.append(block)
     return (
         "\n\n".join(md_blocks) if md_blocks else "No web search results found.",
-        {"provider": "tinyfish", "results": cast(JSON, results)},
+        {"provider": "tinyfish", "results": results},
     )
 
 

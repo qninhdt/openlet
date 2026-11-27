@@ -5,6 +5,7 @@ description = "General-purpose non-production Openlet environment manager for lo
 requires-python = ">=3.14,<3.15"
 dependencies = [
   "openlet-sdk",
+  "pydantic",
   "pyyaml",
   "psycopg[binary]",
   "temporalio",

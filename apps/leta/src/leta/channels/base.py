@@ -76,6 +76,13 @@ class ChannelSummary:
 
 
 @dataclass(frozen=True, slots=True)
+class PlainTargetMatch:
+    target: str
+    address: str
+    label: str
+
+
+@dataclass(frozen=True, slots=True)
 class CallerContext:
     workspace_id: UUID
     leta_id: UUID
@@ -87,6 +94,14 @@ class CallerContext:
 
 class ChannelAdapter(Protocol):
     scheme: str
+
+    async def resolve_uuid_target(
+        self, caller: CallerContext, raw_id: str
+    ) -> str | None: ...
+
+    async def resolve_plain_targets(
+        self, caller: CallerContext, query: str
+    ) -> list[PlainTargetMatch]: ...
 
     async def send(
         self,

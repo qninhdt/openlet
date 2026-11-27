@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Awaitable
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Literal, Protocol, cast, override
 from uuid import UUID
 
 import grpc.aio
@@ -40,6 +40,7 @@ class Actor:
         key = "x-openlet-user-id" if self.type == "user" else "x-openlet-agent-id"
         return ((key, str(self.id)),)
 
+    @override
     def __str__(self) -> str:
         return f"{self.type}:{self.id}"
 
@@ -87,10 +88,57 @@ def consistency_for(zed_token: str | None) -> Consistency:
     return Consistency(minimize_latency=True)
 
 
+class _AsyncPermissionsStub(Protocol):
+    """Async view of authzed PermissionsServiceStub (upstream generates sync-only stubs)."""
+
+    def CheckPermission(
+        self,
+        request: CheckPermissionRequest,
+        *,
+        metadata: tuple[tuple[str, str], ...],
+        timeout: float,
+    ) -> Awaitable[CheckPermissionResponse]: ...
+
+    def WriteRelationships(
+        self,
+        request: WriteRelationshipsRequest,
+        *,
+        metadata: tuple[tuple[str, str], ...],
+        timeout: float,
+    ) -> Awaitable[WriteRelationshipsResponse]: ...
+
+    def DeleteRelationships(
+        self,
+        request: DeleteRelationshipsRequest,
+        *,
+        metadata: tuple[tuple[str, str], ...],
+        timeout: float,
+    ) -> Awaitable[DeleteRelationshipsResponse]: ...
+
+    def ReadRelationships(
+        self,
+        request: ReadRelationshipsRequest,
+        *,
+        metadata: tuple[tuple[str, str], ...],
+        timeout: float,
+    ) -> AsyncIterator[ReadRelationshipsResponse]: ...
+
+    def LookupResources(
+        self,
+        request: LookupResourcesRequest,
+        *,
+        metadata: tuple[tuple[str, str], ...],
+        timeout: float,
+    ) -> AsyncIterator[LookupResourcesResponse]: ...
+
+
 class Authorization:
     def __init__(self, channel: grpc.aio.Channel, token: str) -> None:
         self._channel = channel
-        self._stub = PermissionsServiceStub(channel)
+        # authzed's generated PermissionsServiceStub types RPCs synchronously even on grpc.aio.Channel.
+        self._stub: _AsyncPermissionsStub = cast(
+            "_AsyncPermissionsStub", PermissionsServiceStub(channel)
+        )
         self._headers = (("authorization", f"Bearer {token}"),)
 
     @classmethod
@@ -115,35 +163,27 @@ class Authorization:
         *,
         zed_token: str | None = None,
     ) -> bool:
-        call = cast(
-            Awaitable[CheckPermissionResponse],
-            self._stub.CheckPermission(
+        resp = await self._stub.CheckPermission(
+            CheckPermissionRequest(
+                resource=obj_ref(resource_type, resource_id),
+                permission=permission,
+                subject=subj_ref(actor.type, actor.id),
+                consistency=consistency_for(zed_token),
+            ),
+            metadata=self._headers,
+            timeout=15,
+        )
+        if resp.permissionship != CheckPermissionResponse.PERMISSIONSHIP_HAS_PERMISSION:
+            resp = await self._stub.CheckPermission(
                 CheckPermissionRequest(
                     resource=obj_ref(resource_type, resource_id),
                     permission=permission,
                     subject=subj_ref(actor.type, actor.id),
-                    consistency=consistency_for(zed_token),
+                    consistency=Consistency(fully_consistent=True),
                 ),
                 metadata=self._headers,
                 timeout=15,
-            ),
-        )
-        resp = await call
-        if resp.permissionship != CheckPermissionResponse.PERMISSIONSHIP_HAS_PERMISSION:
-            retry_call = cast(
-                Awaitable[CheckPermissionResponse],
-                self._stub.CheckPermission(
-                    CheckPermissionRequest(
-                        resource=obj_ref(resource_type, resource_id),
-                        permission=permission,
-                        subject=subj_ref(actor.type, actor.id),
-                        consistency=Consistency(fully_consistent=True),
-                    ),
-                    metadata=self._headers,
-                    timeout=15,
-                ),
             )
-            resp = await retry_call
         return (
             resp.permissionship == CheckPermissionResponse.PERMISSIONSHIP_HAS_PERMISSION
         )
@@ -165,15 +205,11 @@ class Authorization:
     async def write(self, *updates: RelationshipUpdate) -> str:
         if not updates:
             return ""
-        call = cast(
-            Awaitable[WriteRelationshipsResponse],
-            self._stub.WriteRelationships(
-                WriteRelationshipsRequest(updates=list(updates)),
-                metadata=self._headers,
-                timeout=15,
-            ),
+        resp = await self._stub.WriteRelationships(
+            WriteRelationshipsRequest(updates=list(updates)),
+            metadata=self._headers,
+            timeout=15,
         )
-        resp = await call
         return str(resp.written_at.token)
 
     async def delete_filter(
@@ -197,15 +233,11 @@ class Authorization:
                     optional_subject_id=str(subject_id) if subject_id else "",
                 )
             )
-        call = cast(
-            Awaitable[DeleteRelationshipsResponse],
-            self._stub.DeleteRelationships(
-                DeleteRelationshipsRequest(relationship_filter=flt),
-                metadata=self._headers,
-                timeout=15,
-            ),
+        await self._stub.DeleteRelationships(
+            DeleteRelationshipsRequest(relationship_filter=flt),
+            metadata=self._headers,
+            timeout=15,
         )
-        await call
 
     async def read_relationships(
         self,
@@ -229,16 +261,13 @@ class Authorization:
                     optional_subject_id=str(subject_id) if subject_id else "",
                 )
             )
-        stream = cast(
-            AsyncIterator[ReadRelationshipsResponse],
-            self._stub.ReadRelationships(
-                ReadRelationshipsRequest(
-                    relationship_filter=flt,
-                    consistency=consistency_for(zed_token),
-                ),
-                metadata=self._headers,
-                timeout=15,
+        stream = self._stub.ReadRelationships(
+            ReadRelationshipsRequest(
+                relationship_filter=flt,
+                consistency=consistency_for(zed_token),
             ),
+            metadata=self._headers,
+            timeout=15,
         )
         out: list[Relationship] = []
         async for item in stream:
@@ -253,18 +282,15 @@ class Authorization:
         *,
         zed_token: str | None = None,
     ) -> list[str]:
-        stream = cast(
-            AsyncIterator[LookupResourcesResponse],
-            self._stub.LookupResources(
-                LookupResourcesRequest(
-                    resource_object_type=resource_type,
-                    permission=permission,
-                    subject=subj_ref(actor.type, actor.id),
-                    consistency=consistency_for(zed_token),
-                ),
-                metadata=self._headers,
-                timeout=15,
+        stream = self._stub.LookupResources(
+            LookupResourcesRequest(
+                resource_object_type=resource_type,
+                permission=permission,
+                subject=subj_ref(actor.type, actor.id),
+                consistency=consistency_for(zed_token),
             ),
+            metadata=self._headers,
+            timeout=15,
         )
         out: list[str] = []
         async for item in stream:

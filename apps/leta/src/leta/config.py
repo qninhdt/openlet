@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from time import monotonic
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal
 
 import grpc.aio
 import httpx
@@ -193,7 +193,7 @@ class LetaRuntimeConfig(_FrozenConfig):
 
     @classmethod
     def from_openlet_config(cls, cfg: Config) -> LetaRuntimeConfig:
-        leta = dict(cast(dict[str, object], cfg["services"]["leta"]))
+        leta: dict[str, object] = {**cfg["services"]["leta"]}
         queues = cfg["dependencies"]["temporal"]["queues"]
         ws_cfg = cfg["services"]["leta"].get("web_search")
         leta["queues"] = {

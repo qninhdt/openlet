@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from uuid import UUID
 
 from ..db import Pool
@@ -11,7 +12,16 @@ from .base import (
     ChannelSummary,
     OutboundMessage,
     OutboundReceipt,
+    PlainTargetMatch,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _PeerAgent:
+    id: UUID
+    handle: str
+    name: str
+    title: str
 
 
 class InternalAgentAdapter:
@@ -23,9 +33,7 @@ class InternalAgentAdapter:
         self.db = db
         self.inbox = inbox
 
-    async def _list_active_peers(
-        self, caller: CallerContext
-    ) -> list[dict[str, object]]:
+    async def _list_active_peers(self, caller: CallerContext) -> list[_PeerAgent]:
         async with self.db.connection() as conn:
             rows = await (
                 await conn.execute(
@@ -38,11 +46,19 @@ class InternalAgentAdapter:
                     (caller.leta_id, caller.agent_id),
                 )
             ).fetchall()
-        return [dict(r) for r in rows]
+        return [
+            _PeerAgent(
+                id=UUID(str(r["id"])),
+                handle=str(r["handle"]),
+                name=str(r["name"]),
+                title=str(r["title"] or ""),
+            )
+            for r in rows
+        ]
 
     async def resolve_target(
         self, caller: CallerContext, target: str
-    ) -> dict[str, object] | None:
+    ) -> _PeerAgent | None:
         cleaned = target.strip().removeprefix("agent:").lstrip("@").strip()
         if not cleaned:
             return None
@@ -77,7 +93,34 @@ class InternalAgentAdapter:
                         (caller.leta_id, low),
                     )
                 ).fetchone()
-        return dict(row) if row is not None else None
+        if row is None:
+            return None
+        return _PeerAgent(
+            id=UUID(str(row["id"])),
+            handle=str(row["handle"]),
+            name=str(row["name"]),
+            title=str(row["title"] or ""),
+        )
+
+    async def resolve_uuid_target(
+        self, caller: CallerContext, raw_id: str
+    ) -> str | None:
+        found = await self.resolve_target(caller, raw_id)
+        return found.handle if found is not None else None
+
+    async def resolve_plain_targets(
+        self, caller: CallerContext, query: str
+    ) -> list[PlainTargetMatch]:
+        sub = await self.resolve_target(caller, query)
+        if sub is None:
+            return []
+        return [
+            PlainTargetMatch(
+                target=sub.handle,
+                address=f"agent:{sub.handle}",
+                label=f"{sub.name} (subagent)",
+            )
+        ]
 
     async def send(
         self,
@@ -86,27 +129,23 @@ class InternalAgentAdapter:
         msg: OutboundMessage,
         idempotency_key: UUID,
     ) -> OutboundReceipt:
-        row = await self.resolve_target(caller, target)
-        if row is None:
+        peer = await self.resolve_target(caller, target)
+        if peer is None:
             peers = await self._list_active_peers(caller)
             if peers:
-                opts = ", ".join(
-                    f"agent:{p['handle']} ({p['name']})" for p in peers[:10]
-                )
+                opts = ", ".join(f"agent:{p.handle} ({p.name})" for p in peers[:10])
                 raise ChannelError(
                     f"Active agent {target!r} not found in this Leta tree. Available agents: {opts}"
                 )
             raise ChannelError(
                 f"Active agent {target!r} not found in this Leta tree (no other active agents)."
             )
-        target_id = UUID(str(row["id"]))
-        handle = str(row["handle"])
-        if target_id == caller.agent_id:
+        if peer.id == caller.agent_id:
             raise ChannelError("Cannot send an internal message to yourself.")
 
         result = await self.inbox.deliver(
             InboxItem(
-                agent_id=target_id,
+                agent_id=peer.id,
                 idempotency_key=f"agent:{idempotency_key}",
                 kind="agent",
                 channel="agent",
@@ -122,16 +161,16 @@ class InternalAgentAdapter:
             )
         )
         if not result.delivered:
-            raise ChannelError(f"Agent {handle!r} is no longer active.")
+            raise ChannelError(f"Agent {peer.handle!r} is no longer active.")
         return OutboundReceipt(
             channel="agent",
-            target=handle,
+            target=peer.handle,
             message_id=str(idempotency_key),
             seq=result.seq,
             recipient={
                 "kind": "agent",
-                "id": str(target_id),
-                "name": str(row["name"]),
+                "id": str(peer.id),
+                "name": peer.name,
             },
         )
 
@@ -154,21 +193,23 @@ class InternalAgentAdapter:
     async def list_channels(
         self, caller: CallerContext, *, query: str = "", limit: int = 20
     ) -> list[ChannelSummary]:
-        rows = await self._list_active_peers(caller)
+        peers = await self._list_active_peers(caller)
         needle = query.strip().lstrip("@").lower()
         out: list[ChannelSummary] = []
-        for r in rows:
-            handle = str(r["handle"])
-            name = str(r["name"])
-            if needle and needle not in handle.lower() and needle not in name.lower():
+        for p in peers:
+            if (
+                needle
+                and needle not in p.handle.lower()
+                and needle not in p.name.lower()
+            ):
                 continue
             out.append(
                 ChannelSummary(
-                    address=f"agent:{handle}",
+                    address=f"agent:{p.handle}",
                     channel="agent",
                     kind="agent",
-                    title=f"{name} ({r['title']})" if r["title"] else name,
-                    handle=handle,
+                    title=f"{p.name} ({p.title})" if p.title else p.name,
+                    handle=p.handle,
                 )
             )
         return out[: max(1, min(limit, 50))]

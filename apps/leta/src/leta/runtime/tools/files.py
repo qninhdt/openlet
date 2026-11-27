@@ -8,15 +8,14 @@ import posixpath
 import re
 import unicodedata
 from contextlib import ExitStack
-from typing import cast
 
 from langchain_core.tools import BaseTool, ToolException
 from langgraph.prebuilt import ToolRuntime
-from mirage import FileStat
 from openlet_sdk.config import JSON
 from pydantic import Field
 
-from ...filesystem.workspace import canonical_path, path_spec
+from ...filesystem.types import GlobHit, GrepHit, SemanticHit
+from ...filesystem.workspace import canonical_path
 from ...observability import build_rag_baggage
 from ...truncation import clip_line
 from ..media import detect_media_type, optimize_image_bytes
@@ -238,10 +237,11 @@ def _try_strip_read_line_prefixes(
     new_lines = new_lf.split("\n")
     new_trailing = new_lf.endswith("\n")
     new_check = new_lines[:-1] if new_trailing else new_lines
-    if new_check and all(_LINE_PREFIX_RE.match(ln) for ln in new_check):
-        stripped_new = "\n".join(
-            cast(re.Match[str], _LINE_PREFIX_RE.match(ln)).group(2) for ln in new_check
-        ) + ("\n" if new_trailing else "")
+    new_matches = [_LINE_PREFIX_RE.match(ln) for ln in new_check]
+    if new_matches and all(m is not None for m in new_matches):
+        stripped_new = "\n".join(m.group(2) for m in new_matches if m is not None) + (
+            "\n" if new_trailing else ""
+        )
     else:
         stripped_new = new_lf
     return (
@@ -749,12 +749,9 @@ async def handle_file_read(
     if extra.get("is_blob"):
         media_type = str(extra.get("media_type", ""))
         if media_type.startswith("image/"):
-            raw_val, _ = await session.vfs.dispatch(
-                "read_raw_bytes",
-                path_spec(abs_path),
-                max_bytes=media_cfg.max_ingest_bytes,
+            raw_bytes = await rt.fs.read_raw_bytes(
+                abs_path, max_bytes=media_cfg.max_ingest_bytes
             )
-            raw_bytes = cast(bytes, raw_val)
             prepared = optimize_image_bytes(raw_bytes, media_cfg)
             if isinstance(prepared, str):
                 return (
@@ -890,11 +887,8 @@ async def handle_file_edit(
     abs_path = normalize_workspace_path(path)
     ft_cfg = rt.services.settings.file_tools
     async with rt.fs.path_mutex.lock(abs_path):
-        session = await rt.fs.open()
         try:
-            read_val, _ = await session.vfs.dispatch(
-                "read_text_with_version", path_spec(abs_path)
-            )
+            read_res = await rt.fs.read_text_with_version(abs_path)
         except FileNotFoundError:
             _, err_msg = await missing_path_recovery(
                 rt, abs_path, allow_alternate=False
@@ -903,7 +897,7 @@ async def handle_file_edit(
         except OSError as exc:
             _raise_friendly_mount_error(rt, abs_path, exc, writable_only=True)
             raise
-        text, version = cast(tuple[str, int], read_val)
+        text, version = read_res.text, read_res.version
         try:
             updated, count, diff, matched_lines, note = apply_file_edit_detailed(
                 text,
@@ -916,9 +910,8 @@ async def handle_file_edit(
         except ValueError as exc:
             raise ToolException(str(exc)) from None
         try:
-            await session.vfs.dispatch(
-                "write_text_optimistic",
-                path_spec(abs_path),
+            await rt.fs.write_text_optimistic(
+                abs_path,
                 content=updated,
                 expected_version=version,
             )
@@ -957,16 +950,12 @@ async def handle_file_write(
     rt = runtime.context
     abs_path = normalize_workspace_path(path)
     async with rt.fs.path_mutex.lock(abs_path):
-        session = await rt.fs.open()
         existed = False
         body = content
         try:
-            read_val, _ = await session.vfs.dispatch(
-                "read_text_with_version", path_spec(abs_path)
-            )
-            old_text, _ = cast(tuple[str, int], read_val)
+            old_res = await rt.fs.read_text_with_version(abs_path)
             existed = True
-            if old_text.startswith("\ufeff") and not body.startswith("\ufeff"):
+            if old_res.text.startswith("\ufeff") and not body.startswith("\ufeff"):
                 body = "\ufeff" + body
         except FileNotFoundError:
             pass
@@ -974,13 +963,10 @@ async def handle_file_write(
             _raise_friendly_mount_error(rt, abs_path, exc, writable_only=True)
             raise
         try:
-            st_val, _ = await session.vfs.dispatch(
-                "write_text_optimistic", path_spec(abs_path), content=body
-            )
+            st = await rt.fs.write_text_optimistic(abs_path, content=body)
         except OSError as exc:
             _raise_friendly_mount_error(rt, abs_path, exc, writable_only=True)
             raise
-        st = cast(FileStat, st_val)
         await rt.fs.notify_changed(abs_path)
     extra = st.extra or {}
     verb = "Wrote" if existed else "Created"
@@ -1008,9 +994,8 @@ async def handle_glob(
     rt = runtime.context
     abs_path = normalize_workspace_path(path or "/shared")
     roots = await _expand_search_roots(rt, abs_path)
-    session = await rt.fs.open()
     cap = min(limit, 100)
-    all_hits: list[dict[str, JSON]] = []
+    all_hits: list[GlobHit] = []
     truncated = False
 
     for root in roots:
@@ -1019,9 +1004,8 @@ async def handle_glob(
             truncated = True
             break
         try:
-            res_val, _ = await session.vfs.dispatch(
-                "glob_files",
-                path_spec(root),
+            res = await rt.fs.glob_files(
+                root,
                 pattern=pattern,
                 include_hidden=hidden,
                 limit=remaining,
@@ -1038,9 +1022,8 @@ async def handle_glob(
                 _raise_friendly_mount_error(rt, root, exc, writable_only=False)
                 raise
             continue
-        res = cast(dict[str, JSON], res_val)
-        all_hits.extend(cast(list[dict[str, JSON]], res.get("hits", [])))
-        if bool(res.get("truncated", False)):
+        all_hits.extend(res.hits)
+        if res.truncated:
             truncated = True
 
     if not all_hits:
@@ -1054,10 +1037,7 @@ async def handle_glob(
             f"No files found matching {pattern!r} in {abs_path}{extra}",
             {"count": 0, "truncated": False},
         )
-    lines = [
-        f"{h['path']}/" if h.get("kind") == "directory" else str(h["path"])
-        for h in all_hits
-    ]
+    lines = [f"{h.path}/" if h.kind == "directory" else h.path for h in all_hits]
     text = "\n".join(lines)
     if truncated:
         text += f"\n[Showing first {len(all_hits)} matches; refine pattern or path for more]"
@@ -1085,9 +1065,8 @@ async def handle_grep(
 
     abs_path = normalize_workspace_path(path or "/shared")
     roots = await _expand_search_roots(rt, abs_path)
-    session = await rt.fs.open()
     cap = min(limit, 100)
-    all_hits: list[dict[str, JSON]] = []
+    all_hits: list[GrepHit] = []
     truncated = False
 
     for root in roots:
@@ -1096,9 +1075,8 @@ async def handle_grep(
             truncated = True
             break
         try:
-            res_val, _ = await session.vfs.dispatch(
-                "grep_files",
-                path_spec(root),
+            res = await rt.fs.grep_files(
+                root,
                 pattern=pattern,
                 include_glob=include,
                 literal=literal,
@@ -1117,9 +1095,8 @@ async def handle_grep(
                 _raise_friendly_mount_error(rt, root, exc, writable_only=False)
                 raise
             continue
-        res = cast(dict[str, JSON], res_val)
-        all_hits.extend(cast(list[dict[str, JSON]], res.get("hits", [])))
-        if bool(res.get("truncated", False)):
+        all_hits.extend(res.hits)
+        if res.truncated:
             truncated = True
 
     if not all_hits:
@@ -1135,10 +1112,7 @@ async def handle_grep(
         )
     grouped: dict[str, list[tuple[int, str]]] = {}
     for h in all_hits:
-        p = str(h["path"])
-        grouped.setdefault(p, []).append(
-            (int(cast(int, h["line_number"])), str(h["line_text"]))
-        )
+        grouped.setdefault(h.path, []).append((h.line_number, h.line_text))
     out_lines = [f"Found {len(all_hits)} match{'es' if len(all_hits) != 1 else ''}"]
     for p, entries in grouped.items():
         out_lines.append(f"{p}:")
@@ -1160,7 +1134,6 @@ async def handle_semantic_search(
 ) -> ToolResult:
     rt = runtime.context
     raw_paths = paths if paths else ["/shared", "/home"]
-    session = await rt.fs.open()
 
     expanded: list[str] = []
     for raw_p in raw_paths[:5]:
@@ -1177,7 +1150,7 @@ async def handle_semantic_search(
         agent_id=str(rt.agent_id),
         workspace_id=str(rt.workspace_id),
     )
-    all_hits: list[dict[str, JSON]] = []
+    all_hits: list[SemanticHit] = []
     valid_count = 0
     missing_paths: list[str] = []
     with ExitStack() as stack:
@@ -1193,16 +1166,15 @@ async def handle_semantic_search(
 
         async def _search_one(
             abs_p: str,
-        ) -> tuple[str, list[dict[str, JSON]] | None]:
+        ) -> tuple[str, list[SemanticHit] | None]:
             try:
-                hits_val, _ = await session.vfs.dispatch(
-                    "semantic_search",
-                    path_spec(abs_p),
+                hits = await rt.fs.semantic_search(
+                    abs_p,
                     query=query,
                     limit=min(limit, 25),
                     baggage=baggage,
                 )
-                return abs_p, cast(list[dict[str, JSON]], hits_val)
+                return abs_p, hits
             except FileNotFoundError:
                 return abs_p, None
             except OSError as exc:
@@ -1226,19 +1198,15 @@ async def handle_semantic_search(
         )
         raise ToolException(err_msg)
 
-    all_hits.sort(key=lambda h: float(cast(float, h.get("score", 0.0))), reverse=True)
+    all_hits.sort(key=lambda h: h.score, reverse=True)
     top = all_hits[:limit]
     if not top:
         return "No semantic matches found.", {"hits": []}
     blocks: list[str] = []
     for h in top:
-        p = str(h["path"])
-        art = str(h.get("artifact_path") or "")
-        header = f"{p}/{art}" if art else p
-        blocks.append(
-            f"{header} (score={float(cast(float, h.get('score', 0.0))):.3f}):\n{h['text']}"
-        )
-    return "\n\n".join(blocks), {"hits": cast(JSON, top)}
+        header = f"{h.path}/{h.artifact_path}" if h.artifact_path else h.path
+        blocks.append(f"{header} (score={h.score:.3f}):\n{h.text}")
+    return "\n\n".join(blocks), {"hits": [h.to_json() for h in top]}
 
 
 async def handle_bash(

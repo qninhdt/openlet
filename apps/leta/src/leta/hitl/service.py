@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 import grpc
 from openlet_api.letfs.v1 import letfs_pb2 as fs
 from openlet_sdk.config import JSON
+from openlet_sdk.types import is_str_mapping
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from temporalio.client import Client as TemporalClient
@@ -15,15 +16,74 @@ from temporalio.service import RPCError, RPCStatusCode
 
 from ..activity import ActivityEmitter, leta_user_channel
 from ..auth import Actor, Authorization
-from ..db import Pool, json_row
+from ..db import Pool, hydrate
 from ..inbox import InboxGateway, InboxItem, InboxSender
+from .models import (
+    ApprovalPayload as ApprovalPayload,
+)
+from .models import (
+    ApprovalResponse as ApprovalResponse,
+)
+from .models import (
+    AskOption as AskOption,
+)
+from .models import (
+    AskPayload as AskPayload,
+)
+from .models import (
+    AskQuestionForm as AskQuestionForm,
+)
+from .models import (
+    AskResponse as AskResponse,
+)
+from .models import (
+    HitlOutcome as HitlOutcome,
+)
 
 if TYPE_CHECKING:
     from openlet_api.letfs.v1.letfs_pb2_grpc import LetFSServiceAsyncStub
 
+type HitlType = Literal["ask", "approval"]
+type HitlStatus = Literal[
+    "pending", "answered", "accepted", "denied", "cancelled", "expired"
+]
+type HitlOpenStatus = Literal[
+    "pending",
+    "answered",
+    "accepted",
+    "denied",
+    "cancelled",
+    "expired",
+    "already_granted",
+]
+
 
 class HitlInput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+
+class HitlRecord(BaseModel):
+    id: UUID
+    leta_id: UUID
+    workspace_id: UUID | None = None
+    requester_agent_id: UUID | None = None
+    recipient_user_id: UUID | None = None
+    type: HitlType | None = None
+    title: str = ""
+    payload: AskPayload | ApprovalPayload | dict[str, JSON] = Field(
+        default_factory=dict[str, JSON]
+    )
+    status: HitlOpenStatus = "pending"
+    response: AskResponse | ApprovalResponse | dict[str, JSON] | None = None
+    outcome: HitlOutcome | None = None
+    expires_at: datetime | None = None
+    resolved_at: datetime | None = None
+    created_at: datetime | None = None
+
+
+class RecipientHitlList(BaseModel):
+    items: list[HitlRecord]
+    pending_count: int
 
 
 class Question(HitlInput):
@@ -42,8 +102,8 @@ class Question(HitlInput):
     @model_validator(mode="before")
     @classmethod
     def coerce_empty_options(cls, data: object) -> object:
-        if isinstance(data, dict):
-            d = dict(cast(dict[str, object], data))
+        if is_str_mapping(data):
+            d = dict(data)
             if d.get("options") == []:
                 d["options"] = None
             return d
@@ -65,7 +125,7 @@ class OpenHitlInput(HitlInput):
     id: UUID
     requester_agent_id: UUID
     recipient_user_id: UUID
-    type: Literal["ask", "approval"]
+    type: HitlType
     title: str = Field(min_length=1, max_length=255)
     payload: dict[str, JSON]
     expires_at: datetime | None = None
@@ -80,84 +140,89 @@ class HitlDecisionInput(HitlInput):
     resolved_at: datetime | None = None
 
 
-def build_ask_form(questions: list[Question]) -> dict[str, JSON]:
-    items: list[JSON] = []
+def build_ask_form(questions: list[Question]) -> AskPayload:
+    items: list[AskQuestionForm] = []
     for idx, q in enumerate(questions):
-        item: dict[str, JSON] = {
-            "id": f"q{idx + 1}",
-            "text": q.text,
-            "type": (
-                "multiple_choice"
-                if q.multiple
-                else "single_choice"
-                if q.options
-                else "text"
-            ),
-        }
-        if q.options:
-            item["options"] = [
-                {"id": f"o{i + 1}", "label": label} for i, label in enumerate(q.options)
+        qtype: Literal["text", "single_choice", "multiple_choice"] = (
+            "multiple_choice"
+            if q.multiple
+            else "single_choice"
+            if q.options
+            else "text"
+        )
+        opts = (
+            [
+                AskOption(id=f"o{i + 1}", label=label)
+                for i, label in enumerate(q.options)
             ]
-        items.append(item)
-    return {"questions": items}
+            if q.options
+            else []
+        )
+        items.append(
+            AskQuestionForm(id=f"q{idx + 1}", text=q.text, type=qtype, options=opts)
+        )
+    return AskPayload(questions=items)
 
 
 def validate_ask_response(
-    payload: dict[str, JSON], response: dict[str, JSON] | None
-) -> dict[str, JSON]:
+    payload: AskPayload | dict[str, JSON], response: dict[str, JSON] | None
+) -> AskResponse:
     if not isinstance(response, dict):
         raise ValueError("response is required for ask requests")
     raw_answers = response.get("answers")
     if not isinstance(raw_answers, dict):
         raise ValueError("response.answers object is required")
-    questions = cast(list[dict[str, JSON]], payload.get("questions", []))
-    expected_ids = {str(q["id"]) for q in questions}
+    form = (
+        payload
+        if isinstance(payload, AskPayload)
+        else AskPayload.model_validate(payload)
+    )
+    expected_ids = {q.id for q in form.questions}
     unknown = set(raw_answers) - expected_ids
     if unknown:
         raise ValueError(f"unknown question ids: {', '.join(sorted(unknown))}")
 
-    cleaned: dict[str, JSON] = {}
-    for q in questions:
-        qid = str(q["id"])
-        qtype = str(q["type"])
-        if qid not in raw_answers:
-            raise ValueError(f"missing answer for question {qid}")
-        ans = raw_answers[qid]
-        if qtype == "text":
+    cleaned: dict[str, str | list[str]] = {}
+    for q in form.questions:
+        if q.id not in raw_answers:
+            raise ValueError(f"missing answer for question {q.id}")
+        ans = raw_answers[q.id]
+        if q.type == "text":
             if not isinstance(ans, str) or not ans.strip():
-                raise ValueError(f"question {qid} requires a non-empty text answer")
-            cleaned[qid] = ans.strip()
-        elif qtype == "single_choice":
-            valid_opts = {
-                str(cast(dict[str, JSON], o)["id"])
-                for o in cast(list[JSON], q.get("options", []))
-            }
+                raise ValueError(f"question {q.id} requires a non-empty text answer")
+            cleaned[q.id] = ans.strip()
+        elif q.type == "single_choice":
+            valid_opts = {o.id for o in q.options}
             if not isinstance(ans, str) or ans not in valid_opts:
-                raise ValueError(f"question {qid} requires one valid option id")
-            cleaned[qid] = ans
-        elif qtype == "multiple_choice":
-            valid_opts = {
-                str(cast(dict[str, JSON], o)["id"])
-                for o in cast(list[JSON], q.get("options", []))
-            }
-            if (
-                not isinstance(ans, list)
-                or not ans
-                or any(not isinstance(v, str) or v not in valid_opts for v in ans)
-                or len(set(cast(list[str], ans))) != len(ans)
-            ):
+                raise ValueError(f"question {q.id} requires one valid option id")
+            cleaned[q.id] = ans
+        else:
+            valid_opts = {o.id for o in q.options}
+            if not isinstance(ans, list) or not ans:
                 raise ValueError(
-                    f"question {qid} requires a non-empty list of unique valid option ids"
+                    f"question {q.id} requires a non-empty list of unique valid option ids"
                 )
-            cleaned[qid] = list(ans)
-    out: dict[str, JSON] = {"answers": cleaned}
+            chosen: list[str] = []
+            for v in ans:
+                if not isinstance(v, str) or v not in valid_opts:
+                    raise ValueError(
+                        f"question {q.id} requires a non-empty list of unique valid option ids"
+                    )
+                chosen.append(v)
+            if len(set(chosen)) != len(chosen):
+                raise ValueError(
+                    f"question {q.id} requires a non-empty list of unique valid option ids"
+                )
+            cleaned[q.id] = chosen
+
+    clean_note: str | None = None
     if "note" in response and response["note"] is not None:
         if not isinstance(response["note"], str):
             raise ValueError("note must be a string")
         note = response["note"].strip()
         if note:
-            out["note"] = note[:4000]
-    return out
+            clean_note = note[:4000]
+    return AskResponse(answers=cleaned, note=clean_note)
 
 
 async def open_hitl(
@@ -167,7 +232,7 @@ async def open_hitl(
     letfs: LetFSServiceAsyncStub,
     activity: ActivityEmitter | None,
     request: OpenHitlInput,
-) -> dict[str, JSON]:
+) -> HitlRecord:
     async with db.connection() as conn:
         agent = await (
             await conn.execute(
@@ -236,12 +301,12 @@ async def open_hitl(
             already_granted = True
 
     if already_granted:
-        return {
-            "id": str(request.id),
-            "leta_id": str(leta_id),
-            "status": "already_granted",
-            "payload": payload,
-        }
+        return HitlRecord(
+            id=request.id,
+            leta_id=leta_id,
+            status="already_granted",
+            payload=payload,
+        )
 
     async with db.connection() as conn, conn.transaction():
         row = await (
@@ -267,16 +332,16 @@ async def open_hitl(
             )
         ).fetchone()
     assert row is not None
-    serialized = json_row(row)
+    record = hydrate(row, HitlRecord)
     if activity is not None:
         await activity.emit(
             leta_id=leta_id,
             agent_id=request.requester_agent_id,
             event_type="hitl.updated",
-            data={"hitl": serialized},
+            data={"hitl": record.model_dump(mode="json")},
             extra_channels=[leta_user_channel(request.recipient_user_id)],
         )
-    return serialized
+    return record
 
 
 async def resolve_hitl(
@@ -284,7 +349,7 @@ async def resolve_hitl(
     db: Pool,
     activity: ActivityEmitter | None,
     decision: HitlDecisionInput,
-) -> dict[str, JSON]:
+) -> HitlRecord:
     now = decision.resolved_at or datetime.now(UTC)
     async with db.connection() as conn, conn.transaction():
         row = await (
@@ -295,19 +360,20 @@ async def resolve_hitl(
         ).fetchone()
         if row is None:
             raise LookupError("hitl request not found")
-        if row["status"] != "pending":
-            raise ValueError(f"hitl request already {row['status']}")
+        existing = hydrate(row, HitlRecord)
+        if existing.status != "pending":
+            raise ValueError(f"hitl request already {existing.status}")
 
-        req_type = str(row["type"])
         clean_response: dict[str, JSON] | None = decision.response
         if decision.status == "answered":
-            if req_type != "ask":
+            if existing.type != "ask":
                 raise ValueError("answered status is only valid for ask requests")
-            clean_response = validate_ask_response(
-                cast(dict[str, JSON], row["payload"]), decision.response
-            )
+            if isinstance(existing.payload, ApprovalPayload):
+                raise ValueError("ask request payload must contain questions")
+            validated = validate_ask_response(existing.payload, decision.response)
+            clean_response = validated.model_dump(exclude_none=True)
         elif decision.status in ("accepted", "denied"):
-            if req_type != "approval":
+            if existing.type != "approval":
                 raise ValueError(
                     "accepted/denied status is only valid for approval requests"
                 )
@@ -334,16 +400,21 @@ async def resolve_hitl(
             )
         ).fetchone()
     assert updated is not None
-    serialized = json_row(updated)
-    if activity is not None:
-        await activity.emit(
-            leta_id=UUID(str(updated["leta_id"])),
-            agent_id=UUID(str(updated["requester_agent_id"])),
-            event_type="hitl.updated",
-            data={"hitl": serialized},
-            extra_channels=[leta_user_channel(str(updated["recipient_user_id"]))],
+    record = hydrate(updated, HitlRecord)
+    if activity is not None and record.requester_agent_id is not None:
+        extra = (
+            [leta_user_channel(record.recipient_user_id)]
+            if record.recipient_user_id is not None
+            else None
         )
-    return serialized
+        await activity.emit(
+            leta_id=record.leta_id,
+            agent_id=record.requester_agent_id,
+            event_type="hitl.updated",
+            data={"hitl": record.model_dump(mode="json")},
+            extra_channels=extra,
+        )
+    return record
 
 
 async def apply_hitl_effect(
@@ -353,7 +424,7 @@ async def apply_hitl_effect(
     letfs: LetFSServiceAsyncStub,
     activity: ActivityEmitter | None,
     request_id: UUID,
-) -> dict[str, JSON]:
+) -> HitlRecord:
     async with db.connection() as conn:
         row = await (
             await conn.execute(
@@ -368,28 +439,29 @@ async def apply_hitl_effect(
         ).fetchone()
     if row is None:
         raise LookupError("hitl request not found")
-    if row["type"] != "approval" or row["status"] != "accepted":
-        return json_row(row)
-    if row["outcome"] is not None:
-        return json_row(row)
+    record = hydrate(row, HitlRecord)
+    if record.type != "approval" or record.status != "accepted":
+        return record
+    if record.outcome is not None:
+        return record
 
-    payload = cast(dict[str, JSON], row["payload"])
-    storage_id = str(payload["storage_id"])
-    role_str = str(payload.get("role", "viewer"))
+    approval = ApprovalPayload.model_validate(record.payload)
+    storage_id = approval.storage_id or ""
     role_enum = (
-        fs.STORAGE_ROLE_EDITOR if role_str == "editor" else fs.STORAGE_ROLE_VIEWER
+        fs.STORAGE_ROLE_EDITOR if approval.role == "editor" else fs.STORAGE_ROLE_VIEWER
     )
-    workspace_id = str(row["workspace_id"])
-    recipient_id = UUID(str(row["recipient_user_id"]))
-    leta_id = UUID(str(row["leta_id"]))
+    workspace_id = str(record.workspace_id or "")
+    recipient_id = record.recipient_user_id
+    assert recipient_id is not None
+    leta_id = record.leta_id
 
-    outcome: dict[str, JSON]
+    outcome: HitlOutcome
     if row["leta_state"] != "active":
-        outcome = {"applied": False, "reason": "leta_inactive"}
+        outcome = HitlOutcome(applied=False, reason="leta_inactive")
     elif not await auth.allowed(
         Actor("user", recipient_id), "workspace", workspace_id, "participate"
     ):
-        outcome = {"applied": False, "reason": "recipient_no_longer_in_workspace"}
+        outcome = HitlOutcome(applied=False, reason="recipient_no_longer_in_workspace")
     else:
         try:
             await letfs.SetStorageAccess(
@@ -402,32 +474,34 @@ async def apply_hitl_effect(
                 metadata=Actor("user", recipient_id).metadata,
                 timeout=15,
             )
-            outcome = {
-                "applied": True,
-                "storage_id": storage_id,
-                "role": role_str,
-            }
+            outcome = HitlOutcome(
+                applied=True,
+                storage_id=storage_id,
+                role=approval.role,
+            )
         except grpc.aio.AioRpcError as exc:
-            outcome = {"applied": False, "reason": exc.details() or str(exc.code())}
+            outcome = HitlOutcome(
+                applied=False, reason=exc.details() or str(exc.code())
+            )
 
     async with db.connection() as conn:
         updated = await (
             await conn.execute(
                 "UPDATE hitl_requests SET outcome = %s WHERE id = %s RETURNING *",
-                (Jsonb(outcome), request_id),
+                (Jsonb(outcome.model_dump(exclude_none=True)), request_id),
             )
         ).fetchone()
     assert updated is not None
-    serialized = json_row(updated)
-    if activity is not None:
+    updated_record = hydrate(updated, HitlRecord)
+    if activity is not None and updated_record.requester_agent_id is not None:
         await activity.emit(
             leta_id=leta_id,
-            agent_id=UUID(str(updated["requester_agent_id"])),
+            agent_id=updated_record.requester_agent_id,
             event_type="hitl.updated",
-            data={"hitl": serialized},
+            data={"hitl": updated_record.model_dump(mode="json")},
             extra_channels=[leta_user_channel(recipient_id)],
         )
-    return serialized
+    return updated_record
 
 
 async def start_hitl_workflow(
@@ -463,6 +537,16 @@ async def cancel_hitl_workflow(
         raise
 
 
+def _to_json_dict(
+    value: BaseModel | dict[str, JSON] | None,
+) -> dict[str, JSON] | None:
+    if value is None:
+        return None
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json", exclude_none=True)
+    return value
+
+
 async def deliver_hitl_result(
     *, db: Pool, inbox: InboxGateway, request_id: UUID
 ) -> None:
@@ -474,33 +558,35 @@ async def deliver_hitl_result(
         ).fetchone()
     if row is None:
         return
-    requester_id = UUID(str(row["requester_agent_id"]))
+    record = hydrate(row, HitlRecord)
+    if record.requester_agent_id is None:
+        return
     await inbox.deliver(
         InboxItem(
-            agent_id=requester_id,
+            agent_id=record.requester_agent_id,
             idempotency_key=f"hitl:{request_id}:result",
             kind="hitl",
             channel="hitl",
             reply_address=None,
             sender=InboxSender(
                 type="user",
-                id=str(row["recipient_user_id"]),
+                id=str(record.recipient_user_id or ""),
             ),
             content="",
             metadata={
                 "request_id": str(request_id),
-                "title": str(row["title"]),
-                "type": str(row["type"]),
-                "status": str(row["status"]),
-                "payload": cast(JSON, row["payload"]),
-                "outcome": cast(JSON, row["outcome"]),
-                "response": cast(JSON, row["response"]),
+                "title": record.title,
+                "type": record.type or "",
+                "status": record.status,
+                "payload": _to_json_dict(record.payload),
+                "outcome": _to_json_dict(record.outcome),
+                "response": _to_json_dict(record.response),
             },
         )
     )
 
 
-async def get_hitl(db: Pool, request_id: UUID) -> dict[str, JSON]:
+async def get_hitl(db: Pool, request_id: UUID) -> HitlRecord:
     async with db.connection() as conn:
         row = await (
             await conn.execute(
@@ -515,7 +601,7 @@ async def get_hitl(db: Pool, request_id: UUID) -> dict[str, JSON]:
         ).fetchone()
     if row is None:
         raise LookupError("hitl request not found")
-    return json_row(row)
+    return hydrate(row, HitlRecord)
 
 
 async def list_recipient_hitl(
@@ -526,7 +612,7 @@ async def list_recipient_hitl(
     leta_id: UUID | None = None,
     status: str | None = None,
     limit: int = 50,
-) -> dict[str, JSON]:
+) -> RecipientHitlList:
     async with db.connection() as conn:
         rows = await (
             await conn.execute(
@@ -566,10 +652,10 @@ async def list_recipient_hitl(
                 (recipient_user_id, workspace_id, workspace_id),
             )
         ).fetchone()
-    return {
-        "items": [json_row(r) for r in rows],
-        "pending_count": int(cnt_row["cnt"]) if cnt_row is not None else 0,
-    }
+    return RecipientHitlList(
+        items=[hydrate(r, HitlRecord) for r in rows],
+        pending_count=int(cnt_row["cnt"]) if cnt_row is not None else 0,
+    )
 
 
 async def list_leta_hitl(
@@ -579,7 +665,7 @@ async def list_leta_hitl(
     requester_agent_id: UUID | None = None,
     status: str | None = None,
     limit: int = 50,
-) -> list[dict[str, JSON]]:
+) -> list[HitlRecord]:
     async with db.connection() as conn:
         rows = await (
             await conn.execute(
@@ -603,4 +689,4 @@ async def list_leta_hitl(
                 ),
             )
         ).fetchall()
-    return [json_row(r) for r in rows]
+    return [hydrate(r, HitlRecord) for r in rows]

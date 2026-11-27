@@ -8,7 +8,7 @@ import time
 from collections.abc import Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Literal
 
 from langchain_core.messages import (
     AIMessage,
@@ -19,6 +19,7 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from openlet_sdk.config import JSON
+from openlet_sdk.types import is_str_mapping
 
 from ..config import CompactionConfig, ModelConfig, ModelSpec
 from ..hitl.service import list_leta_hitl
@@ -79,12 +80,11 @@ def estimate_message_tokens(msg: BaseMessage, cfg: ModelConfig) -> int:
         for block in content:
             if isinstance(block, str):
                 total += estimate_text_tokens(block, cfg.chars_per_token)
-            else:
-                d = cast(dict[str, object], block)
-                btype = str(d.get("type", ""))
+            elif is_str_mapping(block):
+                btype = str(block.get("type", ""))
                 if btype == "text":
                     total += estimate_text_tokens(
-                        str(d.get("text", "")), cfg.chars_per_token
+                        str(block.get("text", "")), cfg.chars_per_token
                     )
                 elif btype == "image_url":
                     total += cfg.image_token_estimate
@@ -92,7 +92,7 @@ def estimate_message_tokens(msg: BaseMessage, cfg: ModelConfig) -> int:
                     total += cfg.pdf_token_estimate
                 else:
                     total += estimate_text_tokens(
-                        json.dumps(d, default=str), cfg.chars_per_token
+                        json.dumps(dict(block), default=str), cfg.chars_per_token
                     )
     if isinstance(msg, AIMessage) and msg.tool_calls:
         total += estimate_text_tokens(
@@ -612,22 +612,21 @@ async def build_live_db_snapshots(rt: RuntimeContext) -> tuple[str, str, str]:
         for r in sub_rows:
             if len(sub_lines) >= comp_cfg.snapshot_max_subagents:
                 break
-            is_running = bool(r["running"])
-            if not is_running:
+            if not r.running:
                 if idle_kept >= comp_cfg.snapshot_max_idle_subagents:
                     continue
                 idle_kept += 1
-            st_str = "running" if is_running else "idle"
+            st_str = "running" if r.running else "idle"
             sub_lines.append(
-                f"- {r['name']} ({r['title']}) | handle: agent:{r['handle']} | status: {st_str}"
+                f"- {r.name} ({r.title}) | handle: agent:{r.handle} | status: {st_str}"
             )
-        for r in hitl_rows:
+        for h in hitl_rows:
             hitl_lines.append(
-                f"- {r['id']} | {r['type']} | status: {r['status']} | {r['title']} (user: {r['recipient_user_id']})"
+                f"- {h.id} | {h.type} | status: {h.status} | {h.title} (user: {h.recipient_user_id})"
             )
-        for r in sched_rows[:20]:
+        for sc in sched_rows[:20]:
             sched_lines.append(
-                f"- {r['id']} | {r['title']} | {r['type']} | paused={r['paused']}"
+                f"- {sc.id} | {sc.title} | {sc.type} | paused={sc.paused}"
             )
     except Exception:
         logger.warning("live DB snapshot query failed during compaction", exc_info=True)

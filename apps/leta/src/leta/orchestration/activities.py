@@ -10,7 +10,6 @@ from openlet_api.chat.v1 import internal_pb2 as chat_int_pb
 from openlet_api.letfs.v1 import internal_pb2 as letfs_int_pb
 from openlet_api.letfs.v1 import letfs_pb2 as letfs_pb
 from openlet_api.platform.v1 import internal_pb2 as plat_int_pb
-from openlet_sdk.config import JSON
 from psycopg.types.json import Jsonb
 from temporalio import activity
 from temporalio.service import RPCError, RPCStatusCode
@@ -19,6 +18,7 @@ from ..auth import relation, touch
 from ..config import Services
 from ..hitl.service import (
     HitlDecisionInput,
+    HitlRecord,
     OpenHitlInput,
     apply_hitl_effect,
     deliver_hitl_result,
@@ -255,7 +255,7 @@ class OrchestrationActivities:
             )
 
     @activity.defn(name="open_hitl")
-    async def open_hitl(self, request: OpenHitlInput) -> dict[str, JSON]:
+    async def open_hitl(self, request: OpenHitlInput) -> HitlRecord:
         return await open_hitl(
             db=self.s.db,
             auth=self.s.auth,
@@ -265,13 +265,13 @@ class OrchestrationActivities:
         )
 
     @activity.defn(name="resolve_hitl")
-    async def resolve_hitl(self, decision: HitlDecisionInput) -> dict[str, JSON]:
+    async def resolve_hitl(self, decision: HitlDecisionInput) -> HitlRecord:
         return await resolve_hitl(
             db=self.s.db, activity=self.s.activity, decision=decision
         )
 
     @activity.defn(name="apply_hitl_effect")
-    async def apply_hitl_effect(self, request_id: UUID) -> dict[str, JSON]:
+    async def apply_hitl_effect(self, request_id: UUID) -> HitlRecord:
         return await apply_hitl_effect(
             db=self.s.db,
             auth=self.s.auth,

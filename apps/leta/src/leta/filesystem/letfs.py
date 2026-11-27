@@ -7,7 +7,7 @@ import posixpath
 from collections.abc import Awaitable
 from contextlib import suppress
 from contextvars import ContextVar
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 from uuid import UUID, uuid4, uuid5
 
 import google_crc32c
@@ -23,10 +23,11 @@ from mirage.utils.key_prefix import mounted_path
 from mirage.vfs.call import vfs_call
 from mirage.vfs.types import Effect, Target
 from openlet_api.letfs.v1 import letfs_pb2 as fs
-from openlet_sdk.config import JSON, LetFSSettings
+from openlet_sdk.config import LetFSSettings
 from openlet_sdk.file_types import classify_file
 
 from ..auth import Actor
+from .types import GlobHit, GlobResult, GrepHit, GrepResult, SemanticHit, VersionedText
 
 if TYPE_CHECKING:
     from openlet_api.letfs.v1.letfs_pb2_grpc import LetFSServiceAsyncStub
@@ -121,6 +122,7 @@ class LetFS(BaseVFS):
     def locator(self, path: PathSpec) -> fs.NodeLocator:
         return fs.NodeLocator(path=path.vfs_path or ".", root_node_id=str(self.root))
 
+    @override
     async def stat(self, path: PathSpec) -> FileStat:
         node = await _grpc_call(
             self.stub.Stat(
@@ -135,6 +137,7 @@ class LetFS(BaseVFS):
         )
         return node_to_stat(node)
 
+    @override
     async def readdir(self, path: PathSpec) -> list[FileStat] | DirListing:
         rows: list[FileStat] = []
         token = ""
@@ -157,6 +160,7 @@ class LetFS(BaseVFS):
             if not token or len(rows) >= 2000:
                 return DirListing(rows, partial=bool(token))
 
+    @override
     async def read(self, path: PathSpec) -> bytes:
         resp = await _grpc_call(
             self.stub.ReadText(
@@ -171,6 +175,7 @@ class LetFS(BaseVFS):
         )
         return resp.content.encode("utf-8")
 
+    @override
     async def first_lines(self, path: PathSpec, n: int) -> bytes:
         resp = await _grpc_call(
             self.stub.ReadText(
@@ -186,6 +191,7 @@ class LetFS(BaseVFS):
         )
         return resp.content.encode("utf-8")
 
+    @override
     async def last_lines(self, path: PathSpec, n: int) -> bytes:
         resp = await _grpc_call(
             self.stub.ReadText(
@@ -201,6 +207,7 @@ class LetFS(BaseVFS):
         )
         return resp.content.encode("utf-8")
 
+    @override
     async def line_count(self, path: PathSpec) -> int:
         resp = await _grpc_call(
             self.stub.ReadText(
@@ -217,6 +224,7 @@ class LetFS(BaseVFS):
         )
         return int(resp.metrics.lines)
 
+    @override
     async def files_containing(
         self, path: PathSpec, text: str, *, whole_word: bool, ignore_case: bool
     ) -> list[PathSpec] | None:
@@ -253,6 +261,7 @@ class LetFS(BaseVFS):
             found.append(mounted_path(path, rel))
         return found
 
+    @override
     async def lines_containing(
         self, path: PathSpec, text: str, *, ignore_case: bool
     ) -> bytes | None:
@@ -275,6 +284,7 @@ class LetFS(BaseVFS):
             return None
         return "".join(f"{hit.line_text}\n" for hit in resp.hits).encode("utf-8")
 
+    @override
     async def read_tree(self, path: PathSpec) -> dict[str, FileStat] | None:
         resp = await _grpc_call(
             self.stub.ReadTree(
@@ -304,7 +314,7 @@ class LetFS(BaseVFS):
         pattern: str,
         include_hidden: bool = False,
         limit: int = 100,
-    ) -> dict[str, JSON]:
+    ) -> GlobResult:
         resp = await _grpc_call(
             self.stub.Glob(
                 fs.GlobRequest(
@@ -319,19 +329,19 @@ class LetFS(BaseVFS):
                 timeout=30,
             )
         )
-        hits: list[JSON] = []
+        hits: list[GlobHit] = []
         for h in resp.hits:
             full = posixpath.normpath(posixpath.join(path.virtual, h.path))
             hits.append(
-                {
-                    "path": full,
-                    "node_id": h.node_id,
-                    "kind": "directory" if h.kind == fs.NODE_KIND_DIRECTORY else "file",
-                    "artifact_path": h.artifact_path,
-                    "size_bytes": int(h.size_bytes),
-                }
+                GlobHit(
+                    path=full,
+                    node_id=h.node_id,
+                    kind="directory" if h.kind == fs.NODE_KIND_DIRECTORY else "file",
+                    artifact_path=h.artifact_path,
+                    size_bytes=int(h.size_bytes),
+                )
             )
-        return {"hits": hits, "truncated": bool(resp.truncated)}
+        return GlobResult(hits=hits, truncated=bool(resp.truncated))
 
     @vfs_call(effect=Effect.READ, target=Target.ANY)
     async def grep_files(
@@ -342,7 +352,7 @@ class LetFS(BaseVFS):
         literal: bool = False,
         case_sensitive: bool = True,
         limit: int = 100,
-    ) -> dict[str, JSON]:
+    ) -> GrepResult:
         resp = await _grpc_call(
             self.stub.Grep(
                 fs.GrepRequest(
@@ -359,7 +369,7 @@ class LetFS(BaseVFS):
                 timeout=30,
             )
         )
-        hits: list[JSON] = []
+        hits: list[GrepHit] = []
         for h in resp.hits:
             full = (
                 path.virtual
@@ -367,18 +377,18 @@ class LetFS(BaseVFS):
                 else posixpath.normpath(posixpath.join(path.virtual, h.path))
             )
             hits.append(
-                {
-                    "path": full,
-                    "line_number": int(h.line_number),
-                    "line_text": h.line_text,
-                    "node_id": h.node_id,
-                    "artifact_path": h.artifact_path,
-                }
+                GrepHit(
+                    path=full,
+                    line_number=int(h.line_number),
+                    line_text=h.line_text,
+                    node_id=h.node_id,
+                    artifact_path=h.artifact_path,
+                )
             )
-        return {"hits": hits, "truncated": bool(resp.truncated)}
+        return GrepResult(hits=hits, truncated=bool(resp.truncated))
 
     @vfs_call(effect=Effect.READ, target=Target.FILE)
-    async def read_text_with_version(self, path: PathSpec) -> tuple[str, int]:
+    async def read_text_with_version(self, path: PathSpec) -> VersionedText:
         resp = await _grpc_call(
             self.stub.ReadText(
                 fs.ReadTextRequest(
@@ -390,7 +400,7 @@ class LetFS(BaseVFS):
                 timeout=15,
             )
         )
-        return resp.content, int(resp.version)
+        return VersionedText(text=resp.content, version=int(resp.version))
 
     @vfs_call(effect=Effect.READ, target=Target.FILE)
     async def read_raw_bytes(self, path: PathSpec, max_bytes: int) -> bytes:
@@ -434,7 +444,7 @@ class LetFS(BaseVFS):
         limit: int = 10,
         *,
         baggage: str | None = None,
-    ) -> list[dict[str, JSON]]:
+    ) -> list[SemanticHit]:
         scope_path = "/" + path.vfs_path.lstrip("/") if path.vfs_path else "/"
         meta = (
             (*self.actor.metadata, ("baggage", baggage))
@@ -455,17 +465,17 @@ class LetFS(BaseVFS):
             )
         )
         mount_root = path.virtual.removesuffix(path.vfs_path).rstrip("/") or "/"
-        out: list[dict[str, JSON]] = []
+        out: list[SemanticHit] = []
         for h in resp.hits:
             virt = posixpath.normpath(posixpath.join(mount_root, h.path.lstrip("/")))
             out.append(
-                {
-                    "path": virt,
-                    "artifact_path": h.artifact_path,
-                    "file_id": h.file_id,
-                    "score": float(h.score),
-                    "text": h.text,
-                }
+                SemanticHit(
+                    path=virt,
+                    artifact_path=h.artifact_path,
+                    file_id=h.file_id,
+                    score=float(h.score),
+                    text=h.text,
+                )
             )
         return out
 
@@ -647,6 +657,7 @@ class LetFS(BaseVFS):
                 )
             raise
 
+    @override
     async def write(self, path: PathSpec, data: ByteSource) -> None:
         raw = await materialize(ensure_stream(data))
         _, name = posixpath.split(path.vfs_path)
@@ -660,6 +671,7 @@ class LetFS(BaseVFS):
             raise OSError(errno.EFBIG, "text file exceeds size limit")
         await self.write_text_optimistic(path, raw.decode("utf-8"))
 
+    @override
     async def append(self, path: PathSpec, data: ByteSource) -> None:
         raw = await materialize(ensure_stream(data))
         text = raw.decode("utf-8")
@@ -682,6 +694,7 @@ class LetFS(BaseVFS):
         except FileNotFoundError:
             await self.write_text_optimistic(path, text)
 
+    @override
     async def mkdir(self, path: PathSpec, parents: bool = False) -> None:
         if parents:
             await _grpc_call(
@@ -734,6 +747,7 @@ class LetFS(BaseVFS):
             )
         )
 
+    @override
     async def rename(self, src: PathSpec, dst: PathSpec) -> None:
         parent, name = posixpath.split(dst.vfs_path)
         await _grpc_call(
@@ -811,22 +825,26 @@ class LetFSByID(BaseVFS):
         )
         return driver, sub_spec
 
+    @override
     async def stat(self, path: PathSpec) -> FileStat:
         if not path.vfs_path.strip("/"):
             return FileStat(name="letfs", type=FileType.DIRECTORY)
         driver, sub = self._delegate(path)
         return await driver.stat(sub)
 
+    @override
     async def readdir(self, path: PathSpec) -> list[FileStat] | DirListing:
         if not path.vfs_path.strip("/"):
             return []
         driver, sub = self._delegate(path)
         return await driver.readdir(sub)
 
+    @override
     async def read(self, path: PathSpec) -> bytes:
         driver, sub = self._delegate(path)
         return await driver.read(sub)
 
+    @override
     async def write(self, path: PathSpec, data: ByteSource) -> None:
         driver, sub = self._delegate(path)
         await driver.write(sub, data)
@@ -838,7 +856,7 @@ class LetFSByID(BaseVFS):
         pattern: str,
         include_hidden: bool = False,
         limit: int = 100,
-    ) -> dict[str, JSON]:
+    ) -> GlobResult:
         driver, sub = self._delegate(path)
         return await driver.glob_files(sub, pattern, include_hidden, limit)
 
@@ -851,14 +869,14 @@ class LetFSByID(BaseVFS):
         literal: bool = False,
         case_sensitive: bool = True,
         limit: int = 100,
-    ) -> dict[str, JSON]:
+    ) -> GrepResult:
         driver, sub = self._delegate(path)
         return await driver.grep_files(
             sub, pattern, include_glob, literal, case_sensitive, limit
         )
 
     @vfs_call(effect=Effect.READ, target=Target.FILE)
-    async def read_text_with_version(self, path: PathSpec) -> tuple[str, int]:
+    async def read_text_with_version(self, path: PathSpec) -> VersionedText:
         driver, sub = self._delegate(path)
         return await driver.read_text_with_version(sub)
 

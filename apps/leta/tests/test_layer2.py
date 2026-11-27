@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from io import BytesIO
 from types import SimpleNamespace
-from typing import cast
+from typing import Self, cast
 from uuid import uuid4
 
 import pytest
@@ -53,6 +53,7 @@ from leta.runtime.tools.base import ToolArgs, ToolResult, make_tool
 from leta.runtime.tools.files import apply_file_edit
 from leta.runtime.tools.messaging import validate_citations
 from leta.truncation import truncate_head, truncate_tail
+from openlet_sdk.types import is_str_mapping
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -569,7 +570,7 @@ def test_citations_inbox_xml_orphans_and_end_turn_router() -> None:
 
 def test_prompt_rendering_and_reasoning_mapping() -> None:
     fake_rt = cast(
-        RuntimeContext,
+        "RuntimeContext",
         SimpleNamespace(
             is_root=True,
             agent_name="Luna",
@@ -724,22 +725,18 @@ def test_native_structured_tools_and_ergonomics() -> None:
     assert "@ethan" not in xml_out
 
     # 3. Domain auto-heals: bash ms->s timeout, param aliases, hitl options=[]
-    bash_schema = cast(
-        dict[str, object],
-        convert_to_openai_tool(by_name["bash"])["function"]["parameters"],
-    )
+    bash_schema = convert_to_openai_tool(by_name["bash"])["function"]["parameters"]
+    assert is_str_mapping(bash_schema)
     healed_bash, notes = repair_tool_args_with_notes(
         {"command": "echo hi", "cwd": "/shared", "timeout": 120000},
-        bash_schema,
+        dict(bash_schema),
         tool_name="bash",
     )
     assert healed_bash == {"command": "echo hi", "workdir": "/shared", "timeout": 120}
     assert any("120s" in n for n in notes)
 
-    edit_schema = cast(
-        dict[str, object],
-        convert_to_openai_tool(by_name["file_edit"])["function"]["parameters"],
-    )
+    edit_schema = convert_to_openai_tool(by_name["file_edit"])["function"]["parameters"]
+    assert is_str_mapping(edit_schema)
     healed_edit, _ = repair_tool_args_with_notes(
         {
             "filePath": "/home/a.txt",
@@ -747,7 +744,7 @@ def test_native_structured_tools_and_ergonomics() -> None:
             "newString": "b",
             "replaceAll": "true",
         },
-        edit_schema,
+        dict(edit_schema),
         tool_name="file_edit",
     )
     assert healed_edit == {
@@ -854,7 +851,7 @@ async def test_native_langgraph_tool_node_pipeline() -> None:
     )
 
     rt = cast(
-        RuntimeContext,
+        "RuntimeContext",
         SimpleNamespace(
             agent_id=uuid4(),
             leta_id=uuid4(),
@@ -902,7 +899,15 @@ async def test_native_langgraph_tool_node_pipeline() -> None:
     assert "<tool-repair>" in tm.text
     assert "ok:nora:/shared/a.md:5" in tm.text
     assert tm.artifact == {"end_turn": True}
-    assert after_tools_router(cast(AgentState, out)) == "end_turn"
+    assert (
+        after_tools_router(
+            {
+                "messages": list(out["messages"]),
+                "inbox_cursor": int(out["inbox_cursor"]),
+            }
+        )
+        == "end_turn"
+    )
 
     # 2. Unknown parameter rejected with Valid parameters hint + invalid_tool_calls handled cleanly
     out2 = await app.ainvoke(  # pyright: ignore[reportUnknownMemberType]
@@ -942,6 +947,7 @@ async def test_native_langgraph_tool_node_pipeline() -> None:
 
 
 def test_clean_utf8_formatting_for_hitl_schedule_and_agent_status() -> None:
+    from leta.hitl.models import AskPayload, AskResponse, HitlOutcome
     from leta.runtime.formatting import (
         format_hitl_outcome,
         format_hitl_outcome_attr,
@@ -949,27 +955,31 @@ def test_clean_utf8_formatting_for_hitl_schedule_and_agent_status() -> None:
     )
     from leta.runtime.tools.workspace_tools import format_activity_event_summary
 
-    payload = {
-        "questions": [
-            {
-                "id": "q1",
-                "text": "Chọn phương án?",
-                "type": "single_choice",
-                "options": [
-                    {"id": "o1", "label": "Phương án A ✅"},
-                    {"id": "o2", "label": "Phương án B"},
-                ],
+    payload = AskPayload.model_validate(
+        {
+            "questions": [
+                {
+                    "id": "q1",
+                    "text": "Chọn phương án?",
+                    "type": "single_choice",
+                    "options": [
+                        {"id": "o1", "label": "Phương án A ✅"},
+                        {"id": "o2", "label": "Phương án B"},
+                    ],
+                },
+                {"id": "q2", "text": "Ghi chú thêm?", "type": "text"},
+            ]
+        }
+    )
+    response = AskResponse.model_validate(
+        {
+            "answers": {
+                "q1": "o1",
+                "q2": "Dòng 1 tiếng Việt 🇻🇳\nDòng 2 xuống dòng thật",
             },
-            {"id": "q2", "text": "Ghi chú thêm?", "type": "text"},
-        ]
-    }
-    response = {
-        "answers": {
-            "q1": "o1",
-            "q2": "Dòng 1 tiếng Việt 🇻🇳\nDòng 2 xuống dòng thật",
-        },
-        "note": "Cảm ơn bạn!\nTiếp tục nhé 🚀",
-    }
+            "note": "Cảm ơn bạn!\nTiếp tục nhé 🚀",
+        }
+    )
     rendered = format_hitl_response(payload, response)
     assert "Phương án A ✅" in rendered
     assert "Dòng 1 tiếng Việt 🇻🇳\n  Dòng 2 xuống dòng thật" in rendered
@@ -977,7 +987,7 @@ def test_clean_utf8_formatting_for_hitl_schedule_and_agent_status() -> None:
     assert "\\n" not in rendered
     assert "{'answers'" not in rendered
 
-    outcome = {"applied": True, "role": "viewer", "storage_id": "s-123"}
+    outcome = HitlOutcome(applied=True, role="viewer", storage_id="s-123")
     assert format_hitl_outcome_attr(outcome) == "applied (viewer)"
     assert (
         format_hitl_outcome(outcome)
@@ -1092,7 +1102,7 @@ async def test_tinyfish_fetch_and_search_use_fetch_and_search_apis(
             self.fetch = _FakeFetch()
             self.search = _FakeSearch()
 
-        async def __aenter__(self) -> _FakeTinyFish:
+        async def __aenter__(self) -> Self:
             return self
 
         async def __aexit__(self, *args: object) -> None:
@@ -1105,7 +1115,7 @@ async def test_tinyfish_fetch_and_search_use_fetch_and_search_apis(
     monkeypatch.setattr(web_tools, "assert_public_url", _allow_public)
 
     rt = cast(
-        ToolRuntime[RuntimeContext, AgentState],
+        "ToolRuntime[RuntimeContext, AgentState]",
         SimpleNamespace(
             context=SimpleNamespace(
                 services=SimpleNamespace(

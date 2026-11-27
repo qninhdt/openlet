@@ -1,8 +1,9 @@
-from typing import NotRequired, TypedDict, cast
+from typing import NotRequired, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from openlet_sdk.config import ReasoningEffort
+from openlet_sdk.types import is_str_mapping
 
 
 class GenerationParameters(TypedDict):
@@ -66,8 +67,8 @@ def usage_details(value: object) -> dict[str, int] | None:
         ("completion_tokens_details", "reasoning_tokens", "output_reasoning"),
     ):
         details = raw.get(source)
-        if isinstance(details, dict):
-            count: object = cast(dict[str, object], details).get(detail)
+        if is_str_mapping(details):
+            count = details.get(detail)
             if isinstance(count, int):
                 result[target] = count
                 # Langfuse usage categories are additive; provider detail counts are subsets.

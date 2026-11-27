@@ -9,9 +9,10 @@ from langgraph.prebuilt import ToolRuntime
 from openlet_sdk.config import JSON
 from pydantic import BaseModel, ConfigDict
 
+from ..content import MessageContentBlock
 from ..state import AgentState, RuntimeContext
 
-type ToolContent = str | list[dict[str, Any]]
+type ToolContent = str | list[MessageContentBlock]
 type ToolResult = tuple[ToolContent, dict[str, JSON]]
 
 

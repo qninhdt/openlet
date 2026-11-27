@@ -1,27 +1,20 @@
-from typing import TYPE_CHECKING
-
 from openlet_api.letfs.v1 import internal_pb2 as internal
 from openlet_sdk.config import Config
-from qdrant_client import AsyncQdrantClient
 from temporalio import activity
-
-if TYPE_CHECKING:
-    from openlet_api.letfs.v1 import internal_pb2_grpc
 
 from .enrich import enrich
 from .index import index
-from .providers import Models
-from .storage import S3Store
+from .protocols import BlobReader, IngestModels, LetFSProcessorStub, VectorStore
 from .telemetry import ProcessingIdentity, heartbeats, stage
 
 
 class Processor:
     def __init__(
         self,
-        stub: "internal_pb2_grpc.LetFSInternalServiceAsyncStub",
-        s3: S3Store,
-        ai: Models,
-        qdrant: AsyncQdrantClient,
+        stub: LetFSProcessorStub,
+        s3: BlobReader,
+        ai: IngestModels,
+        qdrant: VectorStore,
         config: Config,
     ) -> None:
         self.stub = stub

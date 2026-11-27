@@ -11,12 +11,12 @@ from ..compaction import (
     run_compaction,
 )
 from ..prompts import render_system_prompt
-from ..state import AgentState, RuntimeContext
+from ..state import AgentState, AgentStateUpdate, RuntimeContext
 
 
 async def compact_node(
     state: AgentState, runtime: Runtime[RuntimeContext]
-) -> dict[str, object]:
+) -> AgentStateUpdate:
     """Check context ceiling (or overflow flag) and compact into <conversation-checkpoint>."""
     rt = runtime.context
     messages = state["messages"]

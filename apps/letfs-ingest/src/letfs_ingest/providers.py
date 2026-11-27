@@ -20,6 +20,7 @@ from litellm.types.utils import EmbeddingResponse, ModelResponse, Usage  # pyrig
 from openai.types.chat import ChatCompletionContentPartParam
 from openlet_sdk.config import Config, EnrichmentSettings, secret
 from openlet_sdk.inference import InferenceSettings, response_cost, usage_details
+from openlet_sdk.types import is_object_sequence, is_str_mapping
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validator
 
@@ -62,15 +63,14 @@ class BatchEnrichment(BaseModel):
     items: list[ArtifactEnrichment]
 
     @model_validator(mode="after")
-    def validate_expected_ids(self, info: ValidationInfo) -> "BatchEnrichment":
+    def validate_expected_ids(self, info: ValidationInfo) -> BatchEnrichment:
         ctx: object = info.context
-        if not isinstance(ctx, dict):
+        if not is_str_mapping(ctx):
             return self
-        ctx_map = cast(dict[object, object], ctx)
-        expected = ctx_map.get("expected_ids")
-        if expected is None:
+        expected = ctx.get("expected_ids")
+        if expected is None or not is_object_sequence(expected):
             return self
-        expected_set = set(cast(Sequence[str], expected))
+        expected_set = {str(item) for item in expected}
         got_ids = [item.id for item in self.items]
         if len(got_ids) != len(set(got_ids)):
             raise ValueError("duplicate artifact IDs returned in enrichment batch")
@@ -308,7 +308,7 @@ class Models:
                 timeout=self.connection["timeout"],
                 **inference.parameters(),
             )
-            parsed = cast(BatchEnrichment, result[0])
+            parsed = cast("BatchEnrichment", result[0])
         return {entry.id: entry for entry in parsed.items}
 
     async def complete(self, **kwargs: object) -> ModelResponse:
@@ -319,23 +319,24 @@ class Models:
             input=kwargs.get("messages"),
         ) as observation:
             response = cast(
-                ModelResponse,
+                "ModelResponse",
                 await retry_transient(
                     lambda: litellm.acompletion(**kwargs),
                     should_retry=_is_transient_llm_error,
                     sleep=asyncio.sleep,
                 ),
             )
+            raw_hidden = getattr(response, "_hidden_params", None)
+            hidden_cost = (
+                raw_hidden.get("response_cost") if is_str_mapping(raw_hidden) else None
+            )
+            raw_usage = getattr(response, "usage", None)
             observation.update(
                 output=response.choices[0].model_dump(),
                 usage_details=usage_details(
-                    cast(Usage | None, getattr(response, "usage", None))
+                    raw_usage if isinstance(raw_usage, Usage) else None
                 ),
-                cost_details=response_cost(
-                    cast(
-                        dict[str, object], getattr(response, "_hidden_params", {})
-                    ).get("response_cost")
-                ),
+                cost_details=response_cost(hidden_cost),
             )
             return response
 
@@ -359,16 +360,18 @@ class Models:
                     should_retry=_is_transient_llm_error,
                     sleep=asyncio.sleep,
                 )
+                raw_hidden = getattr(response, "_hidden_params", None)
+                hidden_cost = (
+                    raw_hidden.get("response_cost")
+                    if is_str_mapping(raw_hidden)
+                    else None
+                )
                 observation.update(
                     usage_details=usage_details(response.usage),
-                    cost_details=response_cost(
-                        cast(
-                            dict[str, object], getattr(response, "_hidden_params", {})
-                        ).get("response_cost")
-                    ),
+                    cost_details=response_cost(hidden_cost),
                 )
         ordered = sorted(
-            cast(list[EmbeddingData], getattr(response, "data")),
+            cast("list[EmbeddingData]", response.data),  # pyright: ignore[reportUnknownMemberType]
             key=lambda item: item["index"],
         )
         return [item["embedding"] for item in ordered]

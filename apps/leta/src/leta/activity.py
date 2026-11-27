@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID
@@ -13,6 +14,10 @@ from psycopg.types.json import Jsonb
 from .db import Pool
 
 logger = logging.getLogger(__name__)
+
+type StreamDeltaKind = Literal[
+    "stream.thinking_delta", "stream.text_delta", "stream.tool_args_delta"
+]
 
 type ActivityType = Literal[
     "run.started",
@@ -67,7 +72,7 @@ class CentrifugoPublisher:
         self,
         channels: list[str],
         event_type: str,
-        data: dict[str, JSON],
+        data: Mapping[str, JSON],
         *,
         skip_history: bool = False,
     ) -> None:
@@ -85,7 +90,7 @@ class CentrifugoPublisher:
         self,
         channel: str,
         event_type: str,
-        data: dict[str, JSON],
+        data: Mapping[str, JSON],
         *,
         skip_history: bool = False,
     ) -> None:
@@ -95,7 +100,7 @@ class CentrifugoPublisher:
         self,
         channels: list[str],
         event_type: str,
-        data: dict[str, JSON],
+        data: Mapping[str, JSON],
         *,
         skip_history: bool = False,
     ) -> None:
@@ -131,9 +136,9 @@ class ActivityEmitter:
         leta_id: UUID,
         agent_id: UUID,
         event_type: ActivityType,
-        data: dict[str, JSON],
+        data: Mapping[str, JSON],
         run_id: UUID | None = None,
-        realtime_data: dict[str, JSON] | None = None,
+        realtime_data: Mapping[str, JSON] | None = None,
         extra_channels: list[str] | None = None,
     ) -> int:
         async with self.db.connection() as conn, conn.transaction():
@@ -172,9 +177,7 @@ class ActivityEmitter:
         leta_id: UUID,
         agent_id: UUID,
         run_id: UUID,
-        kind: Literal[
-            "stream.thinking_delta", "stream.text_delta", "stream.tool_args_delta"
-        ],
+        kind: StreamDeltaKind,
         delta: str,
         tool_call_id: str | None = None,
     ) -> None:
@@ -210,14 +213,12 @@ class StreamCoalescer:
         self._agent_id = agent_id
         self._run_id = run_id
         self._interval = interval_seconds
-        self._buffers: dict[tuple[str, str | None], list[str]] = {}
+        self._buffers: dict[tuple[StreamDeltaKind, str | None], list[str]] = {}
         self._flush_task: asyncio.Task[None] | None = None
 
     def push(
         self,
-        kind: Literal[
-            "stream.thinking_delta", "stream.text_delta", "stream.tool_args_delta"
-        ],
+        kind: StreamDeltaKind,
         delta: str,
         *,
         tool_call_id: str | None = None,
@@ -246,7 +247,7 @@ class StreamCoalescer:
                 leta_id=self._leta_id,
                 agent_id=self._agent_id,
                 run_id=self._run_id,
-                kind=kind,  # type: ignore[arg-type]
+                kind=kind,
                 delta=text,
                 tool_call_id=tool_call_id,
             )

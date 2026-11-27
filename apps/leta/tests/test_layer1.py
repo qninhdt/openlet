@@ -1,17 +1,25 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import cast
-from uuid import uuid4
+from pathlib import Path
+from uuid import UUID, uuid4
 
 import pytest
-from leta.channels.base import CallerContext, OutboundMessage, OutboundReceipt
+from leta.channels.base import (
+    CallerContext,
+    ChannelMessage,
+    ChannelSummary,
+    OutboundMessage,
+    OutboundReceipt,
+    PlainTargetMatch,
+)
 from leta.channels.router import ChannelRouter, outbound_idempotency_key, parse_address
 from leta.config import LetaRuntimeConfig
 from leta.hitl.service import Question, build_ask_form, validate_ask_response
 from leta.schedules.service import Timing, build_temporal_schedule, normalize_timing
 from leta.subagents.service import random_appearance, root_handle_base, slugify_handle
-from openlet_sdk.config import JSON, Config
+from openlet_sdk.config import load_path
+from openlet_sdk.types import is_object_list, is_str_mapping
 
 
 class _DummyAdapter:
@@ -19,12 +27,24 @@ class _DummyAdapter:
         self.scheme = scheme
         self.sent: list[tuple[str, str, str]] = []
 
+    async def resolve_uuid_target(
+        self, caller: CallerContext, raw_id: str
+    ) -> str | None:
+        _ = caller
+        return raw_id
+
+    async def resolve_plain_targets(
+        self, caller: CallerContext, query: str
+    ) -> list[PlainTargetMatch]:
+        _ = caller, query
+        return []
+
     async def send(
         self,
         caller: CallerContext,
         target: str,
         msg: OutboundMessage,
-        idempotency_key: object,
+        idempotency_key: UUID,
     ) -> OutboundReceipt:
         self.sent.append((target, msg.content, str(idempotency_key)))
         return OutboundReceipt(
@@ -44,12 +64,12 @@ class _DummyAdapter:
         before_seq: int | None = None,
         limit: int = 20,
         query: str = "",
-    ) -> list[object]:
+    ) -> list[ChannelMessage]:
         return []
 
     async def list_channels(
         self, caller: CallerContext, *, query: str = "", limit: int = 20
-    ) -> list[object]:
+    ) -> list[ChannelSummary]:
         return []
 
     async def set_typing(
@@ -57,11 +77,14 @@ class _DummyAdapter:
     ) -> None:
         return None
 
+    async def mark_read(self, caller: CallerContext, target: str, seq: int) -> None:
+        return None
+
 
 async def test_channel_router_enforces_root_vs_subagent_and_idempotency() -> None:
     chat = _DummyAdapter("chat")
     agent = _DummyAdapter("agent")
-    router = ChannelRouter([chat, agent])  # type: ignore[list-item]
+    router = ChannelRouter([chat, agent])
     ws, lid, sid = uuid4(), uuid4(), uuid4()
     root = CallerContext(ws, lid, lid, "nora-the-analyst", "Nora", is_root=True)
     sub = CallerContext(ws, lid, sid, "researcher", "Researcher", is_root=False)
@@ -103,8 +126,8 @@ def test_hitl_question_types_and_validation() -> None:
             "note": "Use Q4 data",
         },
     )
-    assert valid["note"] == "Use Q4 data"
-    assert cast(dict[str, JSON], valid["answers"])["q3"] == ["o1", "o3"]
+    assert valid.note == "Use Q4 data"
+    assert valid.answers["q3"] == ["o1", "o3"]
 
     with pytest.raises(ValueError):
         validate_ask_response(
@@ -118,7 +141,9 @@ def test_hitl_question_types_and_validation() -> None:
 
 def test_schedule_timing_normalization_and_temporal_spec() -> None:
     now = datetime(2026, 11, 26, 10, 0, 0, tzinfo=UTC)
-    kind, spec = normalize_timing(Timing(after_seconds=60), now) or ("", {})
+    normalized = normalize_timing(Timing(after_seconds=60), now)
+    assert normalized is not None
+    kind, spec = normalized
     assert kind == "at"
     assert spec["at"] == (now + timedelta(seconds=60)).isoformat()
     sched = build_temporal_schedule(
@@ -130,9 +155,11 @@ def test_schedule_timing_normalization_and_temporal_spec() -> None:
     )
     assert sched.state.limited_actions is True and sched.state.remaining_actions == 1
 
-    ck, cspec = normalize_timing(
+    normalized_cal = normalize_timing(
         Timing(calendar={"hour": [9], "minute": [30], "day_of_week": [1, 3, 5]}), now
-    ) or ("", {})
+    )
+    assert normalized_cal is not None
+    ck, cspec = normalized_cal
     assert ck == "calendar"
     csched = build_temporal_schedule(
         schedule_id=uuid4(),
@@ -147,10 +174,6 @@ def test_schedule_timing_normalization_and_temporal_spec() -> None:
 def test_handles_appearance_and_yaml_config_loading(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from pathlib import Path
-
-    import yaml
-
     assert (
         root_handle_base("Nora Vance", "Lead Analyst!") == "nora-vance-the-lead-analyst"
     )
@@ -158,10 +181,8 @@ def test_handles_appearance_and_yaml_config_loading(
     app = random_appearance()
     assert "shape" in app and "color" in app
 
-    raw = yaml.safe_load(
-        Path("infra/config/openlet.example.yaml").read_text(encoding="utf-8")
-    )
-    cfg = LetaRuntimeConfig.from_openlet_config(cast(Config, raw))
+    raw = load_path(Path("infra/config/openlet.example.yaml"))
+    cfg = LetaRuntimeConfig.from_openlet_config(raw)
     assert cfg.model.max_steps_per_run is None
     assert cfg.messaging.notification_preview_chars == 120
     assert cfg.bash.python_max_memory == "256MB"
@@ -182,11 +203,14 @@ def test_observability_masking_baggage_and_prompt_hash() -> None:
             {"url": "https://example.com/a.png"},
         ],
     }
-    masked = cast(dict[str, object], mask_trace_data(data=payload))
-    nested = cast(list[dict[str, str]], masked["nested"])
+    masked = mask_trace_data(data=payload)
+    assert is_str_mapping(masked)
+    nested = masked["nested"]
+    assert is_object_list(nested)
+    assert is_str_mapping(nested[0]) and is_str_mapping(nested[1])
     assert masked["text"] == "hello"
-    assert "[omitted" in nested[0]["url"]
-    assert "AAAA" not in nested[0]["url"]
+    assert "[omitted" in str(nested[0]["url"])
+    assert "AAAA" not in str(nested[0]["url"])
     assert nested[1]["url"] == "https://example.com/a.png"
 
     bag = build_rag_baggage(session_id="s1", agent_id="a1", workspace_id="w1")

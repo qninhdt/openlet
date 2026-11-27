@@ -3,21 +3,36 @@
 from __future__ import annotations
 
 import fcntl
-import json
 import os
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
 from uuid import uuid4
 
 import httpx
 import pytest
 from openlet_env import Environment
+from openlet_sdk.types import is_object_list, is_str_mapping
+from pydantic import BaseModel
 
 DATASET_DIR = Path(__file__).resolve().parent / "dataset"
 SAMPLE_FILES_DIR = DATASET_DIR / "workspaces/acme-review/storages/shared"
+
+
+class _WorkerMeta(BaseModel):
+    project: str
+    workers: int
+
+
+def json_object(value: object) -> dict[str, object]:
+    assert is_str_mapping(value), f"expected JSON object, got {type(value)}"
+    return dict(value)
+
+
+def json_object_list(value: object) -> list[dict[str, object]]:
+    assert is_object_list(value), f"expected JSON list, got {type(value)}"
+    return [json_object(item) for item in value]
 
 
 def poll[T](
@@ -87,11 +102,12 @@ class AccountFactory:
         )
         self._clients.append(client)
 
-        def find_private_storage() -> dict[str, Any] | None:
+        def find_private_storage() -> dict[str, object] | None:
             resp = client.get(f"/v1/workspaces/{workspace_id}/storages?owned_only=true")
             if resp.status_code != 200:
                 return None
-            storages = cast(list[dict[str, Any]], resp.json().get("storages", []))
+            body = json_object(resp.json())
+            storages = json_object_list(body.get("storages", []))
             for item in storages:
                 if item.get("visibility") == "STORAGE_VISIBILITY_PRIVATE":
                     return item
@@ -149,16 +165,16 @@ def openlet_env(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Environmen
     with lock_file.open("a+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         if meta_file.is_file():
-            meta = cast(dict[str, Any], json.loads(meta_file.read_text("utf-8")))
-            meta["workers"] = int(meta["workers"]) + 1
-            meta_file.write_text(json.dumps(meta), encoding="utf-8")
+            meta = _WorkerMeta.model_validate_json(meta_file.read_text("utf-8"))
+            meta.workers += 1
+            meta_file.write_text(meta.model_dump_json(), encoding="utf-8")
         else:
             if keep and _is_gateway_healthy(env):
                 env.sync_wiremock_auth()
             else:
                 env.up(build=build)
             meta_file.write_text(
-                json.dumps({"project": project, "workers": 1}),
+                _WorkerMeta(project=project, workers=1).model_dump_json(),
                 encoding="utf-8",
             )
 
@@ -168,15 +184,15 @@ def openlet_env(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Environmen
         with lock_file.open("a+") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             if meta_file.is_file():
-                meta = cast(dict[str, Any], json.loads(meta_file.read_text("utf-8")))
-                remaining = int(meta["workers"]) - 1
+                meta = _WorkerMeta.model_validate_json(meta_file.read_text("utf-8"))
+                remaining = meta.workers - 1
                 if remaining <= 0:
                     meta_file.unlink(missing_ok=True)
                     if not keep:
                         env.down(volumes=True, remove_state=True)
                 else:
-                    meta["workers"] = remaining
-                    meta_file.write_text(json.dumps(meta), encoding="utf-8")
+                    meta.workers = remaining
+                    meta_file.write_text(meta.model_dump_json(), encoding="utf-8")
 
 
 @pytest.fixture(scope="module")

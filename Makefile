@@ -30,6 +30,7 @@ format:
 	gofmt -w apps/platform apps/letfs apps/chat packages/sdk-go
 	uv run --no-env-file --locked ruff check --select I --fix $(PYTHON_PATHS)
 	uv run --no-env-file --locked ruff format $(PYTHON_PATHS)
+	cd evaluations && uv run --no-env-file --locked ruff check --select I --fix src tests && uv run --no-env-file --locked ruff format src tests
 	pnpm format
 
 check: check-go check-python check-js
@@ -44,6 +45,7 @@ check-python:
 	uv run --no-env-file --locked --all-packages --extra cpu ruff check $(PYTHON_PATHS)
 	uv run --no-env-file --locked ruff format --check $(PYTHON_PATHS)
 	uv run --no-env-file --locked --all-packages --extra cpu pyright
+	cd evaluations && uv run --no-env-file --locked ruff check src tests && uv run --no-env-file --locked ruff format --check src tests && uv run --no-env-file --locked pyright
 
 check-js:
 	pnpm format:check

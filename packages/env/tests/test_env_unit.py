@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import cast
 
 import jwt
 import numpy as np
 import pytest
+from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.algorithms import RSAAlgorithm
 from openlet_env import cache, config, dataset
 from openlet_env.auth import LocalAuth
@@ -80,12 +80,13 @@ def test_local_auth_roundtrip_jwt_with_jwks(tmp_path: Path) -> None:
     auth = LocalAuth.load_or_create(tmp_path)
     token = auth.sign("user_alice", "11111111-1111-1111-1111-111111111111")
     jwks = auth.jwks()
-    keys = cast(list[dict[str, object]], jwks["keys"])
+    keys = jwks["keys"]
     assert len(keys) == 1
     pub = RSAAlgorithm.from_jwk(json.dumps(keys[0]))
+    assert isinstance(pub, rsa.RSAPublicKey)
     decoded = jwt.decode(
         token,
-        pub,  # pyright: ignore[reportArgumentType]
+        pub,
         algorithms=["RS256"],
         audience="openlet",
         issuer="http://wiremock:8080",
@@ -133,18 +134,18 @@ def test_cache_fingerprint_ignores_concurrency_and_reads_format6(
     (folder / "artifacts/README.md").write_text("# Report\n", encoding="utf-8")
     format6_input = {
         "format": 6,
-        "source": fp["source"],
-        "sha256": fp["sha256"],
-        "embedding": fp["embedding"],
-        "enrichment": fp["enrichment"],
-        "prompt_label": fp["prompt_label"],
+        "source": fp.source,
+        "sha256": fp.sha256,
+        "embedding": fp.embedding,
+        "enrichment": fp.enrichment,
+        "prompt_label": fp.prompt_label,
         "parser": {
             "activity_concurrency": 99,
-            "split_tokens": fp["split_tokens"],
-            "limits": fp["limits"],
+            "split_tokens": fp.split_tokens,
+            "limits": fp.limits,
         },
-        "chunk_size_tokens": fp["chunk_size_tokens"],
-        "chunk_overlap_tokens": fp["chunk_overlap_tokens"],
+        "chunk_size_tokens": fp.chunk_size_tokens,
+        "chunk_overlap_tokens": fp.chunk_overlap_tokens,
     }
     (folder / "metadata.json").write_text(
         json.dumps(
@@ -161,7 +162,7 @@ def test_cache_fingerprint_ignores_concurrency_and_reads_format6(
     )
     loaded = cache.read_cache(sample, cfg2)
     assert loaded is not None
-    assert loaded.metadata["files"] == {".": ["Title", "Desc"]}
+    assert loaded.metadata.files == {".": ["Title", "Desc"]}
 
 
 def test_read_seed_specs_and_referenced_users(tmp_path: Path) -> None:

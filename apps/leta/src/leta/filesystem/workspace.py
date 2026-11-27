@@ -7,9 +7,11 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from time import monotonic
+from typing import cast
 from uuid import UUID
 
 from mirage import (
+    FileStat,
     Mount,
     MountMode,
     PathSpec,
@@ -32,12 +34,15 @@ from openlet_api.platform.v1 import internal_pb2 as plat_pb
 
 from ..auth import Actor
 from ..config import Services
+from ..inbox import InboxSender
+from ..runs import AgentRuntimeRecord
 from ..truncation import (
     format_tail_truncated,
     spill_filename,
     truncate_tail,
 )
 from .letfs import LetFS, LetFSByID
+from .types import FileRef, GlobResult, GrepResult, SemanticHit, VersionedText
 
 PUBLIC_ONLY_DENIED_DOMAINS: list[str] = [
     "127.0.0.0/8",
@@ -104,9 +109,9 @@ class ShellOutcome:
 
 
 class Filesystem:
-    def __init__(self, services: Services, agent_row: dict[str, object]) -> None:
+    def __init__(self, services: Services, agent: AgentRuntimeRecord) -> None:
         self.s = services
-        self.agent = agent_row
+        self.agent = agent
         self.bindings: dict[str, StorageMount] = {}
         self.mounted: dict[str, StorageMount] = {}
         self.conv_mounts: dict[str, str] = {}
@@ -129,8 +134,8 @@ class Filesystem:
     async def discover(self, *, force: bool = False) -> None:
         if not force and monotonic() - self.discovered < 30.0:
             return
-        actor = Actor("agent", UUID(str(self.agent["leta_id"])))
-        workspace_id = str(self.agent["workspace_id"])
+        actor = Actor("agent", self.agent.leta_id)
+        workspace_id = str(self.agent.workspace_id)
 
         storages: list[fs.Storage] = []
         token = ""
@@ -296,21 +301,20 @@ class Filesystem:
             return self.conv_mounts.get(conv_id)
         return self.conv_mounts.get(addr)
 
-    def enrich_sender(self, sender: Mapping[str, object]) -> dict[str, object]:
-        out = dict(sender)
-        if out.get("handle"):
-            return out
-        stype = str(out.get("type") or "")
-        sid = str(out.get("id") or "")
-        if stype == "user" and sid in self.user_info:
-            name, handle = self.user_info[sid]
-            if handle:
-                out["handle"] = handle
-            if name and not out.get("name"):
-                out["name"] = name
-        elif stype == "agent" and sid in self.agent_handles:
-            out["handle"] = self.agent_handles[sid]
-        return out
+    def enrich_sender(self, sender: InboxSender) -> InboxSender:
+        if sender.handle:
+            return sender
+        if sender.type == "user" and sender.id in self.user_info:
+            name, handle = self.user_info[sender.id]
+            return sender.model_copy(
+                update={
+                    "handle": handle or sender.handle,
+                    "name": sender.name or name,
+                }
+            )
+        if sender.type == "agent" and sender.id in self.agent_handles:
+            return sender.model_copy(update={"handle": self.agent_handles[sender.id]})
+        return sender
 
     def writable_mounts(self) -> list[str]:
         mounts = ["/home"]
@@ -329,9 +333,9 @@ class Filesystem:
     async def _open_locked(self) -> Session:
         previous = self.mounted
         await self.discover()
-        actor = Actor("agent", UUID(str(self.agent["leta_id"])))
-        workspace_id = UUID(str(self.agent["workspace_id"]))
-        storage_id = UUID(str(self.agent["storage_id"]))
+        actor = Actor("agent", self.agent.leta_id)
+        workspace_id = self.agent.workspace_id
+        storage_id = self.agent.storage_id
         letfs_cfg = self.s.config["services"]["letfs"]
         bash_cfg = self.s.settings.bash
 
@@ -423,11 +427,8 @@ class Filesystem:
 
     async def write_spill(self, prefix: str, full_text: str) -> str | None:
         try:
-            session = await self.open()
             target = spill_filename(prefix, self.s.settings.tool_output)
-            await session.vfs.dispatch(
-                "write_text_optimistic", path_spec(target), content=full_text
-            )
+            await self.write_text_optimistic(target, content=full_text)
             await self.notify_changed(target)
             return target
         except Exception:
@@ -462,20 +463,107 @@ class Filesystem:
         except Exception:
             return
 
-    async def resolve_ref(self, virtual_path: str) -> dict[str, object]:
+    async def read_text_with_version(self, path: str) -> VersionedText:
+        session = await self.open()
+        # mirage's vfs.dispatch returns untyped object; LetFS returns VersionedText.
+        val, _ = await session.vfs.dispatch("read_text_with_version", path_spec(path))
+        return cast("VersionedText", val)
+
+    async def read_raw_bytes(self, path: str, *, max_bytes: int) -> bytes:
+        session = await self.open()
+        val, _ = await session.vfs.dispatch(
+            "read_raw_bytes", path_spec(path), max_bytes=max_bytes
+        )
+        return cast("bytes", val)
+
+    async def write_text_optimistic(
+        self,
+        path: str,
+        *,
+        content: str,
+        expected_version: int | None = None,
+    ) -> FileStat:
+        session = await self.open()
+        val, _ = await session.vfs.dispatch(
+            "write_text_optimistic",
+            path_spec(path),
+            content=content,
+            expected_version=expected_version,
+        )
+        return cast("FileStat", val)
+
+    async def glob_files(
+        self,
+        root: str,
+        *,
+        pattern: str,
+        include_hidden: bool = False,
+        limit: int = 100,
+    ) -> GlobResult:
+        session = await self.open()
+        val, _ = await session.vfs.dispatch(
+            "glob_files",
+            path_spec(root),
+            pattern=pattern,
+            include_hidden=include_hidden,
+            limit=limit,
+        )
+        return cast("GlobResult", val)
+
+    async def grep_files(
+        self,
+        root: str,
+        *,
+        pattern: str,
+        include_glob: str = "",
+        literal: bool = False,
+        case_sensitive: bool = True,
+        limit: int = 100,
+    ) -> GrepResult:
+        session = await self.open()
+        val, _ = await session.vfs.dispatch(
+            "grep_files",
+            path_spec(root),
+            pattern=pattern,
+            include_glob=include_glob,
+            literal=literal,
+            case_sensitive=case_sensitive,
+            limit=limit,
+        )
+        return cast("GrepResult", val)
+
+    async def semantic_search(
+        self,
+        root: str,
+        *,
+        query: str,
+        limit: int = 10,
+        baggage: str | None = None,
+    ) -> list[SemanticHit]:
+        session = await self.open()
+        val, _ = await session.vfs.dispatch(
+            "semantic_search",
+            path_spec(root),
+            query=query,
+            limit=limit,
+            baggage=baggage,
+        )
+        return cast("list[SemanticHit]", val)
+
+    async def resolve_ref(self, virtual_path: str) -> FileRef:
         session = await self.open()
         abs_path = canonical_path(virtual_path)
         st = await session.vfs.stat(abs_path)
         extra = st.extra or {}
-        return {
-            "path": abs_path,
-            "storage_id": str(extra.get("storage_id", "")),
-            "node_id": str(extra.get("node_id", "")),
-            "name": st.name or posixpath.basename(abs_path),
-            "kind": "folder" if st.type.value == "directory" else "file",
-            "media_type": str(extra.get("media_type", "")),
-            "size_bytes": int(st.size or 0),
-        }
+        return FileRef(
+            path=abs_path,
+            storage_id=str(extra.get("storage_id", "")),
+            node_id=str(extra.get("node_id", "")),
+            name=st.name or posixpath.basename(abs_path),
+            kind="folder" if st.type.value == "directory" else "file",
+            media_type=str(extra.get("media_type", "")),
+            size_bytes=int(st.size or 0),
+        )
 
     async def run_shell(
         self, command: str, *, workdir: str | None = None, timeout: int | None = None

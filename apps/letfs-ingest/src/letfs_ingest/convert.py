@@ -2,15 +2,26 @@ import re
 import sys
 import zipfile
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Protocol, cast
 
 import openpyxl
 from openlet_sdk.config import Config, load
+from openpyxl.cell.cell import Cell
+from openpyxl.workbook.workbook import Workbook
+from openpyxl.worksheet.formula import ArrayFormula
 from pptx import Presentation
-from pptx.enum.shapes import MSO_SHAPE_TYPE
+from pptx.chart.chart import Chart
+from pptx.shapes.autoshape import Shape
+from pptx.shapes.base import BaseShape
+from pptx.shapes.graphfrm import GraphicFrame
+from pptx.shapes.group import GroupShape
+from pptx.shapes.picture import Picture
+from pptx.shapes.shapetree import GroupShapes, SlideShapes
+from pptx.table import Table
 from pypdf import PdfReader
 
 from .filters import ImageArtifactWriter, ignored_repeated_digests, image_digest
@@ -72,7 +83,7 @@ def preflight(source: Path, media: str, config: Config) -> None:
             raise InvalidDocument(f"invalid PDF: {exc}") from exc
     if media == XLSX_MEDIA:
         try:
-            wb: Any = openpyxl.load_workbook(source, read_only=True, data_only=True)
+            wb = openpyxl.load_workbook(source, read_only=True, data_only=True)
         except Exception as exc:
             raise InvalidDocument(f"invalid spreadsheet: {exc}") from exc
         try:
@@ -521,22 +532,34 @@ def _col_letters_to_index(col: str) -> int:
 def _extract_formula_text(val: object) -> str:
     if isinstance(val, str):
         return val.strip()
-    text = getattr(val, "text", None)
-    if isinstance(text, str):
-        return text.strip()
+    if isinstance(val, ArrayFormula):
+        text: object = val.text
+        return text.strip() if isinstance(text, str) else ""
     return ""
 
 
+class _OpenpyxlImage(Protocol):
+    def _data(self) -> bytes: ...
+
+
+def _sheet_cells(ws: object) -> dict[tuple[int, int], Cell]:
+    raw = getattr(ws, "_cells", None)
+    return cast("dict[tuple[int, int], Cell]", raw) if isinstance(raw, dict) else {}
+
+
+def _sheet_images(ws: object) -> list[_OpenpyxlImage]:
+    raw = getattr(ws, "_images", None)
+    return cast("list[_OpenpyxlImage]", raw) if isinstance(raw, list) else []
+
+
 def _resolve_formula_fallback(
-    wb_cached: object,
-    wb_formulas: object,
+    wb_cached: Workbook,
+    wb_formulas: Workbook,
     sheet_name: str,
     r1: int,
     c1: int,
 ) -> str:
     """Resolve uncached formula cells by following simple cell refs or emitting the formula."""
-    cached_wb = cast(Any, wb_cached)
-    formula_wb = cast(Any, wb_formulas)
     cur_sheet, cur_r, cur_c = sheet_name, r1, c1
     visited: set[tuple[str, int, int]] = set()
     first_formula = ""
@@ -545,10 +568,10 @@ def _resolve_formula_fallback(
         if key in visited:
             break
         visited.add(key)
-        if cur_sheet not in formula_wb.sheetnames:
+        if cur_sheet not in wb_formulas.sheetnames:
             break
-        f_cell = getattr(formula_wb[cur_sheet], "_cells", {}).get((cur_r, cur_c))
-        formula = _extract_formula_text(getattr(f_cell, "value", None))
+        f_cell = _sheet_cells(wb_formulas[cur_sheet]).get((cur_r, cur_c))
+        formula = _extract_formula_text(f_cell.value if f_cell is not None else None)
         if not formula.startswith("="):
             break
         if not first_formula:
@@ -559,13 +582,13 @@ def _resolve_formula_fallback(
         ref_sheet = m.group(1) or m.group(2)
         if ref_sheet is not None:
             ref_sheet = ref_sheet.replace("''", "'").strip()
-            if ref_sheet not in cached_wb.sheetnames:
+            if ref_sheet not in wb_cached.sheetnames:
                 return first_formula
             cur_sheet = ref_sheet
         cur_c = _col_letters_to_index(m.group(3))
         cur_r = int(m.group(4))
-        c_cell = getattr(cached_wb[cur_sheet], "_cells", {}).get((cur_r, cur_c))
-        cached_txt = _cell_str(getattr(c_cell, "value", None))
+        c_cell = _sheet_cells(wb_cached[cur_sheet]).get((cur_r, cur_c))
+        cached_txt = _cell_str(c_cell.value if c_cell is not None else None)
         if cached_txt:
             return cached_txt
     return first_formula
@@ -578,8 +601,8 @@ def convert_xlsx(source: Path, output: Path, config: Config) -> None:
     max_blob = storage["processing"]["max_artifact_blob_bytes"]
     max_output = limits["max_output_bytes"]
 
-    wb: Any = openpyxl.load_workbook(source, read_only=False, data_only=True)
-    wb_formulas: Any = None
+    wb = openpyxl.load_workbook(source, read_only=False, data_only=True)
+    wb_formulas: Workbook | None = None
     output.mkdir(parents=True, exist_ok=True)
     writer = ImageArtifactWriter(output, max_blob=max_blob, max_output=max_output)
     readme_lines: list[str] = ["# Workbook Index\n"]
@@ -587,26 +610,23 @@ def convert_xlsx(source: Path, output: Path, config: Config) -> None:
 
     try:
         for sheet_name in wb.sheetnames:
-            ws: Any = wb[sheet_name]
+            ws = wb[sheet_name]
             readme_lines.append(f"\n## Sheet: {sheet_name}\n")
 
             cells: dict[tuple[int, int], str] = {}
-            cached_cells: dict[tuple[int, int], Any] = getattr(ws, "_cells", {})
-            needs_formulas = any(
-                not _cell_str(getattr(c, "value", None)) for c in cached_cells.values()
-            )
-            formula_cells: dict[tuple[int, int], Any] = {}
+            cached_cells = _sheet_cells(ws)
+            needs_formulas = any(not _cell_str(c.value) for c in cached_cells.values())
+            formula_cells: dict[tuple[int, int], Cell] = {}
             if needs_formulas:
                 if wb_formulas is None:
                     wb_formulas = openpyxl.load_workbook(
                         source, read_only=False, data_only=False
                     )
-                ws_f: Any = wb_formulas[sheet_name]
-                formula_cells = getattr(ws_f, "_cells", {})
+                formula_cells = _sheet_cells(wb_formulas[sheet_name])
             for coord in set(cached_cells) | set(formula_cells):
-                r1, c1 = int(coord[0]), int(coord[1])
+                r1, c1 = coord[0], coord[1]
                 c_cell = cached_cells.get(coord)
-                txt = _cell_str(getattr(c_cell, "value", None))
+                txt = _cell_str(c_cell.value if c_cell is not None else None)
                 if not txt and wb_formulas is not None and coord in formula_cells:
                     txt = _resolve_formula_fallback(wb, wb_formulas, sheet_name, r1, c1)
                 if txt:
@@ -702,9 +722,9 @@ def convert_xlsx(source: Path, output: Path, config: Config) -> None:
                             desc += f": {header_preview}"
                         readme_lines.append(f"- [{desc}](tables/{part_name})")
 
-            for img in getattr(ws, "_images", []):
+            for img in _sheet_images(ws):
                 try:
-                    raw_img: bytes = img._data()
+                    raw_img: bytes = img._data()  # pyright: ignore[reportPrivateUsage]
                 except Exception:
                     continue
                 before = writer.count
@@ -730,15 +750,14 @@ def _fit_utf8_bytes(text: str, limit: int) -> str:
     return text if len(raw) <= limit else raw[:limit].decode("utf-8", errors="ignore")
 
 
-def _iter_shapes_in_order(shapes: object) -> list[Any]:
-    items = list(cast(list[Any], shapes))
+def _iter_shapes_in_order(shapes: SlideShapes | GroupShapes) -> list[BaseShape]:
     ordered = sorted(
-        items,
-        key=lambda s: (int(getattr(s, "top", 0) or 0), int(getattr(s, "left", 0) or 0)),
+        list(shapes),
+        key=lambda s: (int(s.top or 0), int(s.left or 0)),
     )
-    out: list[Any] = []
+    out: list[BaseShape] = []
     for shape in ordered:
-        if getattr(shape, "shape_type", None) == MSO_SHAPE_TYPE.GROUP:
+        if isinstance(shape, GroupShape):
             out.extend(_iter_shapes_in_order(shape.shapes))
         else:
             out.append(shape)
@@ -756,17 +775,26 @@ def _render_markdown_table(rows: list[list[str]]) -> str:
     return "\n".join(lines)
 
 
-def _render_chart_markdown(shape: object) -> str:
-    chart: Any = getattr(shape, "chart")
+class _ChartSeries(Protocol):
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def values(self) -> Sequence[object]: ...
+
+
+def _render_chart_markdown(chart: Chart) -> str:
     lines: list[str] = []
     title_text = ""
-    if getattr(chart, "has_title", False):
+    if chart.has_title:
         title_text = _cell_str(chart.chart_title.text_frame.text)
     lines.append(f"### Chart: {title_text}" if title_text else "### Chart")
     try:
         plot = chart.plots[0]
-        categories = [_cell_str(c.label) for c in getattr(plot, "categories", [])]
-        series_list = list(getattr(plot, "series", []))
+        if isinstance(plot, list):
+            return "\n".join(lines)
+        categories = [_cell_str(c.label) for c in plot.categories]
+        series_list = cast("list[_ChartSeries]", list(plot.series))
         if series_list:
             headers = [
                 "Category",
@@ -793,9 +821,8 @@ def _render_chart_markdown(shape: object) -> str:
     return "\n".join(lines)
 
 
-def _render_table_markdown(table: object) -> str:
-    tbl: Any = table
-    rows = [[_cell_str(cell.text) for cell in row.cells] for row in tbl.rows]
+def _render_table_markdown(table: Table) -> str:
+    rows = [[_cell_str(cell.text) for cell in row.cells] for row in table.rows]
     return _render_markdown_table(rows)
 
 
@@ -807,7 +834,7 @@ def convert_pptx(source: Path, output: Path, config: Config) -> None:
     max_blob = storage["processing"]["max_artifact_blob_bytes"]
     max_output = limits["max_output_bytes"]
 
-    prs: Any = Presentation(str(source))
+    prs = Presentation(str(source))
     slides = list(prs.slides)
     if len(slides) > limits["max_pages"]:
         raise InvalidDocument(
@@ -819,7 +846,7 @@ def convert_pptx(source: Path, output: Path, config: Config) -> None:
     for slide in slides:
         seen_on_slide: set[bytes] = set()
         for shape in _iter_shapes_in_order(slide.shapes):
-            if hasattr(shape, "image"):
+            if isinstance(shape, Picture):
                 try:
                     seen_on_slide.add(image_digest(bytes(shape.image.blob)))
                 except Exception:
@@ -851,15 +878,15 @@ def convert_pptx(source: Path, output: Path, config: Config) -> None:
         for shape in _iter_shapes_in_order(slide.shapes):
             if shape == title_shape:
                 continue
-            if getattr(shape, "has_table", False):
+            if isinstance(shape, GraphicFrame) and shape.has_table:
                 md_table = _render_table_markdown(shape.table)
                 if md_table:
                     parts.append(md_table)
                 continue
-            if getattr(shape, "has_chart", False):
-                parts.append(_render_chart_markdown(shape))
+            if isinstance(shape, GraphicFrame) and shape.has_chart:
+                parts.append(_render_chart_markdown(shape.chart))
                 continue
-            if hasattr(shape, "image"):
+            if isinstance(shape, Picture):
                 try:
                     raw_blob = bytes(shape.image.blob)
                 except Exception:
@@ -870,25 +897,23 @@ def convert_pptx(source: Path, output: Path, config: Config) -> None:
                     raise InvalidDocument(f"presentation {exc}") from exc
                 if not keep or rel_path is None:
                     continue
-                alt = (
-                    _cell_str(getattr(shape, "name", "")) or f"Slide {slide_num} figure"
-                )
+                alt = _cell_str(shape.name) or f"Slide {slide_num} figure"
                 parts.append(f"![{alt}]({rel_path})")
                 continue
-            if getattr(shape, "has_text_frame", False):
+            if isinstance(shape, Shape) and shape.has_text_frame:
                 tf_lines: list[str] = []
                 for para in shape.text_frame.paragraphs:
                     txt = _cell_str(para.text)
                     if not txt:
                         continue
-                    lvl = int(getattr(para, "level", 0) or 0)
+                    lvl = para.level or 0
                     indent = "  " * max(0, lvl - 1)
                     tf_lines.append(f"{indent}- {txt}" if lvl > 0 else txt)
                 if tf_lines:
                     parts.append("\n".join(tf_lines))
 
-        if getattr(slide, "has_notes_slide", False):
-            notes_tf = getattr(slide.notes_slide, "notes_text_frame", None)
+        if slide.has_notes_slide:
+            notes_tf = slide.notes_slide.notes_text_frame
             notes = _cell_str(notes_tf.text) if notes_tf is not None else ""
             if notes:
                 parts.append(f"> Speaker Notes: {notes}")

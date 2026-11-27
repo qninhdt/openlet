@@ -18,6 +18,7 @@ from .base import (
     ChannelSummary,
     OutboundMessage,
     OutboundReceipt,
+    PlainTargetMatch,
 )
 
 if TYPE_CHECKING:
@@ -202,6 +203,24 @@ class OpenletChatAdapter:
             pass
 
         return matches
+
+    async def resolve_uuid_target(
+        self, caller: CallerContext, raw_id: str
+    ) -> str | None:
+        _ = caller
+        return raw_id
+
+    async def resolve_plain_targets(
+        self, caller: CallerContext, query: str
+    ) -> list[PlainTargetMatch]:
+        return [
+            PlainTargetMatch(
+                target=addr.removeprefix("chat:"),
+                address=addr,
+                label=label,
+            )
+            for addr, label in await self.find_plain_matches(caller, query)
+        ]
 
     async def _resolve_conversation_id(self, caller: CallerContext, target: str) -> str:
         """Accept conv UUID, 'user:<handle|uuid>', 'agent:<handle|uuid>', or a group/user/peer handle."""

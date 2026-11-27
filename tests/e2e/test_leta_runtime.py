@@ -5,10 +5,10 @@ from __future__ import annotations
 import datetime as dt
 import json
 import time
-from typing import Any, cast
 
 import httpx
 from openlet_env import Environment
+from openlet_sdk.types import is_object_list, is_str_mapping
 
 from .conftest import AccountFactory, AccountFixture, new_uuid, poll
 
@@ -270,12 +270,18 @@ def test_leta_runtime_boxes_hitl_and_owner_independent_schedules(
             }
         )
         for entry in requests:
-            if int(cast(int, entry["loggedDate"])) < left_at_ms:
+            if entry.loggedDate < left_at_ms:
                 continue
-            body = cast(dict[str, Any], json.loads(cast(str, entry["body"])))
-            for m in cast(list[dict[str, Any]], body.get("messages", [])):
+            body: object = json.loads(entry.body)
+            if not is_str_mapping(body):
+                continue
+            msgs = body.get("messages", [])
+            if not is_object_list(msgs):
+                continue
+            for m in msgs:
                 if (
-                    m.get("role") == "tool"
+                    is_str_mapping(m)
+                    and m.get("role") == "tool"
                     and m.get("tool_call_id") == "reuse-session"
                     and m.get("content") == "Native Leta runtime wrote this file."
                 ):

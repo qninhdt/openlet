@@ -158,7 +158,7 @@ async def resources(c: Config) -> None:
             await client.create_schedule(identity, schedule)
         except ScheduleAlreadyRunningError:
             await client.get_schedule_handle(identity).update(
-                lambda _: ScheduleUpdate(schedule=schedule)
+                lambda _, sched=schedule: ScheduleUpdate(schedule=sched)
             )
     vector = dep["qdrant"]
     host, port = vector["address"].rsplit(":", 1)

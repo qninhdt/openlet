@@ -1,7 +1,7 @@
 import json
 from io import BytesIO
 from types import SimpleNamespace
-from typing import Any
+from typing import Self
 
 import pytest
 from letfs_ingest.providers import (
@@ -13,6 +13,7 @@ from letfs_ingest.providers import (
     vision,
 )
 from openlet_sdk.config import Config
+from openlet_sdk.types import is_object_list, is_str_mapping
 from PIL import Image
 
 
@@ -129,11 +130,11 @@ async def test_describe_batch_interleaves_artifacts_and_retries_with_instructor(
     monkeypatch: pytest.MonkeyPatch, config: Config
 ) -> None:
     monkeypatch.setenv("LITELLM_MASTER_KEY", "test-key")
-    captured_messages: list[Any] = []
+    captured_messages: list[object] = []
     calls = 0
 
     class DummyObs:
-        def __enter__(self) -> "DummyObs":
+        def __enter__(self) -> Self:
             return self
 
         def __exit__(self, *args: object) -> None:
@@ -248,7 +249,12 @@ async def test_describe_batch_interleaves_artifacts_and_retries_with_instructor(
     )
     assert calls == 2  # Missing ID triggered automatic instructor retry
     assert set(result) == {"01-part.md", "images/01-img.png"}
-    user_parts = captured_messages[0][1]["content"]
+    first_call = captured_messages[0]
+    assert is_object_list(first_call)
+    user_msg = first_call[1]
+    assert is_str_mapping(user_msg)
+    user_parts = user_msg["content"]
+    assert is_object_list(user_parts)
     assert user_parts[0] == {
         "type": "text",
         "text": '--- ARTIFACT id="01-part.md" (text/markdown) ---\n# Revenue',
@@ -257,8 +263,12 @@ async def test_describe_batch_interleaves_artifacts_and_retries_with_instructor(
         "type": "text",
         "text": '--- ARTIFACT id="images/01-img.png" (image/png) ---',
     }
-    assert user_parts[2]["type"] == "image_url"
-    assert user_parts[2]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+    img_part = user_parts[2]
+    assert is_str_mapping(img_part)
+    assert img_part["type"] == "image_url"
+    img_url = img_part["image_url"]
+    assert is_str_mapping(img_url)
+    assert str(img_url["url"]).startswith("data:image/jpeg;base64,")
 
 
 async def test_complete_retries_transient_errors(
@@ -270,7 +280,7 @@ async def test_complete_retries_transient_errors(
     attempts = 0
 
     class DummyObs:
-        def __enter__(self) -> "DummyObs":
+        def __enter__(self) -> Self:
             return self
 
         def __exit__(self, *args: object) -> None:

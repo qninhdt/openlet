@@ -4,17 +4,24 @@ import hashlib
 import json
 from collections.abc import Mapping
 from datetime import datetime
-from typing import Any, cast
 from urllib.parse import quote
 from uuid import UUID
 
 from openlet_sdk.config import JSON, Config, secret
+from openlet_sdk.types import is_mapping, is_object_sequence
+from psycopg import AsyncConnection
 from psycopg.rows import DictRow, dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
+from pydantic import BaseModel
 
-type Pool = AsyncConnectionPool[Any]
+type Pool = AsyncConnectionPool[AsyncConnection[DictRow]]
 type Row = DictRow
+
+
+def hydrate[M: BaseModel](row: Mapping[str, object], model: type[M]) -> M:
+    """Validate and hydrate a Postgres DictRow into a typed Pydantic domain model."""
+    return model.model_validate(row)
 
 
 class WriterBusyError(RuntimeError):
@@ -126,7 +133,10 @@ async def get_receipt(
         return None
     if row["request_hash"] != request_hash:
         raise ValueError("idempotency_key reused with different request payload")
-    return cast(dict[str, JSON], row["response"])
+    resp = row["response"]
+    if not is_mapping(resp):
+        raise ValueError("corrupted idempotency receipt response")
+    return {str(k): json_value(v) for k, v in resp.items()}
 
 
 async def save_receipt(
@@ -167,12 +177,10 @@ def json_value(value: object) -> JSON:
         return str(value)
     if isinstance(value, datetime):
         return value.isoformat()
-    if isinstance(value, Mapping):
-        mapping = cast(Mapping[object, object], value)
-        return {str(k): json_value(v) for k, v in mapping.items()}
-    if isinstance(value, (list, tuple)):
-        seq = cast(list[object] | tuple[object, ...], value)
-        return [json_value(v) for v in seq]
+    if is_mapping(value):
+        return {str(k): json_value(v) for k, v in value.items()}
+    if is_object_sequence(value):
+        return [json_value(v) for v in value]
     return str(value)
 
 

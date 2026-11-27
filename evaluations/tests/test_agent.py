@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Sequence
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Self
 
 import httpx
 import pytest
+from deepeval.test_case import LLMTestCase
 
 from openlet_evals.core.report import diff_runs, render_markdown
 from openlet_evals.suites.agent import runner as agent_runner
@@ -17,12 +19,16 @@ from openlet_evals.suites.agent import suite as agent_suite
 from openlet_evals.suites.agent.runner import (
     AssistantMessage,
     Attachment,
+    RunStatusResp,
     RunUsage,
     ToolStats,
     TrialArtifact,
+    collect_outputs,
+    execute_trial,
     parse_history,
     render_deliverable,
     resolve_inline_mentions,
+    wait_for_run,
 )
 from openlet_evals.suites.agent.suite import (
     AgentEvalConfig,
@@ -223,14 +229,15 @@ def test_verdict_parsing_and_multi_trial_aggregation() -> None:
     run = aggregate_results(
         AgentEvalConfig(name="multi", trials=2), trials, wall_s=30.0
     )
-    assert run["metrics"] == {
+    assert run.metrics == {
         "pass_at_1": pytest.approx(0.5),
         "mean_rubric_score": pytest.approx(0.75),
         "pass_at_k": pytest.approx(1.0),
         "pass_pow_k": pytest.approx(0.0),
     }
-    assert run["telemetry"]["avg_input_tokens"] == 1500.0
-    assert run["telemetry"]["tool_error_rate"] == 0.1
+    assert run.telemetry is not None
+    assert run.telemetry["avg_input_tokens"] == 1500.0
+    assert run.telemetry["tool_error_rate"] == 0.1
     assert "## Telemetry" in render_markdown(run)
     assert "## Telemetry Diff" in diff_runs(run, run)
 
@@ -276,7 +283,7 @@ def test_grade_trials_matches_by_name_and_zeros_empty_trials(
 
     def fake_eval(
         *,
-        test_cases: list[Any],
+        test_cases: Sequence[LLMTestCase],
         identifier: str,
         async_config: object,
         cache_config: object,
@@ -384,17 +391,17 @@ def test_wait_for_run_survives_cancel_read_timeout(
 
     monkeypatch.setattr(agent_runner.asyncio, "sleep", fast_sleep)
 
-    async def _run() -> tuple[dict[str, Any], bool]:
+    async def _run() -> tuple[RunStatusResp, bool]:
         async with httpx.AsyncClient(
             base_url="http://test", transport=httpx.MockTransport(handler)
         ) as client:
-            return await agent_runner._wait_for_run(  # pyright: ignore[reportPrivateUsage]
+            return await wait_for_run(
                 client, "/v1/workspaces/w/letas/a", "a", timeout_s=0.01
             )
 
     run_row, timed_out = asyncio.run(_run())
     assert timed_out is True
-    assert run_row["id"] == "run-1"
+    assert run_row.id == "run-1"
     assert any(c.endswith("/cancel") for c in calls)
 
 
@@ -403,7 +410,7 @@ def test_execute_trial_isolates_http_error(monkeypatch: pytest.MonkeyPatch) -> N
         def __init__(self, **_kwargs: object) -> None:
             pass
 
-        async def __aenter__(self) -> FailingClient:
+        async def __aenter__(self) -> Self:
             return self
 
         async def __aexit__(self, *_exc: object) -> None:
@@ -415,7 +422,7 @@ def test_execute_trial_isolates_http_error(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(agent_runner.httpx, "AsyncClient", FailingClient)
     task = AgentTask(id="t-err", workspace="ws-a", task="q", must=["m"])
     art = asyncio.run(
-        agent_runner._execute_trial(  # pyright: ignore[reportPrivateUsage]
+        execute_trial(
             AgentEvalConfig(name="test"),
             "http://test",
             ("wid", {}, {}, {}),
@@ -504,7 +511,7 @@ def test_collect_outputs_keeps_only_final_message_chat_attachments() -> None:
         async with httpx.AsyncClient(
             base_url="http://test", transport=httpx.MockTransport(handler)
         ) as client:
-            _, atts, _, _ = await agent_runner._collect_outputs(  # pyright: ignore[reportPrivateUsage]
+            _, atts, _, _ = await collect_outputs(
                 client,
                 "w1",
                 "/v1/workspaces/w1/letas/a1",

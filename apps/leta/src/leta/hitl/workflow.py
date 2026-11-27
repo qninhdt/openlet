@@ -1,16 +1,14 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import timedelta
 from uuid import UUID
 
-from openlet_sdk.config import JSON
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ApplicationError
 
 with workflow.unsafe.imports_passed_through():
-    from .service import HitlDecisionInput, OpenHitlInput
+    from .service import HitlDecisionInput, HitlRecord, OpenHitlInput
 
 
 @workflow.defn(name="HitlWorkflow")
@@ -19,10 +17,10 @@ class HitlWorkflow:
     def __init__(self, request: OpenHitlInput) -> None:
         self._decision: HitlDecisionInput | None = None
         self._request: OpenHitlInput = request
-        self._resolved: dict[str, JSON] | None = None
+        self._resolved: HitlRecord | None = None
 
     @workflow.update
-    async def decide(self, decision: HitlDecisionInput) -> dict[str, JSON]:
+    async def decide(self, decision: HitlDecisionInput) -> HitlRecord:
         if self._decision is not None:
             raise ApplicationError("HITL request already resolved", non_retryable=True)
         if decision.actor_id != self._request.recipient_user_id:
@@ -32,9 +30,10 @@ class HitlWorkflow:
             )
         decision.resolved_at = workflow.now()
         try:
-            result: dict[str, JSON] = await workflow.execute_activity(
+            result: HitlRecord = await workflow.execute_activity(
                 "resolve_hitl",
                 decision,
+                result_type=HitlRecord,
                 start_to_close_timeout=timedelta(seconds=30),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
@@ -55,15 +54,16 @@ class HitlWorkflow:
             )
 
     @workflow.run
-    async def run(self, request: OpenHitlInput) -> dict[str, JSON]:
+    async def run(self, request: OpenHitlInput) -> HitlRecord:
         request = self._request
-        opened: dict[str, JSON] = await workflow.execute_activity(
+        opened: HitlRecord = await workflow.execute_activity(
             "open_hitl",
             request,
+            result_type=HitlRecord,
             start_to_close_timeout=timedelta(seconds=30),
             retry_policy=RetryPolicy(maximum_attempts=3),
         )
-        if opened.get("status") == "already_granted":
+        if opened.status == "already_granted":
             return opened
 
         timeout: timedelta | None = None
@@ -75,7 +75,7 @@ class HitlWorkflow:
             await workflow.wait_condition(
                 lambda: self._decision is not None, timeout=timeout
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self._decision = HitlDecisionInput(
                 request_id=request.id,
                 actor_id=request.recipient_user_id,
@@ -88,6 +88,7 @@ class HitlWorkflow:
             self._resolved = await workflow.execute_activity(
                 "resolve_hitl",
                 self._decision,
+                result_type=HitlRecord,
                 start_to_close_timeout=timedelta(seconds=30),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
@@ -96,6 +97,7 @@ class HitlWorkflow:
             self._resolved = await workflow.execute_activity(
                 "apply_hitl_effect",
                 request.id,
+                result_type=HitlRecord,
                 start_to_close_timeout=timedelta(seconds=60),
                 retry_policy=RetryPolicy(maximum_attempts=5),
             )

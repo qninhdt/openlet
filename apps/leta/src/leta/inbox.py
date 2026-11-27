@@ -1,20 +1,29 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
 from openlet_sdk.config import JSON
 from psycopg.types.json import Jsonb
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from temporalio.client import Client as TemporalClient
 
 from .activity import ActivityEmitter
-from .db import Pool, Row
+from .db import Pool, hydrate
+from .hitl.models import (
+    ApprovalPayload,
+    ApprovalResponse,
+    AskPayload,
+    AskResponse,
+    HitlOutcome,
+)
 
 type InboxKind = Literal[
     "channel", "reaction", "agent", "hitl", "schedule", "notification"
 ]
+type DeliveryState = Literal["pending", "previewed", "delivered"]
 
 
 class InboxSender(BaseModel):
@@ -22,6 +31,61 @@ class InboxSender(BaseModel):
     id: str
     name: str = ""
     handle: str = ""
+
+
+class InboxAttachment(BaseModel):
+    storage_id: str = ""
+    node_id: str = ""
+    name: str = ""
+    media_type: str = ""
+    kind: str = "file"
+    size_bytes: int = 0
+
+
+class InboxMetadata(BaseModel):
+    """Typed superset of inbox_items.metadata across channel/schedule/hitl/reaction/notification."""
+
+    model_config = ConfigDict(extra="allow")
+
+    # channel / chat
+    message_id: str = ""
+    reply_to_message_id: str | None = None
+    seq: int | None = None
+    # schedule
+    schedule_id: str = ""
+    title: str = ""
+    scheduled_for: str | None = None
+    # hitl
+    request_id: str = ""
+    type: str = ""
+    status: str = ""
+    payload: AskPayload | ApprovalPayload | dict[str, JSON] | None = None
+    response: AskResponse | ApprovalResponse | dict[str, JSON] | str | None = None
+    outcome: HitlOutcome | str | None = None
+    # notification
+    event: str = ""
+    error: str = ""
+    subagent_handle: str = ""
+    subagent_name: str = ""
+    subagent_id: str = ""
+    # reaction
+    target_message_id: str = ""
+    emoji: str = ""
+    action: str = "added"
+
+
+class InboxRecord(BaseModel):
+    seq: int
+    kind: InboxKind
+    channel: str | None = None
+    reply_address: str | None = None
+    sender: InboxSender
+    content: str = ""
+    attachments: list[InboxAttachment] = Field(default_factory=list[InboxAttachment])
+    metadata: InboxMetadata = Field(default_factory=InboxMetadata)
+    silent: bool = False
+    delivery_state: DeliveryState = "pending"
+    created_at: datetime
 
 
 class InboxItem(BaseModel):
@@ -165,7 +229,7 @@ class InboxGateway:
 
     async def fetch_pending(
         self, agent_id: UUID, *, include_previewed: bool
-    ) -> list[Row]:
+    ) -> list[InboxRecord]:
         async with self.db.connection() as conn:
             if include_previewed:
                 rows = await (
@@ -193,7 +257,7 @@ class InboxGateway:
                         (agent_id,),
                     )
                 ).fetchall()
-        return [dict(r) for r in rows]
+        return [hydrate(r, InboxRecord) for r in rows]
 
     async def mark_delivery_states(
         self,

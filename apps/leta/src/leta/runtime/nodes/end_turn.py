@@ -6,14 +6,14 @@ from langchain_core.messages import AIMessage
 from langgraph.runtime import Runtime
 
 from ...channels.base import CallerContext
-from ..state import AgentState, RuntimeContext
+from ..state import AgentState, AgentStateUpdate, RuntimeContext
 
 SYNTHETIC_END_TURN_TEXT = "Message delivered. Standing by."
 
 
 async def end_turn_node(
     state: AgentState, runtime: Runtime[RuntimeContext]
-) -> dict[str, object]:
+) -> AgentStateUpdate:
     """Zero-LLM-call fast exit closing the turn on a valid assistant message."""
     _ = state
     rt = runtime.context

@@ -1,19 +1,19 @@
 import asyncio
 import csv
 from io import StringIO
-from typing import Any, Literal, TypedDict, cast
+from typing import Literal, TypedDict
 from uuid import NAMESPACE_DNS, uuid5
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from openlet_api.letfs.v1 import internal_pb2 as internal
 from openlet_api.letfs.v1 import letfs_pb2 as letfs
 from openlet_sdk.config import Config
-from qdrant_client import AsyncQdrantClient, models
+from qdrant_client import models
 
-from .providers import Models
+from .protocols import EmbeddingModels, VectorStore
 from .readme import own_body
 
-PointKind = Literal["image", "table", "text", "text_chunk"]
+type PointKind = Literal["image", "table", "text", "text_chunk"]
 
 
 class PointPayload(TypedDict):
@@ -205,8 +205,8 @@ def points(
 
 async def index(
     info: internal.GetBlobArtifactsResponse,
-    ai: Models,
-    qdrant: AsyncQdrantClient,
+    ai: EmbeddingModels,
+    qdrant: VectorStore,
     config: Config,
 ) -> None:
     io = config["services"]["letfs_ingest"]["io"]
@@ -239,9 +239,7 @@ async def index(
         async with sem:
             vectors = await ai.embed([p[1]["text"] for p in slice_items])
         return [
-            models.PointStruct(
-                id=pid, vector=vec, payload=cast(dict[str, Any], payload)
-            )
+            models.PointStruct(id=pid, vector=vec, payload=dict(payload))
             for (pid, payload), vec in zip(slice_items, vectors, strict=True)
         ]
 

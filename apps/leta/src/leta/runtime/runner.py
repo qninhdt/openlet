@@ -5,7 +5,6 @@ import logging
 from collections.abc import Callable
 from contextlib import ExitStack
 from time import monotonic
-from typing import cast
 from uuid import UUID, uuid4
 
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
@@ -13,7 +12,7 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
 from langfuse import propagate_attributes
 from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler
-from openlet_sdk.config import ReasoningEffort
+from openlet_sdk.types import is_object_list, is_str_mapping
 
 from ..channels.base import CallerContext
 from ..channels.internal_agent import InternalAgentAdapter
@@ -37,7 +36,7 @@ from ..runs import (
 from .checkpoint import make_checkpointer
 from .graph import build_agent_graph
 from .prompts import prompt_version_hash
-from .state import RuntimeContext
+from .state import AgentState, RuntimeContext
 from .tools.files import build_file_tools
 from .tools.messaging import build_messaging_tools
 from .tools.web import build_web_tools
@@ -130,15 +129,14 @@ async def run_agent_turn(
 
     try:
         agent_row = await load_agent_runtime_record(services.db, agent_id)
-        leta_id = UUID(str(agent_row["leta_id"]))
-        workspace_id = UUID(str(agent_row["workspace_id"]))
-        storage_id = UUID(str(agent_row["storage_id"]))
-        is_root = agent_row["parent_agent_id"] is None
-        handle = str(agent_row["handle"])
-        raw_model_id = agent_row["model_id"]
-        model_id = str(raw_model_id) if raw_model_id else None
-        reasoning_effort = cast(ReasoningEffort, agent_row["reasoning_effort"])
-        model_spec = await services.models.get(model_id, reasoning_effort)
+        leta_id = agent_row.leta_id
+        workspace_id = agent_row.workspace_id
+        storage_id = agent_row.storage_id
+        is_root = agent_row.parent_agent_id is None
+        handle = agent_row.handle
+        model_spec = await services.models.get(
+            agent_row.model_id, agent_row.reasoning_effort
+        )
     except Exception:
         await release_lease(services.db, agent_id, lease_token)
         raise
@@ -159,13 +157,13 @@ async def run_agent_turn(
         storage_id=storage_id,
         is_root=is_root,
         handle=handle,
-        agent_name=str(agent_row["name"]),
-        agent_title=str(agent_row["title"]),
-        agent_description=str(agent_row["description"]),
-        custom_instructions=str(agent_row["custom_instructions"] or ""),
-        parent_handle=str(agent_row.get("parent_handle") or ""),
+        agent_name=agent_row.name,
+        agent_title=agent_row.title,
+        agent_description=agent_row.description,
+        custom_instructions=agent_row.custom_instructions,
+        parent_handle=agent_row.parent_handle or "",
         model_spec=model_spec,
-        reasoning_effort=reasoning_effort,
+        reasoning_effort=agent_row.reasoning_effort,
         run_id=run_id,
         services=services,
         emitter=services.activity,
@@ -185,7 +183,7 @@ async def run_agent_turn(
     )
 
     # Independent heartbeat task (never blocks on DB or gRPC).
-    graph_task: asyncio.Task[dict[str, object]] | None = None
+    graph_task: asyncio.Task[int] | None = None
     lease_lost = False
 
     async def _heartbeat_loop() -> None:
@@ -251,9 +249,16 @@ async def run_agent_turn(
             config["callbacks"] = [lf_handler]
 
         snapshot = await compiled.aget_state(config)
-        existing_values = cast(dict[str, object], snapshot.values or {})
-        existing_msgs = cast(list[BaseMessage], existing_values.get("messages") or [])
-        final_cursor = int(cast(int, existing_values.get("inbox_cursor") or 0))
+        raw_values: object = snapshot.values
+        existing_values = raw_values if is_str_mapping(raw_values) else {}
+        raw_msgs = existing_values.get("messages")
+        existing_msgs: list[BaseMessage] = (
+            [m for m in raw_msgs if isinstance(m, BaseMessage)]
+            if is_object_list(raw_msgs)
+            else []
+        )
+        raw_cursor = existing_values.get("inbox_cursor")
+        final_cursor = raw_cursor if isinstance(raw_cursor, int) else 0
 
         # Case A: Repair orphaned tool_calls left by an interrupted prior run.
         orphans = find_orphaned_tool_calls(existing_msgs)
@@ -271,7 +276,7 @@ async def run_agent_turn(
             snapshot = await compiled.aget_state(config)
 
         # Case B: Resume interrupted worker OOM mid-node vs Case C: normal start.
-        async def _run_graph() -> dict[str, object]:
+        async def _run_graph() -> int:
             with ExitStack() as stack:
                 if lf is not None:
                     stack.enter_context(
@@ -310,15 +315,18 @@ async def run_agent_turn(
                 outcome_label = "completed"
                 try:
                     if snapshot.next and not orphans:
-                        out = await compiled.ainvoke(None, config, context=rt)  # pyright: ignore[reportUnknownMemberType]
+                        out: object = await compiled.ainvoke(None, config, context=rt)  # pyright: ignore[reportUnknownMemberType]
                     else:
-                        initial_state: dict[str, object] = (
-                            {}
-                            if existing_msgs
-                            else {"messages": [], "inbox_cursor": final_cursor}
-                        )
-                        out = await compiled.ainvoke(initial_state, config, context=rt)  # pyright: ignore[reportUnknownMemberType,reportArgumentType]
-                    return cast(dict[str, object], out)
+                        initial_state: AgentState = {
+                            "messages": [],
+                            "inbox_cursor": final_cursor,
+                        }
+                        out = await compiled.ainvoke(initial_state, config, context=rt)  # pyright: ignore[reportUnknownMemberType]
+                    if is_str_mapping(out):
+                        raw_out_cursor = out.get("inbox_cursor")
+                        if isinstance(raw_out_cursor, int):
+                            return raw_out_cursor
+                    return final_cursor
                 except asyncio.CancelledError:
                     outcome_label = "cancelled"
                     raise
@@ -349,13 +357,11 @@ async def run_agent_turn(
         graph_task = asyncio.create_task(_run_graph())
 
         try:
-            final_state = await graph_task
+            final_cursor = await graph_task
         except asyncio.CancelledError:
             if lease_lost:
                 raise LeaseLostError(f"lost lease for agent {agent_id}") from None
             raise
-
-        final_cursor = int(cast(int, final_state.get("inbox_cursor", final_cursor)))
 
         reported_cursor, latest_wake_seq = await services.inbox.compute_wake_cursors(
             agent_id, final_cursor

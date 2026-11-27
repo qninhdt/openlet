@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import importlib.util
-import json
 import os
 import re
 import shutil
 import subprocess
 import sys
 from collections.abc import Mapping
-from dataclasses import asdict
 from pathlib import Path
 from typing import Protocol, cast
 from uuid import uuid4
@@ -18,7 +16,8 @@ from uuid import uuid4
 import boto3
 import yaml
 from botocore.config import Config as S3ClientConfig
-from openlet_sdk.config import Config
+from openlet_sdk.config import Config, load_path
+from openlet_sdk.types import is_str_mapping
 
 from .config import (
     build_openlet_config,
@@ -55,7 +54,7 @@ def _load_configure(repo_root: Path) -> _ConfigureFn:
         raise RuntimeError(f"Unable to load {script_path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return cast(_ConfigureFn, module.configure)
+    return cast("_ConfigureFn", module.configure)
 
 
 class ComposeStack:
@@ -72,33 +71,17 @@ class ComposeStack:
         self.shared_uv_cache = self.repo_root / ".local/uv-cache"
 
     def load_state(self) -> EnvState:
-        raw = cast(dict[str, object], json.loads(self.state_path.read_text("utf-8")))
-        return EnvState(
-            project=cast(str, raw["project"]),
-            mode=cast(EnvMode, raw["mode"]),
-            namespace=cast(str, raw["namespace"]),
-            profiles=tuple(cast(list[str], raw.get("profiles", []))),
-            gateway_port=int(cast(int, raw["gateway_port"])),
-            rustfs_port=int(cast(int, raw["rustfs_port"])),
-            wiremock_port=int(cast(int, raw["wiremock_port"])),
-            seeded_workspaces=dict(
-                cast(dict[str, str], raw.get("seeded_workspaces", {}))
-            ),
-            accounts=dict(cast(dict[str, dict[str, str]], raw.get("accounts", {}))),
-        )
+        return EnvState.model_validate_json(self.state_path.read_text("utf-8"))
 
     def save_state(self, state: EnvState) -> None:
         self.directory.mkdir(parents=True, exist_ok=True)
         self.state_path.write_text(
-            json.dumps(asdict(state), indent=2) + "\n", encoding="utf-8"
+            state.model_dump_json(indent=2) + "\n", encoding="utf-8"
         )
         self.state_path.chmod(0o600)
 
     def load_config(self) -> Config:
-        value: object = yaml.safe_load(self.config_path.read_text("utf-8"))
-        if not isinstance(value, dict):
-            raise ValueError(f"invalid YAML in {self.config_path}")
-        return cast(Config, value)
+        return load_path(self.config_path)
 
     def load_runtime_env(self, state: EnvState) -> dict[str, str]:
         project_secrets = ensure_secrets(self.secrets_path)
@@ -225,9 +208,9 @@ class ComposeStack:
         merged_override: dict[str, object] | None = None
         if override_path is not None:
             raw_override: object = yaml.safe_load(override_path.read_text("utf-8"))
-            if not isinstance(raw_override, dict):
+            if not is_str_mapping(raw_override):
                 raise ValueError(f"override YAML must be a mapping: {override_path}")
-            merged_override = cast(dict[str, object], raw_override)
+            merged_override = dict(raw_override)
         if config_overrides is not None:
             merged_override = (
                 deep_merge(merged_override, config_overrides)

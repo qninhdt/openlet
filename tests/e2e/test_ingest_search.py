@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
-
 import httpx
 import pytest
 from openlet_env.loader import crc32c_base64 as crc32c_b64
 
-from .conftest import SAMPLE_FILES_DIR, AccountFixture, new_uuid, poll
+from .conftest import (
+    SAMPLE_FILES_DIR,
+    AccountFixture,
+    json_object,
+    json_object_list,
+    new_uuid,
+    poll,
+)
 
 
 @pytest.mark.parametrize(
@@ -69,11 +74,12 @@ def test_datalab_publishes_markdown_artifacts(
         json={"root": {"nodeId": node["id"]}, "maxDepth": 8, "maxNodes": 100},
     )
     assert tree.is_success, tree.text
-    entries = cast(list[dict[str, Any]], tree.json()["entries"])
+    entries = json_object_list(json_object(tree.json())["entries"])
     readme = next((e for e in entries if e.get("path") == "README.md"), None)
     assert readme is not None, entries
+    readme_node = json_object(readme["node"])
 
-    artifact = api.get(f"{base}/nodes/{readme['node']['id']}/text")
+    artifact = api.get(f"{base}/nodes/{readme_node['id']}/text")
     assert artifact.is_success, artifact.text
     assert f"Datalab {extension.upper()} extract." in artifact.json()["content"]
 
@@ -131,22 +137,22 @@ def test_xlsx_ingest_search_and_multipart_upload(account: AccountFixture) -> Non
         json={"root": {"nodeId": node["id"]}, "maxDepth": 8, "maxNodes": 100},
     )
     assert tree.is_success, tree.text
-    entries = cast(list[dict[str, Any]], tree.json()["entries"])
+    entries = json_object_list(json_object(tree.json())["entries"])
     readme = next((e for e in entries if e.get("path") == "README.md"), None)
     assert readme is not None
-    assert readme["node"]["readonly"] is True
+    readme_node = json_object(readme["node"])
+    assert readme_node["readonly"] is True
 
     table_entry = next(
         (e for e in entries if str(e.get("path", "")).endswith(".csv")), None
     )
     assert table_entry is not None
-    sheet_text = api.get(f"{base}/nodes/{table_entry['node']['id']}/text").json()[
-        "content"
-    ]
+    table_node = json_object(table_entry["node"])
+    sheet_text = api.get(f"{base}/nodes/{table_node['id']}/text").json()["content"]
     assert "Europe,120" in sheet_text
 
     denied_edit = api.patch(
-        f"{base}/nodes/{readme['node']['id']}/text",
+        f"{base}/nodes/{readme_node['id']}/text",
         json={"append": "denied", "requestId": new_uuid()},
     )
     assert denied_edit.status_code >= 400
@@ -210,7 +216,7 @@ def test_xlsx_ingest_search_and_multipart_upload(account: AccountFixture) -> Non
         f"{base}/uploads/{transfer['id']}:signParts", json={"parts": parts}
     )
     assert signing.is_success, signing.text
-    completed_parts: list[dict[str, Any]] = []
+    completed_parts: list[dict[str, object]] = []
     for part in signing.json()["parts"]:
         part_num = int(part["partNumber"])
         resp = httpx.put(
