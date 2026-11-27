@@ -1,25 +1,32 @@
-import { createContext, useContext, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Navigate, useParams, useSearch } from '@tanstack/react-router';
 import { useMessageSound } from './message-sound';
 import { useBackend, usePreferences } from './backend';
-import type { AgentResource } from './agent-api';
+import { agentCapabilities, type AgentResource } from './agent-api';
+import { chatApi, type ChatConversationDto } from './chat-api';
+import { useRealtime } from './realtime';
 import type { AgentAppearance } from '@/components/agent-appearance';
 import { AppLoading, PageFailure } from '@/components/public/page-state';
 
 export type Workspace = {
   id: string;
   name: string;
+  canCreateAgent?: boolean;
+  conversations?: ChatConversationDto[];
   agents: {
     id: string;
     name: string;
     role: string;
+    handle?: string;
     appearance?: AgentAppearance;
     pinned: boolean;
     state?: string;
+    running?: boolean;
     preview?: string | null;
     updated_at?: string | null;
     unread_count?: number;
+    conversation_id?: string;
     can_view_activity?: boolean;
     can_edit_settings?: boolean;
     can_delete?: boolean;
@@ -32,7 +39,7 @@ export type CreateAgent = {
   title?: string;
   appearance?: AgentAppearance;
   description: string;
-  system_prompt: string;
+  custom_instructions?: string;
   model_id: string | null;
   reasoning_effort: string | null;
 };
@@ -47,6 +54,7 @@ export const useWorkspaces = () => useContext(DirectoryContext);
 
 export function WorkspaceDirectory({ children }: { children: ReactNode }) {
   const { api, actorId, preview } = useBackend();
+  const realtime = useRealtime();
   const preferences = usePreferences();
   const client = useQueryClient();
   const search = useSearch({ strict: false });
@@ -67,59 +75,125 @@ export function WorkspaceDirectory({ children }: { children: ReactNode }) {
       return { workspaces };
     },
   });
+  const workspaceList = directory.data?.workspaces ?? [];
   const selected =
-    directory.data?.workspaces.find((w) => w.id === (params.workspaceId ?? search.workspace)) ??
-    (params.workspaceId ? undefined : directory.data?.workspaces[0]);
+    workspaceList.find((w) => w.id === (params.workspaceId ?? search.workspace)) ??
+    (params.workspaceId ? undefined : workspaceList[0]);
   const agents = useQuery({
     queryKey: ['agents', actorId, selected?.id],
-    refetchInterval: 5000,
-    enabled: !!selected,
+    refetchInterval: 15000,
+    enabled: !!selected && !!api,
     queryFn: async () => {
-      const items: AgentResource[] = [];
-      let cursor: string | null = null;
-      do {
-        const page: { items: AgentResource[]; next_cursor: string | null } = await api!(
-          `/v1/workspaces/${selected!.id}/letas${cursor ? `?cursor=${cursor}` : ''}`,
-        );
-        items.push(...page.items);
-        cursor = page.next_cursor;
-      } while (cursor);
-      return items;
+      const [letaPage, convPage] = await Promise.all([
+        api!<{ items: AgentResource[]; can_create_agent?: boolean }>(
+          `/v1/workspaces/${selected!.id}/letas`,
+        ),
+        chatApi(api!, selected!.id)
+          .listConversations(100)
+          .catch(() => ({ conversations: [] as ChatConversationDto[] })),
+      ]);
+
+      const convByAgent = new Map<string, ChatConversationDto>();
+      for (const conv of convPage.conversations ?? []) {
+        if (conv.type === 'dm') {
+          const agentMember = conv.members?.find((m) => m.actorType === 'agent');
+          if (agentMember) convByAgent.set(agentMember.actorId, conv);
+        }
+      }
+
+      const items: (AgentResource & { conversation_id?: string })[] = (letaPage.items ?? []).map(
+        (raw) => {
+          const caps = agentCapabilities(raw);
+          const dm = convByAgent.get(raw.id);
+          const previewTime = dm?.lastMsgAt ?? raw.updated_at ?? null;
+          const previewMsgId = dm?.lastMessagePreview?.id;
+          return {
+            ...raw,
+            capabilities: caps,
+            conversation_id: dm?.id,
+            preview: dm?.lastMessagePreview?.snippet ?? raw.preview ?? null,
+            updated_at: previewTime,
+            unread_count: Number(dm?.unreadCount ?? raw.unread_count ?? 0),
+            latest_reply_id:
+              dm?.lastMessagePreview?.senderType === 'agent'
+                ? (previewMsgId ?? raw.latest_reply_id)
+                : raw.latest_reply_id,
+            latest_reply_at:
+              dm?.lastMessagePreview?.senderType === 'agent'
+                ? (previewTime ?? raw.latest_reply_at)
+                : raw.latest_reply_at,
+          };
+        },
+      );
+
+      return {
+        items,
+        conversations: convPage.conversations ?? [],
+        canCreateAgent: Boolean(letaPage.can_create_agent),
+      };
     },
   });
+
+  // Live refresh unread badges and previews on personal Centrifugo chat events.
+  useEffect(() => {
+    if (!selected) return;
+    return realtime.onChatUserEvent((env) => {
+      if (
+        env.type === 'message.created' ||
+        env.type === 'read_receipt' ||
+        env.type === 'conversation.created' ||
+        env.type === 'conversation.updated' ||
+        env.type === 'conversation.removed'
+      ) {
+        void client.invalidateQueries({ queryKey: ['agents', actorId, selected.id] });
+      }
+    });
+  }, [realtime, selected, actorId, client]);
+
+  const agentItems = agents.data?.items ?? [];
   useMessageSound(
     `${actorId}:${selected?.id ?? ''}`,
-    agents.data?.flatMap((agent) =>
-      agent.latest_reply_id && agent.latest_reply_at
-        ? [
-            {
-              id: agent.latest_reply_id,
-              role: 'assistant' as const,
-              created_at: agent.latest_reply_at,
-            },
-          ]
-        : [],
-    ),
-    // The embedded landing demo stays silent; the standalone playground supports interaction sounds.
+    agents.data
+      ? agentItems.flatMap((agent) =>
+          agent.latest_reply_id && agent.latest_reply_at
+            ? [
+                {
+                  id: agent.latest_reply_id,
+                  role: 'assistant' as const,
+                  created_at: agent.latest_reply_at,
+                },
+              ]
+            : [],
+        )
+      : undefined,
     (!preview || window.parent === window) && preferences.messageSound,
   );
   const selectedAgent =
-    agents.data?.find((a) => a.id === (params.agentId ?? search.agent)) ??
-    (params.agentId ? undefined : agents.data?.[0]);
+    agentItems.find((a) => a.id === (params.agentId ?? search.agent)) ??
+    (params.agentId ? undefined : agentItems[0]);
   async function create(workspace: string, input: CreateAgent) {
+    const payload = {
+      request_id: input.request_id,
+      name: input.name,
+      title: input.title,
+      appearance: input.appearance,
+      description: input.description,
+      custom_instructions: input.custom_instructions ?? '',
+      model_id: input.model_id,
+      reasoning_effort: input.reasoning_effort,
+    };
     const result = await api!<{ id: string }>(`/v1/workspaces/${workspace}/letas`, {
       method: 'POST',
-      body: JSON.stringify(input),
+      body: JSON.stringify(payload),
     });
-    // Provisioning grants access asynchronously; navigate only after the directory can resolve it.
     for (let attempt = 0; attempt < 60; attempt++) {
       await client.refetchQueries({ queryKey: ['agents', actorId, workspace] });
-      if (
-        client
-          .getQueryData<AgentResource[]>(['agents', actorId, workspace])
-          ?.some((a) => a.id === result.id && a.state === 'active')
-      )
-        return result.id;
+      const cached = client.getQueryData<{ items: AgentResource[] }>([
+        'agents',
+        actorId,
+        workspace,
+      ]);
+      if (cached?.items?.some((a) => a.id === result.id && a.state === 'active')) return result.id;
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
     throw new Error('The agent is still being prepared. Retry to check its progress.');
@@ -145,25 +219,33 @@ export function WorkspaceDirectory({ children }: { children: ReactNode }) {
       />
     );
   if (!selected) return <Navigate to="/workspaces" replace />;
-  const workspaces = directory.data!.workspaces.map((w) => ({
+  const workspaces: Workspace[] = workspaceList.map((w) => ({
     ...w,
+    canCreateAgent: w.id === selected.id ? agents.data?.canCreateAgent : false,
+    conversations: w.id === selected.id ? agents.data?.conversations : [],
     agents:
       w.id === selected.id
-        ? agents.data!.map((a) => ({
-            id: a.id,
-            name: a.name,
-            role: a.title ?? '',
-            appearance: a.appearance,
-            pinned: false,
-            state: a.state,
-            preview: a.preview,
-            updated_at: a.updated_at,
-            unread_count: a.unread_count,
-            can_view_activity: a.capabilities.can_view_activity,
-            can_edit_settings: a.capabilities.can_edit_settings,
-            can_delete: a.capabilities.can_delete,
-            paused: a.paused,
-          }))
+        ? (agents.data?.items ?? []).map((a) => {
+            const caps = agentCapabilities(a);
+            return {
+              id: a.id,
+              name: a.name,
+              role: a.title ?? '',
+              handle: a.handle,
+              appearance: a.appearance,
+              pinned: false,
+              state: a.state,
+              running: a.running,
+              preview: a.preview,
+              updated_at: a.updated_at,
+              unread_count: a.unread_count,
+              conversation_id: a.conversation_id,
+              can_view_activity: caps.can_view_activity,
+              can_edit_settings: caps.can_edit_settings,
+              can_delete: caps.can_delete,
+              paused: a.paused,
+            };
+          })
         : [],
   }));
   return (

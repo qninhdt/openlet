@@ -3,21 +3,23 @@
 from __future__ import annotations
 
 import copy
-import json
 import os
 import re
 import secrets
 import shutil
 import socket
-from collections.abc import Mapping
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict
 
 import yaml
 from dotenv import dotenv_values
-from openlet_sdk.config import Config
+from openlet_sdk.config import Config, parse_config
+from openlet_sdk.types import is_str_mapping
 
-from .models import EnvMode
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from openlet_env.models import EnvMode
 
 RUSTFS_IMAGE = "rustfs/rustfs:1.0.6"
 WIREMOCK_IMAGE = "wiremock/wiremock:3.13.2@sha256:0d4ecb3e4dc8213fd7a4d37d6a78f6e6b553a6d2e15bd51b0999781282ac61b3"
@@ -26,6 +28,7 @@ STUBS_PACKAGE_DIR = Path(__file__).resolve().parent / "wiremock_stubs"
 INTERNAL_SECRET_KEYS: tuple[str, ...] = (
     "POSTGRES_ADMIN_PASSWORD",
     "PLATFORM_DB_PASSWORD",
+    "CHAT_DB_PASSWORD",
     "LETFS_DB_PASSWORD",
     "LETA_DB_PASSWORD",
     "TEMPORAL_DB_PASSWORD",
@@ -34,6 +37,8 @@ INTERNAL_SECRET_KEYS: tuple[str, ...] = (
     "SPICEDB_KEY",
     "QDRANT_API_KEY",
     "REDIS_PASSWORD",
+    "CENTRIFUGO_API_KEY",
+    "CENTRIFUGO_TOKEN_SECRET",
     "LITELLM_MASTER_KEY",
     "S3_ACCESS_KEY_ID",
     "S3_SECRET_ACCESS_KEY",
@@ -41,8 +46,35 @@ INTERNAL_SECRET_KEYS: tuple[str, ...] = (
 )
 
 
-class _ComposeOverride(list[object]):
+class _ComposeOverride(list[str]):
     """Marker list serialized with Docker Compose's `!override` YAML tag."""
+
+
+class _ComposeHealthcheck(TypedDict):
+    test: NotRequired[list[str]]
+    interval: str
+    timeout: str
+    retries: int
+
+
+class _ComposeServiceCondition(TypedDict):
+    condition: Literal["service_healthy"]
+
+
+class _ComposeService(TypedDict, total=False):
+    image: str
+    command: list[str]
+    ports: list[str] | _ComposeOverride
+    volumes: list[str] | _ComposeOverride
+    environment: dict[str, str]
+    depends_on: dict[str, _ComposeServiceCondition]
+    healthcheck: _ComposeHealthcheck
+    stop_grace_period: str
+
+
+class _ComposeOverlay(TypedDict):
+    services: dict[str, _ComposeService]
+    volumes: dict[str, dict[str, str]]
 
 
 class _ComposeDumper(yaml.SafeDumper):
@@ -75,6 +107,7 @@ def find_repo_root(start: Path | None = None) -> Path:
 
 
 def validate_project_name(project: str) -> str:
+    """Validate and return a Docker Compose project name."""
     if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", project):
         raise ValueError(f"invalid Compose project name: {project!r}")
     return project
@@ -87,11 +120,8 @@ def deep_merge(
     merged: dict[str, object] = copy.deepcopy(dict(base))
     for key, value in override.items():
         current = merged.get(key)
-        if isinstance(current, dict) and isinstance(value, Mapping):
-            merged[key] = deep_merge(
-                cast(Mapping[str, object], current),
-                cast(Mapping[str, object], value),
-            )
+        if is_str_mapping(current) and is_str_mapping(value):
+            merged[key] = deep_merge(current, value)
         else:
             merged[key] = copy.deepcopy(value)
     return merged
@@ -132,9 +162,10 @@ def pick_free_port(preferred: int | None = None) -> int:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 sock.bind(("127.0.0.1", preferred))
-                return preferred
             except OSError:
                 pass
+            else:
+                return preferred
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
@@ -168,7 +199,7 @@ def build_runtime_env(
         env["OPENAI_API_KEY"] = "sk-mock-openlet"
         env["OPENAI_BASE_URL"] = "http://wiremock:8080/v1"
         env["LANGFUSE_PUBLIC_KEY"] = "pk-lf-mock"
-        env["LANGFUSE_SECRET_KEY"] = "sk-lf-mock"
+        env["LANGFUSE_SECRET_KEY"] = "sk-lf-mock"  # noqa: S105  # Non-production WireMock stub key.
         env["DATALAB_API_KEY"] = "datalab-test-only"
         env["DATALAB_HOST"] = "http://wiremock:8080"
         return env
@@ -186,7 +217,7 @@ def build_runtime_env(
             env["LANGFUSE_BASE_URL"] = lf_base
     else:
         env["LANGFUSE_PUBLIC_KEY"] = "pk-lf-mock"
-        env["LANGFUSE_SECRET_KEY"] = "sk-lf-mock"
+        env["LANGFUSE_SECRET_KEY"] = "sk-lf-mock"  # noqa: S105  # Non-production WireMock stub key.
     if datalab_key := user_env.get("DATALAB_API_KEY", "").strip():
         env["DATALAB_API_KEY"] = datalab_key
     if tinyfish_key := user_env.get("TINYFISH_API_KEY", "").strip():
@@ -195,6 +226,7 @@ def build_runtime_env(
 
 
 def uses_mock_langfuse(mode: EnvMode, user_env: Mapping[str, str]) -> bool:
+    """Return whether the environment should route Langfuse traffic to WireMock."""
     if mode == "mock":
         return True
     return not (
@@ -215,9 +247,9 @@ def build_openlet_config(
     """Load `infra/config/openlet.example.yaml` as base and merge non-production overrides."""
     example_path = find_repo_root(repo_root) / "infra/config/openlet.example.yaml"
     raw_base: object = yaml.safe_load(example_path.read_text(encoding="utf-8"))
-    if not isinstance(raw_base, dict):
+    if not is_str_mapping(raw_base):
         raise ValueError(f"expected YAML mapping in {example_path}")
-    base = cast(dict[str, object], raw_base)
+    base: dict[str, object] = dict(raw_base)
     base.pop("observability", None)
 
     langfuse_base = (
@@ -273,29 +305,7 @@ def build_openlet_config(
     merged = deep_merge(base, nonprod)
     if override:
         merged = deep_merge(merged, override)
-    return cast(Config, merged)
-
-
-_LANGFUSE_REF_PATTERN = re.compile(r"@@@langfusePrompt:name=leta/([^|@]+)\|[^@]+@@@")
-_LETA_PROMPT_SPECS: tuple[tuple[str, dict[str, object]], ...] = (
-    ("leta", {"model": "openai/gpt-4.1-mini", "max_tokens": 8192}),
-    ("leti", {"model": "openai/gpt-4.1-mini", "max_tokens": 8192}),
-    ("compaction", {}),
-)
-
-
-def _expand_leta_prompt(prompts_dir: Path, name: str) -> str:
-    for suffix in (".j2", ".md"):
-        candidate = prompts_dir / f"{name}{suffix}"
-        if candidate.is_file():
-            raw = candidate.read_text(encoding="utf-8")
-            return _LANGFUSE_REF_PATTERN.sub(
-                lambda match: _expand_leta_prompt(prompts_dir, match.group(1)).rstrip(
-                    "\n"
-                ),
-                raw,
-            )
-    raise FileNotFoundError(f"Leta prompt source not found: {prompts_dir / name}")
+    return parse_config(merged)
 
 
 def stage_wiremock_stubs(
@@ -303,7 +313,6 @@ def stage_wiremock_stubs(
     *,
     mode: EnvMode,
     include_langfuse: bool,
-    repo_root: Path | None = None,
 ) -> None:
     """Populate the project's WireMock mappings directory for mock or live mode."""
     if target_dir.exists():
@@ -314,37 +323,6 @@ def stage_wiremock_stubs(
         if mode == "mock" or (include_langfuse and stub.name.startswith("langfuse-")):
             dest = target_dir / stub.name
             shutil.copy2(stub, dest)
-            dest.chmod(0o644)
-    if mode == "mock" or include_langfuse:
-        prompts_dir = find_repo_root(repo_root) / "apps/leta/prompts"
-        for role, prompt_config in _LETA_PROMPT_SPECS:
-            mapping = {
-                "request": {
-                    "method": "GET",
-                    "urlPathPattern": f"/api/public/v2/prompts/leta(/|%2[Ff]){role}",
-                },
-                "response": {
-                    "status": 200,
-                    "jsonBody": {
-                        "id": f"leta-{role}-fixture",
-                        "name": f"leta/{role}",
-                        "version": 1,
-                        "type": "text",
-                        "prompt": _expand_leta_prompt(prompts_dir, role),
-                        "labels": ["production"],
-                        "tags": [],
-                        "config": prompt_config,
-                        "createdAt": "2026-11-13T00:00:00Z",
-                        "updatedAt": "2026-11-13T00:00:00Z",
-                    },
-                    "headers": {"Content-Type": "application/json"},
-                },
-            }
-            dest = target_dir / f"leta-prompt-{role}.json"
-            dest.write_text(
-                json.dumps(mapping, indent=2, ensure_ascii=False) + "\n",
-                encoding="utf-8",
-            )
             dest.chmod(0o644)
 
 
@@ -361,25 +339,27 @@ def render_compose_overlay(
 ) -> str:
     """Render compose.env.yaml as YAML text (with Compose `!override` tags)."""
     shared_uv_cache.mkdir(parents=True, exist_ok=True)
-    services: dict[str, dict[str, object]] = {
+    spicedb_service: _ComposeService = {"ports": ["127.0.0.1::50051"]}
+    if mode == "mock":
+        spicedb_service["command"] = [
+            "serve",
+            "--datastore-engine",
+            "postgres",
+            "--http-enabled=false",
+            "--skip-release-check",
+            "--datastore-revision-quantization-interval=100ms",
+        ]
+    litellm_service: _ComposeService = {
+        "healthcheck": {"interval": "2s", "timeout": "5s", "retries": 45},
+    }
+    if mode == "mock":
+        litellm_service["depends_on"] = {"wiremock": {"condition": "service_healthy"}}
+        litellm_service["volumes"] = _ComposeOverride(
+            [f"{STUBS_PACKAGE_DIR / 'litellm.yaml'}:/etc/litellm/config.yaml:ro"]
+        )
+    services: dict[str, _ComposeService] = {
         "postgres": {"ports": ["127.0.0.1::5432"]},
-        "spicedb": {
-            "ports": ["127.0.0.1::50051"],
-            **(
-                {
-                    "command": [
-                        "serve",
-                        "--datastore-engine",
-                        "postgres",
-                        "--http-enabled=false",
-                        "--skip-release-check",
-                        "--datastore-revision-quantization-interval=100ms",
-                    ]
-                }
-                if mode == "mock"
-                else {}
-            ),
-        },
+        "spicedb": spicedb_service,
         "qdrant": {"ports": ["127.0.0.1::6334"]},
         "temporal": {"ports": ["127.0.0.1::7233"]},
         "wiremock": {
@@ -425,21 +405,7 @@ def render_compose_overlay(
         "platform": {
             "depends_on": {"wiremock": {"condition": "service_healthy"}},
         },
-        "litellm": {
-            "healthcheck": {"interval": "2s", "timeout": "5s", "retries": 45},
-            **(
-                {
-                    "depends_on": {"wiremock": {"condition": "service_healthy"}},
-                    "volumes": _ComposeOverride(
-                        [
-                            f"{STUBS_PACKAGE_DIR / 'litellm.yaml'}:/etc/litellm/config.yaml:ro"
-                        ]
-                    ),
-                }
-                if mode == "mock"
-                else {}
-            ),
-        },
+        "litellm": litellm_service,
         "envoy": {
             "ports": _ComposeOverride([f"127.0.0.1:{gateway_port}:8080"]),
         },
@@ -452,13 +418,14 @@ def render_compose_overlay(
         }
         services["ingest-io"] = {"stop_grace_period": "5s"}
         services["platform"]["stop_grace_period"] = "5s"
+        services["chat"] = {"stop_grace_period": "5s"}
         services["letfs"] = {"stop_grace_period": "5s"}
         services["litellm"]["stop_grace_period"] = "5s"
         if "leta" in profiles:
             services["leta-api"] = {"stop_grace_period": "5s"}
             services["leta-worker"] = {"stop_grace_period": "5s"}
 
-    overlay: dict[str, object] = {
+    overlay: _ComposeOverlay = {
         "services": services,
         "volumes": {"rustfs-data": {}},
     }

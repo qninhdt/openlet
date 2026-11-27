@@ -63,13 +63,16 @@ const actions: Record<string, string> = {
   file_read: 'Reading files',
   file_write: 'Writing a file',
   file_edit: 'Editing a file',
-  file_search: 'Searching files',
-  file_semantic_search: 'Searching files',
-  execute: 'Running a command',
-  inbox_send: 'Sending a message',
-  inbox_read: 'Reading inbox',
-  activity_search: 'Searching activity',
-  activity_read: 'Reading activity',
+  glob: 'Finding files',
+  grep: 'Searching files',
+  semantic_search: 'Searching files',
+  bash: 'Running a command',
+  send_message: 'Sending a message',
+  read_messages: 'Reading messages',
+  list_channels: 'Listing channels',
+  react_message: 'Reacting to a message',
+  websearch: 'Searching the web',
+  webfetch: 'Fetching a webpage',
 };
 function agentActivityLabel(agent: BoxAgent) {
   return agent.status === 'working' && agent.activity_kind === 'tool_call' && agent.tool_name

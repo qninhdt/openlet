@@ -1,9 +1,16 @@
+"""Markdown block splitting, heading context propagation, and TOC generation."""
+
+from __future__ import annotations
+
 import re
 from collections import Counter
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import tiktoken
 from markdown_it import MarkdownIt
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 HEADING = re.compile(r"^(#{1,6})\s*(.*)$")
 ENCODER = tiktoken.get_encoding("cl100k_base")
@@ -11,6 +18,7 @@ _MD = MarkdownIt("commonmark").enable("table")
 
 
 def blocks(content: str) -> list[str]:
+    """Split Markdown into top-level indivisible blocks, keeping slide markers attached."""
     text = content.strip()
     if not text:
         return []
@@ -58,6 +66,7 @@ def blocks(content: str) -> list[str]:
 
 
 def contexts(units: list[str]) -> list[str]:
+    """Compute cumulative Markdown heading prefixes for each block."""
     headings: list[tuple[int, str]] = []
     prefixes: list[str] = []
     for unit in units:
@@ -93,6 +102,7 @@ def contexts(units: list[str]) -> list[str]:
 
 
 def parts(content: str, split_tokens: int, max_text_bytes: int) -> list[str]:
+    """Partition Markdown into token- and byte-bounded sections."""
     if split_tokens <= 0 or max_text_bytes <= 0:
         raise ValueError("split_tokens and max_text_bytes must be positive")
     units = blocks(content)
@@ -114,7 +124,8 @@ def parts(content: str, split_tokens: int, max_text_bytes: int) -> list[str]:
                 total += unit_tokens_list[j]
             slide_span_tokens[i] = total
 
-    for i, (unit, prefix) in enumerate(zip(units, prefixes, strict=True)):
+    for i, (unit, raw_prefix) in enumerate(zip(units, prefixes, strict=True)):
+        prefix = raw_prefix
         is_slide = unit.lstrip().startswith("<!-- slide ")
         rendered_single = f"{prefix}{unit}" if prefix and unit not in prefix else unit
         if len(rendered_single.encode("utf-8")) > max_text_bytes:
@@ -155,7 +166,9 @@ def _first_heading(text: str) -> str | None:
         match = HEADING.match(ln)
         if match:
             cleaned = match.group(2).strip()
-            if cleaned and not re.fullmatch(r"Slide\s+\d+", cleaned, flags=re.I):
+            if cleaned and not re.fullmatch(
+                r"Slide\s+\d+", cleaned, flags=re.IGNORECASE
+            ):
                 return cleaned[:80]
     return None
 
@@ -173,7 +186,9 @@ def _part_label(text: str, idx: int, repeated_titles: set[str] | None = None) ->
         match = HEADING.match(ln)
         if match:
             cleaned = match.group(2).strip()
-            if cleaned and not re.fullmatch(r"Slide\s+\d+", cleaned, flags=re.I):
+            if cleaned and not re.fullmatch(
+                r"Slide\s+\d+", cleaned, flags=re.IGNORECASE
+            ):
                 headings.append(cleaned[:80])
     for heading in headings:
         if heading not in skip:
@@ -182,7 +197,7 @@ def _part_label(text: str, idx: int, repeated_titles: set[str] | None = None) ->
         return headings[0]
     for ln in lines:
         cleaned = ln.lstrip("# ").strip()
-        if cleaned and not re.fullmatch(r"Slide\s+\d+", cleaned, flags=re.I):
+        if cleaned and not re.fullmatch(r"Slide\s+\d+", cleaned, flags=re.IGNORECASE):
             return cleaned[:80]
     return (lines[0].lstrip("# ").strip() if lines else "")[:80] or f"Part {idx}"
 

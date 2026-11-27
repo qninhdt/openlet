@@ -3,20 +3,25 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING
 
 import jwt
 import numpy as np
 import pytest
+from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.algorithms import RSAAlgorithm
 from openlet_env import cache, config, dataset
 from openlet_env.auth import LocalAuth
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from openlet_sdk.types import MutableJsonObject
+
 
 def test_deep_merge_is_pure_and_recursive() -> None:
-    base: dict[str, object] = {"a": {"x": 1, "y": 2}, "b": 3}
-    override: dict[str, object] = {"a": {"y": 99, "z": 4}}
+    base: MutableJsonObject = {"a": {"x": 1, "y": 2}, "b": 3}
+    override: MutableJsonObject = {"a": {"y": 99, "z": 4}}
     merged = config.deep_merge(base, override)
     assert merged == {"a": {"x": 1, "y": 99, "z": 4}, "b": 3}
     assert base == {"a": {"x": 1, "y": 2}, "b": 3}
@@ -80,12 +85,13 @@ def test_local_auth_roundtrip_jwt_with_jwks(tmp_path: Path) -> None:
     auth = LocalAuth.load_or_create(tmp_path)
     token = auth.sign("user_alice", "11111111-1111-1111-1111-111111111111")
     jwks = auth.jwks()
-    keys = cast(list[dict[str, object]], jwks["keys"])
+    keys = jwks["keys"]
     assert len(keys) == 1
     pub = RSAAlgorithm.from_jwk(json.dumps(keys[0]))
+    assert isinstance(pub, rsa.RSAPublicKey)
     decoded = jwt.decode(
         token,
-        pub,  # pyright: ignore[reportArgumentType]
+        pub,
         algorithms=["RS256"],
         audience="openlet",
         issuer="http://wiremock:8080",
@@ -133,18 +139,18 @@ def test_cache_fingerprint_ignores_concurrency_and_reads_format6(
     (folder / "artifacts/README.md").write_text("# Report\n", encoding="utf-8")
     format6_input = {
         "format": 6,
-        "source": fp["source"],
-        "sha256": fp["sha256"],
-        "embedding": fp["embedding"],
-        "enrichment": fp["enrichment"],
-        "prompt_label": fp["prompt_label"],
+        "source": fp.source,
+        "sha256": fp.sha256,
+        "embedding": fp.embedding,
+        "enrichment": fp.enrichment,
+        "prompt_label": fp.prompt_label,
         "parser": {
             "activity_concurrency": 99,
-            "split_tokens": fp["split_tokens"],
-            "limits": fp["limits"],
+            "split_tokens": fp.split_tokens,
+            "limits": fp.limits,
         },
-        "chunk_size_tokens": fp["chunk_size_tokens"],
-        "chunk_overlap_tokens": fp["chunk_overlap_tokens"],
+        "chunk_size_tokens": fp.chunk_size_tokens,
+        "chunk_overlap_tokens": fp.chunk_overlap_tokens,
     }
     (folder / "metadata.json").write_text(
         json.dumps(
@@ -161,7 +167,7 @@ def test_cache_fingerprint_ignores_concurrency_and_reads_format6(
     )
     loaded = cache.read_cache(sample, cfg2)
     assert loaded is not None
-    assert loaded.metadata["files"] == {".": ["Title", "Desc"]}
+    assert loaded.metadata.files == {".": ["Title", "Desc"]}
 
 
 def test_read_seed_specs_and_referenced_users(tmp_path: Path) -> None:
@@ -191,16 +197,3 @@ def test_read_seed_specs_and_referenced_users(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="invalid seed handle"):
         dataset.validate_slug("Bad_Handle")
-
-
-def test_stage_wiremock_stubs_synthesizes_leta_prompts(tmp_path: Path) -> None:
-    config.stage_wiremock_stubs(tmp_path, mode="live", include_langfuse=True)
-    for role in ("leta", "leti", "compaction"):
-        stub_path = tmp_path / f"leta-prompt-{role}.json"
-        assert stub_path.is_file()
-        data = json.loads(stub_path.read_text(encoding="utf-8"))
-        prompt = data["response"]["jsonBody"]["prompt"]
-        assert "@@@langfusePrompt:" not in prompt
-        if role != "compaction":
-            assert "{% if tools.execute %}" in prompt
-            assert "## Filesystem" in prompt

@@ -222,7 +222,11 @@ func (s *Server) capabilities(ctx context.Context, a sdk.Actor, storages []*pb.S
 			items = append(items, &az.CheckBulkPermissionsRequestItem{Resource: sdk.Object("storage", v.Id), Permission: permission, Subject: sdk.Subject(a)})
 		}
 	}
-	checks, err := s.Graph.CheckBulkPermissions(ctx, &az.CheckBulkPermissionsRequest{Items: items, Consistency: sdk.Consistency(ctx)})
+	cons := sdk.Consistency(ctx)
+	if a.Type == "agent" && !cons.GetFullyConsistent() {
+		cons = &az.Consistency{Requirement: &az.Consistency_FullyConsistent{FullyConsistent: true}}
+	}
+	checks, err := s.Graph.CheckBulkPermissions(ctx, &az.CheckBulkPermissionsRequest{Items: items, Consistency: cons})
 	if err != nil {
 		return err
 	}

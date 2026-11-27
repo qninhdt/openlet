@@ -3,6 +3,7 @@ import App from '../src/App';
 import { createLandingDemo } from '../src/components/public/landing-demo';
 import { ApiError } from '../src/lib/agent-api';
 import { PreviewBackendProvider, type Backend } from '../src/lib/backend';
+import { RealtimeProvider } from '../src/lib/realtime';
 import '../src/globals.css';
 
 const demo = createLandingDemo();
@@ -31,6 +32,8 @@ const backend: Backend = {
 
 createRoot(document.getElementById('root')!).render(
   <PreviewBackendProvider value={backend}>
-    <App />
+    <RealtimeProvider>
+      <App />
+    </RealtimeProvider>
   </PreviewBackendProvider>,
 );

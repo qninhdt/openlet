@@ -9,21 +9,21 @@ const ids = {
   folder: '00000000-0000-4000-8000-000000000006',
 };
 const ref = (node_id: string, label: string, mime = 'text/plain') => ({
-  storage_id: storage,
-  node_id,
-  label,
-  mime,
+  storageId: storage,
+  nodeId: node_id,
+  name: label,
+  mediaType: mime,
+  kind: 'file',
 });
 
 test('mentions stay inline; explicit attachments support albums, file-only messages, preview and download', async ({
   page,
 }) => {
   let sentMessages = 0;
-  await page.route('**/messages/read', (route) => route.fulfill({ json: {} }));
-  await page.route('**/processing', (route) =>
-    route.fulfill({ json: { working: false, run_id: null } }),
+  await page.route('**/conversations/*:markRead', (route) =>
+    route.fulfill({ json: { lastReadSeq: 5 } }),
   );
-  await page.route('**/messages?*', async (route) => {
+  await page.route('**/conversations/*/messages?*', async (route) => {
     if (route.request().method() !== 'GET') {
       sentMessages++;
       return route.fulfill({ status: 400, json: { detail: 'This test never sends messages' } });
@@ -31,39 +31,38 @@ test('mentions stay inline; explicit attachments support albums, file-only messa
     const fixtures = [
       {
         id: 'mention',
-        content: `Xem :file[Báo cáo]{name=${storage}/${ids.report}}`,
-        file_refs: [],
+        content: `Xem [Báo cáo](/letfs/${storage}/${ids.report})`,
+        attachments: [],
       },
       {
         id: 'album',
         content: 'Hai ảnh đây.',
-        file_refs: [
+        attachments: [
           ref(ids.first, 'one.png', 'image/png'),
           ref(ids.second, 'two.png', 'image/png'),
           ref(ids.first, 'one.png', 'image/png'),
         ],
       },
-      { id: 'file-only', content: '', file_refs: [ref(ids.report, 'report.txt')] },
+      { id: 'file-only', content: '', attachments: [ref(ids.report, 'report.txt')] },
       {
         id: 'folder',
-        content: `See :folder[Research notes]{name=${storage}/${ids.folder}}.`,
-        file_refs: [
-          { storage_id: storage, node_id: ids.folder, label: 'Research', kind: 'folder' },
-        ],
+        content: `See [Research notes](/letfs/${storage}/${ids.folder}).`,
+        attachments: [{ storageId: storage, nodeId: ids.folder, name: 'Research', kind: 'folder' }],
       },
       {
         id: 'unavailable',
         content: 'File không còn khả dụng.',
-        file_refs: [ref(ids.unavailable, 'unavailable.txt')],
+        attachments: [ref(ids.unavailable, 'unavailable.txt')],
       },
-    ]
-      .map((message, index) => ({
-        ...message,
-        role: 'assistant',
-        created_at: new Date(Date.now() + index * 1000).toISOString(),
-      }))
-      .reverse();
-    await route.fulfill({ json: { items: fixtures, next_cursor: null } });
+    ].map((message, index) => ({
+      ...message,
+      conversationId: `conv-${agent}`,
+      seq: index + 1,
+      senderType: 'agent',
+      senderId: agent,
+      createdAt: new Date(Date.now() + index * 1000).toISOString(),
+    }));
+    await route.fulfill({ json: { messages: fixtures, hasBefore: false, hasAfter: false } });
   });
   await page.route(`**/storages/${storage}/nodes/**`, async (route) => {
     const url = new URL(route.request().url());

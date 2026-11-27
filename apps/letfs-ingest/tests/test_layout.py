@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 import re
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from letfs_ingest.layout import (
@@ -10,8 +12,11 @@ from letfs_ingest.layout import (
 )
 from letfs_ingest.tables import externalize_tables
 
+if TYPE_CHECKING:
+    from pathlib import Path
 
-@pytest.mark.parametrize("target,byte_limit", [(0, 100), (-1, 100), (100, 0)])
+
+@pytest.mark.parametrize(("target", "byte_limit"), [(0, 100), (-1, 100), (100, 0)])
 def test_invalid_layout_limits_fail_clearly(target: int, byte_limit: int) -> None:
     with pytest.raises(ValueError, match="positive"):
         parts("text", target, byte_limit)
@@ -43,7 +48,7 @@ def test_lists_code_and_table_fences_are_indivisible() -> None:
     listing = "- First\n  - Nested entry\n- Second"
     code = "```python\n# literal heading\nprint('retained')\n```"
     table = '```csv\n"multiline\nvalue",2\n```'
-    content = "# Topic\n\n" + "\n\n".join([listing, code, table])
+    content = f"# Topic\n\n{listing}\n\n{code}\n\n{table}"
     units = blocks(content)
     for block in [listing, code, table]:
         assert sum(block in unit for unit in units) == 1
@@ -56,7 +61,7 @@ def test_context_ignores_empty_headings_and_does_not_leak_between_siblings() -> 
     prefixes = contexts(["# Topic\n\nbody", "more", "# Other\n\nbody", "# \n\nnext"])
     assert prefixes[1] == "# Topic\n\n"
     assert prefixes[2] == ""
-    assert not any(re.search(r"^#+\s*$", prefix, re.M) for prefix in prefixes)
+    assert not any(re.search(r"^#+\s*$", prefix, re.MULTILINE) for prefix in prefixes)
 
 
 def test_slide_content_stays_together_without_previous_slide_heading() -> None:
@@ -67,13 +72,15 @@ def test_slide_content_stays_together_without_previous_slide_heading() -> None:
     assert len(output) >= 4
     for i, slide in enumerate(slides, 1):
         part = next(part for part in output if f"<!-- slide {i} -->" in part)
-        assert slide.rstrip() in part and (i == 1 or f"# Slide {i - 1}" not in part)
+        assert slide.rstrip() in part
+        assert i == 1 or f"# Slide {i - 1}" not in part
 
 
 def test_byte_limit_splits_at_blocks_and_rejects_an_oversized_atom() -> None:
     paragraphs = [f"Evidence {i}: " + "x " * 100 for i in range(6)]
     output = parts("\n\n".join(paragraphs), 4096, 1000)
-    assert len(output) > 1 and all(len(text.encode()) <= 1000 for text in output)
+    assert len(output) > 1
+    assert all(len(text.encode()) <= 1000 for text in output)
     for paragraph in paragraphs:
         assert sum(paragraph.rstrip() in part for part in output) == 1
     with pytest.raises(ValueError, match="artifact text exceeds"):
@@ -83,7 +90,8 @@ def test_byte_limit_splits_at_blocks_and_rejects_an_oversized_atom() -> None:
 def test_oversized_atomic_content_is_retained_without_truncation() -> None:
     text = "Complete original paragraph " * 200
     output = parts(text, 100, 262144)
-    assert len(output) == 1 and output[0].strip() == text.strip()
+    assert len(output) == 1
+    assert output[0].strip() == text.strip()
 
 
 def test_write_markdown_skips_slide_markers_in_readme_toc(tmp_path: Path) -> None:
@@ -150,14 +158,12 @@ def test_externalize_tables_numbers_html_and_pipe_tables_sequentially(
         "<tbody><tr><td>North America Extended Region</td><td>123456789</td></tr>"
         "<tr><td>Europe Middle East and Africa</td><td>987654321</td></tr></tbody></table>"
     )
-    pipe_table = "\n".join(
-        [
-            "| Segment | Value |",
-            "| --- | --- |",
-            "| Alpha Division Extended Name | 100 |",
-            "| Beta Division Extended Name | 200 |",
-            "| Gamma Division Extended Name | 300 |",
-        ]
+    pipe_table = (
+        "| Segment | Value |\n"
+        "| --- | --- |\n"
+        "| Alpha Division Extended Name | 100 |\n"
+        "| Beta Division Extended Name | 200 |\n"
+        "| Gamma Division Extended Name | 300 |"
     )
     body = f"# Summary\n\nIntro\n\n{html_table}\n\n{pipe_table}\n"
     rewritten = externalize_tables(body, tmp_path, split_tokens=15, max_text=140)

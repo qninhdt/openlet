@@ -1,0 +1,122 @@
+"""Temporal workflow orchestrating human-in-the-loop ask and approval lifecycles."""
+
+from __future__ import annotations
+
+from datetime import timedelta
+from uuid import UUID  # noqa: TC003  # Temporal @workflow.signal inspects hints at runtime
+
+from temporalio import workflow
+from temporalio.common import RetryPolicy
+from temporalio.exceptions import ApplicationError
+
+with workflow.unsafe.imports_passed_through():
+    from leta.hitl.service import HitlDecisionInput, HitlRecord, OpenHitlInput
+
+
+@workflow.defn(name="HitlWorkflow")
+class HitlWorkflow:
+    """Durable workflow coordinating HITL opening, decision updates, effects, and delivery."""
+
+    @workflow.init
+    def __init__(self, request: OpenHitlInput) -> None:
+        self._decision: HitlDecisionInput | None = None
+        self._request: OpenHitlInput = request
+        self._resolved: HitlRecord | None = None
+
+    @workflow.update
+    async def decide(self, decision: HitlDecisionInput) -> HitlRecord:
+        """Validate and persist a recipient decision for an open HITL request."""
+        if self._decision is not None:
+            raise ApplicationError("HITL request already resolved", non_retryable=True)
+        if decision.actor_id != self._request.recipient_user_id:
+            raise ApplicationError(
+                "Only the designated recipient can decide this HITL request",
+                non_retryable=True,
+            )
+        decision.resolved_at = workflow.now()
+        try:
+            result: HitlRecord = await workflow.execute_activity(
+                "resolve_hitl",
+                decision,
+                result_type=HitlRecord,
+                start_to_close_timeout=timedelta(seconds=30),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )
+        except Exception as exc:
+            raise ApplicationError(str(exc), non_retryable=True) from exc
+        self._decision = decision
+        self._resolved = result
+        return result
+
+    @workflow.signal
+    def cancel(self, actor_id: UUID) -> None:
+        """Cancel the pending HITL request if not yet decided."""
+        if self._decision is None:
+            self._decision = HitlDecisionInput(
+                request_id=self._request.id,
+                actor_id=actor_id,
+                status="cancelled",
+                resolved_at=workflow.now(),
+            )
+
+    @workflow.run
+    async def run(self, request: OpenHitlInput) -> HitlRecord:
+        """Execute the full HITL request lifecycle until resolution and delivery."""
+        request = self._request
+        opened: HitlRecord = await workflow.execute_activity(
+            "open_hitl",
+            request,
+            result_type=HitlRecord,
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=RetryPolicy(maximum_attempts=3),
+        )
+        if opened.status == "already_granted":
+            return opened
+
+        timeout: timedelta | None = None
+        if request.expires_at is not None:
+            delta = request.expires_at - workflow.now()
+            timeout = delta if delta.total_seconds() > 0 else timedelta(seconds=0)
+
+        try:
+            await workflow.wait_condition(
+                lambda: self._decision is not None, timeout=timeout
+            )
+        except TimeoutError:
+            self._decision = HitlDecisionInput(
+                request_id=request.id,
+                actor_id=request.recipient_user_id,
+                status="expired",
+                resolved_at=workflow.now(),
+            )
+
+        if self._decision is None:
+            raise RuntimeError("HITL decision missing after wait_condition")
+        if self._resolved is None:
+            self._resolved = await workflow.execute_activity(
+                "resolve_hitl",
+                self._decision,
+                result_type=HitlRecord,
+                start_to_close_timeout=timedelta(seconds=30),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )
+
+        if request.type == "approval" and self._decision.status == "accepted":
+            self._resolved = await workflow.execute_activity(
+                "apply_hitl_effect",
+                request.id,
+                result_type=HitlRecord,
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=RetryPolicy(maximum_attempts=5),
+            )
+
+        await workflow.execute_activity(
+            "deliver_hitl_result",
+            request.id,
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=RetryPolicy(maximum_attempts=5),
+        )
+        await workflow.wait_condition(workflow.all_handlers_finished)
+        if self._resolved is None:
+            raise RuntimeError("HITL resolved record missing before return")
+        return self._resolved

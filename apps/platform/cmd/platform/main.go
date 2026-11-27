@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -17,6 +18,8 @@ import (
 	"github.com/clerk/clerk-sdk-go/v2/user"
 	"github.com/qninhdt/openlet/apps/platform/internal/platform"
 	sdk "github.com/qninhdt/openlet/packages/sdk-go"
+	chatpb "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/chat/v1"
+	letapb "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/leta/v1"
 	pb "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/platform/v1"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -37,6 +40,19 @@ func main() {
 		os.Exit(1)
 	}
 }
+
+func profileEnabled(name string) bool {
+	raw, ok := os.LookupEnv("COMPOSE_PROFILES")
+	if !ok {
+		return true
+	}
+	for _, p := range strings.Split(raw, ",") {
+		if strings.TrimSpace(p) == name {
+			return true
+		}
+	}
+	return false
+}
 func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -52,6 +68,8 @@ func run() error {
 	var graph sdk.SpiceDB
 	var temporal sdk.Temporal
 	var clerkURL, clerkKey string
+	var centrifugo sdk.Centrifugo
+	var chatGRPCTarget, letaGRPCTarget string
 	userIDMetadataKey := "openlet_user_id"
 	for _, v := range []struct {
 		path   string
@@ -60,6 +78,15 @@ func run() error {
 		if err = c.Section(v.path, v.target); err != nil {
 			return err
 		}
+	}
+	if err = c.OptionalSection("dependencies.centrifugo", &centrifugo); err != nil {
+		return err
+	}
+	if err = c.OptionalSection("services.chat.grpc_target", &chatGRPCTarget); err != nil {
+		return err
+	}
+	if err = c.OptionalSection("services.leta.grpc_target", &letaGRPCTarget); err != nil {
+		return err
 	}
 	if err = c.OptionalSection("auth.clerk.user_id_metadata_key", &userIDMetadataKey); err != nil {
 		return err
@@ -111,8 +138,49 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	app := &platform.Server{DB: db, Graph: az, Clerk: user.NewClient(&clerk.ClientConfig{BackendConfig: clerk.BackendConfig{URL: &clerkURL, Key: &key, HTTPClient: &http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)}}}), Temporal: tc, Settings: settings, Queue: temporal.Queues.Platform, Queues: temporal.Queues}
-	app.UserIDMetadataKey = userIDMetadataKey
+	var centrifugoSecret string
+	if centrifugo.TokenHMACSecret != "" {
+		centrifugoSecret, err = sdk.Secret("dependencies.centrifugo.token_hmac_secret", centrifugo.TokenHMACSecret)
+		if err != nil {
+			return err
+		}
+	}
+	centrifugoTTL := time.Hour
+	if centrifugo.TokenTTLSeconds > 0 {
+		centrifugoTTL = time.Duration(centrifugo.TokenTTLSeconds) * time.Second
+	}
+	var chatInternal chatpb.ChatInternalServiceClient
+	if chatGRPCTarget != "" {
+		chatConn, err := sdk.Dial(chatGRPCTarget)
+		if err != nil {
+			return err
+		}
+		defer chatConn.Close()
+		chatInternal = chatpb.NewChatInternalServiceClient(chatConn)
+	}
+	var letaInternal letapb.LetaInternalServiceClient
+	if letaGRPCTarget != "" && profileEnabled("leta") {
+		letaConn, err := sdk.Dial(letaGRPCTarget)
+		if err != nil {
+			return err
+		}
+		defer letaConn.Close()
+		letaInternal = letapb.NewLetaInternalServiceClient(letaConn)
+	}
+	app := &platform.Server{
+		DB:                db,
+		Graph:             az,
+		Clerk:             user.NewClient(&clerk.ClientConfig{BackendConfig: clerk.BackendConfig{URL: &clerkURL, Key: &key, HTTPClient: &http.Client{Transport: otelhttp.NewTransport(http.DefaultTransport)}}}),
+		UserIDMetadataKey: userIDMetadataKey,
+		Temporal:          tc,
+		Settings:          settings,
+		Queue:             temporal.Queues.Platform,
+		Queues:            temporal.Queues,
+		CentrifugoSecret:  centrifugoSecret,
+		CentrifugoTTL:     centrifugoTTL,
+		ChatInternal:      chatInternal,
+		LetaInternal:      letaInternal,
+	}
 	w := worker.New(tc, temporal.Queues.Platform, worker.Options{WorkerStopTimeout: time.Duration(runtime.ShutdownTimeoutSeconds) * time.Second})
 	platform.RegisterWorker(w, app)
 	if err = w.Start(); err != nil {

@@ -31,9 +31,25 @@ static_resources:
                     - name: api
                       domains: ['*']
                       routes:
+                        - name: centrifugo-ws
+                          match: {path: /connection/websocket}
+                          route:
+                            cluster: centrifugo
+                            timeout: 0s
+                            idle_timeout: 0s
+                            upgrade_configs:
+                              - {upgrade_type: websocket}
+                          typed_per_filter_config:
+                            envoy.filters.http.grpc_json_transcoder:
+                              '@type': type.googleapis.com/envoy.extensions.filters.http.grpc_json_transcoder.v3.GrpcJsonTranscoder
+                              proto_descriptor: /etc/openlet/public.pb
+                              services: []
                         - name: platform
                           match: {prefix: /openlet.platform.v1.PlatformService/}
                           route: {cluster: platform, timeout: 120s}
+                        - name: chat
+                          match: {prefix: /openlet.chat.v1.ChatService/}
+                          route: {cluster: chat, timeout: 120s}
                         - name: letfs-archive
                           match:
                             safe_regex: {regex: '/openlet\.letfs\.v1\.LetFSService/(DownloadArchive|DownloadArchiveTicket)'}
@@ -64,6 +80,8 @@ static_resources:
                             - {header_name: x-openlet-clerk-subject, claim_name: sub}
                             - {header_name: x-openlet-user-id, claim_name: @USER_ID_CLAIM@}
                       rules:
+                        - match: {path: /connection/websocket}
+                          requires: {allow_missing: {}}
                         - match:
                             safe_regex: {regex: '/v1/archive-downloads/[a-f0-9]+'}
                             headers: [{name: ':method', exact_match: GET}]
@@ -74,7 +92,7 @@ static_resources:
                     typed_config:
                       '@type': type.googleapis.com/envoy.extensions.filters.http.grpc_json_transcoder.v3.GrpcJsonTranscoder
                       proto_descriptor: /etc/openlet/public.pb
-                      services: [openlet.platform.v1.PlatformService, openlet.letfs.v1.LetFSService]
+                      services: [openlet.platform.v1.PlatformService, openlet.letfs.v1.LetFSService, openlet.chat.v1.ChatService]
                       convert_grpc_status: true
                       request_validation_options:
                         reject_unknown_method: true
@@ -98,6 +116,19 @@ static_resources:
       load_assignment:
         cluster_name: letfs
         endpoints: [{lb_endpoints: [{endpoint: {address: {socket_address: {address: @LETFS_HOST@, port_value: @LETFS_PORT@}}}}]}]
+    - name: chat
+      type: STRICT_DNS
+      connect_timeout: 5s
+      http2_protocol_options: {}
+      load_assignment:
+        cluster_name: chat
+        endpoints: [{lb_endpoints: [{endpoint: {address: {socket_address: {address: @CHAT_HOST@, port_value: @CHAT_PORT@}}}}]}]
+    - name: centrifugo
+      type: STRICT_DNS
+      connect_timeout: 5s
+      load_assignment:
+        cluster_name: centrifugo
+        endpoints: [{lb_endpoints: [{endpoint: {address: {socket_address: {address: @CENTRIFUGO_HOST@, port_value: @CENTRIFUGO_PORT@}}}}]}]
     - name: clerk_jwks
       type: LOGICAL_DNS
       dns_lookup_family: ALL

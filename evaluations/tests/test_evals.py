@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from openlet_evals.core.judge import make_judge
 from openlet_evals.core.report import (
+    EvalSample,
     build_run,
     diff_runs,
     load_run,
@@ -15,6 +16,9 @@ from openlet_evals.core.report import (
     save_run,
 )
 from openlet_evals.suites.retrieval.suite import mrr_at_k, recall_at_k, validate_goldens
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_make_judge_configures_model_and_reasoning_effort() -> None:
@@ -66,8 +70,8 @@ def test_report_save_load_and_diff(tmp_path: Path) -> None:
         name="base",
         config={},
         samples=[
-            {"id": "s-1", "group": "ws", "scores": {"recall@5": 0.5}},
-            {"id": "s-2", "group": "ws", "scores": {"recall@5": 1.0}},
+            EvalSample(id="s-1", group="ws", scores={"recall@5": 0.5}),
+            EvalSample(id="s-2", group="ws", scores={"recall@5": 1.0}),
         ],
         wall_s=1.2,
     )
@@ -76,15 +80,15 @@ def test_report_save_load_and_diff(tmp_path: Path) -> None:
         name="cand",
         config={},
         samples=[
-            {"id": "s-1", "group": "ws", "scores": {"recall@5": 1.0}},
-            {"id": "s-2", "group": "ws", "scores": {"recall@5": 1.0}},
+            EvalSample(id="s-1", group="ws", scores={"recall@5": 1.0}),
+            EvalSample(id="s-2", group="ws", scores={"recall@5": 1.0}),
         ],
         wall_s=1.3,
     )
     out = tmp_path / "base.json"
     save_run(base, out)
     loaded = load_run(out)
-    assert loaded["metrics"]["recall@5"] == 0.75
+    assert loaded.metrics["recall@5"] == 0.75
     assert "# Eval: `base` (retrieval)" in render_markdown(loaded)
     diff_md = diff_runs(loaded, cand)
     assert "+0.2500" in diff_md

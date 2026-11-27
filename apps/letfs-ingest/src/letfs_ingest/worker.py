@@ -1,13 +1,16 @@
+"""Temporal worker entrypoint for ``cpu`` and ``io`` LetFS ingest roles."""
+
+from __future__ import annotations
+
 import argparse
 import asyncio
 import logging
 import os
 import signal
-from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack
 from datetime import timedelta
 from importlib.metadata import version
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from openlet_api.letfs.v1.internal_pb2_grpc import LetFSInternalServiceStub
 from openlet_sdk.config import load
@@ -25,10 +28,14 @@ from temporalio.runtime import (
 )
 from temporalio.worker import Worker
 
-from .storage import S3Store
+from letfs_ingest.storage import S3Store
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 
 async def run(role: Literal["cpu", "io"]) -> None:
+    """Start and run the Temporal ingest worker for the given ``role``."""
     config = load()
     runtime = config["runtime"]
     settings = (
@@ -84,9 +91,9 @@ async def run(role: Literal["cpu", "io"]) -> None:
             activities: list[Callable[[str], Awaitable[None]]]
             if role == "cpu":
                 settings = config["services"]["letfs_ingest"]["cpu"]
-                from datalab_sdk import AsyncDatalabClient  # pyright: ignore[reportMissingTypeStubs]
+                from datalab_sdk import AsyncDatalabClient  # noqa: PLC0415  # Role-specific lazy import keeps CPU/IO worker dependencies isolated.  # pyright: ignore[reportMissingTypeStubs]
 
-                from .parse import Parser
+                from letfs_ingest.parse import Parser  # noqa: PLC0415  # Role-specific lazy import keeps CPU/IO worker dependencies isolated.
 
                 if settings["split_tokens"] <= 0:
                     raise ValueError("invalid parser layout limits")
@@ -99,11 +106,11 @@ async def run(role: Literal["cpu", "io"]) -> None:
                 activities = [Parser(stub, s3, config, datalab).run]
             else:
                 settings = config["services"]["letfs_ingest"]["io"]
-                from openlet_sdk.config import secret
-                from qdrant_client import AsyncQdrantClient
+                from openlet_sdk.config import secret  # noqa: PLC0415  # Role-specific lazy import keeps CPU/IO worker dependencies isolated.
+                from qdrant_client import AsyncQdrantClient  # noqa: PLC0415  # Role-specific lazy import keeps CPU/IO worker dependencies isolated.
 
-                from .process import Processor
-                from .providers import Models
+                from letfs_ingest.process import Processor  # noqa: PLC0415  # Role-specific lazy import keeps CPU/IO worker dependencies isolated.
+                from letfs_ingest.providers import Models  # noqa: PLC0415  # Role-specific lazy import keeps CPU/IO worker dependencies isolated.
 
                 if (
                     not 0

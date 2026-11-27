@@ -10,12 +10,13 @@ trials: 1
 concurrency: 16
 tools:
   hitl: false
-  multi_agent: false
+  subagents: false
   schedule: false
   web: false
-  execute: true
+  bash: true
   semantic_search: true
-  activity: true
+  todo: false
+  react: false
 judge_model: gpt-6-luna
 judge_reasoning_effort: max
 judge_concurrency: 16

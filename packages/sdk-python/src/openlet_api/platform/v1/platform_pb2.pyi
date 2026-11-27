@@ -252,3 +252,13 @@ class AcceptInvitationRequest(_message.Message):
     TOKEN_FIELD_NUMBER: _ClassVar[int]
     token: str
     def __init__(self, token: _Optional[str] = ...) -> None: ...
+
+class RealtimeConnectToken(_message.Message):
+    __slots__ = ("token", "expires_at", "user_id")
+    TOKEN_FIELD_NUMBER: _ClassVar[int]
+    EXPIRES_AT_FIELD_NUMBER: _ClassVar[int]
+    USER_ID_FIELD_NUMBER: _ClassVar[int]
+    token: str
+    expires_at: _timestamp_pb2.Timestamp
+    user_id: str
+    def __init__(self, token: _Optional[str] = ..., expires_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., user_id: _Optional[str] = ...) -> None: ...

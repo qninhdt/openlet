@@ -1,107 +1,205 @@
-import asyncio
+"""PostgreSQL pool management, lease fencing, idempotency receipts, and row helpers."""
+
+from __future__ import annotations
+
 import hashlib
 import json
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
-from typing import cast
+from datetime import datetime
+from typing import TYPE_CHECKING
+from urllib.parse import quote
 from uuid import UUID
 
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from openlet_sdk.config import JSON, Config, load, secret
+from openlet_sdk.config import JSON, Config, secret
+from openlet_sdk.types import is_mapping, is_object_sequence
 from psycopg import AsyncConnection
-from psycopg.conninfo import make_conninfo
-from psycopg.rows import dict_row
+from psycopg.rows import DictRow, dict_row
+from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 from pydantic import BaseModel
 
-type Row = dict[str, object]
-type Connection = AsyncConnection[Row]
-type Pool = AsyncConnectionPool[Connection]
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+type Pool = AsyncConnectionPool[AsyncConnection[DictRow]]
+type Row = DictRow
 
 
-def dsn(config: Config) -> str:
-    postgres = config["dependencies"]["postgres"]
-    database = config["services"]["leta"]["database"]
-    return make_conninfo(
-        host=postgres["host"],
-        port=postgres["port"],
-        sslmode=postgres["sslmode"],
-        dbname=database["name"],
-        user=database["user"],
-        password=secret(database["password"]),
+def hydrate[M: BaseModel](row: Mapping[str, object], model: type[M]) -> M:
+    """Validate and hydrate a Postgres DictRow into a typed Pydantic domain model."""
+    return model.model_validate(row)
+
+
+class WriterBusyError(RuntimeError):
+    """Retryable error raised when another active lease holds the agent writer lock."""
+
+
+class LeaseLostError(RuntimeError):
+    """Raised when a worker loses its DB lease/fencing token mid-run."""
+
+
+def database_dsn(cfg: Config) -> str:
+    """Build the PostgreSQL connection string from Leta configuration."""
+    pg = cfg["dependencies"]["postgres"]
+    db = cfg["services"]["leta"]["database"]
+    pw = secret(db["password"])
+    return (
+        f"postgresql://{quote(db['user'], safe='')}:{quote(pw, safe='')}"
+        f"@{pg['host']}:{pg['port']}/{db['name']}?sslmode={pg['sslmode']}"
     )
 
 
-def pool(config: Config) -> Pool:
-    return AsyncConnectionPool(
-        dsn(config),
-        min_size=2,
-        max_size=24,
+async def open_pool(cfg: Config, *, min_size: int = 2, max_size: int = 24) -> Pool:
+    """Open and verify an async psycopg connection pool."""
+    pool: Pool = AsyncConnectionPool(
+        conninfo=database_dsn(cfg),
+        min_size=min_size,
+        max_size=max_size,
         open=False,
-        kwargs={"autocommit": True, "row_factory": dict_row},
+        kwargs={
+            "autocommit": True,
+            "row_factory": dict_row,
+            "prepare_threshold": 0,
+        },
     )
+    await pool.open(wait=True)
+    return pool
 
 
-def request_hash(request: BaseModel) -> bytes:
-    canonical = json.dumps(
-        request.model_dump(mode="json"),
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    )
-    return hashlib.sha256(canonical.encode()).digest()
+async def acquire_lease(
+    pool: Pool, agent_id: UUID, lease_token: UUID, ttl_seconds: int = 30
+) -> None:
+    """Acquire an exclusive writer lease for an active agent or raise WriterBusyError."""
+    async with pool.connection() as conn:
+        row = await (
+            await conn.execute(
+                """
+                UPDATE agents
+                SET lease_token = %s,
+                    lease_expires_at = now() + make_interval(secs => %s)
+                WHERE id = %s
+                  AND state = 'active'
+                  AND (lease_expires_at IS NULL OR lease_expires_at < now())
+                RETURNING id
+                """,
+                (lease_token, ttl_seconds, agent_id),
+            )
+        ).fetchone()
+    if row is None:
+        raise WriterBusyError(f"agent {agent_id} is currently leased or inactive")
 
 
-async def receipt(
-    connection: Connection, caller: str, method: str, key: UUID, request: BaseModel
-) -> JSON:
-    row = await (
-        await connection.execute(
-            "SELECT request_hash,result FROM idempotency_keys WHERE caller=%s AND method=%s AND key=%s",
-            (caller, method, key),
+async def renew_lease(
+    pool: Pool, agent_id: UUID, lease_token: UUID, ttl_seconds: int = 30
+) -> bool:
+    """Extend an active agent writer lease and return whether the token still holds it."""
+    async with pool.connection() as conn:
+        row = await (
+            await conn.execute(
+                """
+                UPDATE agents
+                SET lease_expires_at = now() + make_interval(secs => %s)
+                WHERE id = %s AND lease_token = %s
+                RETURNING id
+                """,
+                (ttl_seconds, agent_id, lease_token),
+            )
+        ).fetchone()
+    return row is not None
+
+
+async def release_lease(pool: Pool, agent_id: UUID, lease_token: UUID) -> None:
+    """Release an agent writer lease if the given token currently owns it."""
+    async with pool.connection() as conn:
+        await conn.execute(
+            """
+            UPDATE agents
+            SET lease_token = NULL, lease_expires_at = NULL
+            WHERE id = %s AND lease_token = %s
+            """,
+            (agent_id, lease_token),
         )
-    ).fetchone()
+
+
+def hash_request(payload: object) -> str:
+    """Return a deterministic SHA-256 hex digest for an idempotency payload."""
+    raw = json.dumps(payload, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+async def get_receipt(
+    pool: Pool, scope: str, action: str, request_id: UUID, request_hash: str
+) -> dict[str, JSON] | None:
+    """Fetch a stored idempotency receipt and verify its payload hash."""
+    async with pool.connection() as conn:
+        row = await (
+            await conn.execute(
+                """
+                SELECT request_hash, response
+                FROM idempotency_receipts
+                WHERE scope = %s AND action = %s AND request_id = %s
+                """,
+                (scope, action, request_id),
+            )
+        ).fetchone()
     if row is None:
         return None
-    if bytes(cast(bytes, row["request_hash"])) != request_hash(request):
-        raise ValueError("request ID was already used with different input")
-    result = cast(bytes | None, row["result"])
-    return cast(JSON, json.loads(bytes(result))) if result is not None else None
+    if row["request_hash"] != request_hash:
+        raise ValueError("idempotency_key reused with different request payload")
+    resp = row["response"]
+    if not is_mapping(resp):
+        raise ValueError("corrupted idempotency receipt response")
+    return {str(k): json_value(v) for k, v in resp.items()}
 
 
 async def save_receipt(
-    connection: Connection,
-    caller: str,
-    method: str,
-    key: UUID,
-    request: BaseModel,
-    result: JSON,
+    pool: Pool,
+    scope: str,
+    action: str,
+    request_id: UUID,
+    *,
+    request_hash: str,
+    response: dict[str, JSON],
 ) -> None:
-    await connection.execute(
-        """INSERT INTO idempotency_keys(caller,method,key,request_hash,result,expires_at)
-           VALUES(%s,%s,%s,%s,%s,'infinity'::timestamptz)""",
-        (caller, method, key, request_hash(request), json.dumps(result).encode()),
-    )
-
-
-async def setup() -> None:
-    async with AsyncPostgresSaver.from_conn_string(dsn(load())) as saver:
-        await saver.setup()
-
-
-@asynccontextmanager
-async def effect(db: Pool, root: UUID) -> AsyncGenerator[None]:
-    async with db.connection() as connection:
-        await connection.execute(
-            "SELECT pg_advisory_lock(hashtextextended(%s,1))", (str(root),)
+    """Persist an idempotency receipt without overwriting an existing entry."""
+    async with pool.connection() as conn:
+        await conn.execute(
+            """
+            INSERT INTO idempotency_receipts(scope, action, request_id, request_hash, response)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (scope, action, request_id) DO NOTHING
+            """,
+            (scope, action, request_id, request_hash, Jsonb(response)),
         )
-        try:
-            yield
-        finally:
-            await connection.execute(
-                "SELECT pg_advisory_unlock(hashtextextended(%s,1))", (str(root),)
-            )
 
 
-if __name__ == "__main__":
-    asyncio.run(setup())
+async def sweep_receipts(pool: Pool, retention_days: int = 7) -> int:
+    """Delete expired idempotency receipts and return the number of removed rows."""
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            """
+            DELETE FROM idempotency_receipts
+            WHERE created_at < now() - make_interval(days => %s)
+            """,
+            (retention_days,),
+        )
+        return int(cur.rowcount or 0)
+
+
+def json_value(value: object) -> JSON:
+    """Convert an arbitrary Python or Postgres value into a JSON-serializable value."""
+    if value is None or isinstance(value, bool | int | float | str):
+        return value
+    if isinstance(value, UUID):
+        return str(value)
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if is_mapping(value):
+        return {str(k): json_value(v) for k, v in value.items()}
+    if is_object_sequence(value):
+        return [json_value(v) for v in value]
+    return str(value)
+
+
+def json_row(row: Mapping[str, object]) -> dict[str, JSON]:
+    """Convert all values in a database mapping row to JSON-serializable values."""
+    return {str(k): json_value(v) for k, v in row.items()}

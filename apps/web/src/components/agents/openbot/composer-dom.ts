@@ -2,7 +2,7 @@
 // PolyForm Noncommercial 1.0.0: https://polyformproject.org/licenses/noncommercial/1.0.0/
 // Required Notice: Copyright 2026 Synthetify Labs spółka z ograniczoną odpowiedzialnością.
 // Required Notice: For a commercial license, contact licenses@openbot.run.
-import { fileToken } from '@/lib/file-refs';
+import { fileLink } from '@/lib/file-refs';
 import { markdownListLineBreak } from './markdown-lists';
 
 export function serializeEditor(editor: HTMLDivElement): string {
@@ -64,7 +64,7 @@ function serializeNode(node: Node): string {
   const attachmentName = node.dataset.attachmentReferenceName;
   if (attachmentId && attachmentName) {
     const [storage_id, node_id] = attachmentId.split('/');
-    return fileToken({
+    return fileLink({
       storage_id,
       node_id,
       label: attachmentName,

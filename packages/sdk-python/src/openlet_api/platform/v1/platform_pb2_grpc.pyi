@@ -35,6 +35,7 @@ class PlatformServiceStub:
     Onboard: _grpc.UnaryUnaryMultiCallable[_empty_pb2.Empty, _platform_pb2.User]
     GetMe: _grpc.UnaryUnaryMultiCallable[_empty_pb2.Empty, _platform_pb2.User]
     UpdateMe: _grpc.UnaryUnaryMultiCallable[_platform_pb2.UpdateMeRequest, _platform_pb2.User]
+    GetRealtimeConnectToken: _grpc.UnaryUnaryMultiCallable[_empty_pb2.Empty, _platform_pb2.RealtimeConnectToken]
     ListWorkspaces: _grpc.UnaryUnaryMultiCallable[_platform_pb2.ListWorkspacesRequest, _platform_pb2.ListWorkspacesResponse]
     CreateMyWorkspace: _grpc.UnaryUnaryMultiCallable[_platform_pb2.CreateMyWorkspaceRequest, _platform_pb2.Workspace]
     GetWorkspace: _grpc.UnaryUnaryMultiCallable[_platform_pb2.WorkspaceRequest, _platform_pb2.Workspace]
@@ -55,6 +56,7 @@ class PlatformServiceAsyncStub(PlatformServiceStub):
     Onboard: _aio.UnaryUnaryMultiCallable[_empty_pb2.Empty, _platform_pb2.User]  # type: ignore[assignment]
     GetMe: _aio.UnaryUnaryMultiCallable[_empty_pb2.Empty, _platform_pb2.User]  # type: ignore[assignment]
     UpdateMe: _aio.UnaryUnaryMultiCallable[_platform_pb2.UpdateMeRequest, _platform_pb2.User]  # type: ignore[assignment]
+    GetRealtimeConnectToken: _aio.UnaryUnaryMultiCallable[_empty_pb2.Empty, _platform_pb2.RealtimeConnectToken]  # type: ignore[assignment]
     ListWorkspaces: _aio.UnaryUnaryMultiCallable[_platform_pb2.ListWorkspacesRequest, _platform_pb2.ListWorkspacesResponse]  # type: ignore[assignment]
     CreateMyWorkspace: _aio.UnaryUnaryMultiCallable[_platform_pb2.CreateMyWorkspaceRequest, _platform_pb2.Workspace]  # type: ignore[assignment]
     GetWorkspace: _aio.UnaryUnaryMultiCallable[_platform_pb2.WorkspaceRequest, _platform_pb2.Workspace]  # type: ignore[assignment]
@@ -87,6 +89,12 @@ class PlatformServiceServicer:
         request: _platform_pb2.UpdateMeRequest,
         context: _ServicerContext,
     ) -> _typing.Union[_platform_pb2.User, _abc.Awaitable[_platform_pb2.User]]: ...
+
+    def GetRealtimeConnectToken(
+        self,
+        request: _empty_pb2.Empty,
+        context: _ServicerContext,
+    ) -> _typing.Union[_platform_pb2.RealtimeConnectToken, _abc.Awaitable[_platform_pb2.RealtimeConnectToken]]: ...
 
     def ListWorkspaces(
         self,

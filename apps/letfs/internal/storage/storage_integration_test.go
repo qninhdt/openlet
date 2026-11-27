@@ -518,23 +518,23 @@ func TestStorageRefactoredInvariants(t *testing.T) {
 		t.Fatalf("ListNodes artifact page2 failed: %+v err=%v", artPage2, err)
 	}
 
-	tsCase, err := s.TextSearch(actorCtx, &pb.TextSearchRequest{
-		WorkspaceId: ws, StorageId: st, Root: &pb.NodeLocator{Locator: &pb.NodeLocator_Path{Path: "/pack.pdf"}}, Query: "Europe", CaseSensitive: true,
+	globRes, err := s.Glob(actorCtx, &pb.GlobRequest{
+		WorkspaceId: ws, StorageId: st, Root: &pb.NodeLocator{Locator: &pb.NodeLocator_Path{Path: "/"}}, Pattern: "**/*.csv",
 	})
-	if err != nil || len(tsCase.Hits) != 1 || tsCase.Hits[0].ArtifactPath != "tables/001.csv" {
-		t.Fatalf("TextSearch CaseSensitive mismatch: %+v err=%v", tsCase, err)
+	if err != nil || len(globRes.Hits) != 3 || globRes.Truncated {
+		t.Fatalf("Glob artifact csv mismatch: %+v err=%v", globRes, err)
 	}
-	tsLines1, err := s.TextSearch(actorCtx, &pb.TextSearchRequest{
-		WorkspaceId: ws, StorageId: st, Root: &pb.NodeLocator{Locator: &pb.NodeLocator_Path{Path: "/a/b/c/note.txt"}}, Query: "Match", LinesMode: true, PageSize: 1,
+	grepCase, err := s.Grep(actorCtx, &pb.GrepRequest{
+		WorkspaceId: ws, StorageId: st, Root: &pb.NodeLocator{Locator: &pb.NodeLocator_Path{Path: "/pack.pdf"}}, Pattern: "Europe", CaseSensitive: true,
 	})
-	if err != nil || len(tsLines1.Hits) != 1 || tsLines1.Hits[0].LineNumber != 1 || tsLines1.NextPageToken == "" {
-		t.Fatalf("TextSearch LinesMode page1 failed: %+v err=%v", tsLines1, err)
+	if err != nil || len(grepCase.Hits) != 1 || grepCase.Hits[0].ArtifactPath != "tables/001.csv" || grepCase.Hits[0].LineNumber != 1 {
+		t.Fatalf("Grep CaseSensitive mismatch: %+v err=%v", grepCase, err)
 	}
-	tsLines2, err := s.TextSearch(actorCtx, &pb.TextSearchRequest{
-		WorkspaceId: ws, StorageId: st, Root: &pb.NodeLocator{Locator: &pb.NodeLocator_Path{Path: "/a/b/c/note.txt"}}, Query: "Match", LinesMode: true, PageSize: 1, PageToken: tsLines1.NextPageToken,
+	grepLines, err := s.Grep(actorCtx, &pb.GrepRequest{
+		WorkspaceId: ws, StorageId: st, Root: &pb.NodeLocator{Locator: &pb.NodeLocator_Path{Path: "/a/b/c/note.txt"}}, Pattern: "Match", Literal: true, CaseSensitive: true, Limit: 1,
 	})
-	if err != nil || len(tsLines2.Hits) != 1 || tsLines2.Hits[0].LineNumber != 2 || tsLines2.NextPageToken != "" {
-		t.Fatalf("TextSearch LinesMode page2 failed: %+v err=%v", tsLines2, err)
+	if err != nil || len(grepLines.Hits) != 1 || grepLines.Hits[0].LineNumber != 1 || !grepLines.Truncated {
+		t.Fatalf("Grep limit/truncation failed: %+v err=%v", grepLines, err)
 	}
 
 	// 4. CreateUpload idempotent retry skips duplicate S3 CreateMultipartUpload.

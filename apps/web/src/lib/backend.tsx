@@ -18,9 +18,18 @@ import { useTheme } from 'next-themes';
 import { clearAccountDrafts } from './chat-drafts';
 import { clearUploads } from './upload-resume';
 import { clearDevAccount, devAuthEnabled, readDevAccount } from './dev-auth';
+import { RealtimeProvider, type RealtimeContextValue } from './realtime';
+
+async function parseJsonResponse<T>(response: Response): Promise<T> {
+  if (response.status === 204 || response.status === 205) return {} as T;
+  const text = await response.text();
+  if (!text.trim()) return {} as T;
+  return JSON.parse(text) as T;
+}
 
 export type Backend = {
   preview?: boolean;
+  previewRealtime?: RealtimeContextValue;
   enabled: boolean;
   ready: boolean;
   actorId: string;
@@ -115,7 +124,7 @@ function DevBackend({ children }: { children: ReactNode }) {
   const api = useMemo<Api>(
     () =>
       async <T,>(path: string, init?: RequestInit) =>
-        (await request(path, init)).json() as Promise<T>,
+        parseJsonResponse<T>(await request(path, init)),
     [request],
   );
   const identity = useQuery({
@@ -174,7 +183,9 @@ function DevBackend({ children }: { children: ReactNode }) {
           }}
         />
       ) : devAccount ? (
-        <div key={userId}>{children}</div>
+        <RealtimeProvider>
+          <div key={userId}>{children}</div>
+        </RealtimeProvider>
       ) : (
         <Navigate to="/login" search={{ returnTo: safeReturnTo(href) }} replace />
       )}
@@ -246,7 +257,7 @@ function ClerkBackend({ children }: { children: ReactNode }) {
   const api = useMemo<Api>(
     () =>
       async <T,>(path: string, init?: RequestInit) =>
-        (await request(path, init)).json() as Promise<T>,
+        parseJsonResponse<T>(await request(path, init)),
     [request],
   );
   const identity = useQuery({
@@ -318,7 +329,9 @@ function ClerkBackend({ children }: { children: ReactNode }) {
           }}
         />
       ) : isSignedIn ? (
-        <div key={userId}>{children}</div>
+        <RealtimeProvider>
+          <div key={userId}>{children}</div>
+        </RealtimeProvider>
       ) : (
         <Navigate to="/login" search={{ returnTo: safeReturnTo(href) }} replace />
       )}

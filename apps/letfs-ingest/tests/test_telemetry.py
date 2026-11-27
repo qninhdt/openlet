@@ -1,11 +1,13 @@
+from __future__ import annotations
+
 import json
 import logging
 import sys
+from typing import TYPE_CHECKING
 
 import httpx
 import pytest
 from letfs_ingest import telemetry
-from letfs_ingest.telemetry import ProcessingIdentity
 from openlet_sdk.telemetry import JSONFormatter, redact_async_request, redact_request
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor, RequestInfo
 from opentelemetry.sdk.metrics import MeterProvider
@@ -13,6 +15,11 @@ from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+if TYPE_CHECKING:
+    from typing import NoReturn
+
+    from letfs_ingest.telemetry import ProcessingIdentity
 
 
 async def test_signed_queries_stay_out_of_exported_spans() -> None:
@@ -38,9 +45,13 @@ async def test_signed_queries_stay_out_of_exported_spans() -> None:
         provider.shutdown()
 
 
+def _raise_dimension_mismatch() -> NoReturn:
+    raise ValueError("embedding dimensions mismatch")
+
+
 def test_json_logs_preserve_activity_exception_cause() -> None:
     try:
-        raise ValueError("embedding dimensions mismatch")
+        _raise_dimension_mismatch()
     except ValueError:
         record = logging.LogRecord(
             "worker", logging.ERROR, __file__, 1, "Activity failed", (), sys.exc_info()
@@ -92,9 +103,11 @@ def test_processing_stage_records_bounded_metrics_and_failure(
                 "worker", logging.INFO, __file__, 1, "stage", (), None
             )
             log = json.loads(JSONFormatter({"service.name": "cpu"}).format(record))
-        with pytest.raises(ValueError):
-            with telemetry.stage("index", identity):
-                raise ValueError("private provider payload")
+        with (
+            pytest.raises(ValueError, match="private provider payload"),
+            telemetry.stage("index", identity),
+        ):
+            raise ValueError("private provider payload")
         spans = exporter.get_finished_spans()
         assert spans[0].context is not None
         assert log["trace_id"] == f"{spans[0].context.trace_id:032x}"

@@ -57,8 +57,8 @@ class LetFSServiceStub:
     CreateArchiveDownload: _grpc.UnaryUnaryMultiCallable[_letfs_pb2.DownloadArchiveRequest, _letfs_pb2.ArchiveDownloadTicket]
     DownloadArchiveTicket: _grpc.UnaryStreamMultiCallable[_letfs_pb2.ArchiveDownloadTicketRequest, _httpbody_pb2.HttpBody]
     DownloadArchive: _grpc.UnaryStreamMultiCallable[_letfs_pb2.DownloadArchiveRequest, _httpbody_pb2.HttpBody]
-    SearchFiles: _grpc.UnaryUnaryMultiCallable[_letfs_pb2.SearchFilesRequest, _letfs_pb2.SearchFilesResponse]
-    TextSearch: _grpc.UnaryUnaryMultiCallable[_letfs_pb2.TextSearchRequest, _letfs_pb2.TextSearchResponse]
+    Glob: _grpc.UnaryUnaryMultiCallable[_letfs_pb2.GlobRequest, _letfs_pb2.GlobResponse]
+    Grep: _grpc.UnaryUnaryMultiCallable[_letfs_pb2.GrepRequest, _letfs_pb2.GrepResponse]
     SemanticSearch: _grpc.UnaryUnaryMultiCallable[_letfs_pb2.SemanticSearchRequest, _letfs_pb2.SemanticSearchResponse]
     TrashNode: _grpc.UnaryUnaryMultiCallable[_letfs_pb2.TrashNodeRequest, _letfs_pb2.TrashEntry]
     ListTrash: _grpc.UnaryUnaryMultiCallable[_letfs_pb2.ListTrashRequest, _letfs_pb2.ListTrashResponse]
@@ -97,8 +97,8 @@ class LetFSServiceAsyncStub(LetFSServiceStub):
     CreateArchiveDownload: _aio.UnaryUnaryMultiCallable[_letfs_pb2.DownloadArchiveRequest, _letfs_pb2.ArchiveDownloadTicket]  # type: ignore[assignment]
     DownloadArchiveTicket: _aio.UnaryStreamMultiCallable[_letfs_pb2.ArchiveDownloadTicketRequest, _httpbody_pb2.HttpBody]  # type: ignore[assignment]
     DownloadArchive: _aio.UnaryStreamMultiCallable[_letfs_pb2.DownloadArchiveRequest, _httpbody_pb2.HttpBody]  # type: ignore[assignment]
-    SearchFiles: _aio.UnaryUnaryMultiCallable[_letfs_pb2.SearchFilesRequest, _letfs_pb2.SearchFilesResponse]  # type: ignore[assignment]
-    TextSearch: _aio.UnaryUnaryMultiCallable[_letfs_pb2.TextSearchRequest, _letfs_pb2.TextSearchResponse]  # type: ignore[assignment]
+    Glob: _aio.UnaryUnaryMultiCallable[_letfs_pb2.GlobRequest, _letfs_pb2.GlobResponse]  # type: ignore[assignment]
+    Grep: _aio.UnaryUnaryMultiCallable[_letfs_pb2.GrepRequest, _letfs_pb2.GrepResponse]  # type: ignore[assignment]
     SemanticSearch: _aio.UnaryUnaryMultiCallable[_letfs_pb2.SemanticSearchRequest, _letfs_pb2.SemanticSearchResponse]  # type: ignore[assignment]
     TrashNode: _aio.UnaryUnaryMultiCallable[_letfs_pb2.TrashNodeRequest, _letfs_pb2.TrashEntry]  # type: ignore[assignment]
     ListTrash: _aio.UnaryUnaryMultiCallable[_letfs_pb2.ListTrashRequest, _letfs_pb2.ListTrashResponse]  # type: ignore[assignment]
@@ -255,17 +255,17 @@ class LetFSServiceServicer:
         context: _ServicerContext,
     ) -> _typing.Union[_abc.Iterator[_httpbody_pb2.HttpBody], _abc.AsyncIterator[_httpbody_pb2.HttpBody]]: ...
 
-    def SearchFiles(
+    def Glob(
         self,
-        request: _letfs_pb2.SearchFilesRequest,
+        request: _letfs_pb2.GlobRequest,
         context: _ServicerContext,
-    ) -> _typing.Union[_letfs_pb2.SearchFilesResponse, _abc.Awaitable[_letfs_pb2.SearchFilesResponse]]: ...
+    ) -> _typing.Union[_letfs_pb2.GlobResponse, _abc.Awaitable[_letfs_pb2.GlobResponse]]: ...
 
-    def TextSearch(
+    def Grep(
         self,
-        request: _letfs_pb2.TextSearchRequest,
+        request: _letfs_pb2.GrepRequest,
         context: _ServicerContext,
-    ) -> _typing.Union[_letfs_pb2.TextSearchResponse, _abc.Awaitable[_letfs_pb2.TextSearchResponse]]: ...
+    ) -> _typing.Union[_letfs_pb2.GrepResponse, _abc.Awaitable[_letfs_pb2.GrepResponse]]: ...
 
     def SemanticSearch(
         self,

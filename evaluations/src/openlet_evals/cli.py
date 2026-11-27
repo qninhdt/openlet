@@ -4,34 +4,42 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING
 
 import yaml
 from openlet_env.config import find_repo_root
+from openlet_sdk.types import is_str_mapping
 
-from .core.report import diff_runs, load_run, render_markdown
-from .suites.agent.suite import (
+from openlet_evals.core.report import diff_runs, load_run, render_markdown
+from openlet_evals.suites.agent.suite import (
     AgentEvalConfig,
     grade_artifacts,
     run_agent,
     validate_agent,
 )
-from .suites.retrieval.suite import RetrievalConfig, run_retrieval, validate_retrieval
+from openlet_evals.suites.retrieval.suite import (
+    RetrievalConfig,
+    run_retrieval,
+    validate_retrieval,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
-def _load_yaml(repo_root: Path, config_path: Path | None) -> dict[str, Any]:
+def _load_yaml(repo_root: Path, config_path: Path | None) -> dict[str, object]:
     if config_path is None:
         return {}
     path = config_path if config_path.is_file() else (repo_root / config_path)
     loaded: object = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    if not isinstance(loaded, dict):
+    if not is_str_mapping(loaded):
         raise ValueError(f"Expected YAML mapping in {path}")
-    return {str(k): v for k, v in cast(dict[object, object], loaded).items()}
+    return dict(loaded)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Run the ``openlet-eval`` CLI entrypoint."""
     parser = argparse.ArgumentParser(prog="openlet-eval")
     sub = parser.add_subparsers(dest="suite", required=True)
 
@@ -83,11 +91,17 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     raw = _load_yaml(repo_root, args.config)
     if args.suite == "retrieval":
-        for attr in ("name", "mode", "top_k", "concurrency"):
-            if (val := getattr(args, attr, None)) is not None:
-                raw[attr] = val
-        if getattr(args, "no_judge", False):
-            raw["use_judge"] = False
+        if args.command == "run":
+            if args.name is not None:
+                raw["name"] = args.name
+            if args.mode is not None:
+                raw["mode"] = args.mode
+            if args.top_k is not None:
+                raw["top_k"] = args.top_k
+            if args.concurrency is not None:
+                raw["concurrency"] = args.concurrency
+            if args.no_judge:
+                raw["use_judge"] = False
         rcfg = RetrievalConfig.model_validate(raw)
         if args.command == "validate":
             n, blobs, pts, errors = validate_retrieval(repo_root, rcfg)
@@ -104,7 +118,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Saved: {json_out} | {md_out}")
         return 0
 
-    if getattr(args, "name", None) is not None:
+    if args.command in ("run", "grade") and args.name is not None:
         raw["name"] = args.name
     acfg = AgentEvalConfig.model_validate(raw)
     if args.command == "validate":

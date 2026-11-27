@@ -2,29 +2,67 @@
 
 from __future__ import annotations
 
-import json
 import os
 import time
-from collections.abc import Sequence
 from datetime import UTC, datetime
-from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING
 
 from deepeval import evaluate  # pyright: ignore[reportUnknownVariableType]
 from deepeval.evaluate.configs import AsyncConfig, CacheConfig, DisplayConfig
 from deepeval.metrics import ContextualPrecisionMetric, ContextualRecallMetric
 from deepeval.test_case import LLMTestCase
 from dotenv import dotenv_values
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from openlet_evals.core.judge import make_judge
-from openlet_evals.core.report import build_run, render_markdown, save_run
+from openlet_evals.core.report import (
+    EvalRun,
+    EvalSample,
+    build_run,
+    render_markdown,
+    save_run,
+)
+from openlet_evals.suites.retrieval.corpus import (
+    COLLECTION,
+    EphemeralQdrant,
+    embed_queries,
+    load_shared_corpus,
+)
+from openlet_evals.suites.retrieval.search import SearchHit, SearchMode, search_qdrant
 
-from .corpus import COLLECTION, EphemeralQdrant, embed_queries, load_shared_corpus
-from .search import SearchMode, search_qdrant
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from pathlib import Path
+
+    from openlet_sdk.types import JsonObject
+
+
+class RetrievalGoldenMetadata(BaseModel):
+    """Metadata identifying a retrieval golden and its expected files."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    workspace: str
+    relevant_files: list[str]
+
+
+class RetrievalGolden(BaseModel):
+    """Retrieval evaluation golden entry."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    input: str
+    expected_output: str
+    additional_metadata: RetrievalGoldenMetadata
+
+
+_GOLDENS_ADAPTER = TypeAdapter(list[RetrievalGolden])
 
 
 class RetrievalConfig(BaseModel):
+    """Configuration for running the retrieval evaluation suite."""
+
     model_config = ConfigDict(extra="forbid")
 
     name: str = "retrieval-baseline"
@@ -43,12 +81,21 @@ class RetrievalConfig(BaseModel):
     use_cache: bool = False
 
 
+class RetrievalEvalSample(EvalSample):
+    """Retrieval evaluation sample including expected and retrieved file paths."""
+
+    relevant_files: list[str] = Field(default_factory=list[str])
+    top_files: list[str] = Field(default_factory=list[str])
+
+
 def recall_at_k(relevant: Sequence[str], hit_files: Sequence[str], k: int) -> float:
+    """Compute recall@k over unique relevant file paths."""
     rel = set(relevant)
     return len(rel & set(hit_files[:k])) / len(rel) if rel else 0.0
 
 
 def mrr_at_k(relevant: Sequence[str], hit_files: Sequence[str], k: int) -> float:
+    """Compute reciprocal rank of the first relevant file within ``k`` hits."""
     rel = set(relevant)
     for rank, path in enumerate(hit_files[:k], start=1):
         if path in rel:
@@ -56,33 +103,29 @@ def mrr_at_k(relevant: Sequence[str], hit_files: Sequence[str], k: int) -> float
     return 0.0
 
 
-def load_goldens(path: Path) -> list[dict[str, Any]]:
-    raw: object = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(raw, list):
-        raise ValueError(f"Expected JSON list in {path}")
-    return cast(list[dict[str, Any]], raw)
+def load_goldens(path: Path) -> list[RetrievalGolden]:
+    """Load and validate retrieval goldens from JSON at ``path``."""
+    return _GOLDENS_ADAPTER.validate_json(path.read_text(encoding="utf-8"))
 
 
 def validate_goldens(
-    goldens: Sequence[dict[str, Any]], indexed_by_ws: dict[str, set[str]]
+    goldens: Sequence[RetrievalGolden | JsonObject],
+    indexed_by_ws: dict[str, set[str]],
 ) -> list[str]:
+    """Validate golden schemas, ID uniqueness, and presence in cached workspace indexes."""
     errors: list[str] = []
     seen: set[str] = set()
-    for i, g in enumerate(goldens):
-        if set(g.keys()) != {"input", "expected_output", "additional_metadata"}:
-            errors.append(f"sample[{i}]: unexpected keys {sorted(g.keys())}")
-            continue
-        meta = cast(dict[str, Any], g["additional_metadata"])
-        if set(meta.keys()) != {"id", "workspace", "relevant_files"}:
-            errors.append(
-                f"sample[{i}]: unexpected metadata keys {sorted(meta.keys())}"
-            )
-            continue
-        sid, ws, rels = (
-            str(meta["id"]),
-            str(meta["workspace"]),
-            list(meta["relevant_files"]),
-        )
+    for i, raw in enumerate(goldens):
+        if isinstance(raw, RetrievalGolden):
+            g = raw
+        else:
+            try:
+                g = RetrievalGolden.model_validate(raw)
+            except ValidationError as exc:
+                errors.append(f"sample[{i}]: invalid schema ({exc})")
+                continue
+        meta = g.additional_metadata
+        sid, ws, rels = meta.id, meta.workspace, meta.relevant_files
         if sid in seen:
             errors.append(f"duplicate id: {sid}")
         seen.add(sid)
@@ -90,15 +133,18 @@ def validate_goldens(
         if ws_idx is None:
             errors.append(f"{sid}: unknown workspace {ws}")
             continue
-        for rf in rels:
-            if rf not in ws_idx:
-                errors.append(f"{sid}: missing from {ws}/shared index: {rf}")
+        errors.extend(
+            f"{sid}: missing from {ws}/shared index: {rf}"
+            for rf in rels
+            if rf not in ws_idx
+        )
     return errors
 
 
 def validate_retrieval(
     repo_root: Path, cfg: RetrievalConfig
 ) -> tuple[int, dict[str, int], dict[str, int], list[str]]:
+    """Load the shared retrieval corpus and return counts plus validation errors."""
     goldens = load_goldens(repo_root / cfg.dataset_file)
     _, _, indexed_by_ws, blobs_by_ws, pts_by_ws = load_shared_corpus(
         repo_root / cfg.datasets_dir
@@ -117,7 +163,8 @@ def run_retrieval(
     *,
     limit: int | None = None,
     output_path: Path | None = None,
-) -> tuple[dict[str, Any], Path, Path]:
+) -> tuple[EvalRun, Path, Path]:
+    """Execute the retrieval evaluation against ephemeral Qdrant and save reports."""
     env = {
         **{k: v for k, v in dotenv_values(repo_root / ".env").items() if v is not None},
         **os.environ,
@@ -144,7 +191,7 @@ def run_retrieval(
             / f"query_embeddings_{cfg.embedding_model.replace('/', '_')}_{cfg.embedding_dimensions}.json"
         )
         qvecs = embed_queries(
-            [str(g["input"]) for g in goldens],
+            [g.input for g in goldens],
             base_url=base_url,
             api_key=api_key,
             model=cfg.embedding_model,
@@ -153,19 +200,18 @@ def run_retrieval(
         )
 
     t0 = time.perf_counter()
-    hits_by_sample: list[list[dict[str, object]]] = []
+    hits_by_sample: list[list[SearchHit]] = []
     with EphemeralQdrant(dimensions=cfg.embedding_dimensions) as qdrant:
         for i in range(0, len(points), 256):
             qdrant.upsert(COLLECTION, points[i : i + 256], wait=True)
         for g, vec in zip(goldens, qvecs, strict=True):
-            ws = str(g["additional_metadata"]["workspace"])
             hits_by_sample.append(
                 search_qdrant(
                     qdrant,
                     bid_to_path,
-                    query=str(g["input"]),
+                    query=g.input,
                     vector=vec,
-                    workspace=ws,
+                    workspace=g.additional_metadata.workspace,
                     mode=cfg.mode,
                     top_k=cfg.top_k,
                     prefetch_limit=cfg.prefetch_limit,
@@ -182,13 +228,13 @@ def run_retrieval(
         )
         test_cases = [
             LLMTestCase(
-                name=str(g["additional_metadata"]["id"]),
-                tags=[str(g["additional_metadata"]["workspace"]), cfg.mode],
-                input=str(g["input"]),
+                name=g.additional_metadata.id,
+                tags=[g.additional_metadata.workspace, cfg.mode],
+                input=g.input,
                 actual_output="",
-                expected_output=str(g["expected_output"]),
-                retrieval_context=[str(h["text"]) for h in hits],
-                metadata=cast(dict[str, Any], g["additional_metadata"]),
+                expected_output=g.expected_output,
+                retrieval_context=[h.text for h in hits],
+                metadata=g.additional_metadata.model_dump(),
             )
             for g, hits in zip(goldens, hits_by_sample, strict=True)
         ]
@@ -207,22 +253,20 @@ def run_retrieval(
             cache_config=CacheConfig(write_cache=True, use_cache=cfg.use_cache),
             display_config=DisplayConfig(show_indicator=False, print_results=False),
         )
-        idx_by_id = {
-            str(g["additional_metadata"]["id"]): i for i, g in enumerate(goldens)
-        }
+        idx_by_id = {g.additional_metadata.id: i for i, g in enumerate(goldens)}
         for tr in result.test_results:
-            idx = idx_by_id.get(getattr(tr, "name", "") or "")
+            idx = idx_by_id.get(tr.name or "")
             if idx is None:
                 continue
             for md in tr.metrics_data or []:
                 key = md.name.lower().replace(" ", "_")
                 judge_scores[idx][key] = round(float(md.score or 0.0), 6)
 
-    samples: list[dict[str, Any]] = []
+    samples: list[EvalSample] = []
     for g, hits, jscores in zip(goldens, hits_by_sample, judge_scores, strict=True):
-        meta = cast(dict[str, Any], g["additional_metadata"])
-        rels: list[str] = list(meta["relevant_files"])
-        hit_files = [str(h["file"]) for h in hits]
+        meta = g.additional_metadata
+        rels = list(meta.relevant_files)
+        hit_files = [h.file for h in hits]
         scores = {
             **{
                 f"recall@{k}": round(recall_at_k(rels, hit_files, k), 6)
@@ -233,13 +277,13 @@ def run_retrieval(
             **jscores,
         }
         samples.append(
-            {
-                "id": str(meta["id"]),
-                "group": str(meta["workspace"]),
-                "scores": scores,
-                "relevant_files": rels,
-                "top_files": hit_files,
-            }
+            RetrievalEvalSample(
+                id=meta.id,
+                group=meta.workspace,
+                scores=scores,
+                relevant_files=rels,
+                top_files=hit_files,
+            )
         )
 
     run = build_run(

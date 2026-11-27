@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-import httpx
+from typing import TYPE_CHECKING
 
 from .conftest import AccountFixture, new_uuid
+
+if TYPE_CHECKING:
+    import httpx
 
 
 def test_gateway_verifies_jwt_strips_headers_and_hides_internal_rpcs(

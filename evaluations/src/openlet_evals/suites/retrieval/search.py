@@ -3,13 +3,23 @@
 from __future__ import annotations
 
 import posixpath
+from dataclasses import dataclass
 from typing import Literal
 
 from qdrant_client import QdrantClient, models
 
-from .corpus import COLLECTION
+from openlet_evals.suites.retrieval.corpus import COLLECTION
 
-SearchMode = Literal["hybrid", "dense", "bm25"]
+type SearchMode = Literal["hybrid", "dense", "bm25"]
+
+
+@dataclass(frozen=True, slots=True)
+class SearchHit:
+    """Deduplicated Qdrant retrieval hit with resolved virtual path."""
+
+    file: str
+    score: float
+    text: str
 
 
 def search_qdrant(
@@ -22,7 +32,7 @@ def search_qdrant(
     mode: SearchMode = "hybrid",
     top_k: int = 5,
     prefetch_limit: int = 50,
-) -> list[dict[str, object]]:
+) -> list[SearchHit]:
     """Run Qdrant search scoped to one workspace's full `/shared` storage and dedup hits."""
     qf = models.Filter(
         must=[
@@ -70,7 +80,7 @@ def search_qdrant(
         ).points
 
     seen: set[tuple[str, str, str]] = set()
-    hits: list[dict[str, object]] = []
+    hits: list[SearchHit] = []
     for pt in pts:
         pl = pt.payload or {}
         bid, ap, txt = (
@@ -84,11 +94,11 @@ def search_qdrant(
         seen.add(key)
         bp = bid_to_path[bid]
         hits.append(
-            {
-                "file": posixpath.join(bp, ap) if ap else bp,
-                "score": float(pt.score),
-                "text": txt,
-            }
+            SearchHit(
+                file=posixpath.join(bp, ap) if ap else bp,
+                score=float(pt.score),
+                text=txt,
+            )
         )
         if len(hits) >= top_k:
             break

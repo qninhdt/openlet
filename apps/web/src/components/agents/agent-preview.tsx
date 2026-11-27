@@ -29,7 +29,8 @@ import { useFileSessions } from '@/components/storage/file-sessions';
 import { storageApi } from '@/lib/storage-api';
 import type { ComposerEditorHandle } from './composer-editor';
 import type { ComposerSelection } from './openbot/composer-dom';
-import { fileText, fileToken, type FileRef } from '@/lib/file-refs';
+import { fileLink, fileReferences, fileText, type FileRef } from '@/lib/file-refs';
+import { toUiChatMessage } from '@/lib/chat-api';
 import { downloadNodes, type StorageNode } from '@/lib/storage-preview';
 
 export type AgentProfile = {
@@ -148,12 +149,22 @@ function usePreviewState() {
   const linkedMessage = search.mainTab === 'agent' ? messageSearch.message : undefined;
   const linkedRole = messageSearch.role ?? 'user';
   const messageContext = useQuery({
-    queryKey: [...live.scope, 'message-context', linkedMessage, linkedRole],
-    enabled: !!resource.id && !!linkedMessage && backend.ready,
-    queryFn: () =>
-      backend.api!<{ items: ChatMessage[] }>(
-        live.path + `/messages/${linkedRole}/${encodeURIComponent(linkedMessage!)}/context`,
-      ),
+    queryKey: [...live.scope, 'message-context', live.conversationId, linkedMessage, linkedRole],
+    enabled:
+      !!resource.id &&
+      !!live.conversationId &&
+      !!linkedMessage &&
+      backend.ready &&
+      !!live.chatClient,
+    queryFn: async () => {
+      const page = await live.chatClient!.listMessages(live.conversationId, {
+        aroundMessageId: linkedMessage!,
+        limit: 30,
+      });
+      return {
+        items: (page.messages ?? []).map((m) => toUiChatMessage(m, backend.actorId)),
+      };
+    },
   });
   function jumpToMessage(message: Pick<ChatMessage, 'id' | 'role'> | null) {
     return routerNavigate({
@@ -167,7 +178,7 @@ function usePreviewState() {
   const graphQuery = useBoxGraph(
     workspace.id,
     boxRoot,
-    (!!resource.id && search.view === 'agents') || search.view === 'boxes',
+    (!!resource.id && search.view === 'agents' && live.manage) || search.view === 'boxes',
   );
   const [optimistic, setOptimistic] = useState<Record<string, ChatMessage[]>>({});
   const [fileNodes, setFileNodes] = useState<Record<string, StorageNode>>({});
@@ -203,10 +214,17 @@ function usePreviewState() {
   };
   const conversationKey = ['conversation-storage', backend.actorId, workspace.id, resource.id];
   async function createConversation(): Promise<ConversationStorage> {
-    return backend.api!<ConversationStorage>(live.path + '/conversation-storage', {
-      method: 'POST',
-      body: '{}',
-    });
+    const convId =
+      live.conversationId ||
+      (await live.chatClient!.createOrGetDM({ type: 'agent', id: resource.id })).id;
+    const res = await live.chatClient!.ensureConversationStorage(convId);
+    return {
+      id: convId,
+      storage_id: res.storageId,
+      root_node_id: res.rootNodeId,
+      workspace_id: workspace.id,
+      ready: true,
+    };
   }
   const conversation = useQuery<ConversationStorage>({
     queryKey: conversationKey,
@@ -271,7 +289,7 @@ function usePreviewState() {
         agentId,
         prefix +
           (prefix && !/\s$/.test(prefix) ? ' ' : '') +
-          fileToken(ref) +
+          fileLink(ref) +
           ' ' +
           draft.slice(at.end),
       );
@@ -290,27 +308,15 @@ function usePreviewState() {
   ) {
     const agentId = resource.id;
     try {
-      const ref = await backend.api!<FileRef>(live.path + '/file-reference', {
-        method: 'POST',
-        body: JSON.stringify({
-          storage_id: node.storage,
-          node_id: node.id,
-          label,
-          copy,
-          request_id: crypto.randomUUID(),
-        }),
-      });
-      insertFileIntoDraft(
-        agentId,
-        { ...node, storage: ref.storage_id, id: ref.node_id },
-        ref.label,
-        selection,
-      );
+      let targetNode = node;
+      if (copy) {
+        const storage = await ensureConversation();
+        targetNode = await filesApi.transfer(node, storage.storage_id, storage.root_node_id, true);
+      }
+      insertFileIntoDraft(agentId, targetNode, label, selection);
       setCopyRequest(null);
     } catch (error) {
-      if (!copy && error instanceof Error && 'status' in error && error.status === 403)
-        setCopyRequest({ node, label, selection });
-      else toast.error(error instanceof Error ? error.message : 'Could not attach this file.');
+      toast.error(error instanceof Error ? error.message : 'Could not attach this file.');
     }
   }
   async function queueUpload(file: File, selection?: ComposerSelection) {
@@ -355,15 +361,14 @@ function usePreviewState() {
   const [createOpen, setCreateOpen] = useState(false);
   const readRequests = useRef(new Set<string>());
   const markChatRead = useCallback(
-    async (through: string) => {
-      const key = `${backend.actorId}:${workspace.id}:${resource.id}:${through}`;
+    async (_through: string, seq?: number) => {
+      const convId = live.conversationId;
+      if (!convId || !live.chatClient || !seq) return;
+      const key = `${backend.actorId}:${workspace.id}:${convId}:${seq}`;
       if (readRequests.current.has(key)) return;
       readRequests.current.add(key);
       try {
-        await backend.api!(`/v1/workspaces/${workspace.id}/letas/${resource.id}/messages/read`, {
-          method: 'PUT',
-          body: JSON.stringify({ through }),
-        });
+        await live.chatClient.markRead(convId, seq);
         await queryClient.invalidateQueries({
           queryKey: ['agents', backend.actorId, workspace.id],
         });
@@ -371,7 +376,7 @@ function usePreviewState() {
         readRequests.current.delete(key);
       }
     },
-    [backend, workspace.id, resource.id, queryClient],
+    [backend.actorId, workspace.id, live.conversationId, live.chatClient, queryClient],
   );
   const [reactionOverrides, setReactionOverrides] = useState<
     Record<string, ChatMessage['reactions']>
@@ -453,7 +458,7 @@ function usePreviewState() {
         title: live.profile.data.title ?? resource.role,
         appearance: live.profile.data.appearance,
         description: live.profile.data.description,
-        instructions: live.settings.data?.system_prompt ?? '',
+        instructions: live.settings.data?.custom_instructions ?? '',
         model: live.profile.data.model_id ?? 'Default model',
         effort: live.profile.data.reasoning_effort ?? '',
       }
@@ -483,15 +488,33 @@ function usePreviewState() {
       ),
     ].sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
   }, [live.chat.data, messageContext.data, linkedMessage, optimistic, resource.id]);
-  const chatMessages = useMemo(
-    () =>
-      baseMessages.map((message) => ({
+  const chatMessages = useMemo(() => {
+    const byId = new Map(baseMessages.map((m) => [m.id, m]));
+    return baseMessages.map((message) => {
+      const parent =
+        !message.reply && message.reply_to_id ? byId.get(message.reply_to_id) : undefined;
+      return {
         ...message,
+        ...(message.role === 'user' &&
+        !message.read_at &&
+        message.seq &&
+        message.seq <= live.agentLastReadSeq
+          ? { read_at: message.created_at }
+          : {}),
+        ...(parent
+          ? {
+              reply: {
+                id: parent.id,
+                role: parent.role,
+                content: parent.content,
+              },
+            }
+          : {}),
         reactions:
           reactionOverrides[`${resource.id}:${message.role}:${message.id}`] ?? message.reactions,
-      })),
-    [baseMessages, reactionOverrides, resource.id],
-  );
+      };
+    });
+  }, [baseMessages, reactionOverrides, resource.id, live.agentLastReadSeq]);
   async function reactMessage(
     message: Pick<ChatMessage, 'id' | 'role' | 'reactions'>,
     emoji: string | null,
@@ -506,10 +529,19 @@ function usePreviewState() {
     setReactionOverrides((current) => ({ ...current, [key]: next }));
     const operation = (reactionQueues.current.get(key) ?? Promise.resolve()).then(async () => {
       try {
-        await live.api!(live.path + `/messages/${message.role}/${message.id}/reaction`, {
-          method: 'PUT',
-          body: JSON.stringify({ request_id: crypto.randomUUID(), emoji }),
-        });
+        const convId = live.conversationId;
+        if (!convId || !live.chatClient) throw new Error('Conversation not ready.');
+        const prevEmoji = previous.find(
+          (r) => r.actor_kind === 'user' && r.actor_id === backend.actorId,
+        )?.emoji;
+        if (emoji) {
+          if (prevEmoji && prevEmoji !== emoji) {
+            await live.chatClient.removeReaction(convId, message.id, prevEmoji).catch(() => {});
+          }
+          await live.chatClient.addReaction(convId, message.id, emoji);
+        } else if (prevEmoji) {
+          await live.chatClient.removeReaction(convId, message.id, prevEmoji);
+        }
         await live.refresh();
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Could not save reaction.');
@@ -537,23 +569,39 @@ function usePreviewState() {
       ),
     }));
     try {
-      await live.api!(live.path + '/messages', {
-        method: 'POST',
-        body: JSON.stringify({
-          message_id: message.id,
-          content: message.content,
-          in_reply_to: message.reply?.id ?? null,
-          in_reply_to_role: message.reply?.role ?? null,
-        }),
+      const convId =
+        live.conversationId ||
+        (await live.chatClient!.createOrGetDM({ type: 'agent', id: resource.id })).id;
+      const refs = fileReferences(message.content);
+      const mentions = refs.map((ref) => ({
+        kind: ref.kind ?? 'file',
+        id: ref.node_id,
+        storageId: ref.storage_id,
+        nodeId: ref.node_id,
+        label: ref.label,
+      }));
+      const sent = await live.chatClient!.sendMessage(convId, {
+        idempotencyKey: message.id,
+        content: message.content,
+        replyToId: message.reply?.id ?? null,
+        mentions,
       });
-      messageSent(`${backend.actorId}:${workspace.id}`, message.id);
+      setOptimistic((current) => ({
+        ...current,
+        [resource.id]: (current[resource.id] ?? []).map((item) =>
+          item.id === message.id ? { ...item, id: sent.id, status: undefined } : item,
+        ),
+      }));
+      messageSent(`${backend.actorId}:${workspace.id}`, sent.id);
       await live.refresh();
       const key = draftKey(backend.actorId, workspace.id, resource.id);
       if (!drafts.get(resource.id)?.trim() && readDraft(key).text.trim() === message.content)
         persistDraft(resource.id, { text: '', reply: null });
       setOptimistic((current) => ({
         ...current,
-        [resource.id]: (current[resource.id] ?? []).filter((item) => item.id !== message.id),
+        [resource.id]: (current[resource.id] ?? []).filter(
+          (item) => item.id !== message.id && item.id !== sent.id,
+        ),
       }));
     } catch (error) {
       setOptimistic((current) => ({
@@ -596,7 +644,7 @@ function usePreviewState() {
     status: 'answered' | 'accepted' | 'denied',
     response?: HumanRequest['response'],
   ) {
-    await live.api!(`/v1/hitl-requests/${request.id}/answer`, {
+    await live.api!(`/v1/hitl-requests/${request.id}/decide`, {
       method: 'POST',
       body: JSON.stringify({ status, response }),
     });
@@ -807,7 +855,7 @@ function usePreviewState() {
             ? { appearance: { shape: draft.appearance.shape, color: draft.appearance.color } }
             : {}),
           description: draft.description,
-          system_prompt: draft.instructions,
+          custom_instructions: draft.instructions,
           model_id: draft.model === 'Default model' ? null : draft.model,
           reasoning_effort: draft.effort ? draft.effort.toLowerCase() : null,
         }),

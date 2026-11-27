@@ -14,6 +14,7 @@ import (
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/qdrant/go-client/qdrant"
+	pb "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/letfs/v1"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/trace"
@@ -163,5 +164,38 @@ func TestQueryQdrantHybridChunksLargeBlobScopesViaQueryBatch(t *testing.T) {
 	}
 	if len(batched) != 1 || batched[0].Payload["text"].GetStringValue() != "chunk-1" {
 		t.Fatalf("expected merged top-1 highest score point from batch 1, got %+v", batched)
+	}
+}
+
+func TestGlobAndGrepHelpers(t *testing.T) {
+	if !hasHiddenSegment(".tool-output/run1.txt") || !hasHiddenSegment("a/.hidden/b") || hasHiddenSegment("reports/2025.csv") {
+		t.Fatal("hasHiddenSegment mismatch")
+	}
+	if !matchesIncludeGlob("*.csv", "pack.pdf/tables/01.csv") || matchesIncludeGlob("*.md", "pack.pdf/tables/01.csv") {
+		t.Fatal("matchesIncludeGlob mismatch")
+	}
+	if !matchesIncludeGlob("tables/*.csv", "tables/01.csv") || matchesIncludeGlob("tables/*.csv", "other/01.csv") {
+		t.Fatal("matchesIncludeGlob path mismatch")
+	}
+	if _, ok := pgSafeRegex(`foo|bar[0-9]+`); !ok {
+		t.Fatal("expected simple alternation to be pg-safe")
+	}
+	for _, unsafe := range []string{`^heading`, `end$`, `\d+`, `\w+`, `\s+`, `(?i)foo`, `\bword\b`} {
+		if _, ok := pgSafeRegex(unsafe); ok {
+			t.Fatalf("expected %q to bypass pg regex pre-filter", unsafe)
+		}
+	}
+
+	m, err := newLineMatcher(`rev\d+`, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := new(pb.GrepResponse)
+	truncated := extractGrepLines("line1\nREV42 long line here\nrev99 second match\nrev100 third", "a/b.csv", "n1", "b.csv", m, 10, 2, out)
+	if !truncated || len(out.Hits) != 2 {
+		t.Fatalf("expected truncated=true len=2, got truncated=%v len=%d", truncated, len(out.Hits))
+	}
+	if out.Hits[0].LineNumber != 2 || out.Hits[0].LineText != "REV42 long" || out.Hits[1].LineNumber != 3 {
+		t.Fatalf("unexpected hits: %+v", out.Hits)
 	}
 }

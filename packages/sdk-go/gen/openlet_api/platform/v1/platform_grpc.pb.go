@@ -23,6 +23,7 @@ const (
 	PlatformService_Onboard_FullMethodName                    = "/openlet.platform.v1.PlatformService/Onboard"
 	PlatformService_GetMe_FullMethodName                      = "/openlet.platform.v1.PlatformService/GetMe"
 	PlatformService_UpdateMe_FullMethodName                   = "/openlet.platform.v1.PlatformService/UpdateMe"
+	PlatformService_GetRealtimeConnectToken_FullMethodName    = "/openlet.platform.v1.PlatformService/GetRealtimeConnectToken"
 	PlatformService_ListWorkspaces_FullMethodName             = "/openlet.platform.v1.PlatformService/ListWorkspaces"
 	PlatformService_CreateMyWorkspace_FullMethodName          = "/openlet.platform.v1.PlatformService/CreateMyWorkspace"
 	PlatformService_GetWorkspace_FullMethodName               = "/openlet.platform.v1.PlatformService/GetWorkspace"
@@ -45,6 +46,7 @@ type PlatformServiceClient interface {
 	Onboard(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*User, error)
 	GetMe(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*User, error)
 	UpdateMe(ctx context.Context, in *UpdateMeRequest, opts ...grpc.CallOption) (*User, error)
+	GetRealtimeConnectToken(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*RealtimeConnectToken, error)
 	ListWorkspaces(ctx context.Context, in *ListWorkspacesRequest, opts ...grpc.CallOption) (*ListWorkspacesResponse, error)
 	CreateMyWorkspace(ctx context.Context, in *CreateMyWorkspaceRequest, opts ...grpc.CallOption) (*Workspace, error)
 	GetWorkspace(ctx context.Context, in *WorkspaceRequest, opts ...grpc.CallOption) (*Workspace, error)
@@ -92,6 +94,16 @@ func (c *platformServiceClient) UpdateMe(ctx context.Context, in *UpdateMeReques
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(User)
 	err := c.cc.Invoke(ctx, PlatformService_UpdateMe_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) GetRealtimeConnectToken(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*RealtimeConnectToken, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RealtimeConnectToken)
+	err := c.cc.Invoke(ctx, PlatformService_GetRealtimeConnectToken_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -235,6 +247,7 @@ type PlatformServiceServer interface {
 	Onboard(context.Context, *emptypb.Empty) (*User, error)
 	GetMe(context.Context, *emptypb.Empty) (*User, error)
 	UpdateMe(context.Context, *UpdateMeRequest) (*User, error)
+	GetRealtimeConnectToken(context.Context, *emptypb.Empty) (*RealtimeConnectToken, error)
 	ListWorkspaces(context.Context, *ListWorkspacesRequest) (*ListWorkspacesResponse, error)
 	CreateMyWorkspace(context.Context, *CreateMyWorkspaceRequest) (*Workspace, error)
 	GetWorkspace(context.Context, *WorkspaceRequest) (*Workspace, error)
@@ -265,6 +278,9 @@ func (UnimplementedPlatformServiceServer) GetMe(context.Context, *emptypb.Empty)
 }
 func (UnimplementedPlatformServiceServer) UpdateMe(context.Context, *UpdateMeRequest) (*User, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpdateMe not implemented")
+}
+func (UnimplementedPlatformServiceServer) GetRealtimeConnectToken(context.Context, *emptypb.Empty) (*RealtimeConnectToken, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetRealtimeConnectToken not implemented")
 }
 func (UnimplementedPlatformServiceServer) ListWorkspaces(context.Context, *ListWorkspacesRequest) (*ListWorkspacesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListWorkspaces not implemented")
@@ -375,6 +391,24 @@ func _PlatformService_UpdateMe_Handler(srv interface{}, ctx context.Context, dec
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(PlatformServiceServer).UpdateMe(ctx, req.(*UpdateMeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_GetRealtimeConnectToken_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(emptypb.Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).GetRealtimeConnectToken(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_GetRealtimeConnectToken_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).GetRealtimeConnectToken(ctx, req.(*emptypb.Empty))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -631,6 +665,10 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UpdateMe",
 			Handler:    _PlatformService_UpdateMe_Handler,
+		},
+		{
+			MethodName: "GetRealtimeConnectToken",
+			Handler:    _PlatformService_GetRealtimeConnectToken_Handler,
 		},
 		{
 			MethodName: "ListWorkspaces",

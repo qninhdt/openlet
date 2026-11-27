@@ -1,11 +1,18 @@
+"""Deterministic slugification, artifact path assignment, and link rewriting."""
+
+from __future__ import annotations
+
 import csv
 import posixpath
 import re
 import unicodedata
-from collections.abc import Mapping
 from io import StringIO
+from typing import TYPE_CHECKING
 
 from markdown_it import MarkdownIt
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 _MAX_NAME_BYTES = 64
 _NUMBER_PREFIX = re.compile(r"^(\d+-)")
@@ -15,6 +22,7 @@ _MD = MarkdownIt("commonmark").enable("table")
 
 
 def slugify(text: str, limit: int = _MAX_NAME_BYTES) -> str:
+    """Convert ``text`` into a bounded lowercase ASCII slug."""
     normalized = unicodedata.normalize("NFKD", text)
     ascii_text = normalized.encode("ascii", "ignore").decode("ascii").lower()
     slug = _INVALID_CHARS.sub("-", ascii_text).strip("-")
@@ -25,6 +33,7 @@ def slugify(text: str, limit: int = _MAX_NAME_BYTES) -> str:
 
 
 def numbered_prefix(stem: str) -> str:
+    """Extract a leading ``NN-`` numeric prefix from a filename stem, if present."""
     match = _NUMBER_PREFIX.match(stem)
     return match.group(1) if match else ""
 
@@ -107,10 +116,11 @@ def _rewrite_markdown_links(
     body: str, base_dir: str, mapping: Mapping[str, str]
 ) -> str:
     tokens = _MD.parse(body)
-    code_ranges: list[tuple[int, int]] = []
-    for token in tokens:
-        if token.type in {"fence", "code_block"} and token.map is not None:
-            code_ranges.append((token.map[0], token.map[1]))
+    code_ranges = [
+        (token.map[0], token.map[1])
+        for token in tokens
+        if token.type in {"fence", "code_block"} and token.map is not None
+    ]
 
     lines = body.splitlines(keepends=True)
     out: list[str] = []
@@ -154,6 +164,7 @@ def rewrite_artifact_links(
     *,
     is_rich_csv: bool = False,
 ) -> str:
+    """Rewrite relative artifact links inside Markdown or rich CSV content."""
     base_dir = posixpath.dirname(artifact_path)
     if media_type == "text/markdown" or artifact_path.endswith(".md"):
         return _rewrite_markdown_links(content, base_dir, mapping)

@@ -3,24 +3,36 @@ import { agent, expect, test, workspace } from '../fixtures/browser';
 for (const compact of [true, false]) {
   test(`legacy compact preference ${compact} does not change chat layout`, async ({ page }) => {
     const text = 'Nội dung tin nhắn dài để kiểm tra giới hạn chiều rộng và xuống dòng. '.repeat(20);
-    await page.route(`**/v1/workspaces/${workspace}/letas/${agent}/messages?*`, (route) =>
+    await page.route(`**/v1/workspaces/${workspace}/conversations/*/messages?*`, (route) =>
       route.fulfill({
         json: {
-          items: [
+          messages: [
+            {
+              id: 'layout-user',
+              conversationId: `conv-${agent}`,
+              seq: 1,
+              senderType: 'user',
+              senderId: 'preview-owner',
+              content: text,
+              createdAt: '2026-11-18T00:00:00Z',
+            },
             {
               id: 'layout-assistant',
-              role: 'assistant',
+              conversationId: `conv-${agent}`,
+              seq: 2,
+              senderType: 'agent',
+              senderId: agent,
               content: text,
-              created_at: '2026-11-18T00:00:01Z',
+              createdAt: '2026-11-18T00:00:01Z',
             },
-            { id: 'layout-user', role: 'user', content: text, created_at: '2026-11-18T00:00:00Z' },
           ],
-          next_cursor: null,
+          hasBefore: false,
+          hasAfter: false,
         },
       }),
     );
-    await page.route(`**/v1/workspaces/${workspace}/letas/${agent}/messages/read`, (route) =>
-      route.fulfill({ json: {} }),
+    await page.route(`**/v1/workspaces/${workspace}/conversations/*:markRead`, (route) =>
+      route.fulfill({ json: { lastReadSeq: 2 } }),
     );
     await page.goto(`/app/${workspace}/agents/${agent}?compact=${compact}`);
     for (const width of [1851, 390]) {

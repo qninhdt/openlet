@@ -613,73 +613,87 @@ class DownloadArchiveRequest(_message.Message):
     targets: _containers.RepeatedCompositeFieldContainer[NodeLocator]
     def __init__(self, workspace_id: _Optional[str] = ..., storage_id: _Optional[str] = ..., targets: _Optional[_Iterable[_Union[NodeLocator, _Mapping]]] = ...) -> None: ...
 
-class SearchFilesRequest(_message.Message):
-    __slots__ = ("workspace_id", "storage_id", "root", "query", "page_size", "page_token", "case_sensitive")
+class GlobRequest(_message.Message):
+    __slots__ = ("workspace_id", "storage_id", "root", "pattern", "include_hidden", "limit")
     WORKSPACE_ID_FIELD_NUMBER: _ClassVar[int]
     STORAGE_ID_FIELD_NUMBER: _ClassVar[int]
     ROOT_FIELD_NUMBER: _ClassVar[int]
-    QUERY_FIELD_NUMBER: _ClassVar[int]
-    PAGE_SIZE_FIELD_NUMBER: _ClassVar[int]
-    PAGE_TOKEN_FIELD_NUMBER: _ClassVar[int]
-    CASE_SENSITIVE_FIELD_NUMBER: _ClassVar[int]
+    PATTERN_FIELD_NUMBER: _ClassVar[int]
+    INCLUDE_HIDDEN_FIELD_NUMBER: _ClassVar[int]
+    LIMIT_FIELD_NUMBER: _ClassVar[int]
     workspace_id: str
     storage_id: str
     root: NodeLocator
-    query: str
-    page_size: int
-    page_token: str
-    case_sensitive: bool
-    def __init__(self, workspace_id: _Optional[str] = ..., storage_id: _Optional[str] = ..., root: _Optional[_Union[NodeLocator, _Mapping]] = ..., query: _Optional[str] = ..., page_size: _Optional[int] = ..., page_token: _Optional[str] = ..., case_sensitive: _Optional[bool] = ...) -> None: ...
+    pattern: str
+    include_hidden: bool
+    limit: int
+    def __init__(self, workspace_id: _Optional[str] = ..., storage_id: _Optional[str] = ..., root: _Optional[_Union[NodeLocator, _Mapping]] = ..., pattern: _Optional[str] = ..., include_hidden: _Optional[bool] = ..., limit: _Optional[int] = ...) -> None: ...
 
-class SearchFilesResponse(_message.Message):
-    __slots__ = ("hits", "next_page_token")
-    HITS_FIELD_NUMBER: _ClassVar[int]
-    NEXT_PAGE_TOKEN_FIELD_NUMBER: _ClassVar[int]
-    hits: _containers.RepeatedCompositeFieldContainer[Node]
-    next_page_token: str
-    def __init__(self, hits: _Optional[_Iterable[_Union[Node, _Mapping]]] = ..., next_page_token: _Optional[str] = ...) -> None: ...
-
-class TextSearchRequest(_message.Message):
-    __slots__ = ("workspace_id", "storage_id", "root", "query", "page_size", "page_token", "case_sensitive", "lines_mode")
-    WORKSPACE_ID_FIELD_NUMBER: _ClassVar[int]
-    STORAGE_ID_FIELD_NUMBER: _ClassVar[int]
-    ROOT_FIELD_NUMBER: _ClassVar[int]
-    QUERY_FIELD_NUMBER: _ClassVar[int]
-    PAGE_SIZE_FIELD_NUMBER: _ClassVar[int]
-    PAGE_TOKEN_FIELD_NUMBER: _ClassVar[int]
-    CASE_SENSITIVE_FIELD_NUMBER: _ClassVar[int]
-    LINES_MODE_FIELD_NUMBER: _ClassVar[int]
-    workspace_id: str
-    storage_id: str
-    root: NodeLocator
-    query: str
-    page_size: int
-    page_token: str
-    case_sensitive: bool
-    lines_mode: bool
-    def __init__(self, workspace_id: _Optional[str] = ..., storage_id: _Optional[str] = ..., root: _Optional[_Union[NodeLocator, _Mapping]] = ..., query: _Optional[str] = ..., page_size: _Optional[int] = ..., page_token: _Optional[str] = ..., case_sensitive: _Optional[bool] = ..., lines_mode: _Optional[bool] = ...) -> None: ...
-
-class TextHit(_message.Message):
-    __slots__ = ("node", "snippet", "line_number", "path", "artifact_path")
-    NODE_FIELD_NUMBER: _ClassVar[int]
-    SNIPPET_FIELD_NUMBER: _ClassVar[int]
-    LINE_NUMBER_FIELD_NUMBER: _ClassVar[int]
+class GlobHit(_message.Message):
+    __slots__ = ("path", "node_id", "kind", "artifact_path", "size_bytes", "updated_at")
     PATH_FIELD_NUMBER: _ClassVar[int]
+    NODE_ID_FIELD_NUMBER: _ClassVar[int]
+    KIND_FIELD_NUMBER: _ClassVar[int]
     ARTIFACT_PATH_FIELD_NUMBER: _ClassVar[int]
-    node: Node
-    snippet: str
-    line_number: int
+    SIZE_BYTES_FIELD_NUMBER: _ClassVar[int]
+    UPDATED_AT_FIELD_NUMBER: _ClassVar[int]
     path: str
+    node_id: str
+    kind: NodeKind
     artifact_path: str
-    def __init__(self, node: _Optional[_Union[Node, _Mapping]] = ..., snippet: _Optional[str] = ..., line_number: _Optional[int] = ..., path: _Optional[str] = ..., artifact_path: _Optional[str] = ...) -> None: ...
+    size_bytes: int
+    updated_at: _timestamp_pb2.Timestamp
+    def __init__(self, path: _Optional[str] = ..., node_id: _Optional[str] = ..., kind: _Optional[_Union[NodeKind, str]] = ..., artifact_path: _Optional[str] = ..., size_bytes: _Optional[int] = ..., updated_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
-class TextSearchResponse(_message.Message):
-    __slots__ = ("hits", "next_page_token")
+class GlobResponse(_message.Message):
+    __slots__ = ("hits", "truncated")
     HITS_FIELD_NUMBER: _ClassVar[int]
-    NEXT_PAGE_TOKEN_FIELD_NUMBER: _ClassVar[int]
-    hits: _containers.RepeatedCompositeFieldContainer[TextHit]
-    next_page_token: str
-    def __init__(self, hits: _Optional[_Iterable[_Union[TextHit, _Mapping]]] = ..., next_page_token: _Optional[str] = ...) -> None: ...
+    TRUNCATED_FIELD_NUMBER: _ClassVar[int]
+    hits: _containers.RepeatedCompositeFieldContainer[GlobHit]
+    truncated: bool
+    def __init__(self, hits: _Optional[_Iterable[_Union[GlobHit, _Mapping]]] = ..., truncated: _Optional[bool] = ...) -> None: ...
+
+class GrepRequest(_message.Message):
+    __slots__ = ("workspace_id", "storage_id", "root", "pattern", "include_glob", "literal", "case_sensitive", "limit")
+    WORKSPACE_ID_FIELD_NUMBER: _ClassVar[int]
+    STORAGE_ID_FIELD_NUMBER: _ClassVar[int]
+    ROOT_FIELD_NUMBER: _ClassVar[int]
+    PATTERN_FIELD_NUMBER: _ClassVar[int]
+    INCLUDE_GLOB_FIELD_NUMBER: _ClassVar[int]
+    LITERAL_FIELD_NUMBER: _ClassVar[int]
+    CASE_SENSITIVE_FIELD_NUMBER: _ClassVar[int]
+    LIMIT_FIELD_NUMBER: _ClassVar[int]
+    workspace_id: str
+    storage_id: str
+    root: NodeLocator
+    pattern: str
+    include_glob: str
+    literal: bool
+    case_sensitive: bool
+    limit: int
+    def __init__(self, workspace_id: _Optional[str] = ..., storage_id: _Optional[str] = ..., root: _Optional[_Union[NodeLocator, _Mapping]] = ..., pattern: _Optional[str] = ..., include_glob: _Optional[str] = ..., literal: _Optional[bool] = ..., case_sensitive: _Optional[bool] = ..., limit: _Optional[int] = ...) -> None: ...
+
+class GrepHit(_message.Message):
+    __slots__ = ("path", "line_number", "line_text", "node_id", "artifact_path")
+    PATH_FIELD_NUMBER: _ClassVar[int]
+    LINE_NUMBER_FIELD_NUMBER: _ClassVar[int]
+    LINE_TEXT_FIELD_NUMBER: _ClassVar[int]
+    NODE_ID_FIELD_NUMBER: _ClassVar[int]
+    ARTIFACT_PATH_FIELD_NUMBER: _ClassVar[int]
+    path: str
+    line_number: int
+    line_text: str
+    node_id: str
+    artifact_path: str
+    def __init__(self, path: _Optional[str] = ..., line_number: _Optional[int] = ..., line_text: _Optional[str] = ..., node_id: _Optional[str] = ..., artifact_path: _Optional[str] = ...) -> None: ...
+
+class GrepResponse(_message.Message):
+    __slots__ = ("hits", "truncated")
+    HITS_FIELD_NUMBER: _ClassVar[int]
+    TRUNCATED_FIELD_NUMBER: _ClassVar[int]
+    hits: _containers.RepeatedCompositeFieldContainer[GrepHit]
+    truncated: bool
+    def __init__(self, hits: _Optional[_Iterable[_Union[GrepHit, _Mapping]]] = ..., truncated: _Optional[bool] = ...) -> None: ...
 
 class SemanticScope(_message.Message):
     __slots__ = ("node_id", "path")
@@ -690,16 +704,18 @@ class SemanticScope(_message.Message):
     def __init__(self, node_id: _Optional[str] = ..., path: _Optional[str] = ...) -> None: ...
 
 class SemanticSearchRequest(_message.Message):
-    __slots__ = ("workspace_id", "storage_id", "root", "query")
+    __slots__ = ("workspace_id", "storage_id", "root", "query", "limit")
     WORKSPACE_ID_FIELD_NUMBER: _ClassVar[int]
     STORAGE_ID_FIELD_NUMBER: _ClassVar[int]
     ROOT_FIELD_NUMBER: _ClassVar[int]
     QUERY_FIELD_NUMBER: _ClassVar[int]
+    LIMIT_FIELD_NUMBER: _ClassVar[int]
     workspace_id: str
     storage_id: str
     root: SemanticScope
     query: str
-    def __init__(self, workspace_id: _Optional[str] = ..., storage_id: _Optional[str] = ..., root: _Optional[_Union[SemanticScope, _Mapping]] = ..., query: _Optional[str] = ...) -> None: ...
+    limit: int
+    def __init__(self, workspace_id: _Optional[str] = ..., storage_id: _Optional[str] = ..., root: _Optional[_Union[SemanticScope, _Mapping]] = ..., query: _Optional[str] = ..., limit: _Optional[int] = ...) -> None: ...
 
 class SemanticHit(_message.Message):
     __slots__ = ("score", "path", "file_id", "text", "artifact_path")

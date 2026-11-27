@@ -3,25 +3,41 @@
 from __future__ import annotations
 
 import datetime as dt
-import json
 import time
-from typing import Any, cast
+from typing import TYPE_CHECKING
 
 import httpx
-from openlet_env import Environment
+from pydantic import BaseModel, ConfigDict
 
 from .conftest import AccountFactory, AccountFixture, new_uuid, poll
 
+if TYPE_CHECKING:
+    from openlet_env import Environment
+
+
+class _ChatMessage(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    role: str = ""
+    tool_call_id: str = ""
+    content: object = None
+
+
+class _ChatCompletionRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    messages: list[_ChatMessage] = []
+
 
 def _read_first_sse_chunk(url: str, token: str) -> str:
-    with httpx.Client(timeout=30.0) as client:
-        with client.stream(
+    with (
+        httpx.Client(timeout=30.0) as client,
+        client.stream(
             "GET", url, headers={"Authorization": f"Bearer {token}"}
-        ) as stream:
-            assert stream.status_code == 200
-            for chunk in stream.iter_text():
-                if chunk.strip():
-                    return chunk
+        ) as stream,
+    ):
+        assert stream.status_code == 200
+        for chunk in stream.iter_text():
+            if chunk.strip():
+                return chunk
     raise AssertionError(f"SSE stream at {url} produced no data")
 
 
@@ -270,16 +286,16 @@ def test_leta_runtime_boxes_hitl_and_owner_independent_schedules(
             }
         )
         for entry in requests:
-            if int(cast(int, entry["loggedDate"])) < left_at_ms:
+            if entry.logged_date < left_at_ms:
                 continue
-            body = cast(dict[str, Any], json.loads(cast(str, entry["body"])))
-            for m in cast(list[dict[str, Any]], body.get("messages", [])):
-                if (
-                    m.get("role") == "tool"
-                    and m.get("tool_call_id") == "reuse-session"
-                    and m.get("content") == "Native Leta runtime wrote this file."
-                ):
-                    return True
+            req = _ChatCompletionRequest.model_validate_json(entry.body)
+            if any(
+                m.role == "tool"
+                and m.tool_call_id == "reuse-session"
+                and m.content == "Native Leta runtime wrote this file."
+                for m in req.messages
+            ):
+                return True
         return False
 
     poll(

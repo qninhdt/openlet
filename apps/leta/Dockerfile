@@ -29,6 +29,7 @@ COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /tmp/goose /usr/local/bin/goose
 COPY packages/contracts/file-types.json packages/contracts/file-types.json
 COPY apps/leta/migrations /migrations
+COPY apps/leta/prompts /app/prompts
 USER leta
 ENTRYPOINT ["/app/.venv/bin/python"]
 CMD ["-m", "leta.api"]

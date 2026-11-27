@@ -1,15 +1,22 @@
+"""README.md header stripping and artifact summary rendering."""
+
+from __future__ import annotations
+
 import posixpath
 import re
-from collections.abc import Mapping
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 _BULLET_LINK_RE = re.compile(
-    r"^- !?\[(.+?)\]\(([^)\s]+)\)(?:[ \t]+-[ \t]+[^\n]*)?$", re.M
+    r"^- !?\[(.+?)\]\(([^)\s]+)\)(?:[ \t]+-[ \t]+[^\n]*)?$", re.MULTILINE
 )
 _DIM_SUFFIX_RE = re.compile(r" \(\d+x\d+\)")
 _HEADER_PREFIX_RE = re.compile(r"^# [^\n]+\n\n> [^\n]+\n\n")
-_SECTION_HEADINGS = {"## Tables", "## Images", "## Files"}
-_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
-_TABLE_EXTS = {".csv", ".html"}
+_SECTION_HEADINGS = frozenset({"## Tables", "## Images", "## Files"})
+_IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif"})
+_TABLE_EXTS = frozenset({".csv", ".html"})
 
 
 def _single_line(text: str) -> str:

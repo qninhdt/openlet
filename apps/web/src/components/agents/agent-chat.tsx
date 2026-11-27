@@ -38,7 +38,7 @@ function ChatBubble() {
     !!message.message_group_id &&
     p.chatMessages[index - 1]?.message_group_id === message.message_group_id;
   const lastMessage = p.chatMessages.at(-1);
-  const latestMessage = p.live.chat.data?.pages[0]?.items[0];
+  const latestMessage = p.live.chat.data?.pages[0]?.items.at(-1);
   const showReceipt =
     user &&
     message === lastMessage &&
@@ -228,7 +228,7 @@ export function AgentChat() {
         document.hasFocus() &&
         lastDelivery
       )
-        void p.markChatRead(lastDelivery.id);
+        void p.markChatRead(lastDelivery.id, lastDelivery.seq);
     };
     read();
     window.addEventListener('focus', read);

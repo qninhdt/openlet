@@ -1,4 +1,4 @@
-# Shared configuration for Platform, LetFS and native infrastructure.
+# Shared configuration for Platform, LetFS, Chat, Leta and native infrastructure.
 # Copy to .local/openlet.yaml and set OPENLET_CONFIG to that file.
 # Example endpoints must be replaced. Secrets live in .env/process environment.
 # A ${VARIABLE_NAME} scalar references that secret; it is resolved after YAML parsing.
@@ -61,9 +61,8 @@ dependencies:
       letfs: openlet-letfs
       ingest_cpu: openlet-ingest-cpu
       ingest_io: openlet-ingest-io
-      leta: openlet-leta
+      leta_orchestration: openlet-leta-orchestration
       leta_runtime: openlet-leta-runtime
-      leta_bridge: openlet-leta-bridge
   spicedb:
     address: spicedb:50051
     tls: false
@@ -85,6 +84,11 @@ dependencies:
     address: redis:6379
     database: 0
     password: ${REDIS_PASSWORD}
+  centrifugo:
+    api_url: http://centrifugo:8000/api
+    api_key: ${CENTRIFUGO_API_KEY}
+    token_hmac_secret: ${CENTRIFUGO_TOKEN_SECRET}
+    token_ttl_seconds: 3600
 
 models:
   gateway:
@@ -101,6 +105,7 @@ models:
     max_image_pixels: 25000000
     image_max_side: 1600
     image_jpeg_quality: 85
+
 services:
   gateway:
     http_listen: 0.0.0.0:8080
@@ -118,10 +123,19 @@ services:
     idempotency_retention_seconds: 86400
     maintenance:
       interval_seconds: 300
+  chat:
+    grpc_listen: 0.0.0.0:9090
+    grpc_target: chat:9090
+    database:
+      name: chat
+      user: chat
+      password: ${CHAT_DB_PASSWORD}
+    outbox:
+      batch_size: 64
+      poll_interval_seconds: 2
+      max_backoff_seconds: 60
+      retention_hours: 24
   letfs:
-    semantic_search:
-      candidate_limit: 50
-      result_limit: 10
     grpc_listen: 0.0.0.0:9090
     grpc_target: letfs:9090
     database:
@@ -135,6 +149,17 @@ services:
     upload_url_ttl_seconds: 900
     download_url_ttl_seconds: 300
     idempotency_retention_seconds: 86400
+    search:
+      default_limit: 100
+      max_limit: 100
+      timeout_seconds: 30
+      max_line_chars: 2000
+    semantic_search:
+      candidate_limit: 50
+      result_limit: 10
+      max_result_limit: 25
+      timeout_seconds: 30
+      max_excerpt_chars: 2000
     processing:
       max_artifacts: 512
       max_manifest_text_bytes: 8388608
@@ -145,27 +170,118 @@ services:
       interval_seconds: 300
       object_gc_grace_seconds: 86400
   leta:
-    # Optional integration. Core services do not load this section or wait for Leta.
     http_listen: 0.0.0.0:8000
-    # web_search:
-    #   api_key: ${TINYFISH_API_KEY}
-    tools:
-      hitl: true
-      multi_agent: true
-      schedule: true
-      web: true
-      execute: true
-      semantic_search: true
-      activity: true
-    compaction:
-      trigger_fraction: 0.8
-      keep_tokens: 8192
-      summary_max_tokens: 2048
     http_target: leta-api:8000
+    grpc_listen: 0.0.0.0:9091
+    grpc_target: leta-api:9091
     database:
       name: leta
       user: leta
       password: ${LETA_DB_PASSWORD}
+    # web_search:
+    #   api_key: ${TINYFISH_API_KEY}
+    tools:
+      hitl: true
+      subagents: true
+      schedule: true
+      web: true
+      bash: true
+      semantic_search: true
+      todo: false
+      react: true
+    model:
+      output_token_fallback: 32000
+      output_token_max: 256000
+      output_token_min: 1024
+      estimate_error_margin: 0.15
+      window_headroom: 0.01
+      max_length_continuations: 2
+      max_steps_per_run: null
+      chars_per_token: 4
+      image_token_estimate: 1500
+      pdf_token_estimate: 2000
+      retry:
+        max_attempts: 10
+        initial_interval_seconds: 2
+        max_interval_seconds: 10
+        retry_after_max_seconds: 900
+        timeout_max_retries: 3
+        unreachable_gap_max_seconds: 30
+        unreachable_window_seconds: 3600
+        one_shot_retries: 3
+    compaction:
+      auto: true
+      reserve_share: 0.15
+      reserve_min_tokens: 16000
+      unknown_window_tokens: 200000
+      summary_output_floor: 32000
+      keep_recent_tokens: 15000
+      recent_tool_output_max_chars: 1250
+      transcript_clip_chars: 2000
+      shrink_steps: [0.85, 0.7, 0.5, 0.35]
+      snapshot_max_subagents: 20
+      snapshot_max_idle_subagents: 10
+      background:
+        enabled: true
+        precompute_lead_tokens: 60000
+        tail_share: 0.4
+        cache_lifetime_seconds: 300
+        cache_margin_seconds: 30
+        max_failures: 2
+    tool_output:
+      max_lines: 2000
+      max_bytes: 51200
+      max_line_length: 2000
+      spill_dir: /home/.tool-output
+      retention_days: 7
+      input_repair_max_depth: 6
+      input_excerpt_limit: 2048
+    file_tools:
+      read_tail_lines: 100
+      edit_miss_hint_lines: 12
+      edit_miss_hint_line_length: 200
+      search_default_limit: 100
+      search_timeout_seconds: 30
+    bash:
+      default_timeout_seconds: 120
+      max_timeout_seconds: 600
+      python_max_memory: 256MB
+      network: public_only
+      shared_mount_read_policy: fresh
+    media:
+      max_ingest_bytes: 20971520
+      image_auto_resize: true
+      image_max_width: 2000
+      image_max_height: 2000
+      image_max_base64_bytes: 5242880
+      png_passthrough_max_base64_bytes: 393216
+      small_png_max_pixels: 65536
+      jpeg_qualities: [80, 70, 55, 40]
+      history_image_bytes_trigger: 26214400
+      history_image_bytes_target: 15728640
+    web:
+      fetch_mode: direct_with_fallback
+      fetch_default_timeout_seconds: 30
+      fetch_max_timeout_seconds: 120
+      fetch_max_redirects: 10
+      fetch_max_response_bytes: 5242880
+      search_max_results: 5
+    subagents:
+      max_depth: 3
+      max_active_per_leta: 16
+    messaging:
+      max_attachments: 20
+      max_sources: 64
+      active_channel_ttl_seconds: 300
+      notification_preview_chars: 120
+    orchestration:
+      run_timeout_seconds: 7200
+      heartbeat_interval_seconds: 3
+      heartbeat_timeout_seconds: 60
+      lease_ttl_seconds: 60
+      lease_renew_interval_seconds: 10
+      max_concurrent_orchestration_activities: 64
+      max_concurrent_runtime_activities: 32
   letfs_ingest:
     cpu:
       activity_concurrency: 8

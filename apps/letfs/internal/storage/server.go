@@ -30,9 +30,18 @@ type Settings struct {
 	UploadURLTTLSeconds         int          `yaml:"upload_url_ttl_seconds"`
 	DownloadURLTTLSeconds       int          `yaml:"download_url_ttl_seconds"`
 	IdempotencyRetentionSeconds int          `yaml:"idempotency_retention_seconds"`
-	SemanticSearch              struct {
-		CandidateLimit uint64 `yaml:"candidate_limit"`
-		ResultLimit    uint64 `yaml:"result_limit"`
+	Search                      struct {
+		DefaultLimit   int `yaml:"default_limit"`
+		MaxLimit       int `yaml:"max_limit"`
+		TimeoutSeconds int `yaml:"timeout_seconds"`
+		MaxLineChars   int `yaml:"max_line_chars"`
+	} `yaml:"search"`
+	SemanticSearch struct {
+		CandidateLimit  uint64 `yaml:"candidate_limit"`
+		ResultLimit     uint64 `yaml:"result_limit"`
+		MaxResultLimit  uint64 `yaml:"max_result_limit"`
+		TimeoutSeconds  int    `yaml:"timeout_seconds"`
+		MaxExcerptChars int    `yaml:"max_excerpt_chars"`
 	} `yaml:"semantic_search"`
 	Processing struct {
 		MaxArtifacts              int   `yaml:"max_artifacts"`
@@ -87,9 +96,21 @@ func (s *Server) check(ctx context.Context, kind, id, permission string) (sdk.Ac
 	if err != nil {
 		return a, err
 	}
-	r, err := s.Graph.CheckPermission(ctx, &az.CheckPermissionRequest{Resource: sdk.Object(kind, id), Permission: permission, Subject: sdk.Subject(a), Consistency: sdk.Consistency(ctx)})
+	cons := sdk.Consistency(ctx)
+	r, err := s.Graph.CheckPermission(ctx, &az.CheckPermissionRequest{Resource: sdk.Object(kind, id), Permission: permission, Subject: sdk.Subject(a), Consistency: cons})
 	if err != nil {
 		return a, err
+	}
+	if r.Permissionship != az.CheckPermissionResponse_PERMISSIONSHIP_HAS_PERMISSION && !cons.GetFullyConsistent() {
+		r, err = s.Graph.CheckPermission(ctx, &az.CheckPermissionRequest{
+			Resource:    sdk.Object(kind, id),
+			Permission:  permission,
+			Subject:     sdk.Subject(a),
+			Consistency: &az.Consistency{Requirement: &az.Consistency_FullyConsistent{FullyConsistent: true}},
+		})
+		if err != nil {
+			return a, err
+		}
 	}
 	if r.Permissionship != az.CheckPermissionResponse_PERMISSIONSHIP_HAS_PERMISSION {
 		return a, permissionDenied()

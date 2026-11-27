@@ -1,0 +1,256 @@
+# Python Engineering Standard
+
+This repository treats static types as an internal contract and runtime validation as the gatekeeper at every untrusted system boundary. The goal is maintainable, self-documenting code with modular feature boundaries and zero silent type holes inside internal domain logic—not dogmatic zero-escape-hatch purity at untyped third-party boundaries.
+
+---
+
+## 1. Architecture & Module Structure (Model 1: Package-by-Feature + SDK Layout)
+
+All Python packages and applications follow a `src/` layout with strictly `snake_case` directories and filenames (`lower_with_under.py`).
+
+### Applications (`apps/leta`, `apps/letfs-ingest`, `evaluations`) — Package-by-Feature
+
+Organize modules vertically by **business domain / feature**, never horizontally into global centralized `interfaces/` or `dataclasses/` folders:
+
+- **Feature packages** (for example `leta/hitl/`, `leta/schedules/`, `leta/channels/`, `leta/filesystem/`, `evaluations/suites/agent/`) keep their domain models, contracts, services, and workflows cohesive in one directory.
+- **Canonical module roles inside a feature or package:**
+  - `models.py` — domain dataclasses and/or Pydantic boundary/DB-row models owned by the feature (add `schemas.py` only when separating an ORM table layer from API DTOs).
+  - `types.py` — lightweight dataclasses, `TypedDict`s, `TypeAlias`es, or `TypeIs` guards shared across the package (`_types.py` when strictly private/internal to a library or SDK).
+  - `protocols.py` / `base.py` — `Protocol` contracts, shared base value objects, and domain exceptions—especially used to invert dependencies and prevent circular imports across features.
+  - `service.py` / `workflow.py` / `router.py` / `runner.py` — orchestration, IO, and business behavior.
+- **Keep definitions local when single-owner:** If a `Protocol`, `_...Stub`, or helper dataclass is only used inside one module, define it locally (or privately with `_`) in that module instead of creating premature shared files.
+- **Enforced architectural boundaries:** Layer separation (for example `leta` Layer 1 orchestration/services vs Layer 2 `leta/runtime/`) is verified by automated tests ([`test_boundaries.py`](../apps/leta/tests/test_boundaries.py)).
+
+### Libraries & SDKs (`packages/sdk-python`, `packages/env`)
+
+- **`__init__.py`:** Curate explicit public exports via `__all__`.
+- **`types.py` vs `_types.py`:** `types.py` defines public, SemVer-supported types and type guards (`openlet_sdk.types`); internal typing helpers not meant for external consumers belong in `_types.py` or private `_`-prefixed symbols.
+- **PEP 561 & reproducible dependencies:** Every reusable library package under `packages/*` must include an empty `py.typed` marker alongside `"Typing :: Typed"` in `pyproject.toml`. CI and tooling invoke `uv sync --locked` / `uv run --locked` against the checked-in `uv.lock`.
+
+### Module & Import Hygiene
+
+- **Absolute, grouped, explicit imports:** Never use wildcard imports (`from module import *`, `F403`) or relative imports (`TID252`, except `tests/e2e`); group imports as `stdlib` → `third-party` → `first-party` (`I001`).
+- **Zero import-time side effects & entrypoints:** Modules must be safe to import without opening DB pools, HTTP clients, reading network config, or parsing CLI flags at top level; guard executable script and CLI runners behind `if __name__ == "__main__":`.
+
+---
+
+## 2. Tooling & CI Baseline
+
+Both the root workspace ([`pyproject.toml`](../pyproject.toml)) and the standalone evaluation suite ([`evaluations/pyproject.toml`](../evaluations/pyproject.toml)) enforce identical typing gates via `make check-python`:
+
+- **Python target:** `>=3.14,<3.15`.
+- **Pyright (`typeCheckingMode = "strict"`):**
+  - `reportMissingParameterType = "error"`
+  - `reportMissingTypeArgument = "error"`
+  - `reportUnnecessaryTypeIgnoreComment = "error"`
+  - `reportImplicitOverride = "error"`
+  - `reportUninitializedInstanceVariable = "error"`
+  - `reportPropertyTypeMismatch = "error"`
+  - `reportDeprecated = "error"`
+- **Ruff lint rules (`select = ["ALL"]`):**
+  - Enforces the full Astral enterprise baseline across correctness (`E`, `F`, `W`, `B`, `PIE`, `RUF`, `ISC`, `C4`, `SIM`, `PERF`, `RET`, `FURB`, `A`, `SLF`, `SLOT`), typing (`ANN`, `UP`, `PYI`, `TC` with `runtime-evaluated-base-classes`/`decorators`, `PGH`, `FA`), async/lifecycle (`ASYNC`, `PTH`, `DTZ`), error handling & observability (`BLE`, `TRY`, `RSE`, `LOG`, `G`, `T10`, `T20`), security (`S`), framework/architecture (`FAST`, `N`, `PL`, `C90` max-complexity `15`, `FBT`, `ERA`, `INP`, `TID252` absolute imports per Google Style Guide), Google-convention docstrings (`D`), and tests (`PT`).
+  - Only formatter-conflicting rules (Astral's official list: `W191`, `E111`, `E114`, `E117`, `E501`, `D206`, `D300`, `Q000`–`Q004`, `COM812`, `COM819`, `ISC001`) and narrow non-formatter exclusions (`CPY`, `D105`, `D107`, `TRY003`, `EM101`–`EM102`, `PLR0911`, `PLR0912`, `PLR0913`, `PLR0915`, `PLR2004`) are excluded globally, with scoped `per-file-ignores` for `tests/**`, `scripts/**`, and CLI entrypoints.
+- **Generated code exclusion:** Protobuf/gRPC outputs (`*_pb2*.py`, `*_pb2.pyi`) are generated by `make generate` / `mypy-protobuf` and excluded from manual edits and Ruff checks.
+
+---
+
+## 3. Architecture Rule: "Parse, Don't Validate" at Boundaries
+
+Every external or dynamic source is untrusted until parsed **once at the system boundary**:
+
+- **Boundaries include:** HTTP JSON payloads, PostgreSQL `JSONB` columns, Redis/SSE events, YAML/TOML configs, environment variables, Datalab/LiteLLM/external SDK responses, LangChain heterogeneous message content, LLM tool-call arguments, and `ToolMessage.artifact`.
+- **At the boundary:** Validate immediately into a structured Pydantic `BaseModel`, `TypeAdapter`, or typed `Config` schema (`parse_config()`).
+- **Inside internal logic:** Pass typed domain models—**never** pass raw `dict[str, Any]` or unparsed `dict[str, object]` across internal function calls, and never repeat `.get()` / `isinstance()` / `is_str_mapping()` checks for known internal structures.
+
+---
+
+## 4. Data Structure Selection Matrix
+
+| Construct | When to use |
+| --- | --- |
+| **`pydantic.BaseModel`** | All boundary contracts, DB/event JSONB payloads, external API schemas, and validated runtime configs. Use `ConfigDict(extra="forbid")` for strict input schemas; use `extra="ignore"` or `extra="allow"` deliberately only when tolerating extra DB columns (`hydrate`) or forward-compatible wire payloads. |
+| **`@dataclass(frozen=True, slots=True)`** | Internal **Value Objects**, DTOs, search hits, outcomes, and read-only result bundles constructed in trusted Python code (prefer `kw_only=True` when fields are numerous). Avoid shallow "fake frozen" containers by using immutable collection types (`tuple[T, ...]`, `frozenset[T]`, `Sequence[T]`, `Mapping[K, V]`) on frozen fields. |
+| **`@dataclass(slots=True)`** | Mutable **runtime state containers**, accumulators, caches, and lifecycle builders mutated in-place (e.g., `RuntimeContext`, `UsageTotals`, `_ColdBlob`, `WorkspaceContext`). Never force `frozen=True` onto genuinely mutable state, and never omit `slots=True`. |
+| **`enum.StrEnum` / `enum.Enum`** | Closed domain states, status codes, and serialized string enums—preferred over repeating raw `Literal[...]` unions or magic string constants across modules. |
+| **`TypedDict`** | Only when the runtime value must remain a plain `dict` (e.g., LangGraph `AgentState`, shared YAML `Config`, Compose/Envoy/WireMock JSON dicts). Prefer `NotRequired[T]` over `T | None` when key omission has distinct meaning, and `typing.ReadOnly[T]` (PEP 705) for immutable keys. |
+| **`NamedTuple`** | Restricted strictly to positional tuple wire rows (e.g., `psycopg` `copy().write_row(row)` bulk loaders) or tuple-unpacking APIs—use `@dataclass(frozen=True, slots=True)` everywhere else. |
+| **`Protocol`** | Service/adapter interfaces, dependency-inversion ports, and thin wrappers around poorly typed or dynamic third-party clients (preferred over `abc.ABC`). |
+| **`type X = ...`** | PEP 695 type aliases (e.g., `type JSON = ...` in `openlet_sdk.types`). |
+| **Plain `class`** | **Only** for services, network/DB clients, stateful IO managers, Temporal workflows/activities, or adapters owning connections, locks, or async lifecycles—never for passive data bags or internal state structs. |
+
+---
+
+## 5. Naming Conventions
+
+- **Packages, directories, and modules:** Strictly `snake_case` (`lower_with_under.py`).
+- **Classes, Protocols, TypedDicts, TypeVars:** `PascalCase` (`CapWords`).
+- **`Protocol` vs `abc.ABC`:**
+  - Prefer `typing.Protocol` (structural subtyping) over `abc.ABC`; reserve `ABC` only for genuine shared-implementation template base classes.
+  - **Ban the Hungarian `I` prefix** (`IUserRepo`, `ICache`, `IStorage`). Legitimate domain acronyms such as `IOSettings` (Input/Output) are allowed.
+  - Name `Protocol` classes by **capability** (`Renderable`, `Closeable`), single-method **`Supports...`** (`SupportsClose`), or **clean role nouns** (`ChannelAdapter`, `VectorStore`, `DatalabClient`).
+  - Append `...Protocol` **only** when disambiguating from a concrete class or superset (`PromptServicesProtocol` vs `Services`).
+  - Prefix internal adapter stubs wrapping untyped third-party clients with `_...Stub` or `_...Protocol` (e.g., `_AsyncPermissionsStub`, `_ChartSeries`).
+- **Dataclasses & Value Objects:** Use clean domain nouns (`SearchHit`, `OutboundMessage`, `SeedResult`). **Never** add type-encoding suffixes like `...Dataclass` or `...VO`.
+- **Boundary Schemas / DTOs:** Use clear role suffixes where lifecycle distinction matters (`*Body`, `*Input`, `*Patch`, `*Request`, `*Response`, `*Record`, `*Summary`, `*Detail`, `*Payload`, `*Event`).
+
+---
+
+## 6. `Any` vs `object` vs `Unknown`
+
+1. **`Unknown` (implicit `Any`):** **Banned.** Every function parameter, return type, and generic container (`list[T]`, `dict[K, V]`, `tuple[...]`) must be parameterized.
+2. **Explicit `Any`:** **Banned in internal domain code and public APIs.** Allowed only locally when an upstream framework contract strictly forces it (for example, LangGraph's `Command[Any]`, `Annotated[Any, InjectedToolArg]`, or `instructor`'s dynamic `create_with_completion` signature), and must never leak to callers.
+3. **`object` and `JSON`:** Use `object` (never `Any`) for genuinely dynamic raw inputs entering a parser, narrowing helper, or `TypeIs` guard. Use `JSON` / `JsonObject` / `MutableJsonObject` (`openlet_sdk.types`) for opaque pass-through JSON bags that are not interpreted internally.
+
+---
+
+## 7. `typing.cast()` Policy
+
+- **Never** use `cast(...)` to silence a type error in internal code—fix the model or signature instead.
+- `cast(...)` is restricted to thin adapter boundaries with untyped C extensions, dynamic imports, or raw dispatchers (`mirage.vfs.dispatch`, `google_crc32c.value`, `importlib`, `yaml.safe_load -> Config`).
+- Always quote the target type string (`cast("TargetType", expr)`, enforced by `TC006`).
+- Isolate casts inside a single helper/wrapper method so downstream callers remain 100% typed.
+
+---
+
+## 8. Suppression Comments (`# pyright: ignore`)
+
+- **Zero internal ignores:** Internal modules must never suppress Pyright diagnostics.
+- **Third-party boundary only:** Suppression is permitted solely where upstream packages lack stubs (`reportMissingTypeStubs`) or publish broken overloads (`reportUnknownMemberType`), and must always cite the specific rule code (`PGH003`) plus a short rationale if non-obvious.
+- Dead ignores are automatically rejected by `reportUnnecessaryTypeIgnoreComment = "error"`.
+
+---
+
+## 9. Third-Party Stubs & Test Fakes Policy
+
+When a dependency triggers `reportMissingTypeStubs` or `reportUnknownMemberType`:
+
+1. **Install official stubs first** (`types-pyyaml`, `types-lxml`, `types-openpyxl`, `types-protobuf`, `types-grpcio`, `boto3-stubs[s3]`, `mypy-protobuf`).
+   - Prefer **`boto3-stubs[s3]`** over `boto3-stubs-lite[s3]`: `boto3-stubs-lite` degrades client types to `Any`, whereas `boto3-stubs[s3]` preserves strict `S3Client` payload and response checking.
+2. **If no stubs exist on PyPI**, write a minimal local `Protocol` / adapter wrapper (`authzed`, `mirage`, `openpyxl` internals, `datalab_sdk`), and keep `# pyright: ignore[reportMissingTypeStubs]` at the import boundary.
+3. **In tests**, use real dataclasses, Pydantic models, or typed `Protocol` fakes rather than `SimpleNamespace` or untyped mock attribute bags.
+
+---
+
+## 10. Runtime Narrowing, `isinstance`, `None` Checks, & Attribute Access
+
+- **`isinstance` narrowing:** Use modern union syntax `isinstance(x, A | B)` (never `isinstance(x, (A, B))`) to narrow known static unions (e.g., `AIMessage | ToolMessage`, `AtSpec | CronSpec`, `str | list[str]`) or inside dedicated boundary parsers / `TypeIs` guards. Never repeat `isinstance(x, dict | list)` in internal domain logic as a substitute for boundary parsing or `Protocol` polymorphism. When narrowing numeric JSON/wire values, exclude `bool` (`isinstance(v, int | float) and not isinstance(v, bool)`) because `bool` subclasses `int`. Pyright strict mode enforces `reportUnnecessaryIsInstance`.
+- **`is None` vs truthiness:** Rely on implicit truthiness (`if seq:`, `if not flag:`) for container emptiness and booleans, but **always** write `if x is None:` / `if x is not None:` for optional values so valid falsy inputs (`0`, `""`, `False`) are never misread as `None`.
+- **Shared `TypeIs[T]` (PEP 742) helpers** live in [`openlet_sdk.types`](../packages/sdk-python/src/openlet_sdk/types.py) (`is_mapping`, `is_str_mapping`, `is_object_list`, `is_object_sequence`). Use them **only** at raw wire/LLM boundaries (LangChain heterogeneous message content, tool-call repair against JSON Schema, YAML/JSON parsing).
+- Prefer direct attribute access or `getattr(obj, name, default)` only for genuinely dynamic/optional attributes; never use `getattr(obj, "constant")` when the attribute exists statically (`B009`).
+
+---
+
+## 11. Modern Python 3.14 Syntax & Typing Hygiene
+
+- Use `X | Y` and `T | None` (never `Union`, `Optional`, `List`, `Dict`, or tuple types in `isinstance`).
+- Use PEP 695 type parameters (`def retry[T](...)`, `class Cache[T]:`) instead of `TypeVar` / `Generic`.
+- Use `typing.Self` for `__enter__` / `__aenter__` / fluent methods returning `self`.
+- Decorate overridden methods with `@typing.override`.
+- Annotate mutable class variables with `typing.ClassVar` and non-rebindable constants or attributes with `typing.Final` (PEP 591).
+- Mark retiring internal or SDK APIs with `@warnings.deprecated("...")` (PEP 702), enforced for callers via `reportDeprecated = "error"`.
+- Isolate type-only imports inside `if TYPE_CHECKING:` (`TC001`–`TC003`) outside runtime-evaluated boundaries (Pydantic models and FastAPI route signatures); new modules targeting Python `>=3.14` may omit `from __future__ import annotations` thanks to native deferred evaluation (PEP 649).
+
+---
+
+## 12. Error Handling, Domain Exceptions, & Cleanup
+
+- **Domain exception hierarchy:** Define domain-specific exceptions deriving from explicit module/package bases (`ChannelError(ValueError)`, `ContextLimitError(RuntimeError)`) when callers branch on failure modes; keep built-ins (`ValueError`, `PermissionError`) for straightforward input/guard validation.
+- **No silent exception swallowing:** Never write bare `except:` or silent `except Exception: pass` / `continue` (`BLE001`, `S110`, `S112`). Catch concrete exception classes (`httpx.HTTPError`, `grpc.aio.AioRpcError`, `RPCError`, `json.JSONDecodeError`).
+  - When best-effort fallback is genuinely required (telemetry, cache cleanup, non-critical enrichment), log at `warning`/`debug` with `exc_info=True` or use `contextlib.suppress(SpecificError)`.
+- **Preserve tracebacks:** Always chain re-raised exceptions with `raise NewError(...) from err` (`B904`).
+- **Deterministic cleanup:** Manage pools, HTTP clients, gRPC channels, and file handles with `with` / `async with` (`ExitStack`, `AsyncExitStack`), never ad-hoc manual teardown without `try...finally`.
+
+---
+
+## 13. Asyncio, Concurrency, & Temporal Determinism
+
+- **Never block the event loop:** Do not call synchronous filesystem or CPU-heavy blocking APIs (`Path.write_bytes`, `Path.rglob`, sync SDK calls) directly inside `async def` (`ASYNC240`); offload blocking work with `asyncio.to_thread(...)` or use native async clients.
+- **Structured concurrency & task ownership:** Prefer `asyncio.TaskGroup` for bounded request-scoped fan-out. When spawning background tasks with `asyncio.create_task(...)`, retain strong references and handle cancellation/exceptions cleanly (`RUF006`).
+- **Cancellation safety:** Never catch `BaseException` or swallow `asyncio.CancelledError`; run essential async cleanup under `try...finally` (using `asyncio.shield(...)` only when finalization must complete on cancellation).
+- **Explicit deadlines:** Bound outbound network/RPC/activity waits with explicit timeouts (`asyncio.wait_for` / Temporal `start_to_close_timeout`).
+- **FastAPI `lifespan` & DI:** Manage app startup/shutdown pools and clients inside an `@asynccontextmanager` `lifespan` function (never deprecated `@app.on_event`), inject dependencies via `Annotated[..., Depends(...)]` (`FAST002`), and keep route handlers thin (`router.py` delegating to `service.py` with explicit `response_model` / status codes).
+- **Thread & `ContextVar` safety:** Do not rely on built-in `dict`/`list` mutation atomicity across threads; coordinate shared state with `queue.Queue` or explicit `threading.Lock` / `Condition`. (`asyncio.to_thread` propagates `ContextVar` automatically; manual thread-pool executors must use `contextvars.copy_context()`.)
+- **Temporal workflow determinism:** Code inside `@workflow.defn` must remain deterministic—never perform raw network/disk IO, `random`, or wall-clock `datetime.now()` outside Temporal workflow APIs.
+
+---
+
+## 14. Observability, Logging, & Console Output
+
+- **Module loggers & lazy formatting:** Instantiate `logger = logging.getLogger(__name__)` and pass format arguments lazily (`logger.warning("Failed for %s: %s", id, exc)`)—never pre-format f-strings in logger calls (`G`, `LOG`).
+- **`print()` policy:** `print()` is restricted to CLI entrypoints and standalone scripts (`cli.py`, `scripts/`, `__main__.py`); library and service packages (`packages/*`, `apps/*/src/*`) must use structured `logging` or explicit output callbacks (`T201`).
+- **Secret redaction:** Never log raw API keys, JWTs, passwords, or PII; wrap secret strings with `openlet_sdk.config.secret` and propagate trace/correlation IDs via `ContextVar` / OpenTelemetry spans.
+
+---
+
+## 15. Security, Persistence, & Global State Hygiene
+
+- **No f-string SQL:** Construct dynamic SQL clauses with `psycopg.sql.SQL` / `psycopg.sql.Identifier` / `psycopg.sql.Composed`, never Python f-strings (`S608`).
+- **Safe deserialization, paths, & templates:** Always use `yaml.safe_load`, `np.load(..., allow_pickle=False)`, and `subprocess.run(..., shell=False)` with explicit argument lists. Prefer `pathlib.Path` over `os.path` (`PTH`) and pass `encoding="utf-8"` explicitly on text file reads/writes (`PLW1514`). Keep Jinja2 `autoescape=False` **only** for non-HTML LLM prompt templates (explicitly documented/annotated).
+- **Timezone-aware timestamps:** Always construct UTC timestamps with `datetime.now(UTC)` (never naive `datetime.now()` or deprecated `datetime.utcnow()`, `DTZ`).
+- **No mutable defaults or module globals:** Never pass mutable defaults (`[]`, `{}`, `set()`) in function signatures (`B006`); use `None` sentinels or `field(default_factory=...)`. Top-level module constants use `UPPER_SNAKE_CASE` with immutable types (`tuple`, `frozenset`, `MappingProxyType`)—never share mutable module-level `dict`/`list` state across calls without explicit encapsulation/locking.
+
+---
+
+## 16. Public API Surface, Docstrings, & Comments
+
+- **Explicit package exports:** Public package `__init__.py` files (`packages/sdk-python`, `packages/env`) must define sorted `__all__` (`RUF022`).
+- **Google-style docstrings:** Use `"""..."""` with a concise one-line summary for public modules, classes, methods, functions, and route handlers (`D100`–`D104`), adding `Args:`, `Returns:`, or `Raises:` sections only where semantics are non-obvious (never duplicate static type annotations). Private `_`-prefixed helpers, constructors (`D107`, documented on the class), and standard dunder methods (`D105`) are exempt from boilerplate docstrings.
+- **Comment the why, not the what:** Keep inline comments focused on non-obvious invariants, edge cases, protocol assumptions, or upstream workarounds; never leave dead commented-out code (`ERA`).
+
+---
+
+## 17. Testing Standards (`pytest`)
+
+- **One assertion per check:** Split compound `assert a and b` into separate `assert` statements (`PT018`) for clear failure diffs.
+- **Precise exception assertions:** Include `match="..."` when asserting broad built-in exceptions like `pytest.raises(ValueError)` or `pytest.raises(RuntimeError)` (`PT011`).
+- **Strict fixture & fake hygiene:** Omit empty parentheses on `@pytest.fixture` (`PT001`), use tuple/sequence form in `@pytest.mark.parametrize` (`PT006`), and build typed dataclass/Pydantic/`Protocol` fakes instead of `SimpleNamespace`.
+- **Clean `zip` iteration:** Always pass `strict=True` when zipping sequences expected to align (`B905`).
+
+---
+
+## 18. PR Review Checklist
+
+Before approving any Python change:
+- [ ] `make check-python` and `make test-python` pass cleanly (and `evaluations` checks/tests if modified).
+- [ ] Module placement follows Package-by-Feature (`snake_case` files, no global `interfaces/` or `dataclasses/` dumping grounds).
+- [ ] New external/wire/DB-JSONB payloads are parsed at the boundary with Pydantic (`model_validate` / `TypeAdapter`).
+- [ ] Value Objects use `@dataclass(frozen=True, slots=True)` with immutable container fields; mutable runtime state uses `@dataclass(slots=True)`; `Protocol` names avoid `I...`.
+- [ ] Zero new `Any`, `SimpleNamespace`, internal `# pyright: ignore`, or unquoted `cast(...)`, and no silent `except Exception: pass`.
+- [ ] Async functions avoid blocking filesystem/sync IO (`asyncio.to_thread`), SQL avoids f-strings (`psycopg.sql`), and timestamps use `UTC`.
+- [ ] Any unavoidable 3rd-party `cast` / `# pyright: ignore[...]` is isolated in a single adapter boundary with a clear reason.
+
+---
+
+## 19. References
+
+### Language Standards & PEPs
+- [PEP 8 — Style Guide for Python Code](https://peps.python.org/pep-0008/) (`snake_case` modules, `CapWords` classes, import conventions)
+- [PEP 484 — Type Hints](https://peps.python.org/pep-0484/) & [Python Typing Specification](https://typing.python.org/en/latest/) (`Any` vs `object`, gradual typing, `cast`)
+- [PEP 544 — Protocols: Structural subtyping](https://peps.python.org/pep-0544/) (`Protocol`, capability & `Supports...` naming)
+- [PEP 557 — Data Classes](https://peps.python.org/pep-0557/) & [Hynek Schlawack — `attrs` / `dataclasses` best practices](https://www.attrs.org/en/stable/overview.html) (`frozen=True`, `slots=True`)
+- [PEP 561 — Distributing and Packaging Type Information](https://peps.python.org/pep-0561/) (`py.typed` markers, `"Typing :: Typed"`)
+- [PEP 589 — TypedDict](https://peps.python.org/pep-0589/), [PEP 655 — `NotRequired`](https://peps.python.org/pep-0655/), & [PEP 705 — `ReadOnly`](https://peps.python.org/pep-0705/)
+- [PEP 591 — `Final` Qualifier](https://peps.python.org/pep-0591/)
+- [PEP 604 — Union Operators `X | Y`](https://peps.python.org/pep-0604/) (`isinstance(x, A | B)`)
+- [PEP 649 — Deferred Evaluation of Annotations](https://peps.python.org/pep-0649/)
+- [PEP 673 — `Self` Type](https://peps.python.org/pep-0673/)
+- [PEP 695 — Type Parameter Syntax](https://peps.python.org/pep-0695/) (`type X = ...`, generic functions/classes)
+- [PEP 698 — Override Decorator](https://peps.python.org/pep-0698/) (`@typing.override`)
+- [PEP 702 — Marking Deprecations (`warnings.deprecated`)](https://peps.python.org/pep-0702/)
+- [PEP 742 — Narrowing Types with `TypeIs`](https://peps.python.org/pep-0742/)
+
+### Engineering Style Guides & Architecture
+- [Google Python Style Guide](https://google.github.io/styleguide/pyguide.html) (absolute imports, Google docstrings without redundant `__init__` docs, exception chaining, no `assert` validation, comment *why*)
+- [Python Packaging User Guide — `src` layout](https://packaging.python.org/en/latest/discussions/src-layout-vs-flat-layout/)
+- [Alexis King — Parse, don't validate](https://lexi-lambda.github.io/blog/2019/11/05/parse-don-t-validate/) (boundary parsing philosophy)
+- [Netflix Dispatch](https://github.com/Netflix/dispatch) & [FastAPI Best Practices](https://github.com/zhanymkanov/fastapi-best-practices) (Package-by-Feature vertical slicing)
+
+### Tooling & Stack Documentation
+- [Astral Ruff — Rules & Formatter Conflicts](https://docs.astral.sh/ruff/formatter/#conflicting-lint-rules) (`ALL`, `pydocstyle` Google convention, `flake8-type-checking` runtime evaluation)
+- [Astral `uv` — Workspaces & Lockfile](https://docs.astral.sh/uv/concepts/projects/sync/) (`--locked` reproducible builds)
+- [Microsoft Pyright — Configuration & Strict Mode](https://microsoft.github.io/pyright/#/configuration)
+- [FastAPI — Dependencies with `Annotated`](https://fastapi.tiangolo.com/tutorial/dependencies/) (`FAST002`)
+- [Pydantic v2 — Models & Extra Behavior](https://docs.pydantic.dev/latest/concepts/models/)
+- [Python `asyncio` — Coroutines, Tasks & Subprocesses](https://docs.python.org/3/library/asyncio-task.html) (`TaskGroup`, `to_thread`, `CancelledError`)
+- [Temporal Python SDK — Determinism & Workflows](https://docs.temporal.io/develop/python/core-application)
+

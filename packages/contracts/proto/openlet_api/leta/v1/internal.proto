@@ -1,0 +1,104 @@
+syntax = "proto3";
+
+package openlet.leta.v1;
+
+import "buf/validate/validate.proto";
+
+option go_package = "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/leta/v1;letav1";
+
+message ActorRef {
+  string type = 1 [(buf.validate.field).string = {
+    in: [
+      "user",
+      "agent",
+      "system"
+    ]
+  }];
+  string id = 2 [(buf.validate.field).string.min_len = 1];
+  string name = 3;
+  string handle = 4;
+}
+
+message ChatAttachment {
+  string storage_id = 1 [(buf.validate.field).string.uuid = true];
+  string node_id = 2 [(buf.validate.field).string.uuid = true];
+  string name = 3;
+  string media_type = 4;
+}
+
+message ChatMention {
+  string kind = 1 [(buf.validate.field).string = {
+    in: [
+      "user",
+      "agent",
+      "file",
+      "folder"
+    ]
+  }];
+  string id = 2;
+  string storage_id = 3;
+  string node_id = 4;
+  string label = 5;
+}
+
+message ChatMessageEvent {
+  string workspace_id = 1 [(buf.validate.field).string.uuid = true];
+  string conversation_id = 2 [(buf.validate.field).string.uuid = true];
+  string conversation_type = 3 [(buf.validate.field).string = {
+    in: [
+      "dm",
+      "group"
+    ]
+  }];
+  string title = 4;
+  string handle = 5;
+  string message_id = 6 [(buf.validate.field).string.uuid = true];
+  int64 seq = 7 [(buf.validate.field).int64.gt = 0];
+  ActorRef sender = 8 [(buf.validate.field).required = true];
+  string content = 9;
+  string reply_to_message_id = 10;
+  repeated ChatAttachment attachments = 11;
+  repeated ChatMention mentions = 12;
+  bytes metadata_json = 13;
+}
+
+message ChatReactionEvent {
+  string workspace_id = 1 [(buf.validate.field).string.uuid = true];
+  string conversation_id = 2 [(buf.validate.field).string.uuid = true];
+  string message_id = 3 [(buf.validate.field).string.uuid = true];
+  ActorRef actor = 4 [(buf.validate.field).required = true];
+  string emoji = 5 [(buf.validate.field).string.min_len = 1];
+  string action = 6 [(buf.validate.field).string = {
+    in: [
+      "added",
+      "removed"
+    ]
+  }];
+}
+
+message DeliverInboxRequest {
+  string agent_id = 1 [(buf.validate.field).string.uuid = true];
+  string idempotency_key = 2 [(buf.validate.field).string.min_len = 1];
+  oneof event {
+    option (buf.validate.oneof).required = true;
+    ChatMessageEvent chat_message = 3;
+    ChatReactionEvent chat_reaction = 4;
+  }
+}
+
+message DeliverInboxResponse {
+  bool delivered = 1;
+  bool skipped = 2;
+  int64 seq = 3;
+}
+
+message DeleteWorkspaceAgentsRequest {
+  string workspace_id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+message DeleteWorkspaceAgentsResponse {}
+
+service LetaInternalService {
+  rpc DeliverInbox(DeliverInboxRequest) returns (DeliverInboxResponse);
+  rpc DeleteWorkspaceAgents(DeleteWorkspaceAgentsRequest) returns (DeleteWorkspaceAgentsResponse);
+}

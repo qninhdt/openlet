@@ -14,7 +14,7 @@ import stripeIcon from '@/assets/source-icons/stripe.png';
 import wikipediaIcon from '@/assets/source-icons/wikipedia.png';
 import { fileReferenceStyles } from '@/components/ui/styles';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { fileMarkdown, fileTokenPattern, type MessageSource } from '@/lib/file-refs';
+import { fileMarkdown, type MessageSource } from '@/lib/file-refs';
 import { FileIcon } from '@/components/storage/file-icon';
 import { useAgentPreview } from './agent-preview';
 import remarkGfm from 'remark-gfm';
@@ -229,20 +229,9 @@ export function AgentMarkdown({ text, sources }: { text: string; sources?: Messa
               />
             );
           },
-          code: ({ children }) => {
-            const text = String(children ?? '');
-            const mention = [...text.matchAll(fileTokenPattern())];
-            if (mention.length === 1 && mention[0][0] === text.trim()) {
-              const [, label, storage, id] = mention[0];
-              return (
-                <FileReference
-                  target={`openlet-${text.trim().startsWith(':folder[') ? 'folder' : 'file'}:${storage}/${id}`}
-                  label={label.replace(/\\(.)/g, '$1')}
-                />
-              );
-            }
-            return <code className="rounded-sm bg-muted px-1 py-0.5 text-xs">{children}</code>;
-          },
+          code: ({ children }) => (
+            <code className="rounded-sm bg-muted px-1 py-0.5 text-xs">{children}</code>
+          ),
           table: ({ children }) => (
             <div
               role="region"

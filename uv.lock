@@ -18,18 +18,6 @@ members = [
 ]
 
 [[package]]
-name = "ag-ui-protocol"
-version = "1.0.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pydantic" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/57/92/d88fdc7f4648dc38d3d54c595066bb3e63a4c091884ffb2f98272c33eef8/ag_ui_protocol-1.0.0.tar.gz", hash = "sha256:cfebecef2e7bc942cc8a52d908a4ea86a98f631d2ffdc6ec5812bb843eac74fb", size = 30759, upload-time = "2026-09-17T18:31:19.448Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/82/b0/850be4576e6443dc575daa54188d8136ae2b2eca3f19e098e7a088fc9ebc/ag_ui_protocol-1.0.0-py3-none-any.whl", hash = "sha256:0058eaf0522201089d444e430fc35180bc8ad0222cae39e8568b313e8105d9e6", size = 36842, upload-time = "2026-09-17T18:31:18.471Z" },
-]
-
-[[package]]
 name = "aiofiles"
 version = "25.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -220,15 +208,15 @@ wheels = [
 
 [[package]]
 name = "boto3-stubs"
-version = "1.44.2"
+version = "1.44.12"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "botocore-stubs" },
     { name = "types-s3transfer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/0f/4c/a2f5984cd879469f23e105d2c440280f99b72b6d6f5a3f2da07872f6cf46/boto3_stubs-1.44.2.tar.gz", hash = "sha256:f8f87bb12525ec822211d5efa1fed17d95116377eeba9440db38d68ada30159d", size = 105755, upload-time = "2026-11-13T00:33:23.842Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4e/c4/7b007bfd02a02b6a25642a24c1b3eb143f616b840e27a2b4047d410c680f/boto3_stubs-1.44.12.tar.gz", hash = "sha256:a9ff6161856ab9258ad8c1faa3112951a53b028a7b36858c652047c3bf2200c1", size = 107577, upload-time = "2026-11-25T22:52:16.938Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9b/ae/340178552ece6bb8cfcc50079632c1c80e69e2bc0a6d6cfea28ded56d715/boto3_stubs-1.44.2-py3-none-any.whl", hash = "sha256:df1b4c547844035730f9d6b35539aaf33171239baf1b542e14743c0d04f79c75", size = 72072, upload-time = "2026-11-13T00:33:16.226Z" },
+    { url = "https://files.pythonhosted.org/packages/bb/2d/0f7a42440507275a864fcf966899c4303a518047027c4513cd68e9d3b17f/boto3_stubs-1.44.12-py3-none-any.whl", hash = "sha256:498e8f18afe1ec3a741c0c45b1cbdbf2994c85bce706dbb1127b2d4fea8074ea", size = 73111, upload-time = "2026-11-25T22:52:13.206Z" },
 ]
 
 [package.optional-dependencies]
@@ -782,6 +770,19 @@ wheels = [
 ]
 
 [[package]]
+name = "html-to-markdown"
+version = "3.23.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c6/cc/3eb83201691a0376c42f47525880b1d130bb5eeba6ed6d3217ece82b9fc0/html_to_markdown-3.23.4.tar.gz", hash = "sha256:d0b162d24aad8e22af5004120b51e7821b8223815591676c1078c64dfbc867d5", size = 6204427, upload-time = "2026-11-25T22:02:26.324Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e8/bb/4be0a20759e50fb460823cf310537ab1febb523bf7df38a689a35d482e9e/html_to_markdown-3.23.4-cp311-abi3-macosx_15_0_arm64.whl", hash = "sha256:50fb4ed1617bb0875e50f122d5e5c81feb16c72c38bdd585e7d4371487071b9d", size = 8131639, upload-time = "2026-11-25T22:02:16.005Z" },
+    { url = "https://files.pythonhosted.org/packages/6d/d3/242c4c6c892165398ee0af66049042978ffa3ae91b88269f7e29e0ad37d9/html_to_markdown-3.23.4-cp311-abi3-macosx_15_0_x86_64.whl", hash = "sha256:f5eabee71de4904b64ba1dc020a751f3858ee227e3f23de6da782150e4e56043", size = 8606163, upload-time = "2026-11-25T22:02:17.881Z" },
+    { url = "https://files.pythonhosted.org/packages/6d/95/e15a9e69ac619f77c3c4362d136789332fe203c17934d977c82486609f9d/html_to_markdown-3.23.4-cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:c00c6a5090c1f458e525ef3eb99d5d0635b91a17f240f584de00d55607c6c116", size = 8377427, upload-time = "2026-11-25T22:02:19.983Z" },
+    { url = "https://files.pythonhosted.org/packages/71/3a/0ef462ae5802c5cd752e4dca9bd9702dcac1b6b2becba0714fe9f959ede4/html_to_markdown-3.23.4-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:aefda9f0251af892bf78202211e706028c2a9eea8c02c847e26c9c03f751ff2b", size = 8864178, upload-time = "2026-11-25T22:02:21.977Z" },
+    { url = "https://files.pythonhosted.org/packages/98/57/d6dde190efb6435d400576c812f8fdd787e068c81f28af6e279e42fad1eb/html_to_markdown-3.23.4-cp311-abi3-win_amd64.whl", hash = "sha256:8adb33e9abb9239d8ed3741c757e390d49c474cbf843b8feff6492606643e4c8", size = 8920200, upload-time = "2026-11-25T22:02:24.201Z" },
+]
+
+[[package]]
 name = "httpcore"
 version = "1.0.9"
 source = { registry = "https://pypi.org/simple" }
@@ -1306,10 +1307,11 @@ name = "leta"
 version = "0.1.0"
 source = { editable = "apps/leta" }
 dependencies = [
-    { name = "ag-ui-protocol" },
     { name = "authzed" },
     { name = "fastapi" },
     { name = "google-crc32c" },
+    { name = "grpcio" },
+    { name = "html-to-markdown" },
     { name = "httpx" },
     { name = "jinja2" },
     { name = "langchain" },
@@ -1320,13 +1322,10 @@ dependencies = [
     { name = "openlet-sdk" },
     { name = "opentelemetry-instrumentation-fastapi" },
     { name = "opentelemetry-instrumentation-psycopg" },
-    { name = "opentelemetry-instrumentation-redis" },
+    { name = "pillow" },
     { name = "psycopg", extra = ["binary", "pool"] },
     { name = "pydantic" },
     { name = "pydantic-monty" },
-    { name = "redis" },
-    { name = "regex" },
-    { name = "sse-starlette" },
     { name = "temporalio" },
     { name = "tinyfish" },
     { name = "uvicorn" },
@@ -1334,10 +1333,11 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ag-ui-protocol" },
     { name = "authzed" },
     { name = "fastapi" },
     { name = "google-crc32c" },
+    { name = "grpcio" },
+    { name = "html-to-markdown", specifier = ">=3.23.0" },
     { name = "httpx" },
     { name = "jinja2" },
     { name = "langchain", specifier = "==1.5.0" },
@@ -1348,13 +1348,10 @@ requires-dist = [
     { name = "openlet-sdk", editable = "packages/sdk-python" },
     { name = "opentelemetry-instrumentation-fastapi" },
     { name = "opentelemetry-instrumentation-psycopg" },
-    { name = "opentelemetry-instrumentation-redis" },
+    { name = "pillow" },
     { name = "psycopg", extras = ["binary", "pool"] },
     { name = "pydantic" },
     { name = "pydantic-monty" },
-    { name = "redis" },
-    { name = "regex", specifier = ">=2026.11.9" },
-    { name = "sse-starlette" },
     { name = "temporalio" },
     { name = "tinyfish", specifier = "==0.11.0" },
     { name = "uvicorn" },
@@ -1704,11 +1701,11 @@ wheels = [
 
 [[package]]
 name = "mypy-boto3-s3"
-version = "1.44.0"
+version = "1.44.6"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/37/29/2276d9f646696587202b27324aa006a3cdcb54391d7adef34438e4a23b7f/mypy_boto3_s3-1.44.0.tar.gz", hash = "sha256:ed98f0c6abeadbb36a96da2619c8f68f212f6671658defdd3eb80c018c7179da", size = 79411, upload-time = "2026-11-10T21:57:31.682Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1b/34/2cfc7c13650830a2d6ab593218a09dbb7fed9bdcfca229f8206c3f1a52a8/mypy_boto3_s3-1.44.6.tar.gz", hash = "sha256:82149e61a10ba7e1cab3a2d2c6333370d81143bb93ee2ae2348c355e7df2b7ef", size = 79839, upload-time = "2026-11-19T00:42:58.138Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0e/ae/6546865a7e96d3920d4e6cec3e8ff88229a38737efe9dfa558981c57c609/mypy_boto3_s3-1.44.0-py3-none-any.whl", hash = "sha256:802febb823c2d9a30da52342f8e886c52f6954f74947162d2ce593bff46a42d4", size = 86787, upload-time = "2026-11-10T21:57:29.213Z" },
+    { url = "https://files.pythonhosted.org/packages/f9/ac/cf28701919efa40816ed4ea429a85b4877862a45db9b1d36089eeb0e03e5/mypy_boto3_s3-1.44.6-py3-none-any.whl", hash = "sha256:d36c7214d8f030d078176dc608666e4cdde0c9b9577ca99d723a7e3bc10e7428", size = 87230, upload-time = "2026-11-19T00:42:55.968Z" },
 ]
 
 [[package]]
@@ -1803,6 +1800,7 @@ dependencies = [
     { name = "numpy" },
     { name = "openlet-sdk" },
     { name = "psycopg", extra = ["binary"] },
+    { name = "pydantic" },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "python-dotenv" },
     { name = "pyyaml" },
@@ -1819,6 +1817,7 @@ requires-dist = [
     { name = "numpy" },
     { name = "openlet-sdk", editable = "packages/sdk-python" },
     { name = "psycopg", extras = ["binary"] },
+    { name = "pydantic" },
     { name = "pyjwt", extras = ["crypto"] },
     { name = "python-dotenv" },
     { name = "pyyaml" },
@@ -1888,6 +1887,7 @@ dev = [
     { name = "ruff" },
     { name = "types-grpcio" },
     { name = "types-lxml" },
+    { name = "types-openpyxl" },
     { name = "types-protobuf" },
     { name = "types-pyyaml" },
 ]
@@ -1918,6 +1918,7 @@ dev = [
     { name = "ruff" },
     { name = "types-grpcio", specifier = ">=1.85.0.20261028" },
     { name = "types-lxml", specifier = ">=2026.2.16" },
+    { name = "types-openpyxl" },
     { name = "types-protobuf", specifier = ">=7.35.1.20260906" },
     { name = "types-pyyaml", specifier = ">=6.0.12.20261113" },
 ]
@@ -2131,21 +2132,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/de/c9/5f2725d45c70bdcfc1022fa2df3c242ff8e56f5bf23e6de9c49b8a73f69f/opentelemetry_instrumentation_psycopg-0.66b2.tar.gz", hash = "sha256:d149293a6a1174d6edcf9c7d35ff1b30614fe60c55a9148610ac5c18ea07d28b", size = 13874, upload-time = "2026-10-29T17:38:37.547Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fe/42/2052f97ffbc45389e2e636d9220844c6c13ef3e3f99262666dbdebb5219a/opentelemetry_instrumentation_psycopg-0.66b2-py3-none-any.whl", hash = "sha256:23bb8b81bb0faacabf7f2c41ed05f0e7ee45f992546097d2403f33f8a5e09df8", size = 11106, upload-time = "2026-10-29T17:37:41.826Z" },
-]
-
-[[package]]
-name = "opentelemetry-instrumentation-redis"
-version = "0.66b2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "opentelemetry-api" },
-    { name = "opentelemetry-instrumentation" },
-    { name = "opentelemetry-semantic-conventions" },
-    { name = "wrapt" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/7f/d5/3aa242b02decea1149fbe3f284d4c720dc8e569921b4e57053ddcaddd70d/opentelemetry_instrumentation_redis-0.66b2.tar.gz", hash = "sha256:15650fda1f51693b607eae8448ebfd79ad4679efb2f6a1e8c5aca5f6effd0ed1", size = 18057, upload-time = "2026-10-29T17:38:42.623Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/cb/92/bd7e6179ebec2e504e3ec07b5107e49bf6511acaf10eb10ae57b7ca1e423/opentelemetry_instrumentation_redis-0.66b2-py3-none-any.whl", hash = "sha256:49c729ec4036020a8f9a0bfb84760d42215d3fbfbc4aa1ec89c6199f67c045b0", size = 14884, upload-time = "2026-10-29T17:37:49.373Z" },
 ]
 
 [[package]]
@@ -2770,15 +2756,6 @@ wheels = [
 ]
 
 [[package]]
-name = "redis"
-version = "8.1.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/a8/99/604f0b666d4c616d891cf77ebb9db6bb21601344c051aebf1b72b9ff915f/redis-8.1.0.tar.gz", hash = "sha256:6e1a19beef9225c83efd689c7e6b7da2d5215b1f42cd13b7fc3714d0a09c7b25", size = 5254356, upload-time = "2026-07-30T08:51:00.269Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/66/9d/c5731f6e3608663d4d3656fd8d3aecee8b509c3082818f5a13eae925baea/redis-8.1.0-py3-none-any.whl", hash = "sha256:a4fe1aac3d3b3cc791d4b3d5931c5a956045dc951ee74d1c913ee3ac4d2ee9fb", size = 560618, upload-time = "2026-07-30T08:50:58.497Z" },
-]
-
-[[package]]
 name = "referencing"
 version = "0.37.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3189,6 +3166,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/dd/ad/c70ac8cbdc28eb58a17301c69b4925af54b614e47f9b2ebc9de5cc10f786/types_lxml-2026.2.16.tar.gz", hash = "sha256:b3a1340cc06db98d541c785732f6f68bea438daff4e2b7809ef748d545d01406", size = 161204, upload-time = "2026-02-17T02:34:50.855Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5f/5c/03ec9befbf4bb5309bfd576c6a5ac1c75633f78f6b64cf1f594e97cd3d23/types_lxml-2026.2.16-py3-none-any.whl", hash = "sha256:5dd81ffa54830e5f361988737c5f1d6a0ae48b2742790637ec560df790ea0401", size = 97040, upload-time = "2026-02-17T02:34:49.286Z" },
+]
+
+[[package]]
+name = "types-openpyxl"
+version = "3.1.5.20261122"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e9/5a/30192a8e53334e9457073589a843408198cfab2d9f2c76698819d70bb87d/types_openpyxl-3.1.5.20261122.tar.gz", hash = "sha256:10b4b572021af793fabd87446594e621fc9a222e6e664b6b1f40fd51f638dee3", size = 102103, upload-time = "2026-11-22T08:59:53.69Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/81/12/bf353e0a7c780b4cbc22bf8a32ee9c521e7a87055e1ecf5c99bd35762039/types_openpyxl-3.1.5.20261122-py3-none-any.whl", hash = "sha256:cc6d93aab042fa27f69e9b89f3b7b671d5630e632199326ee3d18c2e22977839", size = 165892, upload-time = "2026-11-22T08:59:52.262Z" },
 ]
 
 [[package]]

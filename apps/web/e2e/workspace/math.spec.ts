@@ -19,13 +19,22 @@ test('chat renders inline and display math, keeps code literal and contains wide
     String.raw`Lỗi cú pháp vẫn đọc được: $\frac{$`,
     String.raw`Liên kết không tin cậy: $\href{javascript:alert(1)}{x}$`,
   ].join('\n\n');
-  await page.route(`**/v1/workspaces/${workspace}/letas/${agent}/messages?*`, (route) =>
+  await page.route(`**/v1/workspaces/${workspace}/conversations/*/messages?*`, (route) =>
     route.fulfill({
       json: {
-        items: [
-          { id: 'math-user', role: 'user', content: message, created_at: '2026-11-18T00:00:00Z' },
+        messages: [
+          {
+            id: 'math-user',
+            conversationId: `conv-${agent}`,
+            seq: 1,
+            senderType: 'user',
+            senderId: 'preview-owner',
+            content: message,
+            createdAt: '2026-11-18T00:00:00Z',
+          },
         ],
-        next_cursor: null,
+        hasBefore: false,
+        hasAfter: false,
       },
     }),
   );

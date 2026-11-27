@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import cast
+from typing import TYPE_CHECKING
 
 import numpy as np
-from openlet_sdk.config import Config
 
-from .models import JSON, JSONObject
+from openlet_env.models import CacheInput, CacheMetadata, CachePointMeta
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
+    from openlet_sdk.config import Config
 
 CACHE_DIR = ".letfs-cache"
 CACHE_FORMAT = 7
@@ -22,59 +25,67 @@ INDEXED = PARSED | frozenset({".gif", ".jpeg", ".jpg", ".png", ".webp"})
 
 @dataclass(frozen=True, slots=True)
 class CachedIngest:
+    """Loaded `.letfs-cache` directory contents and embeddings."""
+
     folder: Path
-    metadata: JSONObject
-    vectors: dict[bytes, list[float]]
+    metadata: CacheMetadata
+    vectors: Mapping[bytes, Sequence[float]]
 
 
 def text_key(text: str) -> bytes:
+    """Return the SHA-256 digest key for a cached text chunk."""
     return hashlib.sha256(text.encode("utf-8")).digest()
 
 
-def _normalize_input(raw: JSONObject) -> JSONObject:
-    """Normalize format 6 (legacy HF) and format 7 inputs to content-only keys."""
-    parser = cast(JSONObject, raw.get("parser", {}))
-    return {
-        "source": raw.get("source"),
-        "sha256": raw.get("sha256"),
-        "embedding": raw.get("embedding"),
-        "enrichment": raw.get("enrichment"),
-        "prompt_label": raw.get("prompt_label"),
-        "split_tokens": raw.get("split_tokens", parser.get("split_tokens")),
-        "limits": raw.get("limits", parser.get("limits")),
-        "chunk_size_tokens": raw.get("chunk_size_tokens"),
-        "chunk_overlap_tokens": raw.get("chunk_overlap_tokens"),
-    }
-
-
-def fingerprint(path: Path, config: Config) -> JSONObject:
+def fingerprint(path: Path, config: Config) -> CacheInput:
     """Content-only ingest fingerprint (excludes concurrency and rate-limit knobs)."""
     with path.open("rb") as source:
         digest = hashlib.file_digest(source, "sha256").hexdigest()
     ingest = config["services"]["letfs_ingest"]
     langfuse = config.get("langfuse")
-    return {
-        "format": CACHE_FORMAT,
-        "source": path.name,
-        "sha256": digest,
-        "embedding": cast(JSON, dict(config["models"]["embedding"])),
-        "enrichment": cast(JSON, dict(config["models"]["enrichment"])),
-        "prompt_label": langfuse["prompt_label"] if langfuse else None,
-        "split_tokens": ingest["cpu"]["split_tokens"],
-        "limits": cast(JSON, dict(ingest["cpu"]["limits"])),
-        "chunk_size_tokens": ingest["io"]["chunk_size_tokens"],
-        "chunk_overlap_tokens": ingest["io"]["chunk_overlap_tokens"],
-    }
+    emb = config["models"]["embedding"]
+    enr = config["models"]["enrichment"]
+    limits = ingest["cpu"]["limits"]
+    return CacheInput(
+        format=CACHE_FORMAT,
+        source=path.name,
+        sha256=digest,
+        embedding={
+            "model": emb["model"],
+            "dimensions": emb["dimensions"],
+        },
+        enrichment={
+            "output_mode": enr["output_mode"],
+            "max_input_characters": enr["max_input_characters"],
+            "max_image_pixels": enr["max_image_pixels"],
+            "image_max_side": enr["image_max_side"],
+            "image_jpeg_quality": enr["image_jpeg_quality"],
+        },
+        prompt_label=langfuse["prompt_label"] if langfuse else None,
+        split_tokens=ingest["cpu"]["split_tokens"],
+        limits={
+            "max_pages": limits["max_pages"],
+            "max_page_pixels": limits["max_page_pixels"],
+            "max_office_expanded_bytes": limits["max_office_expanded_bytes"],
+            "max_spreadsheet_cells": limits["max_spreadsheet_cells"],
+            "max_sheets": limits["max_sheets"],
+            "max_output_bytes": limits["max_output_bytes"],
+        },
+        chunk_size_tokens=ingest["io"]["chunk_size_tokens"],
+        chunk_overlap_tokens=ingest["io"]["chunk_overlap_tokens"],
+    )
 
 
 def read_cache(path: Path, config: Config) -> CachedIngest | None:
+    """Read and validate cached ingest artifacts for ``path``, or return ``None``."""
     folder = path.parent / CACHE_DIR / path.name
     metadata_path = folder / "metadata.json"
     if not metadata_path.is_file():
         return None
-    metadata = cast(JSONObject, json.loads(metadata_path.read_text(encoding="utf-8")))
-    saved_input = cast(JSONObject, metadata.get("input", {}))
-    if _normalize_input(saved_input) != _normalize_input(fingerprint(path, config)):
+    metadata = CacheMetadata.model_validate_json(
+        metadata_path.read_text(encoding="utf-8")
+    )
+    if metadata.input.normalized() != fingerprint(path, config).normalized():
         return None
     with np.load(folder / "embeddings.npz", allow_pickle=False) as data:
         hashes, vectors = data["text_sha256"], data["vectors"]
@@ -95,11 +106,15 @@ def read_cache(path: Path, config: Config) -> CachedIngest | None:
 
 def save_cache(
     source: Path,
-    input_settings: JSONObject,
-    metadata: JSONObject,
+    input_settings: CacheInput,
+    files: dict[str, list[str]],
+    *,
+    points: list[CachePointMeta],
     vectors: dict[bytes, list[float]],
     artifacts: dict[str, bytes | None],
+    dimensions: int,
 ) -> None:
+    """Atomically write cached ingest artifacts and embeddings for ``source``."""
     parent = source.parent / CACHE_DIR
     parent.mkdir(exist_ok=True)
     target = parent / source.name
@@ -115,19 +130,18 @@ def save_cache(
             else:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(content)
+        payload = CacheMetadata(input=input_settings, files=files, points=points)
         (output / "metadata.json").write_text(
-            json.dumps({"input": input_settings, **metadata}, indent=2) + "\n",
+            payload.model_dump_json(indent=2, exclude_none=True) + "\n",
             encoding="utf-8",
         )
-        embedding = cast(dict[str, int], input_settings["embedding"])
-        width = int(embedding["dimensions"])
         np.savez(
             output / "embeddings.npz",
             text_sha256=np.asarray(
                 [list(key) for key in vectors], dtype=np.uint8
             ).reshape(len(vectors), 32),
             vectors=np.asarray(list(vectors.values()), dtype=np.float32).reshape(
-                len(vectors), width
+                len(vectors), dimensions
             ),
         )
         old = base / "old"

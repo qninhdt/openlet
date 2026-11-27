@@ -1,42 +1,69 @@
+"""Export and sanitize Datalab Markdown/JSON payloads into local artifact trees."""
+
+from __future__ import annotations
+
 import base64
-import json
 import re
 from collections import Counter
-from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
-from .convert import InvalidDocument, page_limit, validate_output
-from .filters import ImageArtifactWriter, ignored_repeated_digests, image_digest
-from .layout import write_markdown
-from .tables import externalize_tables
+from openlet_sdk.types import JSON
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+from letfs_ingest.convert import InvalidDocumentError, page_limit, validate_output
+from letfs_ingest.filters import (
+    ImageArtifactWriter,
+    ignored_repeated_digests,
+    image_digest,
+)
+from letfs_ingest.layout import write_markdown
+from letfs_ingest.tables import externalize_tables
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from openlet_sdk.config import Config
 
 
-def response_object(value: object) -> dict[str, object]:
-    if isinstance(value, dict):
-        return {str(k): v for k, v in cast(dict[object, object], value).items()}
-    return {}
+class _DatalabBlock(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    block_type: str | None = None
+    images: dict[str, JSON] | None = None
 
 
-def _block_types(result: dict[str, object]) -> dict[str, str]:
+class _DatalabChunks(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    blocks: list[_DatalabBlock] = Field(default_factory=list[_DatalabBlock])
+
+
+class _DatalabMetadata(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    failed_pages: JSON = None
+
+
+class _DatalabPayload(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    success: bool | None = None
+    page_count: int | None = None
+    markdown: str | None = None
+    metadata: _DatalabMetadata | None = None
+    chunks: _DatalabChunks | None = None
+    images: dict[str, str] | None = None
+
+
+def _block_types(payload: _DatalabPayload) -> dict[str, str]:
     types: dict[str, str] = {}
-    chunks = result.get("chunks")
-    if not isinstance(chunks, dict):
+    if payload.chunks is None:
         return types
-    blocks = response_object(cast(object, chunks)).get("blocks")
-    if not isinstance(blocks, list):
-        return types
-    for block in cast(list[object], blocks):
-        obj = response_object(block)
-        btype = obj.get("block_type")
-        if not isinstance(btype, str):
+    for block in payload.chunks.blocks:
+        if block.block_type is None or block.images is None:
             continue
-        imgs = obj.get("images")
-        if isinstance(imgs, dict):
-            for key in cast(dict[object, object], imgs):
-                types[str(key)] = btype
+        for key in block.images:
+            types[key] = block.block_type
     return types
 
 
@@ -54,7 +81,7 @@ def _strip_dropped_image(body: str, key: str, dropped_alts: set[str]) -> str:
         r"""<img\b[^>]*\bsrc=["']<?""" + re.escape(key) + r""">?["'][^>]*>""",
         "",
         body,
-        flags=re.I,
+        flags=re.IGNORECASE,
     )
 
 
@@ -95,34 +122,41 @@ def _rewrite_image_links(body: str, renames: dict[str, str]) -> str:
             r'(\bsrc=["\'])' + re.escape(old_key) + r'(?=["\'])',
             rf"\g<1>{new_path}",
             body,
-            flags=re.I,
+            flags=re.IGNORECASE,
         )
     return body
 
 
-def export(source: Path, success: bool, output: Path, config: Config) -> None:
-    with source.open("rb") as stream:
-        result = response_object(json.load(stream))
-    result.setdefault("success", success)
+def export(source: Path, output: Path, config: Config, *, success: bool) -> None:
+    """Validate a Datalab conversion response JSON and write normalized artifacts."""
+    try:
+        payload = _DatalabPayload.model_validate_json(source.read_bytes())
+    except ValidationError as exc:
+        raise InvalidDocumentError(
+            f"Datalab returned invalid JSON payload: {exc}"
+        ) from exc
+
+    effective_success = success if payload.success is None else payload.success
     parser = config["services"]["letfs_ingest"]["cpu"]
     limits = parser["limits"]
     storage = config["services"]["letfs"]
-    count, body = result.get("page_count"), result.get("markdown")
+    count = payload.page_count
+    body = payload.markdown
     limit = page_limit(config)
-    if type(count) is int and count > limit:
-        raise InvalidDocument(f"Document exceeds the {limit}-page limit")
+    if count is not None and count > limit:
+        raise InvalidDocumentError(f"Document exceeds the {limit}-page limit")
     if (
-        result.get("success") is not True
-        or type(count) is not int
+        effective_success is not True
+        or count is None
         or count <= 0
-        or not isinstance(body, str)
+        or body is None
         or not body.strip()
-        or response_object(result.get("metadata") or {}).get("failed_pages")
+        or (payload.metadata is not None and payload.metadata.failed_pages)
     ):
-        raise InvalidDocument("Datalab returned incomplete content")
+        raise InvalidDocumentError("Datalab returned incomplete content")
 
-    block_map = _block_types(result)
-    images = response_object(result.get("images") or {})
+    block_map = _block_types(payload)
+    images = payload.images or {}
     max_blob = storage["processing"]["max_artifact_blob_bytes"]
     max_artifacts = storage["processing"]["max_artifacts"]
 
@@ -138,8 +172,8 @@ def export(source: Path, success: bool, output: Path, config: Config) -> None:
         )
         if not occurrences:
             continue
-        if not isinstance(encoded, str) or len(encoded) > 4 * ((max_blob + 2) // 3):
-            raise InvalidDocument("Datalab image exceeds byte limit")
+        if len(encoded) > 4 * ((max_blob + 2) // 3):
+            raise InvalidDocumentError("Datalab image exceeds byte limit")
         raw_bytes = base64.b64decode(encoded, validate=True)
         decoded_by_key[key] = raw_bytes
         digest_counts[image_digest(raw_bytes)] += occurrences
@@ -158,7 +192,7 @@ def export(source: Path, success: bool, output: Path, config: Config) -> None:
         try:
             keep, rel_path = writer.save(raw_bytes, block_type=block_map.get(key))
         except ValueError as exc:
-            raise InvalidDocument(f"Datalab {exc}") from exc
+            raise InvalidDocumentError(f"Datalab {exc}") from exc
         if not keep:
             body = _strip_dropped_image(body, key, dropped_alts)
         elif rel_path is not None:
@@ -171,14 +205,14 @@ def export(source: Path, success: bool, output: Path, config: Config) -> None:
         r"^<!-- BEGIN IMAGE CAPTION -->[ \t]*\n.*?^<!-- END IMAGE CAPTION -->[ \t]*(?:\n|$)",
         "",
         body,
-        flags=re.M | re.S,
+        flags=re.MULTILINE | re.DOTALL,
     )
     # Compact oversized GFM separator rulers and padded table-cell spaces so tables stay concise.
     body = re.sub(
         r"^(\|(?:[ \t]*:?-{3,}:?[ \t]*\|)+)[ \t]*$",
         lambda m: re.sub(r"-{4,}", "---", m.group(1)),
         body,
-        flags=re.M,
+        flags=re.MULTILINE,
     )
     body = re.sub(
         r"^\|.*\|[ \t]*$",
@@ -190,7 +224,7 @@ def export(source: Path, success: bool, output: Path, config: Config) -> None:
             + " |"
         ),
         body,
-        flags=re.M,
+        flags=re.MULTILINE,
     )
     max_text = storage["max_text_bytes"]
     body = externalize_tables(body, output, parser["split_tokens"], max_text)

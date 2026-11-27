@@ -1,13 +1,9 @@
 from pathlib import Path
-from typing import cast
 
 import pytest
-import yaml
-from openlet_sdk.config import Config
+from openlet_sdk.config import Config, load_path
 
 
 @pytest.fixture
 def config() -> Config:
-    return cast(
-        Config, yaml.safe_load(Path("infra/config/openlet.example.yaml").read_text())
-    )
+    return load_path(Path("infra/config/openlet.example.yaml"))

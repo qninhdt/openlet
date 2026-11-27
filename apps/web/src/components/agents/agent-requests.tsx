@@ -49,6 +49,7 @@ export function RequestForm({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [notes, setNotes] = useState<Record<string, string>>({});
   const questions = request.payload.questions ?? [];
   function update(id: string, values: string[]) {
     onDraft({ ...draft, [id]: values });
@@ -61,14 +62,17 @@ export function RequestForm({
         status === 'answered'
           ? {
               answers: Object.fromEntries(
-                questions.map((q) => [
-                  q.id,
-                  q.type === 'text'
-                    ? { text: draft[q.id]?.[0] ?? '' }
-                    : q.type === 'single_choice'
-                      ? { option_id: draft[q.id]?.[0] ?? null }
-                      : { option_ids: draft[q.id] ?? [] },
-                ]),
+                questions.map((q) => {
+                  const note = notes[q.id]?.trim();
+                  return [
+                    q.id,
+                    q.type === 'text'
+                      ? { text: draft[q.id]?.[0] ?? '' }
+                      : q.type === 'single_choice'
+                        ? { option_id: draft[q.id]?.[0] ?? null, ...(note ? { note } : {}) }
+                        : { option_ids: draft[q.id] ?? [], ...(note ? { note } : {}) },
+                  ];
+                }),
               ),
             }
           : undefined;
@@ -155,27 +159,35 @@ export function RequestForm({
                   placeholder="Write your answer…"
                 />
               ) : (
-                <QuestionnaireChoices>
-                  {q.options?.map((o) => (
-                    <QuestionnaireChoice
-                      key={o.id}
-                      value={o.id}
-                      checked={draft[q.id]?.includes(o.id) ?? false}
-                      onChange={(e) =>
-                        update(
-                          q.id,
-                          q.type === 'single_choice'
-                            ? [o.id]
-                            : e.target.checked
-                              ? [...(draft[q.id] ?? []), o.id]
-                              : (draft[q.id] ?? []).filter((id) => id !== o.id),
-                        )
-                      }
-                    >
-                      {o.label}
-                    </QuestionnaireChoice>
-                  ))}
-                </QuestionnaireChoices>
+                <div className="space-y-2.5">
+                  <QuestionnaireChoices>
+                    {q.options?.map((o) => (
+                      <QuestionnaireChoice
+                        key={o.id}
+                        value={o.id}
+                        checked={draft[q.id]?.includes(o.id) ?? false}
+                        onChange={(e) =>
+                          update(
+                            q.id,
+                            q.type === 'single_choice'
+                              ? [o.id]
+                              : e.target.checked
+                                ? [...(draft[q.id] ?? []), o.id]
+                                : (draft[q.id] ?? []).filter((id) => id !== o.id),
+                          )
+                        }
+                      >
+                        {o.label}
+                      </QuestionnaireChoice>
+                    ))}
+                  </QuestionnaireChoices>
+                  <QuestionnaireInput
+                    aria-label={`Optional note for ${q.text}`}
+                    value={notes[q.id] ?? ''}
+                    onChange={(e) => setNotes((cur) => ({ ...cur, [q.id]: e.target.value }))}
+                    placeholder="Optional note…"
+                  />
+                </div>
               )}
             </QuestionnaireItem>
           ))}

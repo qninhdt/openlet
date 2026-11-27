@@ -13,6 +13,8 @@ import (
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 func TestProvisionWorkspaceReturnsFinalStorageRevision(t *testing.T) {
@@ -35,13 +37,13 @@ func TestProvisionWorkspaceReturnsFinalStorageRevision(t *testing.T) {
 	env.AssertExpectations(t)
 }
 
-func TestDeleteWorkspaceObservesBothOwners(t *testing.T) {
+func TestDeleteWorkspaceObservesAllOwners(t *testing.T) {
 	for _, storageFails := range []bool{false, true} {
-		t.Run(map[bool]string{false: "storage completes before agent cleanup", true: "storage failure preserves record"}[storageFails], func(t *testing.T) {
+		t.Run(map[bool]string{false: "all owners complete before record delete", true: "storage failure preserves record"}[storageFails], func(t *testing.T) {
 			var suite testsuite.WorkflowTestSuite
 			env := suite.NewTestWorkflowEnvironment()
 			noop := func(context.Context, sdk.WorkspaceCleanup) error { return nil }
-			for _, name := range []string{"RevokeWorkspaceAccess", "DeleteWorkspaceStorage", "DeleteWorkspaceAgents", "DeleteWorkspaceRecord"} {
+			for _, name := range []string{"RevokeWorkspaceAccess", "DeleteWorkspaceStorage", "DeleteWorkspaceChat", "DeleteWorkspaceAgents", "DeleteWorkspaceRecord"} {
 				env.RegisterActivityWithOptions(noop, activity.RegisterOptions{Name: name})
 			}
 			payload := sdk.WorkspaceCleanup{WorkspaceID: "a259f79c-6945-4f28-838a-8699852122f6"}
@@ -54,15 +56,14 @@ func TestDeleteWorkspaceObservesBothOwners(t *testing.T) {
 				storageErr = temporal.NewNonRetryableApplicationError("storage unavailable", "storage", nil)
 			}
 			env.OnActivity("DeleteWorkspaceStorage", mock.Anything, payload).Return(storageErr).Once()
+			env.OnActivity("DeleteWorkspaceChat", mock.Anything, payload).Return(nil).Once()
 			env.OnActivity("DeleteWorkspaceAgents", mock.Anything, payload).After(time.Minute).Return(nil).Once()
-			deleted := false
 			if !storageFails {
-				env.OnActivity("DeleteWorkspaceRecord", mock.Anything, payload).Return(func(context.Context, sdk.WorkspaceCleanup) error { deleted = true; return nil }).Once()
+				env.OnActivity("DeleteWorkspaceRecord", mock.Anything, payload).Return(nil).Once()
 			} else {
 				env.OnActivity("DeleteWorkspaceRecord", mock.Anything, payload).Never()
 			}
-			env.RegisterDelayedCallback(func() { require.Equal(t, !storageFails, deleted) }, 30*time.Second)
-			env.ExecuteWorkflow(DeleteWorkspace, DeleteWorkspaceInput{WorkspaceID: payload.WorkspaceID, LetFSQueue: "storage", LetaBridgeQueue: "agents"})
+			env.ExecuteWorkflow(DeleteWorkspace, DeleteWorkspaceInput{WorkspaceID: payload.WorkspaceID, LetFSQueue: "storage"})
 			require.True(t, env.IsWorkflowCompleted())
 			if storageFails {
 				require.Error(t, env.GetWorkflowError())
@@ -72,4 +73,15 @@ func TestDeleteWorkspaceObservesBothOwners(t *testing.T) {
 			env.AssertExpectations(t)
 		})
 	}
+}
+
+func TestGetRealtimeConnectToken(t *testing.T) {
+	s := &Server{CentrifugoSecret: "super-secret", CentrifugoTTL: 30 * time.Minute}
+	uid := "a259f79c-6945-4f28-838a-8699852122f6"
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("x-openlet-user-id", uid))
+	resp, err := s.GetRealtimeConnectToken(ctx, &emptypb.Empty{})
+	require.NoError(t, err)
+	require.Equal(t, uid, resp.UserId)
+	require.NotEmpty(t, resp.Token)
+	require.True(t, resp.ExpiresAt.AsTime().After(time.Now().Add(20*time.Minute)))
 }

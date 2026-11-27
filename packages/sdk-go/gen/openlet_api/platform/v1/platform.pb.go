@@ -1467,6 +1467,66 @@ func (x *AcceptInvitationRequest) GetToken() string {
 	return ""
 }
 
+type RealtimeConnectToken struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Token         string                 `protobuf:"bytes,1,opt,name=token,proto3" json:"token,omitempty"`
+	ExpiresAt     *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	UserId        string                 `protobuf:"bytes,3,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RealtimeConnectToken) Reset() {
+	*x = RealtimeConnectToken{}
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RealtimeConnectToken) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RealtimeConnectToken) ProtoMessage() {}
+
+func (x *RealtimeConnectToken) ProtoReflect() protoreflect.Message {
+	mi := &file_openlet_api_platform_v1_platform_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RealtimeConnectToken.ProtoReflect.Descriptor instead.
+func (*RealtimeConnectToken) Descriptor() ([]byte, []int) {
+	return file_openlet_api_platform_v1_platform_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *RealtimeConnectToken) GetToken() string {
+	if x != nil {
+		return x.Token
+	}
+	return ""
+}
+
+func (x *RealtimeConnectToken) GetExpiresAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ExpiresAt
+	}
+	return nil
+}
+
+func (x *RealtimeConnectToken) GetUserId() string {
+	if x != nil {
+		return x.UserId
+	}
+	return ""
+}
+
 var File_openlet_api_platform_v1_platform_proto protoreflect.FileDescriptor
 
 const file_openlet_api_platform_v1_platform_proto_rawDesc = "" +
@@ -1592,7 +1652,12 @@ const file_openlet_api_platform_v1_platform_proto_rawDesc = "" +
 	"\fworkspace_id\x18\x01 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\vworkspaceId\x12-\n" +
 	"\rinvitation_id\x18\x02 \x01(\tB\b\xbaH\x05r\x03\xb0\x01\x01R\finvitationId\"8\n" +
 	"\x17AcceptInvitationRequest\x12\x1d\n" +
-	"\x05token\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x05token*d\n" +
+	"\x05token\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x05token\"\x80\x01\n" +
+	"\x14RealtimeConnectToken\x12\x14\n" +
+	"\x05token\x18\x01 \x01(\tR\x05token\x129\n" +
+	"\n" +
+	"expires_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\x12\x17\n" +
+	"\auser_id\x18\x03 \x01(\tR\x06userId*d\n" +
 	"\rWorkspaceRole\x12\x1e\n" +
 	"\x1aWORKSPACE_ROLE_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14WORKSPACE_ROLE_OWNER\x10\x01\x12\x19\n" +
@@ -1601,11 +1666,12 @@ const file_openlet_api_platform_v1_platform_proto_rawDesc = "" +
 	"\x1bWORKSPACE_STATE_UNSPECIFIED\x10\x00\x12 \n" +
 	"\x1cWORKSPACE_STATE_PROVISIONING\x10\x01\x12\x1a\n" +
 	"\x16WORKSPACE_STATE_ACTIVE\x10\x02\x12\x1c\n" +
-	"\x18WORKSPACE_STATE_DELETING\x10\x032\xfb\x10\n" +
+	"\x18WORKSPACE_STATE_DELETING\x10\x032\x80\x12\n" +
 	"\x0fPlatformService\x12W\n" +
 	"\aOnboard\x12\x16.google.protobuf.Empty\x1a\x19.openlet.platform.v1.User\"\x19\x82\xd3\xe4\x93\x02\x13:\x01*\"\x0e/v1/me:onboard\x12J\n" +
 	"\x05GetMe\x12\x16.google.protobuf.Empty\x1a\x19.openlet.platform.v1.User\"\x0e\x82\xd3\xe4\x93\x02\b\x12\x06/v1/me\x12^\n" +
-	"\bUpdateMe\x12$.openlet.platform.v1.UpdateMeRequest\x1a\x19.openlet.platform.v1.User\"\x11\x82\xd3\xe4\x93\x02\v:\x01*2\x06/v1/me\x12\x81\x01\n" +
+	"\bUpdateMe\x12$.openlet.platform.v1.UpdateMeRequest\x1a\x19.openlet.platform.v1.User\"\x11\x82\xd3\xe4\x93\x02\v:\x01*2\x06/v1/me\x12\x82\x01\n" +
+	"\x17GetRealtimeConnectToken\x12\x16.google.protobuf.Empty\x1a).openlet.platform.v1.RealtimeConnectToken\"$\x82\xd3\xe4\x93\x02\x1e:\x01*\"\x19/v1/realtime:connectToken\x12\x81\x01\n" +
 	"\x0eListWorkspaces\x12*.openlet.platform.v1.ListWorkspacesRequest\x1a+.openlet.platform.v1.ListWorkspacesResponse\"\x16\x82\xd3\xe4\x93\x02\x10\x12\x0e/v1/workspaces\x12}\n" +
 	"\x11CreateMyWorkspace\x12-.openlet.platform.v1.CreateMyWorkspaceRequest\x1a\x1e.openlet.platform.v1.Workspace\"\x19\x82\xd3\xe4\x93\x02\x13:\x01*\"\x0e/v1/workspaces\x12|\n" +
 	"\fGetWorkspace\x12%.openlet.platform.v1.WorkspaceRequest\x1a\x1e.openlet.platform.v1.Workspace\"%\x82\xd3\xe4\x93\x02\x1f\x12\x1d/v1/workspaces/{workspace_id}\x12\x88\x01\n" +
@@ -1633,7 +1699,7 @@ func file_openlet_api_platform_v1_platform_proto_rawDescGZIP() []byte {
 }
 
 var file_openlet_api_platform_v1_platform_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_openlet_api_platform_v1_platform_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
+var file_openlet_api_platform_v1_platform_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
 var file_openlet_api_platform_v1_platform_proto_goTypes = []any{
 	(WorkspaceRole)(0),                        // 0: openlet.platform.v1.WorkspaceRole
 	(WorkspaceState)(0),                       // 1: openlet.platform.v1.WorkspaceState
@@ -1660,61 +1726,65 @@ var file_openlet_api_platform_v1_platform_proto_goTypes = []any{
 	(*ListInvitationsResponse)(nil),           // 22: openlet.platform.v1.ListInvitationsResponse
 	(*RevokeInvitationRequest)(nil),           // 23: openlet.platform.v1.RevokeInvitationRequest
 	(*AcceptInvitationRequest)(nil),           // 24: openlet.platform.v1.AcceptInvitationRequest
-	(*timestamppb.Timestamp)(nil),             // 25: google.protobuf.Timestamp
-	(*emptypb.Empty)(nil),                     // 26: google.protobuf.Empty
+	(*RealtimeConnectToken)(nil),              // 25: openlet.platform.v1.RealtimeConnectToken
+	(*timestamppb.Timestamp)(nil),             // 26: google.protobuf.Timestamp
+	(*emptypb.Empty)(nil),                     // 27: google.protobuf.Empty
 }
 var file_openlet_api_platform_v1_platform_proto_depIdxs = []int32{
 	2,  // 0: openlet.platform.v1.User.appearance:type_name -> openlet.platform.v1.AvatarAppearance
 	3,  // 1: openlet.platform.v1.User.preferences:type_name -> openlet.platform.v1.AccountPreferences
 	1,  // 2: openlet.platform.v1.Workspace.state:type_name -> openlet.platform.v1.WorkspaceState
-	25, // 3: openlet.platform.v1.Workspace.created_at:type_name -> google.protobuf.Timestamp
+	26, // 3: openlet.platform.v1.Workspace.created_at:type_name -> google.protobuf.Timestamp
 	0,  // 4: openlet.platform.v1.Workspace.role:type_name -> openlet.platform.v1.WorkspaceRole
 	4,  // 5: openlet.platform.v1.WorkspaceMember.user:type_name -> openlet.platform.v1.User
 	0,  // 6: openlet.platform.v1.WorkspaceMember.role:type_name -> openlet.platform.v1.WorkspaceRole
-	25, // 7: openlet.platform.v1.Invitation.expires_at:type_name -> google.protobuf.Timestamp
+	26, // 7: openlet.platform.v1.Invitation.expires_at:type_name -> google.protobuf.Timestamp
 	2,  // 8: openlet.platform.v1.UpdateMeRequest.appearance:type_name -> openlet.platform.v1.AvatarAppearance
 	3,  // 9: openlet.platform.v1.UpdateMeRequest.preferences:type_name -> openlet.platform.v1.AccountPreferences
 	5,  // 10: openlet.platform.v1.ListWorkspacesResponse.workspaces:type_name -> openlet.platform.v1.Workspace
 	6,  // 11: openlet.platform.v1.ListMembersResponse.members:type_name -> openlet.platform.v1.WorkspaceMember
 	7,  // 12: openlet.platform.v1.CreateInvitationResponse.invitation:type_name -> openlet.platform.v1.Invitation
 	7,  // 13: openlet.platform.v1.ListInvitationsResponse.invitations:type_name -> openlet.platform.v1.Invitation
-	26, // 14: openlet.platform.v1.PlatformService.Onboard:input_type -> google.protobuf.Empty
-	26, // 15: openlet.platform.v1.PlatformService.GetMe:input_type -> google.protobuf.Empty
-	8,  // 16: openlet.platform.v1.PlatformService.UpdateMe:input_type -> openlet.platform.v1.UpdateMeRequest
-	9,  // 17: openlet.platform.v1.PlatformService.ListWorkspaces:input_type -> openlet.platform.v1.ListWorkspacesRequest
-	11, // 18: openlet.platform.v1.PlatformService.CreateMyWorkspace:input_type -> openlet.platform.v1.CreateMyWorkspaceRequest
-	12, // 19: openlet.platform.v1.PlatformService.GetWorkspace:input_type -> openlet.platform.v1.WorkspaceRequest
-	13, // 20: openlet.platform.v1.PlatformService.UpdateWorkspace:input_type -> openlet.platform.v1.UpdateWorkspaceRequest
-	12, // 21: openlet.platform.v1.PlatformService.DeleteWorkspace:input_type -> openlet.platform.v1.WorkspaceRequest
-	14, // 22: openlet.platform.v1.PlatformService.TransferWorkspaceOwnership:input_type -> openlet.platform.v1.TransferWorkspaceOwnershipRequest
-	15, // 23: openlet.platform.v1.PlatformService.ListMembers:input_type -> openlet.platform.v1.ListMembersRequest
-	17, // 24: openlet.platform.v1.PlatformService.AddMember:input_type -> openlet.platform.v1.AddMemberRequest
-	18, // 25: openlet.platform.v1.PlatformService.RemoveMember:input_type -> openlet.platform.v1.RemoveMemberRequest
-	19, // 26: openlet.platform.v1.PlatformService.CreateInvitation:input_type -> openlet.platform.v1.CreateInvitationRequest
-	21, // 27: openlet.platform.v1.PlatformService.ListInvitations:input_type -> openlet.platform.v1.ListInvitationsRequest
-	23, // 28: openlet.platform.v1.PlatformService.RevokeInvitation:input_type -> openlet.platform.v1.RevokeInvitationRequest
-	24, // 29: openlet.platform.v1.PlatformService.AcceptInvitation:input_type -> openlet.platform.v1.AcceptInvitationRequest
-	4,  // 30: openlet.platform.v1.PlatformService.Onboard:output_type -> openlet.platform.v1.User
-	4,  // 31: openlet.platform.v1.PlatformService.GetMe:output_type -> openlet.platform.v1.User
-	4,  // 32: openlet.platform.v1.PlatformService.UpdateMe:output_type -> openlet.platform.v1.User
-	10, // 33: openlet.platform.v1.PlatformService.ListWorkspaces:output_type -> openlet.platform.v1.ListWorkspacesResponse
-	5,  // 34: openlet.platform.v1.PlatformService.CreateMyWorkspace:output_type -> openlet.platform.v1.Workspace
-	5,  // 35: openlet.platform.v1.PlatformService.GetWorkspace:output_type -> openlet.platform.v1.Workspace
-	5,  // 36: openlet.platform.v1.PlatformService.UpdateWorkspace:output_type -> openlet.platform.v1.Workspace
-	5,  // 37: openlet.platform.v1.PlatformService.DeleteWorkspace:output_type -> openlet.platform.v1.Workspace
-	6,  // 38: openlet.platform.v1.PlatformService.TransferWorkspaceOwnership:output_type -> openlet.platform.v1.WorkspaceMember
-	16, // 39: openlet.platform.v1.PlatformService.ListMembers:output_type -> openlet.platform.v1.ListMembersResponse
-	6,  // 40: openlet.platform.v1.PlatformService.AddMember:output_type -> openlet.platform.v1.WorkspaceMember
-	26, // 41: openlet.platform.v1.PlatformService.RemoveMember:output_type -> google.protobuf.Empty
-	20, // 42: openlet.platform.v1.PlatformService.CreateInvitation:output_type -> openlet.platform.v1.CreateInvitationResponse
-	22, // 43: openlet.platform.v1.PlatformService.ListInvitations:output_type -> openlet.platform.v1.ListInvitationsResponse
-	26, // 44: openlet.platform.v1.PlatformService.RevokeInvitation:output_type -> google.protobuf.Empty
-	6,  // 45: openlet.platform.v1.PlatformService.AcceptInvitation:output_type -> openlet.platform.v1.WorkspaceMember
-	30, // [30:46] is the sub-list for method output_type
-	14, // [14:30] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	26, // 14: openlet.platform.v1.RealtimeConnectToken.expires_at:type_name -> google.protobuf.Timestamp
+	27, // 15: openlet.platform.v1.PlatformService.Onboard:input_type -> google.protobuf.Empty
+	27, // 16: openlet.platform.v1.PlatformService.GetMe:input_type -> google.protobuf.Empty
+	8,  // 17: openlet.platform.v1.PlatformService.UpdateMe:input_type -> openlet.platform.v1.UpdateMeRequest
+	27, // 18: openlet.platform.v1.PlatformService.GetRealtimeConnectToken:input_type -> google.protobuf.Empty
+	9,  // 19: openlet.platform.v1.PlatformService.ListWorkspaces:input_type -> openlet.platform.v1.ListWorkspacesRequest
+	11, // 20: openlet.platform.v1.PlatformService.CreateMyWorkspace:input_type -> openlet.platform.v1.CreateMyWorkspaceRequest
+	12, // 21: openlet.platform.v1.PlatformService.GetWorkspace:input_type -> openlet.platform.v1.WorkspaceRequest
+	13, // 22: openlet.platform.v1.PlatformService.UpdateWorkspace:input_type -> openlet.platform.v1.UpdateWorkspaceRequest
+	12, // 23: openlet.platform.v1.PlatformService.DeleteWorkspace:input_type -> openlet.platform.v1.WorkspaceRequest
+	14, // 24: openlet.platform.v1.PlatformService.TransferWorkspaceOwnership:input_type -> openlet.platform.v1.TransferWorkspaceOwnershipRequest
+	15, // 25: openlet.platform.v1.PlatformService.ListMembers:input_type -> openlet.platform.v1.ListMembersRequest
+	17, // 26: openlet.platform.v1.PlatformService.AddMember:input_type -> openlet.platform.v1.AddMemberRequest
+	18, // 27: openlet.platform.v1.PlatformService.RemoveMember:input_type -> openlet.platform.v1.RemoveMemberRequest
+	19, // 28: openlet.platform.v1.PlatformService.CreateInvitation:input_type -> openlet.platform.v1.CreateInvitationRequest
+	21, // 29: openlet.platform.v1.PlatformService.ListInvitations:input_type -> openlet.platform.v1.ListInvitationsRequest
+	23, // 30: openlet.platform.v1.PlatformService.RevokeInvitation:input_type -> openlet.platform.v1.RevokeInvitationRequest
+	24, // 31: openlet.platform.v1.PlatformService.AcceptInvitation:input_type -> openlet.platform.v1.AcceptInvitationRequest
+	4,  // 32: openlet.platform.v1.PlatformService.Onboard:output_type -> openlet.platform.v1.User
+	4,  // 33: openlet.platform.v1.PlatformService.GetMe:output_type -> openlet.platform.v1.User
+	4,  // 34: openlet.platform.v1.PlatformService.UpdateMe:output_type -> openlet.platform.v1.User
+	25, // 35: openlet.platform.v1.PlatformService.GetRealtimeConnectToken:output_type -> openlet.platform.v1.RealtimeConnectToken
+	10, // 36: openlet.platform.v1.PlatformService.ListWorkspaces:output_type -> openlet.platform.v1.ListWorkspacesResponse
+	5,  // 37: openlet.platform.v1.PlatformService.CreateMyWorkspace:output_type -> openlet.platform.v1.Workspace
+	5,  // 38: openlet.platform.v1.PlatformService.GetWorkspace:output_type -> openlet.platform.v1.Workspace
+	5,  // 39: openlet.platform.v1.PlatformService.UpdateWorkspace:output_type -> openlet.platform.v1.Workspace
+	5,  // 40: openlet.platform.v1.PlatformService.DeleteWorkspace:output_type -> openlet.platform.v1.Workspace
+	6,  // 41: openlet.platform.v1.PlatformService.TransferWorkspaceOwnership:output_type -> openlet.platform.v1.WorkspaceMember
+	16, // 42: openlet.platform.v1.PlatformService.ListMembers:output_type -> openlet.platform.v1.ListMembersResponse
+	6,  // 43: openlet.platform.v1.PlatformService.AddMember:output_type -> openlet.platform.v1.WorkspaceMember
+	27, // 44: openlet.platform.v1.PlatformService.RemoveMember:output_type -> google.protobuf.Empty
+	20, // 45: openlet.platform.v1.PlatformService.CreateInvitation:output_type -> openlet.platform.v1.CreateInvitationResponse
+	22, // 46: openlet.platform.v1.PlatformService.ListInvitations:output_type -> openlet.platform.v1.ListInvitationsResponse
+	27, // 47: openlet.platform.v1.PlatformService.RevokeInvitation:output_type -> google.protobuf.Empty
+	6,  // 48: openlet.platform.v1.PlatformService.AcceptInvitation:output_type -> openlet.platform.v1.WorkspaceMember
+	32, // [32:49] is the sub-list for method output_type
+	15, // [15:32] is the sub-list for method input_type
+	15, // [15:15] is the sub-list for extension type_name
+	15, // [15:15] is the sub-list for extension extendee
+	0,  // [0:15] is the sub-list for field type_name
 }
 
 func init() { file_openlet_api_platform_v1_platform_proto_init() }
@@ -1736,7 +1806,7 @@ func file_openlet_api_platform_v1_platform_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_openlet_api_platform_v1_platform_proto_rawDesc), len(file_openlet_api_platform_v1_platform_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   23,
+			NumMessages:   24,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

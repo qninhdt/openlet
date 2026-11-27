@@ -50,6 +50,11 @@ class PlatformServiceStub:
                 request_serializer=openlet__api_dot_platform_dot_v1_dot_platform__pb2.UpdateMeRequest.SerializeToString,
                 response_deserializer=openlet__api_dot_platform_dot_v1_dot_platform__pb2.User.FromString,
                 _registered_method=True)
+        self.GetRealtimeConnectToken = channel.unary_unary(
+                '/openlet.platform.v1.PlatformService/GetRealtimeConnectToken',
+                request_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
+                response_deserializer=openlet__api_dot_platform_dot_v1_dot_platform__pb2.RealtimeConnectToken.FromString,
+                _registered_method=True)
         self.ListWorkspaces = channel.unary_unary(
                 '/openlet.platform.v1.PlatformService/ListWorkspaces',
                 request_serializer=openlet__api_dot_platform_dot_v1_dot_platform__pb2.ListWorkspacesRequest.SerializeToString,
@@ -133,6 +138,12 @@ class PlatformServiceServicer:
         raise NotImplementedError('Method not implemented!')
 
     def UpdateMe(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetRealtimeConnectToken(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -233,6 +244,11 @@ def add_PlatformServiceServicer_to_server(servicer, server):
                     servicer.UpdateMe,
                     request_deserializer=openlet__api_dot_platform_dot_v1_dot_platform__pb2.UpdateMeRequest.FromString,
                     response_serializer=openlet__api_dot_platform_dot_v1_dot_platform__pb2.User.SerializeToString,
+            ),
+            'GetRealtimeConnectToken': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetRealtimeConnectToken,
+                    request_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
+                    response_serializer=openlet__api_dot_platform_dot_v1_dot_platform__pb2.RealtimeConnectToken.SerializeToString,
             ),
             'ListWorkspaces': grpc.unary_unary_rpc_method_handler(
                     servicer.ListWorkspaces,
@@ -381,6 +397,33 @@ class PlatformService:
             '/openlet.platform.v1.PlatformService/UpdateMe',
             openlet__api_dot_platform_dot_v1_dot_platform__pb2.UpdateMeRequest.SerializeToString,
             openlet__api_dot_platform_dot_v1_dot_platform__pb2.User.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetRealtimeConnectToken(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/openlet.platform.v1.PlatformService/GetRealtimeConnectToken',
+            google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
+            openlet__api_dot_platform_dot_v1_dot_platform__pb2.RealtimeConnectToken.FromString,
             options,
             channel_credentials,
             insecure,

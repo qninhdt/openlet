@@ -2,13 +2,28 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import TypedDict
 
 import httpx
 import pytest
 from openlet_env.loader import crc32c_base64 as crc32c_b64
 
-from .conftest import SAMPLE_FILES_DIR, AccountFixture, new_uuid, poll
+from .conftest import (
+    SAMPLE_FILES_DIR,
+    AccountFixture,
+    ReadTreeResponse,
+    new_uuid,
+    poll,
+)
+
+
+class _UploadPart(TypedDict):
+    partNumber: int
+    checksum: str
+
+
+class _CompletedPart(_UploadPart):
+    etag: str
 
 
 @pytest.mark.parametrize(
@@ -69,11 +84,11 @@ def test_datalab_publishes_markdown_artifacts(
         json={"root": {"nodeId": node["id"]}, "maxDepth": 8, "maxNodes": 100},
     )
     assert tree.is_success, tree.text
-    entries = cast(list[dict[str, Any]], tree.json()["entries"])
-    readme = next((e for e in entries if e.get("path") == "README.md"), None)
+    entries = ReadTreeResponse.model_validate(tree.json()).entries
+    readme = next((e for e in entries if e.path == "README.md"), None)
     assert readme is not None, entries
 
-    artifact = api.get(f"{base}/nodes/{readme['node']['id']}/text")
+    artifact = api.get(f"{base}/nodes/{readme.node.id}/text")
     assert artifact.is_success, artifact.text
     assert f"Datalab {extension.upper()} extract." in artifact.json()["content"]
 
@@ -131,22 +146,18 @@ def test_xlsx_ingest_search_and_multipart_upload(account: AccountFixture) -> Non
         json={"root": {"nodeId": node["id"]}, "maxDepth": 8, "maxNodes": 100},
     )
     assert tree.is_success, tree.text
-    entries = cast(list[dict[str, Any]], tree.json()["entries"])
-    readme = next((e for e in entries if e.get("path") == "README.md"), None)
+    entries = ReadTreeResponse.model_validate(tree.json()).entries
+    readme = next((e for e in entries if e.path == "README.md"), None)
     assert readme is not None
-    assert readme["node"]["readonly"] is True
+    assert readme.node.readonly is True
 
-    table_entry = next(
-        (e for e in entries if str(e.get("path", "")).endswith(".csv")), None
-    )
+    table_entry = next((e for e in entries if e.path.endswith(".csv")), None)
     assert table_entry is not None
-    sheet_text = api.get(f"{base}/nodes/{table_entry['node']['id']}/text").json()[
-        "content"
-    ]
+    sheet_text = api.get(f"{base}/nodes/{table_entry.node.id}/text").json()["content"]
     assert "Europe,120" in sheet_text
 
     denied_edit = api.patch(
-        f"{base}/nodes/{readme['node']['id']}/text",
+        f"{base}/nodes/{readme.node.id}/text",
         json={"append": "denied", "requestId": new_uuid()},
     )
     assert denied_edit.status_code >= 400
@@ -202,7 +213,7 @@ def test_xlsx_ingest_search_and_multipart_upload(account: AccountFixture) -> Non
     assert transfer["transfer"]["multipart"] is True
     part_size = int(transfer["transfer"]["partSizeBytes"])
     chunks = [payload[i : i + part_size] for i in range(0, len(payload), part_size)]
-    parts = [
+    parts: list[_UploadPart] = [
         {"partNumber": idx + 1, "checksum": crc32c_b64(chunk)}
         for idx, chunk in enumerate(chunks)
     ]
@@ -210,7 +221,7 @@ def test_xlsx_ingest_search_and_multipart_upload(account: AccountFixture) -> Non
         f"{base}/uploads/{transfer['id']}:signParts", json={"parts": parts}
     )
     assert signing.is_success, signing.text
-    completed_parts: list[dict[str, Any]] = []
+    completed_parts: list[_CompletedPart] = []
     for part in signing.json()["parts"]:
         part_num = int(part["partNumber"])
         resp = httpx.put(
@@ -220,7 +231,13 @@ def test_xlsx_ingest_search_and_multipart_upload(account: AccountFixture) -> Non
             timeout=60.0,
         )
         assert resp.is_success, resp.text
-        completed_parts.append({**parts[part_num - 1], "etag": resp.headers["etag"]})
+        completed_parts.append(
+            {
+                "partNumber": parts[part_num - 1]["partNumber"],
+                "checksum": parts[part_num - 1]["checksum"],
+                "etag": resp.headers["etag"],
+            }
+        )
 
     published = api.post(
         f"{base}/uploads/{transfer['id']}:complete",

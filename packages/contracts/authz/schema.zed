@@ -18,7 +18,7 @@ definition storage {
  relation owner: user | agent | agent#owner | workspace#owner
  relation editor: user | agent
  relation viewer: user | agent
- permission read = (owner + editor + viewer + public_workspace->eligible_actor + conversation->participate) & workspace->eligible_actor
+ permission read = (owner + editor + viewer + public_workspace->eligible_actor + conversation->view) & workspace->eligible_actor
  permission write = (owner + editor + conversation->participate) & workspace->eligible_actor
  permission manage_access = owner & workspace->eligible_actor
  permission delete = (owner & workspace->eligible_actor) + workspace->manage
@@ -41,7 +41,11 @@ definition computer {
 }
 
 definition conversation {
- relation agent: agent
+ relation workspace: workspace
+ relation admin: user
  relation member: user | agent
- permission participate = member & (agent + agent->use)
+ relation agent_member: agent
+ permission participate = (admin + member) & workspace->eligible_actor
+ permission view = participate + (agent_member->manage & workspace->participate)
+ permission manage = admin & workspace->participate
 }

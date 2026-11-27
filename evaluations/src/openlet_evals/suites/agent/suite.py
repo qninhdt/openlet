@@ -6,10 +6,9 @@ import json
 import math
 import time
 from collections import Counter, defaultdict
-from collections.abc import Sequence
 from datetime import UTC, datetime
-from pathlib import Path
-from typing import Any, Literal
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Literal
 
 from deepeval import evaluate  # pyright: ignore[reportUnknownVariableType]
 from deepeval.dataset import Expectations, Golden
@@ -21,28 +20,52 @@ from deepeval.evaluate.configs import (
 )
 from deepeval.test_case import LLMTestCase
 from openlet_env.config import read_user_env
+from openlet_sdk.types import is_str_mapping
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from openlet_evals.core.judge import make_judge
-from openlet_evals.core.report import build_run, render_markdown, save_run
+from openlet_evals.core.report import (
+    EvalRun,
+    EvalSample,
+    TelemetryValue,
+    build_run,
+    render_markdown,
+    save_run,
+)
+from openlet_evals.suites.agent.runner import (
+    DEFAULT_PROMPT_TEMPLATE,
+    RunUsage,
+    ToolStats,
+    TrialArtifact,
+    run_trials,
+)
 
-from .runner import DEFAULT_PROMPT_TEMPLATE, TrialArtifact, run_trials
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from pathlib import Path
 
-DEFAULT_TOOLS: dict[str, bool] = {
-    "hitl": False,
-    "multi_agent": False,
-    "schedule": False,
-    "web": False,
-    "execute": True,
-    "semantic_search": True,
-    "activity": True,
-}
+    from deepeval.evaluate.types import TestResult
+
+DEFAULT_TOOLS: MappingProxyType[str, bool] = MappingProxyType(
+    {
+        "hitl": False,
+        "subagents": False,
+        "schedule": False,
+        "web": False,
+        "bash": True,
+        "semantic_search": True,
+        "todo": False,
+        "react": False,
+    }
+)
 
 
-ToneKind = Literal["informal", "semi-formal", "formal"]
+type ToneKind = Literal["informal", "semi-formal", "formal"]
 
 
 class TaskMetadata(BaseModel):
+    """Task metadata embedded in agent DeepEval Goldens."""
+
     model_config = ConfigDict(extra="forbid")
 
     workspace: str = Field(min_length=1)
@@ -52,6 +75,8 @@ class TaskMetadata(BaseModel):
 
 
 class AgentTask(BaseModel):
+    """Normalized agent evaluation task."""
+
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(min_length=1)
@@ -65,6 +90,8 @@ class AgentTask(BaseModel):
 
 
 class AgentEvalConfig(BaseModel):
+    """Configuration for running and grading live agent trials."""
+
     model_config = ConfigDict(extra="forbid")
 
     name: str = "agent-baseline"
@@ -86,13 +113,38 @@ class AgentEvalConfig(BaseModel):
 
 
 class Verdict(BaseModel):
+    """Single expectation pass/fail verdict parsed from DeepEval verbose logs."""
+
     id: str
     status: str
     reason: str = ""
     evidence: str = ""
 
 
+class TrialSummary(BaseModel):
+    """Per-trial execution and grading summary."""
+
+    trial: int
+    status: str
+    passed: bool
+    rubric_score: float
+    latency_s: float
+    usage: RunUsage
+    tool_stats: ToolStats
+    judge_reason: str | None = None
+    judge_error: str | None = None
+    verdicts: list[Verdict] = Field(default_factory=list[Verdict])
+
+
+class AgentEvalSample(EvalSample):
+    """Aggregated sample containing per-trial summaries for one agent task."""
+
+    trials: list[TrialSummary] = Field(default_factory=list[TrialSummary])
+
+
 class GradedTrial(BaseModel):
+    """Trial artifact paired with its DeepEval expectation grading results."""
+
     artifact: TrialArtifact
     passed: bool
     rubric_score: float
@@ -107,6 +159,7 @@ _VERDICTS_ADAPTER = TypeAdapter(list[Verdict])
 
 
 def load_tasks(path: Path) -> list[AgentTask]:
+    """Load and validate agent evaluation tasks from DeepEval Goldens JSON."""
     goldens = _GOLDENS_ADAPTER.validate_json(path.read_text(encoding="utf-8"))
     tasks: list[AgentTask] = []
     for idx, g in enumerate(goldens):
@@ -114,7 +167,7 @@ def load_tasks(path: Path) -> list[AgentTask]:
             raise ValueError(f"sample[{idx}]: Golden.name is required")
         if g.expectations is None or not g.expectations.must:
             raise ValueError(f"{g.name}: Golden.expectations.must is required")
-        raw_meta: Any = g.additional_metadata  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        raw_meta: object = g.additional_metadata  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
         if raw_meta is None:
             raise ValueError(f"{g.name}: Golden.additional_metadata is required")
         meta = TaskMetadata.model_validate(raw_meta)
@@ -139,6 +192,7 @@ def validate_tasks(
     *,
     workspaces_dir: Path | None = None,
 ) -> list[str]:
+    """Validate task IDs, workspaces, expectations, and referenced `/shared` files."""
     errors: list[str] = []
     seen: set[str] = set()
     for t in tasks:
@@ -152,15 +206,18 @@ def validate_tasks(
             errors.append(f"{t.id}: empty criterion in must/must_not")
         if workspaces_dir is not None:
             shared_root = workspaces_dir / t.workspace / "storages" / "shared"
-            for rf in t.reference_files:
-                if not (shared_root / rf.lstrip("/")).is_file():
-                    errors.append(f"{t.id}: missing reference_file {rf}")
+            errors.extend(
+                f"{t.id}: missing reference_file {rf}"
+                for rf in t.reference_files
+                if not (shared_root / rf.lstrip("/")).is_file()
+            )
     return errors
 
 
 def validate_agent(
     repo_root: Path, cfg: AgentEvalConfig
 ) -> tuple[int, list[str], list[str]]:
+    """Load agent tasks and return task count, referenced workspaces, and errors."""
     tasks = load_tasks(repo_root / cfg.dataset_file)
     ws_root = repo_root / cfg.datasets_dir / "workspaces"
     available: set[str] = (
@@ -174,11 +231,12 @@ def validate_agent(
 
 
 def parse_expectation_verdicts(verbose_logs: str | None) -> list[Verdict]:
+    """Extract per-criterion verdicts from DeepEval JSON verbose logs."""
     try:
-        data: Any = json.loads(verbose_logs or "")
+        data: object = json.loads(verbose_logs or "")
         return (
             _VERDICTS_ADAPTER.validate_python(data["verdicts"])
-            if isinstance(data, dict) and "verdicts" in data
+            if is_str_mapping(data) and "verdicts" in data
             else []
         )
     except ValueError, TypeError:
@@ -196,7 +254,7 @@ def grade_trials(
     if not artifacts:
         return []
     non_empty = [a for a in artifacts if a.attachments]
-    by_name: dict[str, Any] = {}
+    by_name: dict[str, TestResult] = {}
     if non_empty:
         judge = make_judge(
             model=cfg.judge_model,
@@ -232,9 +290,7 @@ def grade_trials(
             error_config=ErrorConfig(ignore_errors=True),
             display_config=DisplayConfig(show_indicator=False, print_results=False),
         )
-        by_name = {
-            tr.name: tr for tr in result.test_results if getattr(tr, "name", None)
-        }
+        by_name = {tr.name: tr for tr in result.test_results if tr.name}
 
     graded: list[GradedTrial] = []
     for art in artifacts:
@@ -275,13 +331,13 @@ def grade_trials(
 
 def aggregate_results(
     cfg: AgentEvalConfig, graded: Sequence[GradedTrial], *, wall_s: float
-) -> dict[str, Any]:
+) -> EvalRun:
     """Aggregate pass_at_1/pass_at_k/pass_pow_k, mean_rubric_score, and telemetry."""
     by_task: dict[str, list[GradedTrial]] = defaultdict(list)
     for row in graded:
         by_task[row.artifact.task_id].append(row)
 
-    samples: list[dict[str, Any]] = []
+    samples: list[EvalSample] = []
     for tid, rows in by_task.items():
         n = max(1, len(rows))
         passes = sum(r.passed for r in rows)
@@ -298,26 +354,26 @@ def aggregate_results(
             ),
         }
         samples.append(
-            {
-                "id": tid,
-                "group": rows[0].artifact.workspace,
-                "scores": scores,
-                "trials": [
-                    {
-                        "trial": r.artifact.trial,
-                        "status": r.artifact.status,
-                        "passed": r.passed,
-                        "rubric_score": r.rubric_score,
-                        "latency_s": r.artifact.latency_s,
-                        "usage": r.artifact.usage.model_dump(),
-                        "tool_stats": r.artifact.tool_stats.model_dump(),
-                        "judge_reason": r.judge_reason,
-                        "judge_error": r.judge_error,
-                        "verdicts": [v.model_dump() for v in r.verdicts],
-                    }
+            AgentEvalSample(
+                id=tid,
+                group=rows[0].artifact.workspace,
+                scores=scores,
+                trials=[
+                    TrialSummary(
+                        trial=r.artifact.trial,
+                        status=r.artifact.status,
+                        passed=r.passed,
+                        rubric_score=r.rubric_score,
+                        latency_s=r.artifact.latency_s,
+                        usage=r.artifact.usage,
+                        tool_stats=r.artifact.tool_stats,
+                        judge_reason=r.judge_reason,
+                        judge_error=r.judge_error,
+                        verdicts=r.verdicts,
+                    )
                     for r in sorted(rows, key=lambda item: item.artifact.trial)
                 ],
-            }
+            )
         )
 
     n_trials = max(1, len(graded))
@@ -333,6 +389,7 @@ def aggregate_results(
         tool_counts.update(a.tool_stats.by_tool)
     total_tools = sum(a.tool_stats.total for a in arts)
     total_errors = sum(a.tool_stats.errors for a in arts)
+    total_compactions = sum(a.tool_stats.compactions for a in arts)
     lats = sorted(a.latency_s for a in arts)
     p95 = (
         round(lats[max(0, min(len(lats) - 1, math.ceil(0.95 * len(lats)) - 1))], 3)
@@ -340,7 +397,7 @@ def aggregate_results(
         else 0.0
     )
 
-    telemetry: dict[str, Any] = {
+    telemetry: dict[str, TelemetryValue] = {
         "completion_rate": round(
             sum(a.status == "completed" for a in arts) / n_trials, 4
         ),
@@ -356,6 +413,7 @@ def aggregate_results(
         "avg_tool_calls": round(total_tools / n_trials, 2),
         "tool_errors": total_errors,
         "tool_error_rate": round(total_errors / max(1, total_tools), 4),
+        "total_compactions": total_compactions,
         "avg_latency_s": round(sum(lats) / n_trials, 2),
         "p95_latency_s": p95,
         "tool_calls_by_tool": dict(sorted(tool_counts.items())),
@@ -377,7 +435,7 @@ def _grade_and_save(
     *,
     started_at: float,
     json_out: Path,
-) -> tuple[dict[str, Any], Path, Path]:
+) -> tuple[EvalRun, Path, Path]:
     env = read_user_env(repo_root)
     graded = grade_trials(
         artifacts,
@@ -399,7 +457,8 @@ def run_agent(
     limit: int | None = None,
     keep_stack: bool = False,
     output_path: Path | None = None,
-) -> tuple[dict[str, Any], Path, Path, Path]:
+) -> tuple[EvalRun, Path, Path, Path]:
+    """Run live agent evaluation trials, save artifacts, and grade deliverables."""
     tasks = load_tasks(repo_root / cfg.dataset_file)
     _, _, errors = validate_agent(repo_root, cfg)
     if errors:
@@ -429,7 +488,8 @@ def grade_artifacts(
     artifacts_path: Path,
     *,
     output_path: Path | None = None,
-) -> tuple[dict[str, Any], Path, Path]:
+) -> tuple[EvalRun, Path, Path]:
+    """Re-grade previously captured trial artifacts from ``artifacts_path``."""
     artifacts = _ARTIFACTS_ADAPTER.validate_json(
         artifacts_path.read_text(encoding="utf-8")
     )

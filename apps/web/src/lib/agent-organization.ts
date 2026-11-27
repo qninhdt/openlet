@@ -1,9 +1,9 @@
 import { useEffect, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { createParser } from 'eventsource-parser';
 import { toast } from 'sonner';
 import { useBackend } from './backend';
-import { ApiError } from './agent-api';
+import { chatApi, type SidebarLayoutDto } from './chat-api';
+import { useRealtime } from './realtime';
 
 export type AgentFolder = { id: string; name: string; parent_id: string | null };
 export type AgentLayout = {
@@ -14,6 +14,35 @@ export type AgentLayout = {
   collapsed: string[];
 };
 type Snapshot = { revision: number; layout: AgentLayout; can_create_agent?: boolean };
+
+function fromDto(dto?: SidebarLayoutDto): AgentLayout {
+  return {
+    folders: (dto?.folders ?? []).map((f) => ({
+      id: f.id,
+      name: f.name,
+      parent_id: f.parentId ?? null,
+    })),
+    assignments: dto?.assignments ?? {},
+    pins: dto?.pins ?? [],
+    order: dto?.order ?? [],
+    collapsed: dto?.collapsed ?? [],
+  };
+}
+
+function toDto(layout: AgentLayout): SidebarLayoutDto {
+  return {
+    folders: layout.folders.map((f) => ({
+      id: f.id,
+      name: f.name,
+      ...(f.parent_id ? { parentId: f.parent_id } : {}),
+    })),
+    assignments: layout.assignments,
+    pins: layout.pins,
+    order: layout.order,
+    collapsed: layout.collapsed,
+  };
+}
+
 export function folderLabel(folders: AgentFolder[], id: string): string {
   const folder = folders.find((item) => item.id === id);
   if (!folder) return '';
@@ -21,6 +50,7 @@ export function folderLabel(folders: AgentFolder[], id: string): string {
     ? `${folderLabel(folders, folder.parent_id)} / ${folder.name}`
     : folder.name;
 }
+
 export function folderDestination(folders: AgentFolder[], id: string, parent: string | null) {
   let depth = 1;
   let current = parent;
@@ -37,73 +67,65 @@ export function folderDestination(folders: AgentFolder[], id: string, parent: st
     1 + Math.max(0, ...folders.filter((f) => f.parent_id === node).map((f) => height(f.id)));
   return depth + height(id) - 1 <= 3;
 }
+
 export function useAgentOrganization(workspace: string) {
   const backend = useBackend();
+  const realtime = useRealtime();
   const client = useQueryClient();
   const key = ['agent-sidebar', backend.actorId, workspace];
-  const path = `/v1/workspaces/${workspace}/letas/sidebar`;
   const saving = useRef(false);
+
   const query = useQuery<Snapshot>({
     queryKey: key,
-    queryFn: () => backend.api!<Snapshot>(path),
-    refetchInterval: 30000,
+    enabled: backend.enabled && !!backend.api,
+    queryFn: async () => {
+      const chat = chatApi(backend.api!, workspace);
+      const [sidebar, letasPage] = await Promise.all([
+        chat.getSidebar(),
+        backend.api!<{ can_create_agent?: boolean }>(`/v1/workspaces/${workspace}/letas`).catch(
+          () => ({ can_create_agent: false }),
+        ),
+      ]);
+      return {
+        revision: Number(sidebar.revision ?? 0),
+        layout: fromDto(sidebar.layout),
+        can_create_agent: Boolean(letasPage.can_create_agent),
+      };
+    },
+    refetchInterval: 60000,
   });
+
+  // Real-time multi-tab sidebar sync via Centrifugo chat:user#{user_id}.
   useEffect(() => {
-    if (!backend.enabled || !backend.request) return;
-    const abort = new AbortController();
-    let retry: ReturnType<typeof setTimeout>;
-    const connect = async () => {
-      try {
-        const response = await backend.request!(path + '/events', { signal: abort.signal });
-        if (!response.body) throw new Error('Empty sidebar stream');
+    if (!backend.enabled) return;
+    return realtime.onChatUserEvent((event) => {
+      if (event.type === 'sidebar.updated' && !saving.current) {
         void client.invalidateQueries({ queryKey: key });
-        const parser = createParser({
-          onEvent: () => {
-            if (!saving.current) void client.invalidateQueries({ queryKey: key });
-          },
-        });
-        const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
-        try {
-          while (!abort.signal.aborted) {
-            const chunk = await reader.read();
-            if (chunk.done) break;
-            parser.feed(chunk.value);
-          }
-        } finally {
-          await reader.cancel().catch(() => {});
-        }
-      } catch (error) {
-        if (error instanceof ApiError && [401, 403, 404].includes(error.status)) {
-          client.removeQueries({ queryKey: key });
-          return;
-        }
       }
-      if (!abort.signal.aborted) retry = setTimeout(() => void connect(), 2000);
-    };
-    void connect();
-    return () => {
-      abort.abort();
-      clearTimeout(retry);
-    };
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [backend.enabled, backend.request, backend.actorId, workspace, client]);
+  }, [backend.enabled, realtime, workspace, backend.actorId, client]);
+
   const mutation = useMutation({
     mutationFn: async (layout: AgentLayout) => {
-      const previous = client.getQueryData<Snapshot>(key)!;
-      return backend.api!<Snapshot>(path, {
-        method: 'PUT',
-        body: JSON.stringify({ revision: previous.revision, layout }),
-      });
+      const previous = client.getQueryData<Snapshot>(key);
+      const chat = chatApi(backend.api!, workspace);
+      const updated = await chat.updateSidebar(previous?.revision ?? 0, toDto(layout));
+      return {
+        revision: Number(updated.revision ?? 0),
+        layout: fromDto(updated.layout),
+        can_create_agent: previous?.can_create_agent,
+      } satisfies Snapshot;
     },
     onMutate: async (layout) => {
       saving.current = true;
       await client.cancelQueries({ queryKey: key });
-      const previous = client.getQueryData<Snapshot>(key)!;
-      client.setQueryData(key, { ...previous, layout });
+      const previous = client.getQueryData<Snapshot>(key);
+      if (previous) client.setQueryData(key, { ...previous, layout });
       return previous;
     },
     onSuccess: (next, _layout, previous) =>
-      client.setQueryData(key, { ...next, can_create_agent: previous.can_create_agent }),
+      client.setQueryData(key, { ...next, can_create_agent: previous?.can_create_agent }),
     onError: (error, _layout, previous) => {
       if (previous) client.setQueryData(key, previous);
       toast.error(error.message);
@@ -113,6 +135,7 @@ export function useAgentOrganization(workspace: string) {
       if (backend.enabled) void client.invalidateQueries({ queryKey: key });
     },
   });
+
   return {
     layout: query.data?.layout ?? {
       folders: [],

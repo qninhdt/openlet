@@ -2,93 +2,126 @@
 
 from __future__ import annotations
 
-import json
 from collections import defaultdict
 from datetime import UTC, datetime
-from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING
+
+from openlet_sdk.types import JsonObject, MutableJsonObject
+from pydantic import BaseModel, ConfigDict, Field, SerializeAsAny
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+    from pathlib import Path
+
+type TelemetryValue = int | float | str | dict[str, int]
+
+
+class EvalSample(BaseModel):
+    """Per-sample evaluation score record."""
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    group: str
+    scores: dict[str, float] = Field(default_factory=dict)
+
+
+class EvalRun(BaseModel):
+    """Aggregated evaluation run summary, config snapshot, and sample rows."""
+
+    suite: str
+    name: str
+    created_at: str
+    wall_s: float
+    sample_count: int
+    config: MutableJsonObject = Field(default_factory=dict)
+    metrics: dict[str, float] = Field(default_factory=dict)
+    perfect: dict[str, int] = Field(default_factory=dict)
+    by_group: dict[str, dict[str, int | float]] = Field(default_factory=dict)
+    samples: list[SerializeAsAny[EvalSample]] = Field(default_factory=list[EvalSample])
+    telemetry: dict[str, TelemetryValue] | None = None
 
 
 def build_run(
     *,
     suite: str,
     name: str,
-    config: dict[str, Any],
-    samples: list[dict[str, Any]],
+    config: JsonObject,
+    samples: Sequence[EvalSample],
     wall_s: float,
-    telemetry: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Aggregate overall and per-group metrics across sample dicts."""
-    keys = list(dict.fromkeys(k for s in samples for k in s["scores"]))
+    telemetry: Mapping[str, TelemetryValue] | None = None,
+) -> EvalRun:
+    """Aggregate overall and per-group metrics across evaluation samples."""
+    sample_list = list(samples)
+    keys = list(dict.fromkeys(k for s in sample_list for k in s.scores))
     metrics = {
         k: round(
-            sum(s["scores"][k] for s in samples if k in s["scores"])
-            / max(1, len(samples)),
+            sum(s.scores[k] for s in sample_list if k in s.scores)
+            / max(1, len(sample_list)),
             6,
         )
         for k in keys
     }
     perfect = {
-        k: sum(1 for s in samples if s["scores"].get(k, 0.0) >= 0.999999) for k in keys
+        k: sum(1 for s in sample_list if s.scores.get(k, 0.0) >= 0.999999) for k in keys
     }
-    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for s in samples:
-        grouped[str(s["group"])].append(s)
+    grouped: dict[str, list[EvalSample]] = defaultdict(list)
+    for s in sample_list:
+        grouped[s.group].append(s)
 
-    by_group = {
+    by_group: dict[str, dict[str, int | float]] = {
         grp: {
             "count": len(rows),
             **{
-                k: round(
-                    sum(r["scores"][k] for r in rows if k in r["scores"]) / len(rows), 6
-                )
+                k: round(sum(r.scores[k] for r in rows if k in r.scores) / len(rows), 6)
                 for k in keys
             },
         }
         for grp, rows in sorted(grouped.items())
     }
-    run: dict[str, Any] = {
-        "suite": suite,
-        "name": name,
-        "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
-        "wall_s": round(wall_s, 2),
-        "sample_count": len(samples),
-        "config": config,
-        "metrics": metrics,
-        "perfect": perfect,
-        "by_group": by_group,
-        "samples": samples,
-    }
-    if telemetry is not None:
-        run["telemetry"] = telemetry
-    return run
+    return EvalRun(
+        suite=suite,
+        name=name,
+        created_at=datetime.now(UTC).isoformat(timespec="seconds"),
+        wall_s=round(wall_s, 2),
+        sample_count=len(sample_list),
+        config=dict(config),
+        metrics=metrics,
+        perfect=perfect,
+        by_group=by_group,
+        samples=sample_list,
+        telemetry=dict(telemetry) if telemetry is not None else None,
+    )
 
 
-def save_run(run: dict[str, Any], path: Path) -> None:
+def save_run(run: EvalRun, path: Path) -> None:
+    """Serialize an ``EvalRun`` to JSON at ``path``."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(run, indent=2) + "\n", encoding="utf-8")
+    path.write_text(
+        run.model_dump_json(indent=2, exclude_none=True) + "\n", encoding="utf-8"
+    )
 
 
-def load_run(path: Path) -> dict[str, Any]:
-    data: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
-    return data
+def load_run(path: Path) -> EvalRun:
+    """Load an ``EvalRun`` from a saved JSON file."""
+    return EvalRun.model_validate_json(path.read_text(encoding="utf-8"))
 
 
-def _fmt(value: object) -> str:
+def _fmt(value: TelemetryValue) -> str:
     if isinstance(value, dict):
-        items = cast(dict[object, object], value).items()
-        return ", ".join(f"{k}={v}" for k, v in items) or "-"
+        return ", ".join(f"{k}={v}" for k, v in value.items()) or "-"
     return f"{value:.4f}" if isinstance(value, float) else str(value)
 
 
-def render_markdown(run: dict[str, Any]) -> str:
-    n = int(run["sample_count"])
-    metrics: dict[str, float] = run["metrics"]
-    perfect: dict[str, int] = run.get("perfect", {})
+def render_markdown(run: EvalRun) -> str:
+    """Render an ``EvalRun`` as a Markdown summary table."""
+    n = run.sample_count
+    metrics = run.metrics
+    perfect = run.perfect
     lines = [
-        f"# Eval: `{run['name']}` ({run['suite']})",
+        f"# Eval: `{run.name}` ({run.suite})",
         "",
-        f"- **Created:** `{run['created_at']}` | **Samples:** `{n}` | **Wall:** `{run['wall_s']}s`",
+        f"- **Created:** `{run.created_at}` | **Samples:** `{n}` | **Wall:** `{run.wall_s}s`",
         "",
         "| Metric | Score | Perfect |",
         "|---|---:|---:|",
@@ -97,7 +130,7 @@ def render_markdown(run: dict[str, Any]) -> str:
             for k, v in metrics.items()
         ],
     ]
-    if telemetry := cast(dict[str, Any], run.get("telemetry") or {}):
+    if run.telemetry:
         lines.extend(
             [
                 "",
@@ -105,11 +138,10 @@ def render_markdown(run: dict[str, Any]) -> str:
                 "",
                 "| Metric | Value |",
                 "|---|---:|",
-                *[f"| `{k}` | `{_fmt(v)}` |" for k, v in telemetry.items()],
+                *[f"| `{k}` | `{_fmt(v)}` |" for k, v in run.telemetry.items()],
             ]
         )
-    by_group: dict[str, dict[str, Any]] = run.get("by_group", {})
-    if by_group and metrics:
+    if run.by_group and metrics:
         keys = list(metrics)
         lines.extend(
             [
@@ -120,7 +152,7 @@ def render_markdown(run: dict[str, Any]) -> str:
                     f"| `{grp}` | {int(vals['count'])} | "
                     + " | ".join(f"`{float(vals.get(k, 0.0)):.4f}`" for k in keys)
                     + " |"
-                    for grp, vals in by_group.items()
+                    for grp, vals in run.by_group.items()
                 ],
             ]
         )
@@ -128,13 +160,15 @@ def render_markdown(run: dict[str, Any]) -> str:
 
 
 def _diff_table(
-    base_map: dict[str, Any], cand_map: dict[str, Any], keys: list[str]
+    base_map: Mapping[str, int | float],
+    cand_map: Mapping[str, int | float],
+    keys: list[str],
 ) -> list[str]:
     rows = ["| Metric | Base | Candidate | Delta |", "|---|---:|---:|---:|"]
     for k in keys:
         bv, cv = base_map.get(k), cand_map.get(k)
-        b = float(bv) if isinstance(bv, (int, float)) else None
-        c = float(cv) if isinstance(cv, (int, float)) else None
+        b = float(bv) if bv is not None else None
+        c = float(cv) if cv is not None else None
         delta = f"{c - b:+.4f}" if (b is not None and c is not None) else "n/a"
         rows.append(
             f"| `{k}` | `{f'{b:.4f}' if b is not None else 'n/a'}` | "
@@ -143,26 +177,30 @@ def _diff_table(
     return rows
 
 
-def diff_runs(
-    base: dict[str, Any], cand: dict[str, Any], *, metric: str | None = None
-) -> str:
-    keys = list(dict.fromkeys([*base["metrics"], *cand["metrics"]]))
+def diff_runs(base: EvalRun, cand: EvalRun, *, metric: str | None = None) -> str:
+    """Render a Markdown comparison between ``base`` and ``cand`` evaluation runs."""
+    keys = list(dict.fromkeys([*base.metrics, *cand.metrics]))
     lines = [
-        f"# Eval Diff: `{base['name']}` → `{cand['name']}`",
+        f"# Eval Diff: `{base.name}` → `{cand.name}`",
         "",
-        *_diff_table(base["metrics"], cand["metrics"], keys),
+        *_diff_table(base.metrics, cand.metrics, keys),
     ]
-    b_tel = cast(dict[str, Any], base.get("telemetry") or {})
-    c_tel = cast(dict[str, Any], cand.get("telemetry") or {})
-    tel_keys = [
-        k
-        for k in dict.fromkeys([*b_tel, *c_tel])
-        if isinstance(b_tel.get(k), (int, float))
-        or isinstance(c_tel.get(k), (int, float))
-    ]
+    b_tel = base.telemetry or {}
+    c_tel = cand.telemetry or {}
+    b_num: dict[str, int | float] = {
+        k: v
+        for k, v in b_tel.items()
+        if isinstance(v, int | float) and not isinstance(v, bool)
+    }
+    c_num: dict[str, int | float] = {
+        k: v
+        for k, v in c_tel.items()
+        if isinstance(v, int | float) and not isinstance(v, bool)
+    }
+    tel_keys = list(dict.fromkeys([*b_num, *c_num]))
     if tel_keys:
         lines.extend(
-            ["", "## Telemetry Diff", "", *_diff_table(b_tel, c_tel, tel_keys)]
+            ["", "## Telemetry Diff", "", *_diff_table(b_num, c_num, tel_keys)]
         )
 
     focus = metric or (
@@ -173,20 +211,19 @@ def diff_runs(
         else (keys[0] if keys else None)
     )
     if focus:
-        b_map = {s["id"]: s["scores"].get(focus) for s in base.get("samples", [])}
-        c_map = {s["id"]: s["scores"].get(focus) for s in cand.get("samples", [])}
+        b_map = {s.id: s.scores.get(focus) for s in base.samples}
+        c_map = {s.id: s.scores.get(focus) for s in cand.samples}
         changed = sorted(
             (
-                float(c_map[sid]) - float(b_map[sid]),
+                cv - bv,
                 sid,
-                float(b_map[sid]),
-                float(c_map[sid]),
+                bv,
+                cv,
             )
-            for sid in b_map
-            if sid in c_map
-            and b_map[sid] is not None
-            and c_map[sid] is not None
-            and abs(float(c_map[sid]) - float(b_map[sid])) > 1e-6
+            for sid, bv in b_map.items()
+            if bv is not None
+            and (cv := c_map.get(sid)) is not None
+            and abs(cv - bv) > 1e-6
         )
         if changed:
             lines.extend(

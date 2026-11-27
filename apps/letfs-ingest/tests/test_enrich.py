@@ -1,15 +1,19 @@
-from io import BytesIO
-from typing import Any, cast
+from __future__ import annotations
 
-import pytest
+from io import BytesIO
+from typing import TYPE_CHECKING, override
+
 from letfs_ingest.enrich import enrich
 from letfs_ingest.naming import artifact_paths, rewrite_artifact_links, rich_csv_paths
-from letfs_ingest.providers import ArtifactEnrichment, EnrichItem, Models
-from letfs_ingest.storage import S3Store
+from letfs_ingest.providers import ArtifactEnrichment, EnrichItem
 from openlet_api.letfs.v1 import internal_pb2 as internal
 from openlet_api.letfs.v1 import letfs_pb2 as letfs
-from openlet_sdk.config import Config
 from PIL import Image, ImageDraw
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from openlet_sdk.config import Config
 
 
 def _png_bytes() -> bytes:
@@ -87,7 +91,7 @@ def test_link_rewrite_preserves_code_and_plain_csv_but_updates_rich_cells() -> N
 
 
 async def test_enrichment_batches_all_artifacts_and_rewrites_links(
-    config: Config, monkeypatch: pytest.MonkeyPatch
+    config: Config,
 ) -> None:
     saved: list[internal.SaveEnrichedArtifactsRequest] = []
     batched_items: list[list[EnrichItem]] = []
@@ -98,7 +102,7 @@ async def test_enrichment_batches_all_artifacts_and_rewrites_links(
             return _png_bytes()
 
     class FakeStub:
-        async def SaveEnrichedArtifacts(
+        async def SaveEnrichedArtifacts(  # noqa: N802  # Matches gRPC service method name.
             self, req: internal.SaveEnrichedArtifactsRequest
         ) -> internal.BlobProcessingOutcome:
             saved.append(req)
@@ -106,9 +110,9 @@ async def test_enrichment_batches_all_artifacts_and_rewrites_links(
 
     class FakeModels:
         async def describe_batch(
-            self, items: list[EnrichItem]
+            self, items: Sequence[EnrichItem]
         ) -> dict[str, ArtifactEnrichment]:
-            batched_items.append(items)
+            batched_items.append(list(items))
             return {
                 "README.md": ArtifactEnrichment(
                     id="README.md",
@@ -163,13 +167,7 @@ async def test_enrichment_batches_all_artifacts_and_rewrites_links(
             ),
         ],
     )
-    await enrich(
-        info,
-        cast(Any, FakeStub()),
-        cast(S3Store, FakeS3()),
-        cast(Models, FakeModels()),
-        config,
-    )
+    await enrich(info, FakeStub(), FakeS3(), FakeModels(), config)
 
     assert len(batched_items) == 1
     assert len(batched_items[0]) == 3
@@ -232,13 +230,7 @@ async def test_enrichment_batches_all_artifacts_and_rewrites_links(
         ],
     )
     saved.clear()
-    await enrich(
-        toc_info,
-        cast(Any, FakeStub()),
-        cast(S3Store, FakeS3()),
-        cast(Models, FakeModels()),
-        config,
-    )
+    await enrich(toc_info, FakeStub(), FakeS3(), FakeModels(), config)
     toc_readme = {a.artifact_id: a for a in saved[0].artifacts}[
         "id-readme"
     ].text_content
@@ -293,8 +285,9 @@ async def test_enrichment_batches_all_artifacts_and_rewrites_links(
     )
 
     class FakeWorkbookModels(FakeModels):
+        @override
         async def describe_batch(
-            self, items: list[EnrichItem]
+            self, items: Sequence[EnrichItem]
         ) -> dict[str, ArtifactEnrichment]:
             return {
                 "README.md": ArtifactEnrichment(
@@ -317,13 +310,7 @@ async def test_enrichment_batches_all_artifacts_and_rewrites_links(
             }
 
     saved.clear()
-    await enrich(
-        wb_info,
-        cast(Any, FakeStub()),
-        cast(S3Store, FakeS3()),
-        cast(Models, FakeWorkbookModels()),
-        config,
-    )
+    await enrich(wb_info, FakeStub(), FakeS3(), FakeWorkbookModels(), config)
     wb_readme = {a.artifact_id: a for a in saved[0].artifacts}["id-readme"].text_content
     assert wb_readme == (
         "# Q1 Financial Model\n\n"
@@ -353,8 +340,9 @@ async def test_enrichment_batches_all_artifacts_and_rewrites_links(
     )
 
     class FakeSingleModels(FakeModels):
+        @override
         async def describe_batch(
-            self, items: list[EnrichItem]
+            self, items: Sequence[EnrichItem]
         ) -> dict[str, ArtifactEnrichment]:
             return {
                 "README.md": ArtifactEnrichment(
@@ -365,13 +353,7 @@ async def test_enrichment_batches_all_artifacts_and_rewrites_links(
             }
 
     saved.clear()
-    await enrich(
-        single_info,
-        cast(Any, FakeStub()),
-        cast(S3Store, FakeS3()),
-        cast(Models, FakeSingleModels()),
-        config,
-    )
+    await enrich(single_info, FakeStub(), FakeS3(), FakeSingleModels(), config)
     single_readme = {a.artifact_id: a for a in saved[0].artifacts}[
         "id-readme"
     ].text_content
@@ -392,7 +374,7 @@ async def test_standalone_image_enriches_directly_on_blob(config: Config) -> Non
             return _png_bytes()
 
     class FakeStub:
-        async def SaveEnrichedArtifacts(
+        async def SaveEnrichedArtifacts(  # noqa: N802  # Matches gRPC service method name.
             self, req: internal.SaveEnrichedArtifactsRequest
         ) -> internal.BlobProcessingOutcome:
             saved.append(req)
@@ -400,13 +382,11 @@ async def test_standalone_image_enriches_directly_on_blob(config: Config) -> Non
 
     class FakeModels:
         async def describe_batch(
-            self, items: list[EnrichItem]
+            self, items: Sequence[EnrichItem]
         ) -> dict[str, ArtifactEnrichment]:
-            assert (
-                len(items) == 1
-                and items[0].id == "."
-                and items[0].image_b64 is not None
-            )
+            assert len(items) == 1
+            assert items[0].id == "."
+            assert items[0].image_b64 is not None
             return {
                 ".": ArtifactEnrichment(
                     id=".",
@@ -423,13 +403,7 @@ async def test_standalone_image_enriches_directly_on_blob(config: Config) -> Non
         media_type="image/png",
         artifacts=[],
     )
-    await enrich(
-        info,
-        cast(Any, FakeStub()),
-        cast(S3Store, FakeS3()),
-        cast(Models, FakeModels()),
-        config,
-    )
+    await enrich(info, FakeStub(), FakeS3(), FakeModels(), config)
     assert len(saved) == 1
     assert saved[0].blob_title == "System Diagram"
     assert saved[0].blob_description == "Microservice architecture flow."

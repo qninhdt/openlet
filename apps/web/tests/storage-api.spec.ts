@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { storageApi } from '../src/lib/storage-api.js';
 import type { Api } from '../src/lib/agent-api.js';
-import { fileMarkdown, fileReferences, fileToken, fileText } from '../src/lib/file-refs.js';
+import { fileLink, fileMarkdown, fileReferences, fileText } from '../src/lib/file-refs.js';
 import { readTextFile, serializeTextFile } from '../src/lib/text-file.js';
 import { newAssistantMessages } from '../src/lib/message-sound.js';
 
@@ -41,7 +41,22 @@ test('live adapter binds root IDs, paginates, searches nested files and loads fu
       result = path.endsWith('pageToken=next')
         ? { nodes: [file] }
         : { nodes: [], nextPageToken: 'next' };
-    else if (path.endsWith('/files:search')) result = { hits: [file] };
+    else if (path.endsWith('/files:glob'))
+      result = {
+        hits: [
+          { nodeId: file.id, path: 'nested/report.md', kind: 'NODE_KIND_FILE', sizeBytes: '4' },
+        ],
+      };
+    else if (path.endsWith('/nodes:batchStat')) {
+      expect(JSON.parse(String(init?.body))).toEqual({ targets: [{ nodeId: file.id }] });
+      result = { results: [{ node: file }] };
+    } else if (path.endsWith('/files:grep'))
+      result = {
+        hits: [
+          { nodeId: file.id, path: 'nested/report.md', lineNumber: 3, lineText: 'matched line' },
+        ],
+      };
+    else if (path.endsWith(`/nodes/${file.id}`)) result = file;
     else if (path.endsWith(':download'))
       result = { text: { content: 'data', mediaType: 'text/markdown' } };
     else throw new Error(`Unexpected API call: ${path}`);
@@ -63,10 +78,22 @@ test('live adapter binds root IDs, paginates, searches nested files and loads fu
   expect(branch.map((n) => n.id)).toEqual(['nested', 'report.md']);
   expect(await (await branch[1].read!()).text()).toBe('data');
   expect((await files.search('storage', 'report'))[0].version).toBe(7);
-  expect(calls.find((call) => call.path.endsWith('/files:search'))?.body).toEqual({
+  expect(calls.some((call) => call.path.endsWith('/nodes:batchStat'))).toBe(true);
+  const grepRes = await files.searchContent('storage', 'matched', 'text');
+  expect(grepRes.hits).toEqual([
+    {
+      fileId: file.id,
+      path: 'nested/report.md',
+      artifactPath: undefined,
+      text: 'matched line',
+      lineNumber: 3,
+    },
+  ]);
+  expect(calls.find((call) => call.path.endsWith('/files:glob'))?.body).toEqual({
     root: { nodeId: 'remote-root' },
-    query: 'report',
-    pageSize: 100,
+    pattern: '**/*report*',
+    includeHidden: false,
+    limit: 100,
   });
 });
 
@@ -86,12 +113,19 @@ test('live edits pass the opened version and surface conflicts without silently 
   expect(opened.version).toBe(7);
 });
 
-test('file chips round-trip escaped custom labels without turning ordinary paths into references', () => {
+test('file chips round-trip escaped custom labels and canonical /letfs links without turning ordinary paths into references', () => {
   const reference = { storage_id: 'storage', node_id: 'node', label: 'bản [dự toán] \\ final' };
-  const token = fileToken(reference);
-  expect(fileReferences(`Review ${token} please`)).toEqual([reference]);
+  const link = fileLink(reference);
+  expect(fileReferences(`Review ${link} please`)).toEqual([reference]);
   expect(fileReferences('Budget.xlsx /mnt/storage/Budget.xlsx')).toEqual([]);
-  expect(fileText(`Review ${token} please`)).toBe(`Review ${reference.label} please`);
+  expect(fileText(`Review ${link} please`)).toBe(`Review ${reference.label} please`);
+  expect(fileReferences('Open [Q3 Report](/letfs/sid-1/nid-2) now')).toEqual([
+    { storage_id: 'sid-1', node_id: 'nid-2', label: 'Q3 Report' },
+  ]);
+  expect(fileMarkdown('Open [Q3 Report](/letfs/sid-1/nid-2) now')).toBe(
+    'Open [Q3 Report](openlet-file:sid-1/nid-2) now',
+  );
+  expect(fileText('Open [Q3 Report](/letfs/sid-1/nid-2) now')).toBe('Open Q3 Report now');
 });
 
 test('replace keeps file identity and version checks for text and blob without trashing', async () => {
@@ -161,17 +195,17 @@ test('Trash pagination retains deletion IDs and quota bytes are parsed', async (
 });
 
 test('file mentions render outside code while code examples stay literal', () => {
-  const token = fileToken({ storage_id: 'storage', node_id: 'node', label: 'draft [1]' });
-  expect(fileMarkdown(token)).toContain('(openlet-file:storage/node)');
+  const link = fileLink({ storage_id: 'storage', node_id: 'node', label: 'draft [1]' });
+  expect(fileMarkdown(link)).toContain('(openlet-file:storage/node)');
   for (const code of [
-    `\`${token}\``,
-    `\`\`${token}\`\``,
-    `\`\`\`md\n${token}\n\`\`\``,
-    `~~~\n${token}\n~~~~`,
-    `\`\`\`\n${token}`,
+    `\`${link}\``,
+    `\`\`${link}\`\``,
+    `\`\`\`md\n${link}\n\`\`\``,
+    `~~~\n${link}\n~~~~`,
+    `\`\`\`\n${link}`,
   ])
     expect(fileMarkdown(code)).toBe(code);
-  expect(fileMarkdown(`\`unclosed ${token}`)).toContain('(openlet-file:storage/node)');
+  expect(fileMarkdown(`\`unclosed ${link}`)).toContain('(openlet-file:storage/node)');
 });
 
 test('text previews preserve BOM and CRLF on save and reject binary content', async () => {
@@ -212,7 +246,7 @@ test('message sounds ignore history, reads, duplicate refresh and earlier pagina
   expect(newAssistantMessages([old], [{ ...next, role: 'user' }, old])).toEqual([]);
 });
 
-test('content search sends semantic scope and uses the server result limit', async () => {
+test('content search sends grep and semantic scope with server result limits', async () => {
   const calls: Record<string, unknown>[] = [];
   const api: Api = async <T>(path: string, init?: RequestInit) => {
     calls.push(JSON.parse(String(init?.body)));
@@ -222,25 +256,27 @@ test('content search sends semantic scope and uses the server result limit', asy
       } as T;
     }
     return {
-      hits: [{ node: file, snippet: 'relevant content', path: 'nested/report.md', lineNumber: 12 }],
-      nextPageToken: 'next',
+      hits: [
+        { nodeId: file.id, lineText: 'relevant content', path: 'nested/report.md', lineNumber: 12 },
+      ],
+      truncated: false,
     } as T;
   };
   const files = storageApi(api, 'workspace');
   files.bind('storage', 'remote-root');
-  const page = await files.searchContent('storage', 'relevant', 'text', 'previous');
+  const page = await files.searchContent('storage', 'relevant', 'text');
   expect(page.hits[0]).toMatchObject({
-    node: { id: file.id, version: 7 },
+    fileId: file.id,
     text: 'relevant content',
     path: 'nested/report.md',
     lineNumber: 12,
   });
-  expect(page.nextPageToken).toBe('next');
   expect(calls[0]).toEqual({
     root: { nodeId: 'remote-root' },
-    query: 'relevant',
-    pageSize: 50,
-    pageToken: 'previous',
+    pattern: 'relevant',
+    literal: true,
+    caseSensitive: false,
+    limit: 100,
   });
   const semantic = await files.searchContent('storage', 'describe a topic', 'semantic');
   expect(semantic.hits).toEqual([
@@ -249,6 +285,7 @@ test('content search sends semantic scope and uses the server result limit', asy
   expect(calls[1]).toEqual({
     root: { path: '/' },
     query: 'describe a topic',
+    limit: 25,
   });
 });
 

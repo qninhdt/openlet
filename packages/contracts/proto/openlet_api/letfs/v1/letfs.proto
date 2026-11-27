@@ -72,13 +72,49 @@ message GetDownloadResponse { oneof download { SignedDownload blob = 1; TextDown
 message ArchiveDownloadTicket { string ticket = 1; google.protobuf.Timestamp expires_at = 2; }
 message ArchiveDownloadTicketRequest { string ticket = 1 [(buf.validate.field).string = {pattern: "^[a-f0-9]{64}$"}]; }
 message DownloadArchiveRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; repeated NodeLocator targets = 3 [(buf.validate.field).repeated = {min_items: 1, max_items: 100}]; }
-message SearchFilesRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; NodeLocator root = 3 [(buf.validate.field).required = true]; string query = 4 [(buf.validate.field).string.min_len = 1]; int32 page_size = 5 [(buf.validate.field).int32 = {gte: 0, lte: 100}]; string page_token = 6; bool case_sensitive = 7; }
-message SearchFilesResponse { repeated Node hits = 1; string next_page_token = 2; }
-message TextSearchRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; NodeLocator root = 3 [(buf.validate.field).required = true]; string query = 4 [(buf.validate.field).string.min_len = 1]; int32 page_size = 5 [(buf.validate.field).int32 = {gte: 0, lte: 100}]; string page_token = 6; bool case_sensitive = 7; bool lines_mode = 8; }
-message TextHit { Node node = 1; string snippet = 2; uint32 line_number = 3; string path = 4; string artifact_path = 5; }
-message TextSearchResponse { repeated TextHit hits = 1; string next_page_token = 2; }
+message GlobRequest {
+  string workspace_id = 1 [(buf.validate.field).string.uuid = true];
+  string storage_id = 2 [(buf.validate.field).string.uuid = true];
+  NodeLocator root = 3 [(buf.validate.field).required = true];
+  string pattern = 4 [(buf.validate.field).string.min_len = 1];
+  bool include_hidden = 5;
+  int32 limit = 6 [(buf.validate.field).int32 = {gte: 0, lte: 100}];
+}
+message GlobHit {
+  string path = 1;
+  string node_id = 2;
+  NodeKind kind = 3;
+  string artifact_path = 4;
+  int64 size_bytes = 5;
+  google.protobuf.Timestamp updated_at = 6;
+}
+message GlobResponse {
+  repeated GlobHit hits = 1;
+  bool truncated = 2;
+}
+message GrepRequest {
+  string workspace_id = 1 [(buf.validate.field).string.uuid = true];
+  string storage_id = 2 [(buf.validate.field).string.uuid = true];
+  NodeLocator root = 3 [(buf.validate.field).required = true];
+  string pattern = 4 [(buf.validate.field).string.min_len = 1];
+  string include_glob = 5;
+  bool literal = 6;
+  bool case_sensitive = 7;
+  int32 limit = 8 [(buf.validate.field).int32 = {gte: 0, lte: 100}];
+}
+message GrepHit {
+  string path = 1;
+  uint32 line_number = 2;
+  string line_text = 3;
+  string node_id = 4;
+  string artifact_path = 5;
+}
+message GrepResponse {
+  repeated GrepHit hits = 1;
+  bool truncated = 2;
+}
 message SemanticScope { oneof locator { option (buf.validate.oneof).required = true; string node_id = 1 [(buf.validate.field).string.uuid = true]; string path = 2 [(buf.validate.field).string.min_len = 1]; } }
-message SemanticSearchRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; SemanticScope root = 3 [(buf.validate.field).required = true]; string query = 4 [(buf.validate.field).string.min_len = 1]; reserved 5; reserved "top_k"; }
+message SemanticSearchRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; SemanticScope root = 3 [(buf.validate.field).required = true]; string query = 4 [(buf.validate.field).string.min_len = 1]; reserved 5; reserved "top_k"; optional int32 limit = 6 [(buf.validate.field).int32 = {gte: 1, lte: 25}]; }
 message SemanticHit { reserved 1, 2; reserved "node", "snippet"; double score = 3; string path = 4; string file_id = 5; string text = 6; string artifact_path = 7; }
 message SemanticSearchResponse { repeated SemanticHit hits = 1; }
 message TrashNodeRequest { string workspace_id = 1 [(buf.validate.field).string.uuid = true]; string storage_id = 2 [(buf.validate.field).string.uuid = true]; NodeLocator target = 3 [(buf.validate.field).required = true]; string request_id = 4 [(buf.validate.field).string.uuid = true]; }
@@ -131,8 +167,8 @@ service LetFSService {
   rpc CreateArchiveDownload(DownloadArchiveRequest) returns (ArchiveDownloadTicket) { option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes:archiveDownload" body: "*" }; }
   rpc DownloadArchiveTicket(ArchiveDownloadTicketRequest) returns (stream google.api.HttpBody) { option (google.api.http) = { get: "/v1/archive-downloads/{ticket}" }; }
   rpc DownloadArchive(DownloadArchiveRequest) returns (stream google.api.HttpBody) { option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes:downloadArchive" body: "*" }; }
-  rpc SearchFiles(SearchFilesRequest) returns (SearchFilesResponse) { option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/storages/{storage_id}/files:search" body: "*" }; }
-  rpc TextSearch(TextSearchRequest) returns (TextSearchResponse) { option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/storages/{storage_id}/files:textSearch" body: "*" }; }
+  rpc Glob(GlobRequest) returns (GlobResponse) { option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/storages/{storage_id}/files:glob" body: "*" }; }
+  rpc Grep(GrepRequest) returns (GrepResponse) { option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/storages/{storage_id}/files:grep" body: "*" }; }
   rpc SemanticSearch(SemanticSearchRequest) returns (SemanticSearchResponse) { option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/storages/{storage_id}/files:semanticSearch" body: "*" }; }
   rpc TrashNode(TrashNodeRequest) returns (TrashEntry) { option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/storages/{storage_id}/nodes/{target.node_id}:trash" body: "*" }; }
   rpc ListTrash(ListTrashRequest) returns (ListTrashResponse) { option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/storages/{storage_id}/trash" }; }

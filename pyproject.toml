@@ -30,6 +30,7 @@ dev = [
     "ruff",
     "types-grpcio>=1.85.0.20261028",
     "types-lxml>=2026.2.16",
+    "types-openpyxl",
     "types-protobuf>=7.35.1.20260906",
     "types-pyyaml>=6.0.12.20261113",
 ]
@@ -38,11 +39,72 @@ dev = [
 target-version = "py314"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "ANN"]
-ignore = ["E501"]
+select = ["ALL"]
+ignore = [
+    # Formatter conflicts (Astral official list)
+    "W191",
+    "E111",
+    "E114",
+    "E117",
+    "E501",
+    "D206",
+    "D300",
+    "Q000",
+    "Q001",
+    "Q002",
+    "Q003",
+    "Q004",
+    "COM812",
+    "COM819",
+    "ISC001",
+    # Intentional enterprise exclusions
+    "CPY",
+    "TRY003",
+    "EM101",
+    "EM102",
+    "D105",
+    "D107",
+    "PLR0911",
+    "PLR0912",
+    "PLR0913",
+    "PLR0915",
+    "PLR2004",
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.mccabe]
+max-complexity = 15
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ruff.lint.flake8-type-checking]
+runtime-evaluated-base-classes = [
+    "pydantic.BaseModel",
+    "pydantic.RootModel",
+]
+runtime-evaluated-decorators = [
+    "fastapi.APIRouter.get",
+    "fastapi.APIRouter.post",
+    "fastapi.APIRouter.put",
+    "fastapi.APIRouter.patch",
+    "fastapi.APIRouter.delete",
+    "fastapi.FastAPI.get",
+    "fastapi.FastAPI.post",
+    "fastapi.FastAPI.put",
+    "fastapi.FastAPI.patch",
+    "fastapi.FastAPI.delete",
+]
 
 [tool.ruff.lint.per-file-ignores]
 "**/*_pb2*.py" = ["ALL"]
+"tests/**" = ["S101", "S105", "S106", "S311", "SLF001", "ARG", "D", "DOC", "FBT", "INP001", "TID252"]
+"**/tests/**" = ["S101", "S105", "S106", "S311", "SLF001", "ARG", "D", "DOC", "FBT", "INP001"]
+"scripts/**" = ["T201", "INP001", "S603", "S607", "D"]
+"**/cli.py" = ["T201"]
+"**/__main__.py" = ["T201"]
 
 [tool.pytest.ini_options]
 addopts = ["--import-mode=importlib"]
@@ -68,6 +130,10 @@ extraPaths = ["packages/sdk-python/src", "packages/env/src", "apps/leta/src", "a
 reportMissingParameterType = "error"
 reportMissingTypeArgument = "error"
 reportUnnecessaryTypeIgnoreComment = "error"
+reportImplicitOverride = "error"
+reportUninitializedInstanceVariable = "error"
+reportPropertyTypeMismatch = "error"
+reportDeprecated = "error"
 
 [tool.uv.sources]
 openlet-sdk = { workspace = true }

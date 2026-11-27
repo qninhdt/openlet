@@ -108,7 +108,10 @@ function WorkspaceEntry() {
   const { api, actorId } = useBackend();
   const directory = useQuery({
     queryKey: ['workspaces', actorId],
-    queryFn: () => api!<{ workspaces?: Workspace[] }>('/v1/workspaces?page_size=100'),
+    queryFn: async () => {
+      const page = await api!<{ workspaces?: Workspace[] }>('/v1/workspaces?page_size=100');
+      return { workspaces: page.workspaces ?? [] };
+    },
   });
   if (directory.isPending) return <AppLoading label="Loading workspaces…" />;
   if (directory.error)

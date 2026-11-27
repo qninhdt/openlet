@@ -1,0 +1,323 @@
+syntax = "proto3";
+package openlet.chat.v1;
+option go_package = "github.com/qninhdt/openlet/packages/sdk-go/gen/openlet_api/chat/v1;chatv1";
+
+import "buf/validate/validate.proto";
+import "google/api/annotations.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+message ChatActor {
+  string type = 1 [(buf.validate.field).string = {in: ["user", "agent"]}];
+  string id = 2 [(buf.validate.field).string.uuid = true];
+}
+
+message ConversationMember {
+  string actor_type = 1;
+  string actor_id = 2;
+  string role = 3;
+  int64 last_read_seq = 4;
+  bool muted = 5;
+  google.protobuf.Timestamp joined_at = 6;
+}
+
+message MessagePreview {
+  string id = 1;
+  int64 seq = 2;
+  string sender_type = 3;
+  string sender_id = 4;
+  string snippet = 5;
+  bool has_attachments = 6;
+}
+
+message Conversation {
+  string id = 1;
+  string workspace_id = 2;
+  string type = 3;
+  optional string handle = 4;
+  string title = 5;
+  optional string storage_id = 6;
+  bool storage_ready = 7;
+  int64 last_seq = 8;
+  google.protobuf.Timestamp last_msg_at = 9;
+  MessagePreview last_message_preview = 10;
+  int64 unread_count = 11;
+  string created_by = 12;
+  google.protobuf.Timestamp created_at = 13;
+  repeated ConversationMember members = 14;
+}
+
+message MessageAttachment {
+  string storage_id = 1 [(buf.validate.field).string.uuid = true];
+  string node_id = 2 [(buf.validate.field).string.uuid = true];
+  string kind = 3;
+  string name = 4;
+  string media_type = 5;
+  int64 size_bytes = 6;
+}
+
+message MessageMention {
+  string kind = 1 [(buf.validate.field).string = {in: ["user", "agent", "file", "folder"]}];
+  string id = 2;
+  optional string storage_id = 3;
+  optional string node_id = 4;
+  string label = 5;
+}
+
+message MessageReaction {
+  string actor_type = 1;
+  string actor_id = 2;
+  string emoji = 3;
+  google.protobuf.Timestamp created_at = 4;
+}
+
+message Message {
+  string id = 1;
+  string conversation_id = 2;
+  int64 seq = 3;
+  optional string idempotency_key = 4;
+  string sender_type = 5;
+  string sender_id = 6;
+  string content = 7;
+  optional string reply_to_id = 8;
+  repeated MessageAttachment attachments = 9;
+  repeated MessageMention mentions = 10;
+  google.protobuf.Struct metadata = 11;
+  repeated MessageReaction reactions = 12;
+  google.protobuf.Timestamp created_at = 13;
+  google.protobuf.Timestamp edited_at = 14;
+  google.protobuf.Timestamp deleted_at = 15;
+}
+
+message CreateOrGetDMRequest {
+  string workspace_id = 1 [(buf.validate.field).string.uuid = true];
+  ChatActor target = 2 [(buf.validate.field).required = true];
+}
+
+message CreateGroupRequest {
+  string workspace_id = 1 [(buf.validate.field).string.uuid = true];
+  string title = 2 [(buf.validate.field).string = {min_len: 1, max_len: 200}];
+  repeated ChatActor members = 3;
+  optional string handle = 4 [(buf.validate.field).string = {min_len: 1, max_len: 80, pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$"}];
+}
+
+message ListConversationsRequest {
+  string workspace_id = 1 [(buf.validate.field).string.uuid = true];
+  int32 page_size = 2 [(buf.validate.field).int32 = {gte: 0, lte: 100}];
+  string page_token = 3;
+}
+
+message ListAgentConversationsRequest {
+  string workspace_id = 1 [(buf.validate.field).string.uuid = true];
+  string agent_id = 2 [(buf.validate.field).string.uuid = true];
+  int32 page_size = 3 [(buf.validate.field).int32 = {gte: 0, lte: 100}];
+  string page_token = 4;
+}
+
+message ListConversationsResponse {
+  repeated Conversation conversations = 1;
+  string next_page_token = 2;
+}
+
+message ConversationRequest {
+  string workspace_id = 1 [(buf.validate.field).string.uuid = true];
+  string conversation_id = 2 [(buf.validate.field).string.uuid = true];
+}
+
+message UpdateGroupRequest {
+  string workspace_id = 1 [(buf.validate.field).string.uuid = true];
+  string conversation_id = 2 [(buf.validate.field).string.uuid = true];
+  optional string title = 3 [(buf.validate.field).string = {min_len: 1, max_len: 200}];
+  optional string handle = 4 [(buf.validate.field).string = {min_len: 1, max_len: 80, pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$"}];
+}
+
+message AddMembersRequest {
+  string workspace_id = 1 [(buf.validate.field).string.uuid = true];
+  string conversation_id = 2 [(buf.validate.field).string.uuid = true];
+  repeated ChatActor members = 3 [(buf.validate.field).repeated = {min_items: 1, max_items: 100}];
+}
+
+message RemoveMemberRequest {
+  string workspace_id = 1 [(buf.validate.field).string.uuid = true];
+  string conversation_id = 2 [(buf.validate.field).string.uuid = true];
+  string actor_type = 3 [(buf.validate.field).string = {in: ["user", "agent"]}];
+  string actor_id = 4 [(buf.validate.field).string.uuid = true];
+}
+
+message EnsureConversationStorageResponse {
+  string storage_id = 1;
+  string root_node_id = 2;
+}
+
+message SendMessageRequest {
+  string workspace_id = 1 [(buf.validate.field).string.uuid = true];
+  string conversation_id = 2 [(buf.validate.field).string.uuid = true];
+  optional string idempotency_key = 3 [(buf.validate.field).string.uuid = true];
+  string content = 4;
+  optional string reply_to_id = 5 [(buf.validate.field).string.uuid = true];
+  repeated MessageAttachment attachments = 6 [(buf.validate.field).repeated.max_items = 20];
+  repeated MessageMention mentions = 7 [(buf.validate.field).repeated.max_items = 100];
+  google.protobuf.Struct metadata = 8;
+}
+
+message ListMessagesRequest {
+  string workspace_id = 1 [(buf.validate.field).string.uuid = true];
+  string conversation_id = 2 [(buf.validate.field).string.uuid = true];
+  optional int64 before_seq = 3 [(buf.validate.field).int64.gt = 0];
+  optional int64 after_seq = 4 [(buf.validate.field).int64.gte = 0];
+  optional int64 around_seq = 5 [(buf.validate.field).int64.gt = 0];
+  optional string around_message_id = 6 [(buf.validate.field).string.uuid = true];
+  int32 limit = 7 [(buf.validate.field).int32 = {gte: 0, lte: 100}];
+  string query = 8;
+}
+
+message ListMessagesResponse {
+  repeated Message messages = 1;
+  bool has_before = 2;
+  bool has_after = 3;
+}
+
+message EditMessageRequest {
+  string workspace_id = 1 [(buf.validate.field).string.uuid = true];
+  string conversation_id = 2 [(buf.validate.field).string.uuid = true];
+  string message_id = 3 [(buf.validate.field).string.uuid = true];
+  string content = 4 [(buf.validate.field).string.min_len = 1];
+  repeated MessageMention mentions = 5 [(buf.validate.field).repeated.max_items = 100];
+}
+
+message DeleteMessageRequest {
+  string workspace_id = 1 [(buf.validate.field).string.uuid = true];
+  string conversation_id = 2 [(buf.validate.field).string.uuid = true];
+  string message_id = 3 [(buf.validate.field).string.uuid = true];
+}
+
+message ReactionRequest {
+  string workspace_id = 1 [(buf.validate.field).string.uuid = true];
+  string conversation_id = 2 [(buf.validate.field).string.uuid = true];
+  string message_id = 3 [(buf.validate.field).string.uuid = true];
+  string emoji = 4 [(buf.validate.field).string = {min_len: 1, max_len: 64}];
+}
+
+message MarkReadRequest {
+  string workspace_id = 1 [(buf.validate.field).string.uuid = true];
+  string conversation_id = 2 [(buf.validate.field).string.uuid = true];
+  int64 seq = 3 [(buf.validate.field).int64.gte = 0];
+}
+
+message MarkReadResponse {
+  int64 last_read_seq = 1;
+}
+
+message SetTypingRequest {
+  string workspace_id = 1 [(buf.validate.field).string.uuid = true];
+  string conversation_id = 2 [(buf.validate.field).string.uuid = true];
+  bool active = 3;
+}
+
+message SidebarFolder {
+  string id = 1 [(buf.validate.field).string = {min_len: 1, max_len: 64}];
+  string name = 2 [(buf.validate.field).string = {min_len: 1, max_len: 100}];
+  optional string parent_id = 3;
+  int32 order = 4;
+}
+
+message SidebarLayout {
+  repeated SidebarFolder folders = 1;
+  map<string, string> assignments = 2;
+  repeated string pins = 3;
+  repeated string order = 4;
+  repeated string collapsed = 5;
+}
+
+message GetSidebarRequest {
+  string workspace_id = 1 [(buf.validate.field).string.uuid = true];
+}
+
+message UpdateSidebarRequest {
+  string workspace_id = 1 [(buf.validate.field).string.uuid = true];
+  int32 revision = 2 [(buf.validate.field).int32.gte = 0];
+  SidebarLayout layout = 3 [(buf.validate.field).required = true];
+}
+
+message SidebarState {
+  int32 revision = 1;
+  SidebarLayout layout = 2;
+}
+
+message GetRealtimeTokenRequest {
+  string workspace_id = 1 [(buf.validate.field).string.uuid = true];
+  string channel = 2 [(buf.validate.field).string.min_len = 1];
+}
+
+message RealtimeTokenResponse {
+  string token = 1;
+  google.protobuf.Timestamp expires_at = 2;
+  string channel = 3;
+}
+
+service ChatService {
+  rpc CreateOrGetDM(CreateOrGetDMRequest) returns (Conversation) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/conversations:dm" body: "*" };
+  }
+  rpc CreateGroup(CreateGroupRequest) returns (Conversation) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/conversations" body: "*" };
+  }
+  rpc ListConversations(ListConversationsRequest) returns (ListConversationsResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/conversations" };
+  }
+  rpc ListAgentConversations(ListAgentConversationsRequest) returns (ListConversationsResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/agents/{agent_id}/conversations" };
+  }
+  rpc GetConversation(ConversationRequest) returns (Conversation) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/conversations/{conversation_id}" };
+  }
+  rpc UpdateGroup(UpdateGroupRequest) returns (Conversation) {
+    option (google.api.http) = { patch: "/v1/workspaces/{workspace_id}/conversations/{conversation_id}" body: "*" };
+  }
+  rpc AddMembers(AddMembersRequest) returns (Conversation) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/conversations/{conversation_id}/members" body: "*" };
+  }
+  rpc RemoveMember(RemoveMemberRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = { delete: "/v1/workspaces/{workspace_id}/conversations/{conversation_id}/members/{actor_type}/{actor_id}" };
+  }
+  rpc LeaveConversation(ConversationRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/conversations/{conversation_id}:leave" body: "*" };
+  }
+  rpc EnsureConversationStorage(ConversationRequest) returns (EnsureConversationStorageResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/conversations/{conversation_id}:ensureStorage" body: "*" };
+  }
+  rpc SendMessage(SendMessageRequest) returns (Message) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/conversations/{conversation_id}/messages" body: "*" };
+  }
+  rpc ListMessages(ListMessagesRequest) returns (ListMessagesResponse) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/conversations/{conversation_id}/messages" };
+  }
+  rpc EditMessage(EditMessageRequest) returns (Message) {
+    option (google.api.http) = { patch: "/v1/workspaces/{workspace_id}/conversations/{conversation_id}/messages/{message_id}" body: "*" };
+  }
+  rpc DeleteMessage(DeleteMessageRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = { delete: "/v1/workspaces/{workspace_id}/conversations/{conversation_id}/messages/{message_id}" };
+  }
+  rpc AddReaction(ReactionRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = { put: "/v1/workspaces/{workspace_id}/conversations/{conversation_id}/messages/{message_id}/reactions/{emoji}" body: "*" };
+  }
+  rpc RemoveReaction(ReactionRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = { delete: "/v1/workspaces/{workspace_id}/conversations/{conversation_id}/messages/{message_id}/reactions/{emoji}" };
+  }
+  rpc MarkRead(MarkReadRequest) returns (MarkReadResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/conversations/{conversation_id}:markRead" body: "*" };
+  }
+  rpc SetTyping(SetTypingRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/conversations/{conversation_id}:typing" body: "*" };
+  }
+  rpc GetSidebar(GetSidebarRequest) returns (SidebarState) {
+    option (google.api.http) = { get: "/v1/workspaces/{workspace_id}/chat/sidebar" };
+  }
+  rpc UpdateSidebar(UpdateSidebarRequest) returns (SidebarState) {
+    option (google.api.http) = { put: "/v1/workspaces/{workspace_id}/chat/sidebar" body: "*" };
+  }
+  rpc GetRealtimeToken(GetRealtimeTokenRequest) returns (RealtimeTokenResponse) {
+    option (google.api.http) = { post: "/v1/workspaces/{workspace_id}/chat:realtimeToken" body: "*" };
+  }
+}

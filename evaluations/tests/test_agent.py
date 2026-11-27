@@ -4,25 +4,31 @@ from __future__ import annotations
 
 import asyncio
 import json
-from pathlib import Path
-from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Self
 
 import httpx
 import pytest
+from deepeval.evaluate.types import EvaluationResult, TestResult
+from deepeval.tracing.api import MetricData
 
 from openlet_evals.core.report import diff_runs, render_markdown
 from openlet_evals.suites.agent import runner as agent_runner
 from openlet_evals.suites.agent import suite as agent_suite
 from openlet_evals.suites.agent.runner import (
+    ActivityEventItem,
     AssistantMessage,
     Attachment,
+    RunStatusResp,
     RunUsage,
     ToolStats,
     TrialArtifact,
+    WorkspaceContext,
+    collect_outputs,
+    execute_trial,
     parse_history,
     render_deliverable,
     resolve_inline_mentions,
+    wait_for_run,
 )
 from openlet_evals.suites.agent.suite import (
     AgentEvalConfig,
@@ -34,6 +40,12 @@ from openlet_evals.suites.agent.suite import (
     parse_expectation_verdicts,
     validate_tasks,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from pathlib import Path
+
+    from deepeval.test_case import LLMTestCase
 
 
 def test_load_goldens_and_validate_tasks(tmp_path: Path) -> None:
@@ -60,7 +72,8 @@ def test_load_goldens_and_validate_tasks(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     loaded = load_tasks(ds)
-    assert len(loaded) == 1 and loaded[0].id == "ws-01"
+    assert len(loaded) == 1
+    assert loaded[0].id == "ws-01"
     assert loaded[0].must_not == ["Must not cite draft figures."]
 
     shared = tmp_path / "ws-a" / "storages" / "shared"
@@ -88,7 +101,7 @@ def test_mentions_and_deliverable_rendering() -> None:
     }
     assert (
         resolve_inline_mentions(
-            r"See :file[Q3 \[Final\]]{name=s1/n1}, :file[Budget]{name=s1/n2}, :file[X]{name=s9/n9}.",
+            r"See [Q3 \[Final\]](/letfs/s1/n1), [Budget](/letfs/s1/n2), [X](/letfs/s9/n9).",
             path_map,
         )
         == "See [Q3 [Final]](/shared/q3/report.pdf), [Budget](</shared/My Folder/Budget (2026).xlsx>), X."
@@ -107,50 +120,52 @@ def test_mentions_and_deliverable_rendering() -> None:
 
 
 def test_parse_history_pairs_calls_and_counts_errors() -> None:
+    raw_entries = [
+        {
+            "seq": 2,
+            "kind": "tool_result",
+            "payload": {
+                "tool_call_id": "1",
+                "name": "file_read",
+                "text": "ok",
+                "status": "success",
+            },
+        },
+        {
+            "seq": 1,
+            "kind": "tool_call",
+            "payload": {
+                "tool_call_id": "1",
+                "name": "file_read",
+                "args": {"path": "/shared/a.md"},
+            },
+        },
+        {
+            "seq": 3,
+            "kind": "tool_call",
+            "payload": {
+                "tool_call_id": "2",
+                "name": "execute",
+                "args": {"command": "false"},
+            },
+        },
+        {
+            "seq": 4,
+            "kind": "tool_result",
+            "payload": {
+                "tool_call_id": "2",
+                "name": "execute",
+                "text": "err",
+                "status": "error",
+            },
+        },
+    ]
     calls, stats = parse_history(
-        [
-            {
-                "seq": 2,
-                "kind": "tool_result",
-                "payload": {
-                    "tool_call_id": "1",
-                    "name": "file_read",
-                    "text": "ok",
-                    "status": "success",
-                },
-            },
-            {
-                "seq": 1,
-                "kind": "tool_call",
-                "payload": {
-                    "tool_call_id": "1",
-                    "name": "file_read",
-                    "args": {"path": "/shared/a.md"},
-                },
-            },
-            {
-                "seq": 3,
-                "kind": "tool_call",
-                "payload": {
-                    "tool_call_id": "2",
-                    "name": "execute",
-                    "args": {"command": "false"},
-                },
-            },
-            {
-                "seq": 4,
-                "kind": "tool_result",
-                "payload": {
-                    "tool_call_id": "2",
-                    "name": "execute",
-                    "text": "err",
-                    "status": "error",
-                },
-            },
-        ]
+        [ActivityEventItem.model_validate(item) for item in raw_entries]
     )
     assert [c.name for c in calls] == ["file_read", "execute"]
-    assert calls[0].output == "ok" and calls[1].status == "error"
+    assert calls[0].output == "ok"
+    assert calls[1].status == "error"
     assert stats == ToolStats(total=2, errors=1, by_tool={"execute": 1, "file_read": 1})
 
 
@@ -169,7 +184,8 @@ def test_verdict_parsing_and_multi_trial_aggregation() -> None:
             }
         )
     )
-    assert len(verdicts) == 1 and verdicts[0].status == "pass"
+    assert len(verdicts) == 1
+    assert verdicts[0].status == "pass"
     assert parse_expectation_verdicts("bad") == []
 
     trials = [
@@ -223,14 +239,15 @@ def test_verdict_parsing_and_multi_trial_aggregation() -> None:
     run = aggregate_results(
         AgentEvalConfig(name="multi", trials=2), trials, wall_s=30.0
     )
-    assert run["metrics"] == {
+    assert run.metrics == {
         "pass_at_1": pytest.approx(0.5),
         "mean_rubric_score": pytest.approx(0.75),
         "pass_at_k": pytest.approx(1.0),
         "pass_pow_k": pytest.approx(0.0),
     }
-    assert run["telemetry"]["avg_input_tokens"] == 1500.0
-    assert run["telemetry"]["tool_error_rate"] == 0.1
+    assert run.telemetry is not None
+    assert run.telemetry["avg_input_tokens"] == 1500.0
+    assert run.telemetry["tool_error_rate"] == 0.1
     assert "## Telemetry" in render_markdown(run)
     assert "## Telemetry Diff" in diff_runs(run, run)
 
@@ -274,67 +291,85 @@ def test_grade_trials_matches_by_name_and_zeros_empty_trials(
 
     seen_names: list[str] = []
 
+    def _metric_data(
+        *,
+        success: bool,
+        score: float,
+        reason: str,
+        verdicts: list[dict[str, str]],
+    ) -> MetricData:
+        return MetricData(
+            name="Expectations",
+            success=success,
+            score=score,
+            reason=reason,
+            strictMode=False,
+            evaluationModel=None,
+            error=None,
+            evaluationCost=None,
+            inputTokenCount=None,
+            outputTokenCount=None,
+            verboseLogs=json.dumps({"verdicts": verdicts}),
+            expectationsData=None,
+        )
+
     def fake_eval(
         *,
-        test_cases: list[Any],
+        test_cases: Sequence[LLMTestCase],
         identifier: str,
         async_config: object,
         cache_config: object,
         error_config: object,
         display_config: object,
-    ) -> SimpleNamespace:
+    ) -> EvaluationResult:
         _ = (identifier, async_config, cache_config, error_config, display_config)
         seen_names.extend(str(c.name) for c in test_cases)
         # Return results in reverse completion order to ensure positional zip isn't used.
-        return SimpleNamespace(
+        return EvaluationResult(
             test_results=[
-                SimpleNamespace(
+                TestResult(
                     name="t2#t1",
+                    success=False,
+                    conversational=False,
                     metrics_data=[
-                        SimpleNamespace(
+                        _metric_data(
                             success=False,
                             score=0.0,
                             reason="bad2",
-                            error=None,
-                            verbose_logs=json.dumps(
+                            verdicts=[
                                 {
-                                    "verdicts": [
-                                        {
-                                            "id": "must[0]",
-                                            "status": "fail",
-                                            "reason": "no",
-                                            "evidence": "x",
-                                        }
-                                    ]
+                                    "id": "must[0]",
+                                    "status": "fail",
+                                    "reason": "no",
+                                    "evidence": "x",
                                 }
-                            ),
+                            ],
                         )
                     ],
                 ),
-                SimpleNamespace(
+                TestResult(
                     name="t1#t1",
+                    success=True,
+                    conversational=False,
                     metrics_data=[
-                        SimpleNamespace(
+                        _metric_data(
                             success=True,
                             score=1.0,
                             reason="ok1",
-                            error=None,
-                            verbose_logs=json.dumps(
+                            verdicts=[
                                 {
-                                    "verdicts": [
-                                        {
-                                            "id": "must[0]",
-                                            "status": "pass",
-                                            "reason": "yes",
-                                            "evidence": "y",
-                                        }
-                                    ]
+                                    "id": "must[0]",
+                                    "status": "pass",
+                                    "reason": "yes",
+                                    "evidence": "y",
                                 }
-                            ),
+                            ],
                         )
                     ],
                 ),
-            ]
+            ],
+            confident_link=None,
+            test_run_id=None,
         )
 
     def fake_judge(
@@ -357,9 +392,12 @@ def test_grade_trials_matches_by_name_and_zeros_empty_trials(
         api_key="k",
     )
     assert seen_names == ["t1#t1", "t2#t1"]
-    assert graded[0].passed is False and graded[0].rubric_score == 0.0
-    assert graded[1].passed is True and graded[1].judge_reason == "ok1"
-    assert graded[2].passed is False and graded[2].judge_reason == "bad2"
+    assert graded[0].passed is False
+    assert graded[0].rubric_score == 0.0
+    assert graded[1].passed is True
+    assert graded[1].judge_reason == "ok1"
+    assert graded[2].passed is False
+    assert graded[2].judge_reason == "bad2"
 
 
 def test_wait_for_run_survives_cancel_read_timeout(
@@ -369,8 +407,10 @@ def test_wait_for_run_survives_cancel_read_timeout(
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(f"{request.method} {request.url.path}")
-        if request.url.path.endswith("/processing"):
-            return httpx.Response(200, json={"run_id": "run-1"})
+        if request.url.path.endswith("/runs"):
+            return httpx.Response(
+                200, json={"items": [{"id": "run-1", "status": "running"}]}
+            )
         if request.url.path.endswith("/cancel"):
             raise httpx.ReadTimeout("blocking cancel_current timed out")
         if request.url.path.endswith("/runs/run-1"):
@@ -382,17 +422,17 @@ def test_wait_for_run_survives_cancel_read_timeout(
 
     monkeypatch.setattr(agent_runner.asyncio, "sleep", fast_sleep)
 
-    async def _run() -> tuple[dict[str, Any], bool]:
+    async def _run() -> tuple[RunStatusResp, bool]:
         async with httpx.AsyncClient(
             base_url="http://test", transport=httpx.MockTransport(handler)
         ) as client:
-            return await agent_runner._wait_for_run(  # pyright: ignore[reportPrivateUsage]
+            return await wait_for_run(
                 client, "/v1/workspaces/w/letas/a", "a", timeout_s=0.01
             )
 
     run_row, timed_out = asyncio.run(_run())
     assert timed_out is True
-    assert run_row["id"] == "run-1"
+    assert run_row.id == "run-1"
     assert any(c.endswith("/cancel") for c in calls)
 
 
@@ -401,7 +441,7 @@ def test_execute_trial_isolates_http_error(monkeypatch: pytest.MonkeyPatch) -> N
         def __init__(self, **_kwargs: object) -> None:
             pass
 
-        async def __aenter__(self) -> FailingClient:
+        async def __aenter__(self) -> Self:
             return self
 
         async def __aexit__(self, *_exc: object) -> None:
@@ -413,68 +453,72 @@ def test_execute_trial_isolates_http_error(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(agent_runner.httpx, "AsyncClient", FailingClient)
     task = AgentTask(id="t-err", workspace="ws-a", task="q", must=["m"])
     art = asyncio.run(
-        agent_runner._execute_trial(  # pyright: ignore[reportPrivateUsage]
+        execute_trial(
             AgentEvalConfig(name="test"),
             "http://test",
-            ("wid", {}, {}, {}),
+            WorkspaceContext("wid", {}, {}, {}),
             task,
             trial=1,
             idx=0,
         )
     )
     assert art.status == "error"
-    assert art.error_code and "ConnectError" in art.error_code
+    assert art.error_code
+    assert "ConnectError" in art.error_code
     assert art.task_id == "t-err"
 
 
 def test_collect_outputs_keeps_only_final_message_chat_attachments() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         p = request.url.path
-        if p.endswith("/conversation-storage"):
+        if p.endswith(":ensureStorage"):
             return httpx.Response(
-                200, json={"storage_id": "conv", "root_node_id": "croot"}
+                200, json={"storageId": "conv", "rootNodeId": "croot"}
             )
         if p.endswith("/messages"):
             return httpx.Response(
                 200,
                 json={
-                    "items": [
+                    "messages": [
                         {
                             "id": "m1",
-                            "role": "assistant",
-                            "created_at": "2026-01-01T00:00:01Z",
+                            "seq": 1,
+                            "senderType": "agent",
+                            "createdAt": "2026-01-01T00:00:01Z",
                             "content": "Draft",
-                            "file_refs": [
+                            "attachments": [
                                 {
-                                    "storage_id": "conv",
-                                    "node_id": "n-old",
+                                    "storageId": "conv",
+                                    "nodeId": "n-old",
                                     "name": "draft.md",
-                                    "mime": "text/markdown",
-                                    "size": 10,
+                                    "mediaType": "text/markdown",
+                                    "sizeBytes": 10,
                                 }
                             ],
                         },
                         {
                             "id": "m2",
-                            "role": "assistant",
-                            "created_at": "2026-01-01T00:00:02Z",
-                            "content": "Done",
-                            "file_refs": [
+                            "seq": 2,
+                            "senderType": "agent",
+                            "createdAt": "2026-01-01T00:00:02Z",
+                            "content": "Done [Source](/letfs/shared/n-src)",
+                            "attachments": [
                                 {
-                                    "storage_id": "shared",
-                                    "node_id": "n-src",
+                                    "storageId": "shared",
+                                    "nodeId": "n-src",
                                     "name": "source.pdf",
                                 },
                                 {
-                                    "storage_id": "conv",
-                                    "node_id": "n-final",
+                                    "storageId": "conv",
+                                    "nodeId": "n-final",
                                     "name": "report.md",
-                                    "mime": "text/markdown",
-                                    "size": 20,
+                                    "mediaType": "text/markdown",
+                                    "sizeBytes": 20,
                                 },
                             ],
                         },
-                    ]
+                    ],
+                    "hasBefore": False,
                 },
             )
         if p.endswith("/activity"):
@@ -491,21 +535,22 @@ def test_collect_outputs_keeps_only_final_message_chat_attachments() -> None:
             return httpx.Response(
                 200, json={"id": "n-src", "parentId": "sroot", "name": "source.pdf"}
             )
-        if p.endswith("/nodes/n-final/text"):
-            return httpx.Response(200, json={"content": "# Final Report"})
+        if p.endswith("/nodes/n-final:download"):
+            return httpx.Response(200, json={"text": {"content": "# Final Report"}})
         return httpx.Response(404)
 
     async def _run() -> list[Attachment]:
         async with httpx.AsyncClient(
             base_url="http://test", transport=httpx.MockTransport(handler)
         ) as client:
-            _, atts, _, _ = await agent_runner._collect_outputs(  # pyright: ignore[reportPrivateUsage]
+            _, atts, _, _ = await collect_outputs(
                 client,
                 "w1",
                 "/v1/workspaces/w1/letas/a1",
                 "a1",
-                {"shared": "/shared"},
-                {("shared", "sroot"): "/shared"},
+                "conv-1",
+                storage_prefixes={"shared": "/shared"},
+                path_cache={("shared", "sroot"): "/shared"},
             )
             return atts
 

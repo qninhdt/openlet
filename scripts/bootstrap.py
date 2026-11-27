@@ -1,5 +1,7 @@
 """Initialize fresh databases or native service resources from OPENLET_CONFIG."""
 
+from __future__ import annotations
+
 import argparse
 import asyncio
 import os
@@ -14,7 +16,6 @@ from authzed.api.v1.schema_service_pb2_grpc import SchemaServiceStub
 from botocore.exceptions import ClientError
 from configure import ROOT, load, secret
 from google.protobuf.duration_pb2 import Duration
-from openlet_sdk.config import Config, DatabaseSettings
 from psycopg import sql
 from qdrant_client import QdrantClient, models
 from temporalio.api.workflowservice.v1 import RegisterNamespaceRequest
@@ -33,6 +34,7 @@ from temporalio.service import RPCError, RPCStatusCode
 
 if TYPE_CHECKING:
     from mypy_boto3_s3.literals import BucketLocationConstraintType
+    from openlet_sdk.config import Config, DatabaseSettings
 
 
 def databases(c: Config) -> None:
@@ -42,6 +44,8 @@ def databases(c: Config) -> None:
         c["services"]["platform"]["database"],
         c["services"]["letfs"]["database"],
     ]
+    if chat_cfg := c["services"].get("chat"):
+        targets.append(chat_cfg["database"])
     targets += [
         c["deployment"]["temporal"]["database"],
         c["deployment"]["spicedb"]["database"],
@@ -115,7 +119,9 @@ async def resources(c: Config) -> None:
         await asyncio.to_thread(
             SchemaServiceStub(channel).WriteSchema,
             WriteSchemaRequest(
-                schema=(ROOT / "packages/contracts/authz/schema.zed").read_text()
+                schema=(ROOT / "packages/contracts/authz/schema.zed").read_text(
+                    encoding="utf-8"
+                )
             ),
             metadata=(("authorization", "Bearer " + secret(graph["key"])),),
             timeout=30,
@@ -156,7 +162,7 @@ async def resources(c: Config) -> None:
             await client.create_schedule(identity, schedule)
         except ScheduleAlreadyRunningError:
             await client.get_schedule_handle(identity).update(
-                lambda _: ScheduleUpdate(schedule=schedule)
+                lambda _, sched=schedule: ScheduleUpdate(schedule=sched)
             )
     vector = dep["qdrant"]
     host, port = vector["address"].rsplit(":", 1)

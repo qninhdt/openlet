@@ -1,1 +1,1 @@
-"""Workspace agents, durable inboxes and independent specialist teams."""
+"""Leta agent orchestration, service, and runtime package."""

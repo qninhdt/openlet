@@ -735,18 +735,18 @@ function useBrowser(
   }
   const ensureConversationStorage = useCallback(
     async (agentId: string) => {
-      const res = await backend.api!<{ storage_id: string; root_node_id: string }>(
-        `/v1/workspaces/${workspace.id}/letas/${agentId}/conversation-storage`,
-        { method: 'POST', body: '{}' },
-      );
-      live?.bind(res.storage_id, res.root_node_id);
+      const { chatApi } = await import('@/lib/chat-api');
+      const chat = chatApi(backend.api!, workspace.id);
+      const conv = await chat.createOrGetDM({ type: 'agent', id: agentId });
+      const res = await chat.ensureConversationStorage(conv.id);
+      live?.bind(res.storageId, res.rootNodeId);
       await client.invalidateQueries({
         queryKey: ['storage-roots', backend.actorId, workspace.id],
       });
       return {
-        id: res.storage_id,
+        id: res.storageId,
         name: 'Conversation',
-        root: res.root_node_id,
+        root: res.rootNodeId,
         write: true,
       };
     },

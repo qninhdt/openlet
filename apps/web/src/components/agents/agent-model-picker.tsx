@@ -38,10 +38,13 @@ export function AgentModelPicker({
   const catalog = useQuery({
     queryKey: ['agent-models', p.actorId, p.workspace.id],
     enabled: p.live.enabled,
-    queryFn: () =>
-      p.live.api!<{ models: { model_id: string; reasoning_efforts: (string | null)[] }[] }>(
-        `/v1/workspaces/${p.workspace.id}/letas/models`,
-      ),
+    queryFn: async () => {
+      const resp = await p.live.api!<{
+        models?: { model_id: string; reasoning_efforts: (string | null)[] }[];
+        items?: { model_id: string; reasoning_efforts: (string | null)[] }[];
+      }>(`/v1/workspaces/${p.workspace.id}/models`);
+      return { models: resp.models ?? resp.items ?? [] };
+    },
   });
   const models = catalog.data?.models ?? [];
   const providers = [...new Set(models.map((model) => providerFor(model.model_id)))];

@@ -1,17 +1,25 @@
+"""CSV and HTML table externalization for oversized Markdown tables."""
+
+from __future__ import annotations
+
 import csv
 import re
 from bisect import bisect_left
 from copy import deepcopy
 from io import StringIO
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from markdown_it import MarkdownIt
 
-TABLE_TAGS = re.compile(r"<(/?)(table)\b[^>]*>", re.I)
+if TYPE_CHECKING:
+    from pathlib import Path
+
+TABLE_TAGS = re.compile(r"<(/?)(table)\b[^>]*>", re.IGNORECASE)
 _MD = MarkdownIt("commonmark").enable("table")
 
 
 def csv_text(rows: list[list[str]]) -> str:
+    """Serialize table ``rows`` as LF-delimited CSV text."""
     buffer = StringIO()
     csv.writer(buffer, lineterminator="\n").writerows(rows)
     return buffer.getvalue()
@@ -57,7 +65,8 @@ def write_rows(
 
 
 def write_html_table(markup: str, output: Path, start: int, max_text: int) -> str:
-    from lxml import html
+    """Split an oversized HTML table into ``tables/`` files and return Markdown links."""
+    from lxml import html  # noqa: PLC0415  # Optional cpu-extra dependency loaded only for oversized HTML tables.
 
     table = html.fragment_fromstring(markup)
     if str(table.tag).lower() != "table":
@@ -129,7 +138,7 @@ def externalize_tables(
             token.type == "html_block"
             and token.level == 0
             and token.map
-            and re.match(r"\s*<table(?=\s|>)", token.content, re.I)
+            and re.match(r"\s*<table(?=\s|>)", token.content, re.IGNORECASE)
         ):
             first = token.map[0]
             depth = 0

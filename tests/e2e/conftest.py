@@ -3,21 +3,57 @@
 from __future__ import annotations
 
 import fcntl
-import json
 import os
 import time
-from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import httpx
 import pytest
 from openlet_env import Environment
+from pydantic import BaseModel, ConfigDict, Field
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
 
 DATASET_DIR = Path(__file__).resolve().parent / "dataset"
 SAMPLE_FILES_DIR = DATASET_DIR / "workspaces/acme-review/storages/shared"
+
+
+class _WorkerMeta(BaseModel):
+    project: str
+    workers: int
+
+
+class _StorageSummary(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+    id: str
+    root_node_id: str = Field(alias="rootNodeId")
+    visibility: str = ""
+
+
+class _ListStoragesResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    storages: list[_StorageSummary] = []
+
+
+class TreeNode(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    readonly: bool = False
+
+
+class TreeEntry(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    path: str
+    node: TreeNode
+
+
+class ReadTreeResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    entries: list[TreeEntry] = []
 
 
 def poll[T](
@@ -87,15 +123,19 @@ class AccountFactory:
         )
         self._clients.append(client)
 
-        def find_private_storage() -> dict[str, Any] | None:
+        def find_private_storage() -> _StorageSummary | None:
             resp = client.get(f"/v1/workspaces/{workspace_id}/storages?owned_only=true")
             if resp.status_code != 200:
                 return None
-            storages = cast(list[dict[str, Any]], resp.json().get("storages", []))
-            for item in storages:
-                if item.get("visibility") == "STORAGE_VISIBILITY_PRIVATE":
-                    return item
-            return None
+            parsed = _ListStoragesResponse.model_validate(resp.json())
+            return next(
+                (
+                    item
+                    for item in parsed.storages
+                    if item.visibility == "STORAGE_VISIBILITY_PRIVATE"
+                ),
+                None,
+            )
 
         storage = poll(
             find_private_storage, timeout=30.0, desc="private storage provisioning"
@@ -105,8 +145,8 @@ class AccountFactory:
             api=client,
             id=acct.user_id,
             workspace_id=workspace_id,
-            storage_id=str(storage["id"]),
-            root_id=str(storage["rootNodeId"]),
+            storage_id=storage.id,
+            root_id=storage.root_node_id,
             email=acct.email,
             subject=acct.clerk_user_id,
             token=acct.token,
@@ -122,9 +162,10 @@ def _is_gateway_healthy(env: Environment) -> bool:
         return False
     try:
         resp = httpx.get(f"{env.endpoints.api_url}/v1/workspaces", timeout=2.0)
-        return resp.status_code == 401
-    except Exception:
+    except httpx.HTTPError:
         return False
+    else:
+        return resp.status_code == 401
 
 
 @pytest.fixture(scope="session")
@@ -149,16 +190,16 @@ def openlet_env(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Environmen
     with lock_file.open("a+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         if meta_file.is_file():
-            meta = cast(dict[str, Any], json.loads(meta_file.read_text("utf-8")))
-            meta["workers"] = int(meta["workers"]) + 1
-            meta_file.write_text(json.dumps(meta), encoding="utf-8")
+            meta = _WorkerMeta.model_validate_json(meta_file.read_text("utf-8"))
+            meta.workers += 1
+            meta_file.write_text(meta.model_dump_json(), encoding="utf-8")
         else:
             if keep and _is_gateway_healthy(env):
                 env.sync_wiremock_auth()
             else:
                 env.up(build=build)
             meta_file.write_text(
-                json.dumps({"project": project, "workers": 1}),
+                _WorkerMeta(project=project, workers=1).model_dump_json(),
                 encoding="utf-8",
             )
 
@@ -168,15 +209,15 @@ def openlet_env(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Environmen
         with lock_file.open("a+") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             if meta_file.is_file():
-                meta = cast(dict[str, Any], json.loads(meta_file.read_text("utf-8")))
-                remaining = int(meta["workers"]) - 1
+                meta = _WorkerMeta.model_validate_json(meta_file.read_text("utf-8"))
+                remaining = meta.workers - 1
                 if remaining <= 0:
                     meta_file.unlink(missing_ok=True)
                     if not keep:
                         env.down(volumes=True, remove_state=True)
                 else:
-                    meta["workers"] = remaining
-                    meta_file.write_text(json.dumps(meta), encoding="utf-8")
+                    meta.workers = remaining
+                    meta_file.write_text(meta.model_dump_json(), encoding="utf-8")
 
 
 @pytest.fixture(scope="module")
@@ -188,12 +229,12 @@ def accounts(openlet_env: Environment) -> Iterator[AccountFactory]:
         factory.close()
 
 
-@pytest.fixture()
+@pytest.fixture
 def account(accounts: AccountFactory) -> AccountFixture:
     return accounts.create()
 
 
-@pytest.fixture()
+@pytest.fixture
 def raw_client(openlet_env: Environment) -> Iterator[httpx.Client]:
     with httpx.Client(base_url=openlet_env.endpoints.api_url, timeout=30.0) as client:
         yield client

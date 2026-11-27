@@ -36,13 +36,18 @@ type SpiceDB struct {
 	Key     string `yaml:"key"`
 }
 type Queues struct {
-	Platform    string `yaml:"platform"`
-	LetFS       string `yaml:"letfs"`
-	IngestCPU   string `yaml:"ingest_cpu"`
-	IngestIO    string `yaml:"ingest_io"`
-	Leta        string `yaml:"leta"`
-	LetaRuntime string `yaml:"leta_runtime"`
-	LetaBridge  string `yaml:"leta_bridge"`
+	Platform          string `yaml:"platform"`
+	LetFS             string `yaml:"letfs"`
+	IngestCPU         string `yaml:"ingest_cpu"`
+	IngestIO          string `yaml:"ingest_io"`
+	LetaOrchestration string `yaml:"leta_orchestration"`
+	LetaRuntime       string `yaml:"leta_runtime"`
+}
+type Centrifugo struct {
+	APIURL          string `yaml:"api_url"`
+	APIKey          string `yaml:"api_key"`
+	TokenHMACSecret string `yaml:"token_hmac_secret"`
+	TokenTTLSeconds int    `yaml:"token_ttl_seconds"`
 }
 type Temporal struct {
 	Address   string `yaml:"address"`

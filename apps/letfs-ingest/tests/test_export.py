@@ -1,9 +1,10 @@
+from __future__ import annotations
+
 import csv
 import zipfile
 from copy import deepcopy
 from io import BytesIO, StringIO
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 
 import openpyxl
 import pytest
@@ -11,19 +12,23 @@ from letfs_ingest.convert import (
     PDF_MEDIA,
     PPTX_MEDIA,
     XLSX_MEDIA,
-    InvalidDocument,
+    InvalidDocumentError,
     convert,
     preflight,
     validate_output,
 )
 from lxml import etree
-from openlet_sdk.config import Config
 from PIL import Image, ImageDraw
 from pptx import Presentation
-from pptx.chart.data import CategoryChartData
+from pptx.chart.data import ChartData
 from pptx.enum.chart import XL_CHART_TYPE
 from pptx.util import Inches
 from pypdf import PdfWriter
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from openlet_sdk.config import Config
 
 
 def _textured_png(size: tuple[int, int] = (120, 80), accent: str = "navy") -> bytes:
@@ -48,7 +53,7 @@ def _solid_png(size: tuple[int, int] = (60, 60)) -> bytes:
 def test_powerpoint_extracts_charts_notes_groups_and_drops_noise_images(
     tmp_path: Path, config: Config
 ) -> None:
-    prs: Any = Presentation()
+    prs = Presentation()
     blank = prs.slide_layouts[6]
 
     chart_img = tmp_path / "chart.png"
@@ -71,9 +76,9 @@ def test_powerpoint_extracts_charts_notes_groups_and_drops_noise_images(
             slide.shapes.add_picture(str(chart_img), Inches(1), Inches(2))
             slide.shapes.add_picture(str(tiny_icon), Inches(0.1), Inches(0.1))
             slide.shapes.add_picture(str(solid_box), Inches(0.2), Inches(0.2))
-            data: Any = CategoryChartData()
+            data = ChartData()
             data.categories = ["Q1", "Q2"]
-            data.add_series("Revenue", (100, 140))
+            data.add_series("Revenue", (100, 140))  # pyright: ignore[reportUnknownMemberType]
             slide.shapes.add_chart(
                 XL_CHART_TYPE.COLUMN_CLUSTERED,
                 Inches(3),
@@ -82,7 +87,9 @@ def test_powerpoint_extracts_charts_notes_groups_and_drops_noise_images(
                 Inches(3),
                 data,
             )
-            slide.notes_slide.notes_text_frame.text = "Focus on Q2 surge"
+            notes_tf = slide.notes_slide.notes_text_frame
+            assert notes_tf is not None
+            notes_tf.text = "Focus on Q2 surge"
         else:
             box = slide.shapes.add_textbox(
                 Inches(0.5), Inches(0.5), Inches(5), Inches(1)
@@ -96,7 +103,8 @@ def test_powerpoint_extracts_charts_notes_groups_and_drops_noise_images(
 
     combined = "\n".join(p.read_text() for p in out.glob("*.md"))
     assert "Sales Review" in combined
-    assert "### Chart" in combined and "| Q1 | 100.0 |" in combined
+    assert "### Chart" in combined
+    assert "| Q1 | 100.0 |" in combined
     assert "> Speaker Notes: Focus on Q2 surge" in combined
 
     saved_images = list((out / "images").glob("*"))
@@ -108,8 +116,9 @@ def test_powerpoint_extracts_charts_notes_groups_and_drops_noise_images(
 def test_xlsx_xy_cut_segments_separate_tables_and_renders_clean_csv(
     tmp_path: Path, config: Config
 ) -> None:
-    wb: Any = openpyxl.Workbook()
+    wb = openpyxl.Workbook()
     ws = wb.active
+    assert ws is not None
     ws.title = "Financials"
     # Table 1 with 1-row banner title above
     ws["A1"] = "Revenue Summary"
@@ -148,8 +157,9 @@ def test_xlsx_xy_cut_segments_separate_tables_and_renders_clean_csv(
 def test_xlsx_xy_cut_keeps_left_label_column_across_single_blank_spacer(
     tmp_path: Path, config: Config
 ) -> None:
-    wb: Any = openpyxl.Workbook()
+    wb = openpyxl.Workbook()
     ws = wb.active
+    assert ws is not None
     ws.title = "Operating"
     # Left row labels in col B, blank spacer col C, numbers in col D..F
     ws["B2"] = "Revenue"
@@ -179,8 +189,9 @@ def test_xlsx_xy_cut_keeps_left_label_column_across_single_blank_spacer(
 def test_xlsx_sparse_bfs_merges_headers_indents_and_inlines_prose_notes(
     tmp_path: Path, config: Config
 ) -> None:
-    wb: Any = openpyxl.Workbook()
+    wb = openpyxl.Workbook()
     ws = wb.active
+    assert ws is not None
     ws.title = "P&L"
     # Merged banner across cols A..E -> peeled cleanly, NOT repeated 5x in CSV
     ws.merge_cells("A1:E1")
@@ -234,20 +245,21 @@ def test_input_limits_reject_expanded_office_and_oversized_spreadsheet(
     small_zip = tmp_path / "large.pptx"
     with zipfile.ZipFile(small_zip, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("ppt/slides/slide1.xml", etree.tostring(etree.Element("sld")) * 20)
-    with pytest.raises(InvalidDocument, match="expanded size"):
+    with pytest.raises(InvalidDocumentError, match="expanded size"):
         preflight(small_zip, PPTX_MEDIA, cfg)
 
     cfg = deepcopy(config)
     cfg["services"]["letfs_ingest"]["cpu"]["limits"]["max_spreadsheet_cells"] = 4
-    wb: Any = openpyxl.Workbook()
+    wb = openpyxl.Workbook()
     ws = wb.active
+    assert ws is not None
     for r in range(1, 5):
         for c in range(1, 3):
             ws.cell(r, c, "x")
     xlsx_path = tmp_path / "cells.xlsx"
     wb.save(xlsx_path)
     wb.close()
-    with pytest.raises(InvalidDocument, match="cell count"):
+    with pytest.raises(InvalidDocumentError, match="cell count"):
         preflight(xlsx_path, XLSX_MEDIA, cfg)
 
 
@@ -257,7 +269,7 @@ def test_conversion_rejects_text_limit_before_publish(
     cfg = deepcopy(config)
     cfg["services"]["letfs"]["processing"]["max_manifest_text_bytes"] = 10
     (tmp_path / "README.md").write_text("more than ten bytes")
-    with pytest.raises(InvalidDocument, match="max_manifest_text_bytes"):
+    with pytest.raises(InvalidDocumentError, match="max_manifest_text_bytes"):
         validate_output(tmp_path, cfg)
 
 
@@ -277,26 +289,27 @@ def test_pdf_preflight_validates_pages_pixels_and_corrupt_files(
     preflight(ok_pdf, PDF_MEDIA, cfg)
 
     cfg["services"]["letfs_ingest"]["cpu"]["limits"]["max_pages"] = 1
-    with pytest.raises(InvalidDocument, match="exceeding limit 1"):
+    with pytest.raises(InvalidDocumentError, match="exceeding limit 1"):
         preflight(ok_pdf, PDF_MEDIA, cfg)
 
     cfg["services"]["letfs_ingest"]["cpu"]["limits"]["max_pages"] = 2
     cfg["services"]["letfs_ingest"]["cpu"]["limits"]["max_page_pixels"] = 50_000
-    with pytest.raises(InvalidDocument, match="pixel limit"):
+    with pytest.raises(InvalidDocumentError, match="pixel limit"):
         preflight(ok_pdf, PDF_MEDIA, cfg)
 
     bad_pdf = tmp_path / "bad.pdf"
     bad_pdf.write_bytes(b"not a pdf")
-    with pytest.raises(InvalidDocument, match="invalid PDF"):
+    with pytest.raises(InvalidDocumentError, match="invalid PDF"):
         preflight(bad_pdf, PDF_MEDIA, cfg)
 
 
 def test_xlsx_bridges_header_unit_note_and_horizontal_year_gaps(
     tmp_path: Path, config: Config
 ) -> None:
-    wb: Any = openpyxl.Workbook()
+    wb = openpyxl.Workbook()
     # Sheet 1: SATS-style header band separated from data by 1-cell unit note in col A
     ws1 = wb.active
+    assert ws1 is not None
     ws1.title = "Quarterly"
     ws1.merge_cells("B2:C2")
     ws1.merge_cells("D2:E2")
@@ -357,7 +370,7 @@ def test_xlsx_bridges_header_unit_note_and_horizontal_year_gaps(
 def test_xlsx_multibyte_utf8_readme_stays_within_max_text_bytes(
     tmp_path: Path, config: Config
 ) -> None:
-    wb: Any = openpyxl.Workbook()
+    wb = openpyxl.Workbook()
     for idx in range(4):
         ws = wb.active if idx == 0 else wb.create_sheet()
         assert ws is not None
@@ -380,11 +393,11 @@ def test_xlsx_multibyte_utf8_readme_stays_within_max_text_bytes(
 def test_pptx_chart_header_escapes_pipe_characters(
     tmp_path: Path, config: Config
 ) -> None:
-    prs: Any = Presentation()
+    prs = Presentation()
     slide = prs.slides.add_slide(prs.slide_layouts[5])
-    chart_data: Any = CategoryChartData()
+    chart_data = ChartData()
     chart_data.categories = ["2024", "2025"]
-    chart_data.add_series("Q1|Actual", (10.0, 20.0))
+    chart_data.add_series("Q1|Actual", (10.0, 20.0))  # pyright: ignore[reportUnknownMemberType]
     slide.shapes.add_chart(
         XL_CHART_TYPE.COLUMN_CLUSTERED,
         Inches(1),
@@ -394,7 +407,7 @@ def test_pptx_chart_header_escapes_pipe_characters(
         chart_data,
     )
     src = tmp_path / "chart_pipe.pptx"
-    prs.save(src)
+    prs.save(str(src))
 
     out = tmp_path / "out_chart"
     convert(src, PPTX_MEDIA, out, config)

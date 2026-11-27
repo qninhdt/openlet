@@ -3,24 +3,21 @@
 from __future__ import annotations
 
 import importlib.util
-import json
 import os
 import re
 import shutil
 import subprocess
 import sys
-from collections.abc import Mapping
-from dataclasses import asdict
-from pathlib import Path
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 from uuid import uuid4
 
 import boto3
 import yaml
 from botocore.config import Config as S3ClientConfig
-from openlet_sdk.config import Config
+from openlet_sdk.config import Config, load_path
+from openlet_sdk.types import is_str_mapping
 
-from .config import (
+from openlet_env.config import (
     build_openlet_config,
     build_runtime_env,
     deep_merge,
@@ -34,7 +31,11 @@ from .config import (
     uses_mock_langfuse,
     validate_project_name,
 )
-from .models import Endpoints, EnvMode, EnvState
+from openlet_env.models import Endpoints, EnvMode, EnvState
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from pathlib import Path
 
 
 class _ConfigureFn(Protocol):
@@ -55,7 +56,14 @@ def _load_configure(repo_root: Path) -> _ConfigureFn:
         raise RuntimeError(f"Unable to load {script_path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return cast(_ConfigureFn, module.configure)
+    return cast("_ConfigureFn", module.configure)
+
+
+def _docker_bin() -> str:
+    docker_bin = shutil.which("docker")
+    if docker_bin is None:
+        raise FileNotFoundError("docker executable not found on PATH")
+    return docker_bin
 
 
 class ComposeStack:
@@ -72,35 +80,23 @@ class ComposeStack:
         self.shared_uv_cache = self.repo_root / ".local/uv-cache"
 
     def load_state(self) -> EnvState:
-        raw = cast(dict[str, object], json.loads(self.state_path.read_text("utf-8")))
-        return EnvState(
-            project=cast(str, raw["project"]),
-            mode=cast(EnvMode, raw["mode"]),
-            namespace=cast(str, raw["namespace"]),
-            profiles=tuple(cast(list[str], raw.get("profiles", []))),
-            gateway_port=int(cast(int, raw["gateway_port"])),
-            rustfs_port=int(cast(int, raw["rustfs_port"])),
-            wiremock_port=int(cast(int, raw["wiremock_port"])),
-            seeded_workspaces=dict(
-                cast(dict[str, str], raw.get("seeded_workspaces", {}))
-            ),
-            accounts=dict(cast(dict[str, dict[str, str]], raw.get("accounts", {}))),
-        )
+        """Load persisted environment state from ``state.json``."""
+        return EnvState.model_validate_json(self.state_path.read_text("utf-8"))
 
     def save_state(self, state: EnvState) -> None:
+        """Persist environment state to ``state.json`` with private permissions."""
         self.directory.mkdir(parents=True, exist_ok=True)
         self.state_path.write_text(
-            json.dumps(asdict(state), indent=2) + "\n", encoding="utf-8"
+            state.model_dump_json(indent=2) + "\n", encoding="utf-8"
         )
         self.state_path.chmod(0o600)
 
     def load_config(self) -> Config:
-        value: object = yaml.safe_load(self.config_path.read_text("utf-8"))
-        if not isinstance(value, dict):
-            raise ValueError(f"invalid YAML in {self.config_path}")
-        return cast(Config, value)
+        """Load the generated ``openlet.yaml`` configuration for this project."""
+        return load_path(self.config_path)
 
     def load_runtime_env(self, state: EnvState) -> dict[str, str]:
+        """Build the isolated Compose runtime environment mapping for ``state``."""
         project_secrets = ensure_secrets(self.secrets_path)
         user_env = read_user_env(self.repo_root)
         return build_runtime_env(
@@ -117,11 +113,12 @@ class ComposeStack:
         capture: bool = False,
         check: bool = True,
     ) -> str:
+        """Execute a ``docker compose`` subcommand scoped to this project."""
         active_profiles = (
             profiles if profiles is not None else self.load_state().profiles
         )
         cmd = [
-            "docker",
+            _docker_bin(),
             "compose",
             "-p",
             self.project,
@@ -140,7 +137,7 @@ class ComposeStack:
             "COMPOSE_PROJECT_NAME": self.project,
             "COMPOSE_PROFILES": ",".join(active_profiles),
         }
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603  # Trusted local docker CLI with validated project/file args.
             cmd,
             cwd=self.repo_root,
             env=env,
@@ -163,9 +160,9 @@ class ComposeStack:
     ) -> tuple[EnvState, bool]:
         """Prepare config + overlays and boot the Compose stack. Returns (state, fell_back_to_mock)."""
         if not self.state_path.exists():
-            existing = subprocess.run(
+            existing = subprocess.run(  # noqa: S603  # Trusted local docker CLI checking existing project containers.
                 [
-                    "docker",
+                    _docker_bin(),
                     "ps",
                     "-aq",
                     "--filter",
@@ -225,9 +222,9 @@ class ComposeStack:
         merged_override: dict[str, object] | None = None
         if override_path is not None:
             raw_override: object = yaml.safe_load(override_path.read_text("utf-8"))
-            if not isinstance(raw_override, dict):
+            if not is_str_mapping(raw_override):
                 raise ValueError(f"override YAML must be a mapping: {override_path}")
-            merged_override = cast(dict[str, object], raw_override)
+            merged_override = dict(raw_override)
         if config_overrides is not None:
             merged_override = (
                 deep_merge(merged_override, config_overrides)
@@ -270,7 +267,6 @@ class ComposeStack:
             self.wiremock_dir,
             mode=effective_mode,
             include_langfuse=uses_mock_langfuse(effective_mode, user_env),
-            repo_root=self.repo_root,
         )
         overlay_yaml = render_compose_overlay(
             mode=effective_mode,
@@ -306,7 +302,7 @@ class ComposeStack:
     ) -> None:
         """Allow browser dev server (localhost:5173 / 127.0.0.1:5173) direct presigned PUT/GET."""
         cfg = self.load_config()["dependencies"]["s3"]
-        s3 = boto3.client(  # pyright: ignore[reportUnknownMemberType]
+        s3 = boto3.client(  # pyright: ignore[reportUnknownMemberType]  # Only the S3 service overload has installed stubs.
             "s3",
             endpoint_url=f"http://{self.port('rustfs', 9000)}",
             region_name=cfg["region"],
@@ -338,6 +334,7 @@ class ComposeStack:
             s3.close()
 
     def port(self, service: str, container_port: int | str) -> str:
+        """Resolve the loopback ``host:port`` bound to ``service``'s ``container_port``."""
         endpoint = self.compose(
             "port", service, str(container_port), capture=True
         ).strip()
@@ -348,6 +345,7 @@ class ComposeStack:
         return endpoint
 
     def endpoints(self) -> Endpoints:
+        """Resolve loopback service endpoints for the running Compose stack."""
         envoy = self.port("envoy", 8080)
         rustfs = self.port("rustfs", 9000)
         wiremock = self.port("wiremock", 8080)
@@ -366,6 +364,7 @@ class ComposeStack:
         )
 
     def down(self, *, volumes: bool = False, remove_state: bool = False) -> None:
+        """Tear down Compose services and optionally remove volumes and state."""
         if self.state_path.is_file():
             self.compose(
                 "down",

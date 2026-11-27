@@ -1,10 +1,13 @@
+"""LiteLLM + Instructor multimodal enrichment and embedding providers."""
+
+from __future__ import annotations
+
 import asyncio
 import base64
 import csv
-from collections.abc import Sequence
 from dataclasses import dataclass
 from io import BytesIO, StringIO
-from typing import Any, TypedDict, cast
+from typing import TYPE_CHECKING, Self, TypedDict, cast
 
 import instructor
 import litellm
@@ -17,13 +20,21 @@ from litellm.exceptions import (
     Timeout,
 )
 from litellm.types.utils import EmbeddingResponse, ModelResponse, Usage  # pyright: ignore[reportMissingTypeStubs]
-from openai.types.chat import ChatCompletionContentPartParam
 from openlet_sdk.config import Config, EnrichmentSettings, secret
 from openlet_sdk.inference import InferenceSettings, response_cost, usage_details
+from openlet_sdk.types import is_object_sequence, is_str_mapping
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validator
 
-from .telemetry import retry_transient
+from letfs_ingest.telemetry import retry_transient
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from openai.types.chat import (
+        ChatCompletionContentPartParam,
+        ChatCompletionMessageParam,
+    )
 
 BATCH_CHAR_BUDGET = 36_000
 MAX_ITEMS_PER_BATCH = 20
@@ -57,20 +68,22 @@ class ArtifactEnrichment(BaseModel):
 
 
 class BatchEnrichment(BaseModel):
+    """Structured batch response returned by the enrichment LLM."""
+
     model_config = ConfigDict(extra="forbid")
 
     items: list[ArtifactEnrichment]
 
     @model_validator(mode="after")
-    def validate_expected_ids(self, info: ValidationInfo) -> "BatchEnrichment":
+    def validate_expected_ids(self, info: ValidationInfo) -> Self:
+        """Ensure every requested artifact ID appears once with no extras."""
         ctx: object = info.context
-        if not isinstance(ctx, dict):
+        if not is_str_mapping(ctx):
             return self
-        ctx_map = cast(dict[object, object], ctx)
-        expected = ctx_map.get("expected_ids")
-        if expected is None:
+        expected = ctx.get("expected_ids")
+        if expected is None or not is_object_sequence(expected):
             return self
-        expected_set = set(cast(Sequence[str], expected))
+        expected_set = {str(item) for item in expected}
         got_ids = [item.id for item in self.items]
         if len(got_ids) != len(set(got_ids)):
             raise ValueError("duplicate artifact IDs returned in enrichment batch")
@@ -83,20 +96,24 @@ class BatchEnrichment(BaseModel):
         return self
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class EnrichItem:
+    """Single artifact payload prepared for multimodal enrichment."""
+
     id: str
     media_type: str
     text_sample: str | None = None
     image_b64: str | None = None
 
     def estimated_chars(self) -> int:
+        """Estimate character budget consumed by this item in a prompt batch."""
         if self.image_b64 is not None:
             return 1_500
         return len(self.id) + len(self.media_type) + len(self.text_sample or "") + 40
 
 
 def sample_text(text: str, characters: int) -> str:
+    """Sample head, middle, and tail excerpts from ``text`` within ``characters``."""
     if characters <= 0 or len(text) <= characters:
         return text
     marker = "\n...\n"
@@ -115,6 +132,7 @@ def sample_text(text: str, characters: int) -> str:
 
 
 def sample_csv(text: str, characters: int) -> str:
+    """Sample header, representative middle rows, tail rows, and row count for CSV."""
     rows = list(csv.reader(StringIO(text)))
     if not rows:
         return sample_text(text, characters)
@@ -147,6 +165,7 @@ def sample_csv(text: str, characters: int) -> str:
 
 
 def evidence(text: str, media_type: str, characters: int) -> str:
+    """Build a bounded text or CSV evidence sample for enrichment."""
     if media_type == "text/csv":
         return sample_csv(text, characters)
     return sample_text(text, characters)
@@ -157,6 +176,7 @@ def adaptive_item_budget(
     max_input_characters: int,
     char_budget: int = BATCH_CHAR_BUDGET,
 ) -> int:
+    """Compute per-item character budget scaled by batch size."""
     effective = max(1, min(item_count, MAX_ITEMS_PER_BATCH))
     per_item = char_budget // effective
     return min(max_input_characters, max(1_500, per_item))
@@ -168,6 +188,7 @@ def pack_batches(
     max_items: int = MAX_ITEMS_PER_BATCH,
     max_images: int = MAX_IMAGES_PER_BATCH,
 ) -> list[list[EnrichItem]]:
+    """Pack enrichment items into batches respecting item, char, and image caps."""
     batches: list[list[EnrichItem]] = []
     cur: list[EnrichItem] = []
     cur_chars = 0
@@ -194,6 +215,7 @@ def pack_batches(
 
 
 def vision(data: bytes, settings: EnrichmentSettings) -> str:
+    """Downscale and base64-encode an image as JPEG for multimodal enrichment."""
     with Image.open(BytesIO(data)) as image:
         if image.width * image.height > settings["max_image_pixels"]:
             raise ValueError("image exceeds max_image_pixels enrichment limit")
@@ -214,6 +236,8 @@ def vision(data: bytes, settings: EnrichmentSettings) -> str:
 
 
 class ConnectionParameters(TypedDict):
+    """LiteLLM gateway connection parameters."""
+
     api_base: str
     api_key: str
     custom_llm_provider: str
@@ -222,11 +246,15 @@ class ConnectionParameters(TypedDict):
 
 
 class EmbeddingData(TypedDict):
+    """Single embedding item returned by LiteLLM."""
+
     index: int
     embedding: list[float]
 
 
 class Models:
+    """Managed gateway client for artifact enrichment and vector embeddings."""
+
     def __init__(self, config: Config) -> None:
         self.config = config
         self.langfuse = get_client()
@@ -246,6 +274,7 @@ class Models:
         self.client = instructor.from_litellm(
             self.complete,
             mode=modes[config["models"]["enrichment"]["output_mode"]],
+            async_client=True,
         )
         lf = config.get("langfuse")
         self.prompt_label = lf["prompt_label"] if lf else "production"
@@ -253,6 +282,7 @@ class Models:
     async def describe_batch(
         self, items: Sequence[EnrichItem]
     ) -> dict[str, ArtifactEnrichment]:
+        """Enrich a batch of text and image artifacts via the Langfuse-managed prompt."""
         if not items:
             return {}
         prompt = await asyncio.to_thread(
@@ -262,9 +292,8 @@ class Models:
             type="text",
             cache_ttl_seconds=60,
         )
-        cfg_obj: object = getattr(prompt, "config", None) or {}
-        inference = InferenceSettings.model_validate(cfg_obj)
-        system_prompt = str(getattr(prompt, "prompt", ""))
+        inference = InferenceSettings.model_validate(prompt.config or {})
+        system_prompt = prompt.prompt
 
         parts: list[ChatCompletionContentPartParam] = []
         for item in items:
@@ -285,7 +314,7 @@ class Models:
                     {"type": "text", "text": f"{header}\n{item.text_sample or ''}"}
                 )
 
-        messages: list[dict[str, object]] = [
+        messages: list[ChatCompletionMessageParam] = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": parts},
         ]
@@ -295,8 +324,7 @@ class Models:
             batch_summary = batch_summary[:147] + "..."
 
         with propagate_attributes(metadata={"blob_items": batch_summary}):
-            create_with_completion: Any = self.client.create_with_completion
-            result = await create_with_completion(
+            parsed, _ = await self.client.create_with_completion(
                 response_model=BatchEnrichment,
                 messages=messages,
                 context={"expected_ids": expected_ids},
@@ -308,10 +336,10 @@ class Models:
                 timeout=self.connection["timeout"],
                 **inference.parameters(),
             )
-            parsed = cast(BatchEnrichment, result[0])
         return {entry.id: entry for entry in parsed.items}
 
     async def complete(self, **kwargs: object) -> ModelResponse:
+        """Execute a retried LiteLLM chat completion under a Langfuse observation."""
         with self.langfuse.start_as_current_observation(
             name="enrichment",
             as_type="generation",
@@ -319,56 +347,60 @@ class Models:
             input=kwargs.get("messages"),
         ) as observation:
             response = cast(
-                ModelResponse,
+                "ModelResponse",
                 await retry_transient(
                     lambda: litellm.acompletion(**kwargs),
                     should_retry=_is_transient_llm_error,
                     sleep=asyncio.sleep,
                 ),
             )
+            raw_hidden = getattr(response, "_hidden_params", None)
+            hidden_cost = (
+                raw_hidden.get("response_cost") if is_str_mapping(raw_hidden) else None
+            )
+            raw_usage = getattr(response, "usage", None)
             observation.update(
                 output=response.choices[0].model_dump(),
                 usage_details=usage_details(
-                    cast(Usage | None, getattr(response, "usage", None))
+                    raw_usage if isinstance(raw_usage, Usage) else None
                 ),
-                cost_details=response_cost(
-                    cast(
-                        dict[str, object], getattr(response, "_hidden_params", {})
-                    ).get("response_cost")
-                ),
+                cost_details=response_cost(hidden_cost),
             )
             return response
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
+        """Embed ``texts`` in input order using the configured embedding model."""
         model = self.config["models"]["embedding"]
-        with propagate_attributes():
-            with self.langfuse.start_as_current_observation(
+        with (
+            propagate_attributes(),
+            self.langfuse.start_as_current_observation(
                 name="embedding",
                 as_type="embedding",
                 model=model["model"],
                 input=texts,
-            ) as observation:
-                response: EmbeddingResponse = await retry_transient(
-                    lambda: litellm.aembedding(
-                        model=model["model"],
-                        input=texts,
-                        dimensions=model["dimensions"],
-                        encoding_format="float",
-                        **self.connection,
-                    ),
-                    should_retry=_is_transient_llm_error,
-                    sleep=asyncio.sleep,
-                )
-                observation.update(
-                    usage_details=usage_details(response.usage),
-                    cost_details=response_cost(
-                        cast(
-                            dict[str, object], getattr(response, "_hidden_params", {})
-                        ).get("response_cost")
-                    ),
-                )
+            ) as observation,
+        ):
+            response: EmbeddingResponse = await retry_transient(
+                lambda: litellm.aembedding(
+                    model=model["model"],
+                    input=texts,
+                    dimensions=model["dimensions"],
+                    encoding_format="float",
+                    **self.connection,
+                ),
+                should_retry=_is_transient_llm_error,
+                sleep=asyncio.sleep,
+            )
+            raw_hidden = getattr(response, "_hidden_params", None)
+            hidden_cost = (
+                raw_hidden.get("response_cost") if is_str_mapping(raw_hidden) else None
+            )
+            observation.update(
+                usage_details=usage_details(response.usage),
+                cost_details=response_cost(hidden_cost),
+            )
         ordered = sorted(
-            cast(list[EmbeddingData], getattr(response, "data")),
+            cast("list[EmbeddingData]", response.data),  # pyright: ignore[reportUnknownMemberType]
             key=lambda item: item["index"],
         )
         return [item["embedding"] for item in ordered]

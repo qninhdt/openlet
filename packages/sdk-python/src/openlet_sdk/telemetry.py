@@ -1,8 +1,12 @@
+"""OpenTelemetry logging, tracing, metrics, and Langfuse initialization."""
+
+from __future__ import annotations
+
 import json
 import logging
 import math
-from collections.abc import Callable, Mapping
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, override
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
@@ -24,22 +28,37 @@ from opentelemetry.sdk.resources import OTELResourceDetector, Resource
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
-from opentelemetry.trace import Span
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
-from opentelemetry.util.types import AttributeValue
 
-from .config import LangfuseSettings, RuntimeSettings, TelemetrySettings, secret
+from openlet_sdk.config import (
+    LangfuseSettings,
+    RuntimeSettings,
+    TelemetrySettings,
+    secret,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
+
+    from langfuse.types import MaskFunction
+    from opentelemetry.trace import Span
+    from opentelemetry.util.types import AttributeValue
+
+_MISSING = object()
 
 
 class JSONFormatter(logging.Formatter):
+    """Structured JSON log formatter with trace correlation fields."""
+
     def __init__(self, identity: Mapping[str, AttributeValue] | None = None) -> None:
         super().__init__()
         self.identity = identity or {}
 
+    @override
     def format(self, record: logging.LogRecord) -> str:
         fields: dict[str, object] = {
             **self.identity,
-            "time": datetime.now(timezone.utc).isoformat(),
+            "time": datetime.now(UTC).isoformat(),
             "level": record.levelname.lower(),
             "logger": record.name,
             "message": record.getMessage(),
@@ -53,8 +72,9 @@ class JSONFormatter(logging.Formatter):
             "temporal_activity",
             "temporal_workflow",
         ):
-            if hasattr(record, key):
-                fields[key] = getattr(record, key)
+            extra_value = getattr(record, key, _MISSING)
+            if extra_value is not _MISSING:
+                fields[key] = extra_value
         if record.exc_info:
             fields["exception"] = self.formatException(record.exc_info)
         span = trace.get_current_span().get_span_context()
@@ -66,6 +86,7 @@ class JSONFormatter(logging.Formatter):
 
 
 def redact_request(span: Span, request: RequestInfo) -> None:
+    """Strip credentials, query strings, and fragments from HTTP span URLs."""
     if span.is_recording():
         url = urlsplit(str(request.url))
         safe = urlunsplit((url.scheme, url.netloc.rsplit("@", 1)[-1], url.path, "", ""))
@@ -74,12 +95,14 @@ def redact_request(span: Span, request: RequestInfo) -> None:
 
 
 async def redact_async_request(span: Span, request: RequestInfo) -> None:
+    """Async wrapper delegating HTTP span URL redaction to ``redact_request``."""
     redact_request(span, request)
 
 
 def initialize(
     name: str, runtime: RuntimeSettings, settings: TelemetrySettings
 ) -> Callable[[], None]:
+    """Configure structured logging, OpenTelemetry tracing/metrics, and return shutdown."""
     resource = Resource.create(
         {
             "service.name": name,
@@ -172,6 +195,7 @@ def initialize(
 
 
 def langfuse_span(span: ReadableSpan) -> bool:
+    """Filter OpenTelemetry spans exported to Langfuse."""
     attributes = span.attributes or {}
     return is_default_export_span(span) or (
         span.kind == trace.SpanKind.CLIENT
@@ -181,12 +205,17 @@ def langfuse_span(span: ReadableSpan) -> bool:
 
 
 def initialize_langfuse(
-    settings: LangfuseSettings, runtime: RuntimeSettings
+    settings: LangfuseSettings,
+    runtime: RuntimeSettings,
+    *,
+    mask: MaskFunction | None = None,
 ) -> Langfuse:
+    """Create a configured Langfuse client for the active runtime environment."""
     return Langfuse(
         base_url=settings["base_url"],
         public_key=secret(settings["public_key"]),
         secret_key=secret(settings["secret_key"]),
         environment=runtime["environment"],
         should_export_span=langfuse_span,
+        mask=mask,
     )

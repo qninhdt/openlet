@@ -24,16 +24,44 @@ export function AgentAccess() {
   const access = useQuery({
     queryKey: key,
     queryFn: async () => {
-      const people: { user_id: string; role: string }[] = [];
-      let cursor = '';
-      do {
-        const page = await api!<{ items: typeof people; next_cursor: string | null }>(
-          p.live.path + '/access?' + new URLSearchParams({ cursor }),
-        );
-        people.push(...page.items);
-        cursor = page.next_cursor ?? '';
-      } while (cursor);
-      return people;
+      type AccessPerson = {
+        id?: string;
+        user_id?: string;
+        role?: string;
+        display_name?: string;
+        handle?: string;
+        avatar_url?: string;
+      };
+      const page = await api!<{
+        owners?: AccessPerson[];
+        operators?: AccessPerson[];
+        items?: AccessPerson[];
+      }>(p.live.path + '/access');
+      if (Array.isArray(page.owners) || Array.isArray(page.operators)) {
+        return [
+          ...(page.owners ?? []).map((u) => ({
+            user_id: u.user_id ?? u.id ?? '',
+            role: 'owner',
+            display_name: u.display_name,
+            handle: u.handle,
+            avatar_url: u.avatar_url,
+          })),
+          ...(page.operators ?? []).map((u) => ({
+            user_id: u.user_id ?? u.id ?? '',
+            role: 'operator',
+            display_name: u.display_name,
+            handle: u.handle,
+            avatar_url: u.avatar_url,
+          })),
+        ];
+      }
+      return (page.items ?? []).map((u) => ({
+        user_id: u.user_id ?? u.id ?? '',
+        role: u.role ?? 'operator',
+        display_name: u.display_name,
+        handle: u.handle,
+        avatar_url: u.avatar_url,
+      }));
     },
   });
   const members = useWorkspaceMembers(p.workspace.id);
@@ -74,8 +102,10 @@ export function AgentAccess() {
         {access.data?.map((person) => (
           <li key={person.user_id + person.role} className="flex items-center gap-2 py-2 text-sm">
             <span className="min-w-0 flex-1 truncate">
-              {members.data?.find((member) => member.user.id === person.user_id)?.user
-                .displayName ?? person.user_id}
+              {person.display_name ??
+                members.data?.find((member) => member.user.id === person.user_id)?.user
+                  .displayName ??
+                person.user_id}
             </span>
             <span className="text-xs text-muted-foreground capitalize">{person.role}</span>
             {person.role === 'operator' && (

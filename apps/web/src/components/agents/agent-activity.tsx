@@ -11,7 +11,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { MessageScrollerContent, MessageScrollerItem } from '@/components/ui/message-scroller';
 import { agentAppearance } from '@/components/agent-appearance';
-import type { ActivityEntry } from '@/lib/agent-api';
+import { normalizeActivityEntry, type ActivityEntry, type RawActivityRow } from '@/lib/agent-api';
 import { useAgentPreview } from './agent-preview';
 import { StopRun } from './stop-run';
 import { AgentMarkdown } from './agent-rich-content';
@@ -47,9 +47,10 @@ function ActivityMessage() {
     setLoading(true);
     setError('');
     try {
-      const full = await p.live.api!<ActivityEntry>(
-        `${p.live.path}/agents/${entry.agent_id}/activity/${entry.id}`,
+      const raw = await p.live.api!<RawActivityRow | ActivityEntry>(
+        `${p.live.path}/agents/${entry.agent_id}/activity/${entry.seq}`,
       );
+      const full = normalizeActivityEntry(raw) ?? entry;
       client.setQueryData(
         [...p.live.scope, 'activity'],
         (old: { pages: { items: ActivityEntry[] }[] } | undefined) =>
@@ -158,12 +159,42 @@ export function LiveActivity() {
             {p.live.connection}
           </p>
         )}
-        {p.activityAgent.status === 'working' && p.activityAgent.run_id && (
-          <div className="flex items-center justify-end gap-3 px-4 py-2">
-            <span role="status" className="text-xs text-muted-foreground">
-              {p.activityAgent.name} is working…
-            </span>
-            <StopRun agent={p.activityAgent.id} run={p.activityAgent.run_id} />
+        {(p.live.latestRun || p.activityAgent.status === 'working') && (
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-muted/30 px-4 py-2 text-caption text-muted-foreground">
+            <div className="flex flex-wrap items-center gap-3 tabular-nums">
+              <span className="inline-flex items-center gap-1.5 font-medium text-foreground capitalize">
+                <span
+                  aria-hidden="true"
+                  className={
+                    p.live.latestRun?.status === 'running' || p.activityAgent.status === 'working'
+                      ? 'size-2 rounded-full bg-primary motion-safe:animate-pulse'
+                      : p.live.latestRun?.status === 'failed'
+                        ? 'size-2 rounded-full bg-destructive'
+                        : 'size-2 rounded-full bg-muted-foreground/50'
+                  }
+                />
+                {p.live.latestRun?.status ?? p.activityAgent.status}
+              </span>
+              {p.live.latestRun && (
+                <>
+                  <span>
+                    In {p.live.latestRun.input_tokens.toLocaleString()}
+                    {p.live.latestRun.cached_input_tokens > 0
+                      ? ` (${p.live.latestRun.cached_input_tokens.toLocaleString()} cached)`
+                      : ''}
+                  </span>
+                  <span>Out {p.live.latestRun.output_tokens.toLocaleString()}</span>
+                  <span>{p.live.latestRun.llm_calls} calls</span>
+                  <span>${p.live.latestRun.cost_usd.toFixed(4)}</span>
+                </>
+              )}
+            </div>
+            {(p.live.latestRun?.status === 'running' || p.activityAgent.status === 'working') && (
+              <StopRun
+                agent={p.activityAgent.id}
+                run={p.live.latestRun?.id ?? p.activityAgent.run_id}
+              />
+            )}
           </div>
         )}
         <AgentMessageScroller positionKey={`${p.activityAgent.id}:activity`}>

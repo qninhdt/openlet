@@ -1,22 +1,31 @@
+"""Chunking, embedding, and Qdrant vector indexing for enriched LetFS artifacts."""
+
+from __future__ import annotations
+
 import asyncio
 import csv
 from io import StringIO
-from typing import Any, Literal, TypedDict, cast
+from typing import TYPE_CHECKING, Literal, TypedDict
 from uuid import NAMESPACE_DNS, uuid5
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from openlet_api.letfs.v1 import internal_pb2 as internal
 from openlet_api.letfs.v1 import letfs_pb2 as letfs
-from openlet_sdk.config import Config
-from qdrant_client import AsyncQdrantClient, models
+from qdrant_client import models
 
-from .providers import Models
-from .readme import own_body
+from letfs_ingest.readme import own_body
 
-PointKind = Literal["image", "table", "text", "text_chunk"]
+if TYPE_CHECKING:
+    from openlet_sdk.config import Config
+
+    from letfs_ingest.protocols import EmbeddingModels, VectorStore
+
+type PointKind = Literal["image", "table", "text", "text_chunk"]
 
 
 class PointPayload(TypedDict):
+    """Qdrant payload fields stored alongside each embedded vector."""
+
     workspace_id: str
     blob_id: str
     artifact_path: str
@@ -66,12 +75,107 @@ def _merge_small_chunks(
     return out
 
 
+def _make_point(
+    info: internal.GetBlobArtifactsResponse,
+    artifact_path: str,
+    kind: PointKind,
+    *,
+    title: str,
+    chunk_index: int,
+    text: str,
+) -> tuple[str, PointPayload]:
+    return (
+        _point_id(info.blob_id, artifact_path, kind, chunk_index),
+        PointPayload(
+            workspace_id=info.workspace_id,
+            blob_id=info.blob_id,
+            artifact_path=artifact_path,
+            kind=kind,
+            title=title,
+            chunk_index=chunk_index,
+            text=text,
+        ),
+    )
+
+
+def _text_artifact_points(
+    info: internal.GetBlobArtifactsResponse,
+    art: internal.BlobArtifact,
+    summary: str,
+    splitter: RecursiveCharacterTextSplitter,
+    *,
+    chunk_size_tokens: int,
+) -> list[tuple[str, PointPayload]]:
+    body = art.text_content if art.HasField("text_content") else ""
+    if art.media_type == "text/csv" or art.path.endswith(".csv"):
+        headers = _csv_headers(body)
+        parts = [summary] if summary else []
+        if headers:
+            parts.append(f"Columns: {headers}")
+        text = "\n".join(parts)
+        return (
+            [
+                _make_point(
+                    info, art.path, "table", title=art.title, chunk_index=0, text=text
+                )
+            ]
+            if text
+            else []
+        )
+
+    if art.path == "README.md":
+        body = own_body(body)
+    if not body.strip():
+        return []
+    chunks = _merge_small_chunks(
+        splitter.split_text(body),
+        max_chars=max(2_400, chunk_size_tokens * 5),
+    )
+    if len(chunks) == 1:
+        combined = f"{summary}\n\n{chunks[0]}".strip() if summary else chunks[0]
+        return [
+            _make_point(
+                info,
+                art.path,
+                "text_chunk",
+                title=art.title,
+                chunk_index=0,
+                text=combined,
+            )
+        ]
+
+    out: list[tuple[str, PointPayload]] = []
+    if summary:
+        out.append(
+            _make_point(
+                info, art.path, "text", title=art.title, chunk_index=0, text=summary
+            )
+        )
+    for idx, chunk in enumerate(chunks):
+        if not any(ch.isalnum() for ch in chunk):
+            continue
+        text = f"{art.title}\n\n{chunk}".strip() if art.title else chunk
+        out.append(
+            _make_point(
+                info,
+                art.path,
+                "text_chunk",
+                title=art.title,
+                chunk_index=idx,
+                text=text,
+            )
+        )
+    return out
+
+
 def points(
     info: internal.GetBlobArtifactsResponse, config: Config
 ) -> list[tuple[str, PointPayload]]:
+    """Build deterministic Qdrant point IDs and payloads for all indexable artifacts."""
     io = config["services"]["letfs_ingest"]["io"]
+    chunk_size = int(io["chunk_size_tokens"])
     splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
-        chunk_size=io["chunk_size_tokens"],
+        chunk_size=chunk_size,
         chunk_overlap=io["chunk_overlap_tokens"],
     )
     out: list[tuple[str, PointPayload]] = []
@@ -80,17 +184,8 @@ def points(
         text = "\n\n".join(filter(None, [info.title, info.description]))
         if text:
             out.append(
-                (
-                    _point_id(info.blob_id, "", "image", 0),
-                    PointPayload(
-                        workspace_id=info.workspace_id,
-                        blob_id=info.blob_id,
-                        artifact_path="",
-                        kind="image",
-                        title=info.title,
-                        chunk_index=0,
-                        text=text,
-                    ),
+                _make_point(
+                    info, "", "image", title=info.title, chunk_index=0, text=text
                 )
             )
         return out
@@ -99,116 +194,38 @@ def points(
         if art.kind != letfs.NODE_KIND_FILE or not art.indexable:
             continue
         summary = "\n\n".join(filter(None, [art.title, art.description]))
-
         if art.media_type.startswith("image/"):
             if summary:
                 out.append(
-                    (
-                        _point_id(info.blob_id, art.path, "image", 0),
-                        PointPayload(
-                            workspace_id=info.workspace_id,
-                            blob_id=info.blob_id,
-                            artifact_path=art.path,
-                            kind="image",
-                            title=art.title,
-                            chunk_index=0,
-                            text=summary,
-                        ),
-                    )
-                )
-            continue
-
-        body = art.text_content if art.HasField("text_content") else ""
-        if art.media_type == "text/csv" or art.path.endswith(".csv"):
-            headers = _csv_headers(body)
-            parts = [summary] if summary else []
-            if headers:
-                parts.append(f"Columns: {headers}")
-            text = "\n".join(parts)
-            if text:
-                out.append(
-                    (
-                        _point_id(info.blob_id, art.path, "table", 0),
-                        PointPayload(
-                            workspace_id=info.workspace_id,
-                            blob_id=info.blob_id,
-                            artifact_path=art.path,
-                            kind="table",
-                            title=art.title,
-                            chunk_index=0,
-                            text=text,
-                        ),
-                    )
-                )
-            continue
-
-        if art.path == "README.md":
-            body = own_body(body)
-        if not body.strip():
-            continue
-        chunks = _merge_small_chunks(
-            splitter.split_text(body),
-            max_chars=max(2_400, int(io["chunk_size_tokens"]) * 5),
-        )
-        if len(chunks) == 1:
-            combined = f"{summary}\n\n{chunks[0]}".strip() if summary else chunks[0]
-            out.append(
-                (
-                    _point_id(info.blob_id, art.path, "text_chunk", 0),
-                    PointPayload(
-                        workspace_id=info.workspace_id,
-                        blob_id=info.blob_id,
-                        artifact_path=art.path,
-                        kind="text_chunk",
+                    _make_point(
+                        info,
+                        art.path,
+                        "image",
                         title=art.title,
                         chunk_index=0,
-                        text=combined,
-                    ),
+                        text=summary,
+                    )
                 )
+            continue
+        out.extend(
+            _text_artifact_points(
+                info,
+                art,
+                summary,
+                splitter,
+                chunk_size_tokens=chunk_size,
             )
-        else:
-            if summary:
-                out.append(
-                    (
-                        _point_id(info.blob_id, art.path, "text", 0),
-                        PointPayload(
-                            workspace_id=info.workspace_id,
-                            blob_id=info.blob_id,
-                            artifact_path=art.path,
-                            kind="text",
-                            title=art.title,
-                            chunk_index=0,
-                            text=summary,
-                        ),
-                    )
-                )
-            for idx, chunk in enumerate(chunks):
-                if not any(ch.isalnum() for ch in chunk):
-                    continue
-                text = f"{art.title}\n\n{chunk}".strip() if art.title else chunk
-                out.append(
-                    (
-                        _point_id(info.blob_id, art.path, "text_chunk", idx),
-                        PointPayload(
-                            workspace_id=info.workspace_id,
-                            blob_id=info.blob_id,
-                            artifact_path=art.path,
-                            kind="text_chunk",
-                            title=art.title,
-                            chunk_index=idx,
-                            text=text,
-                        ),
-                    )
-                )
+        )
     return out
 
 
 async def index(
     info: internal.GetBlobArtifactsResponse,
-    ai: Models,
-    qdrant: AsyncQdrantClient,
+    ai: EmbeddingModels,
+    qdrant: VectorStore,
     config: Config,
 ) -> None:
+    """Delete stale blob points, embed artifact chunks, and upsert into Qdrant."""
     io = config["services"]["letfs_ingest"]["io"]
     collection = config["dependencies"]["qdrant"]["collection"]
     # Clear any earlier retry/partial points before idempotent upsert.
@@ -239,9 +256,7 @@ async def index(
         async with sem:
             vectors = await ai.embed([p[1]["text"] for p in slice_items])
         return [
-            models.PointStruct(
-                id=pid, vector=vec, payload=cast(dict[str, Any], payload)
-            )
+            models.PointStruct(id=pid, vector=vec, payload=dict(payload))
             for (pid, payload), vec in zip(slice_items, vectors, strict=True)
         ]
 

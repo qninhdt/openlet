@@ -10,7 +10,8 @@ import {
   SelectContent,
   SelectItem,
 } from '@/components/ui/select';
-import type { Cursor, InboxItem, Page, HumanRequest } from '@/lib/agent-api';
+import { chatApi } from '@/lib/chat-api';
+import type { InboxItem, Page, HumanRequest } from '@/lib/agent-api';
 import { queryString } from '@/lib/agent-api';
 import { RequestInspector, ScheduleInspector, type ScheduleRecord } from './inbox-sources';
 import { useAgentPreview } from './agent-preview';
@@ -34,7 +35,9 @@ function LiveInbox() {
   const [query, setQuery] = useState('');
   const [kind, setKind] = useState('all');
   const [unread, setUnread] = useState(false);
-  const [selected, setSelected] = useState<InboxItem | null>(null);
+  const [selected, setSelected] = useState<(InboxItem & { agent_last_read_seq?: number }) | null>(
+    null,
+  );
   const [source, setSource] = useState<
     { kind: 'request'; item: HumanRequest } | { kind: 'schedule'; item: ScheduleRecord } | null
   >(null);
@@ -60,30 +63,90 @@ function LiveInbox() {
     maxPages: 10,
     refetchInterval: 30000,
   });
-  const params = new URLSearchParams({
-    agent_id: p.activityAgent.id,
-    query,
-    ...(kind !== 'all' ? { kind } : {}),
-    unread: String(unread),
-  });
   const list = useInfiniteQuery({
     queryKey: [...p.live.scope, 'inbox', query, kind, unread],
-    initialPageParam: null as Cursor | null,
-    queryFn: ({ pageParam }) =>
-      p.live.api!<Page<InboxItem>>(`${p.live.path}/inbox?${params}&${queryString(pageParam)}`),
-    getNextPageParam: (page) => page.next_cursor as Cursor | null,
+    initialPageParam: '' as string,
+    enabled: Boolean(p.live.api),
+    queryFn: async ({ pageParam }) => {
+      const chat = chatApi(p.live.api!, p.workspace.id);
+      const resp = await chat.listAgentConversations(p.activityAgent.id, 50, pageParam);
+      const needle = query.trim().toLowerCase();
+      const items: (InboxItem & { agent_last_read_seq?: number })[] = (resp.conversations ?? [])
+        .map((c): InboxItem & { agent_last_read_seq?: number } => {
+          const other = c.members?.find((m) => m.actorId !== p.activityAgent.id);
+          const selfMember = c.members?.find(
+            (m) => m.actorType === 'agent' && m.actorId === p.activityAgent.id,
+          );
+          const sourceKind = c.type === 'group' ? 'box' : (other?.actorType ?? 'user');
+          const preview = c.lastMessagePreview;
+          return {
+            id: preview?.id ?? c.id,
+            conversation_id: c.id,
+            source_kind: sourceKind,
+            source_id: other?.actorId ?? c.id,
+            source_name: c.title || c.handle || other?.actorId || c.id,
+            content: preview?.snippet ?? '',
+            created_at: c.lastMsgAt ?? c.createdAt ?? new Date().toISOString(),
+            direction: preview?.senderId === p.activityAgent.id ? 'out' : 'in',
+            unread_count: Number(c.unreadCount ?? 0),
+            agent_last_read_seq: Number(selfMember?.lastReadSeq ?? 0),
+          };
+        })
+        .filter((it) => {
+          if (unread && it.unread_count <= 0) return false;
+          if (kind !== 'all' && it.source_kind !== kind) return false;
+          if (needle && !`${it.source_name ?? ''} ${it.content}`.toLowerCase().includes(needle)) {
+            return false;
+          }
+          return true;
+        });
+      return { items, next_cursor: resp.nextPageToken || null };
+    },
+    getNextPageParam: (page) => (page.next_cursor ? String(page.next_cursor) : undefined),
     maxPages: 10,
     refetchInterval: 30000,
   });
   const detail = useInfiniteQuery({
     queryKey: [...p.live.scope, 'inbox', selected?.conversation_id],
-    enabled: !!selected,
-    initialPageParam: null as Cursor | null,
-    queryFn: ({ pageParam }) =>
-      p.live.api!<Page<InboxItem>>(
-        `${p.live.path}/inbox/${selected!.conversation_id}/messages?agent_id=${p.activityAgent.id}&${queryString(pageParam)}`,
-      ),
-    getNextPageParam: (page) => page.next_cursor as Cursor | null,
+    enabled: !!selected && Boolean(p.live.api),
+    initialPageParam: null as number | null,
+    queryFn: async ({ pageParam }) => {
+      const chat = chatApi(p.live.api!, p.workspace.id);
+      const resp = await chat.listMessages(selected!.conversation_id, {
+        ...(pageParam ? { beforeSeq: pageParam } : {}),
+        limit: 40,
+      });
+      const agentLastReadSeq = selected?.agent_last_read_seq ?? 0;
+      const items: InboxItem[] = (resp.messages ?? []).map((m) => {
+        const msgSeq = Number(m.seq ?? 0);
+        return {
+          id: m.id,
+          conversation_id: m.conversationId,
+          source_kind: m.senderType,
+          source_id: m.senderId,
+          source_name: m.senderId,
+          content: m.deletedAt ? '[Message deleted]' : m.content,
+          created_at: m.createdAt,
+          direction: m.senderId === p.activityAgent.id ? 'out' : 'in',
+          unread_count: 0,
+          read_at: msgSeq > 0 && msgSeq <= agentLastReadSeq ? m.createdAt : null,
+          reactions: (m.reactions ?? []).map((r) => ({
+            actor_kind: r.actorType,
+            actor_id: r.actorId,
+            emoji: r.emoji,
+          })),
+        };
+      });
+      const oldestSeq = (resp.messages ?? []).reduce(
+        (min, m) => (Number(m.seq) > 0 && (min === 0 || Number(m.seq) < min) ? Number(m.seq) : min),
+        0,
+      );
+      return {
+        items,
+        next_cursor: resp.hasBefore && oldestSeq > 1 ? oldestSeq : null,
+      };
+    },
+    getNextPageParam: (page) => page.next_cursor,
     maxPages: 10,
     refetchInterval: 30000,
   });

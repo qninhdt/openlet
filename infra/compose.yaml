@@ -41,7 +41,6 @@ services:
 
   redis:
     logging: *logging
-    profiles: [leta]
     image: redis:8.2.3-alpine@sha256:08ad0b1d280850169a790dba1393ff7a90aef951fc19632cf4d3ce4f78e679ba
     entrypoint: [/bin/sh, -ec]
     command: ['exec redis-server --requirepass "$$REDIS_PASSWORD" --maxmemory 256mb --maxmemory-policy allkeys-lru --appendonly no --save ""']
@@ -51,13 +50,51 @@ services:
       timeout: 3s
       retries: 30
 
+  centrifugo:
+    logging: *logging
+    image: centrifugo/centrifugo:v6@sha256:33fdbbce7d195dde316cbde17bc1d2a17b9e345de82799d1ec3c2bb8916e3803
+    command: [centrifugo, -c, /centrifugo/config.json]
+    volumes: ['${OPENLET_GENERATED:?required}/centrifugo.json:/centrifugo/config.json:ro']
+    healthcheck:
+      test: [CMD, wget, -qO-, http://127.0.0.1:8000/health]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    depends_on:
+      redis: {condition: service_healthy}
+
+  chat-migrate:
+    logging: *logging
+    image: openlet/chat:local
+    build: {context: .., dockerfile: apps/chat/Dockerfile}
+    entrypoint: [/usr/local/bin/goose]
+    command: [up]
+    depends_on:
+      databases: {condition: service_completed_successfully}
+
+  chat:
+    logging: *logging
+    image: openlet/chat:local
+    build: {context: .., dockerfile: apps/chat/Dockerfile}
+    volumes: ['${OPENLET_CONFIG:?required}:/etc/openlet/openlet.yaml:ro']
+    stop_grace_period: 30s
+    healthcheck:
+      test: [CMD, grpc-health-probe, '-addr=127.0.0.1:9090']
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    depends_on:
+      resources: {condition: service_completed_successfully}
+      chat-migrate: {condition: service_completed_successfully}
+      centrifugo: {condition: service_healthy}
+
   leta-migrate:
     logging: *logging
     profiles: [leta]
     image: openlet/leta:local
     build: {context: .., dockerfile: apps/leta/Dockerfile}
     entrypoint: [/bin/sh, -ec]
-    command: ['goose up && /app/.venv/bin/python -m leta.db']
+    command: ['goose up && /app/.venv/bin/python -m leta.runtime.checkpoint']
     volumes: ['${OPENLET_CONFIG:?required}:/etc/openlet/openlet.yaml:ro']
     depends_on:
       databases: {condition: service_completed_successfully}
@@ -71,14 +108,15 @@ services:
     volumes: ['${OPENLET_CONFIG:?required}:/etc/openlet/openlet.yaml:ro']
     stop_grace_period: 190s
     healthcheck:
-      test: [CMD, /app/.venv/bin/python, -c, 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8080/ready",timeout=3)']
+      test: [CMD, /app/.venv/bin/python, -c, 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/ready",timeout=3)']
       interval: 3s
       timeout: 5s
       retries: 30
     depends_on:
       litellm: {condition: service_healthy}
       leta-migrate: {condition: service_completed_successfully}
-      redis: {condition: service_healthy}
+      centrifugo: {condition: service_healthy}
+      chat: {condition: service_healthy}
       resources: {condition: service_completed_successfully}
 
   leta-worker:
@@ -92,7 +130,7 @@ services:
     depends_on:
       litellm: {condition: service_healthy}
       leta-migrate: {condition: service_completed_successfully}
-      redis: {condition: service_healthy}
+      centrifugo: {condition: service_healthy}
       resources: {condition: service_completed_successfully}
 
   alloy:
@@ -280,6 +318,8 @@ services:
     depends_on:
       platform: {condition: service_healthy}
       letfs: {condition: service_healthy}
+      chat: {condition: service_healthy}
+      centrifugo: {condition: service_healthy}
 
 volumes:
   alloy-data:
