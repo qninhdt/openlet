@@ -1,23 +1,29 @@
+"""Agent tree persistence, handle allocation, subagent spawning, and lookup services."""
+
 from __future__ import annotations
 
 import asyncio
 import re
 import secrets
 from datetime import datetime
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID, uuid4
 
 from openlet_sdk.config import ReasoningEffort
-from psycopg import AsyncConnection
-from psycopg.rows import DictRow
+from psycopg import sql
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field
-from temporalio.client import Client as TemporalClient
 from temporalio.service import RPCError, RPCStatusCode
 
-from ..activity import ActivityEmitter
-from ..db import Pool, hydrate
-from ..inbox import InboxGateway, InboxItem, InboxSender
+from leta.db import Pool, hydrate
+from leta.inbox import InboxGateway, InboxItem, InboxMetadata, InboxSender
+
+if TYPE_CHECKING:
+    from psycopg import AsyncConnection
+    from psycopg.rows import DictRow
+    from temporalio.client import Client as TemporalClient
+
+    from leta.activity import ActivityEmitter
 
 AVATAR_SHAPES: tuple[str, ...] = (
     "cercle",
@@ -48,6 +54,8 @@ _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
 
 class Appearance(BaseModel):
+    """Avatar shape and color attributes for an agent."""
+
     shape: Literal[
         "cercle",
         "galet",
@@ -75,6 +83,7 @@ class Appearance(BaseModel):
 
 
 def random_appearance() -> dict[str, str]:
+    """Return a randomly sampled avatar shape and color dictionary."""
     return {
         "shape": secrets.choice(AVATAR_SHAPES),
         "color": secrets.choice(AVATAR_COLORS),
@@ -82,6 +91,7 @@ def random_appearance() -> dict[str, str]:
 
 
 def slugify_handle(text: str, *, fallback: str = "agent") -> str:
+    """Normalize text into a lowercase hyphenated handle slug."""
     slug = _SLUG_RE.sub("-", text.lower()).strip("-")
     if len(slug) > 64:
         slug = slug[:64].rstrip("-")
@@ -89,6 +99,7 @@ def slugify_handle(text: str, *, fallback: str = "agent") -> str:
 
 
 def root_handle_base(name: str, title: str) -> str:
+    """Construct the base handle slug for a Root Leta from name and title."""
     n = slugify_handle(name, fallback="leta")
     t = slugify_handle(title, fallback="")
     return f"{n}-the-{t}" if t else n
@@ -97,6 +108,7 @@ def root_handle_base(name: str, title: str) -> str:
 async def allocate_unique_root_handle(
     conn: AsyncConnection[DictRow], workspace_id: UUID, name: str, title: str
 ) -> str:
+    """Allocate a handle that is unique among active/provisioning Root Letas in workspace."""
     base = root_handle_base(name, title)
     rows = await (
         await conn.execute(
@@ -125,6 +137,7 @@ async def allocate_unique_root_handle(
 async def allocate_unique_subagent_handle(
     conn: AsyncConnection[DictRow], leta_id: UUID, name: str, title: str = ""
 ) -> str:
+    """Allocate a handle that is unique among active agents in a Leta tree."""
     base = slugify_handle(name if not title else f"{name}-{title}", fallback="subagent")
     rows = await (
         await conn.execute(
@@ -148,6 +161,8 @@ async def allocate_unique_subagent_handle(
 
 
 class AgentPatch(BaseModel):
+    """Partial update payload for an existing agent record."""
+
     name: str | None = Field(default=None, min_length=1, max_length=255)
     title: str | None = Field(default=None, max_length=255)
     description: str | None = Field(default=None, max_length=4000)
@@ -158,6 +173,8 @@ class AgentPatch(BaseModel):
 
 
 class AgentSummary(BaseModel):
+    """Public summary of a Root Leta or subagent including running status."""
+
     id: UUID
     leta_id: UUID
     parent_agent_id: UUID | None = None
@@ -176,6 +193,8 @@ class AgentSummary(BaseModel):
 
 
 class RootAgentBrief(BaseModel):
+    """Lightweight summary of an active Root Leta in a workspace."""
+
     id: UUID
     name: str
     title: str
@@ -184,6 +203,8 @@ class RootAgentBrief(BaseModel):
 
 
 class ResolvedAgent(BaseModel):
+    """Resolved agent metadata for handle/UUID lookups inside a Leta tree."""
+
     id: UUID
     parent_agent_id: UUID | None = None
     name: str
@@ -194,6 +215,8 @@ class ResolvedAgent(BaseModel):
 
 
 class ActiveSubagentStatus(BaseModel):
+    """Snapshot entry describing an active subagent's current run status."""
+
     handle: str
     name: str
     title: str
@@ -202,6 +225,8 @@ class ActiveSubagentStatus(BaseModel):
 
 
 class AgentRow(BaseModel):
+    """Full hydrated agent + parent Leta row used by orchestration activities."""
+
     id: UUID
     leta_id: UUID
     parent_agent_id: UUID | None = None
@@ -222,6 +247,7 @@ class AgentRow(BaseModel):
 
 
 async def get_agent_row(db: Pool, agent_id: UUID) -> AgentRow:
+    """Fetch a single agent row joined with its owning Leta metadata."""
     async with db.connection() as conn:
         row = await (
             await conn.execute(
@@ -240,6 +266,7 @@ async def get_agent_row(db: Pool, agent_id: UUID) -> AgentRow:
 
 
 async def list_leta_agents(db: Pool, leta_id: UUID) -> list[AgentSummary]:
+    """List all agents in a Leta tree ordered by depth and creation time."""
     async with db.connection() as conn:
         rows = await (
             await conn.execute(
@@ -267,6 +294,7 @@ async def update_agent(
     agent_id: UUID,
     patch: AgentPatch,
 ) -> AgentSummary:
+    """Apply a partial patch to an agent while preserving its immutable handle."""
     supplied = patch.model_fields_set
     async with db.connection() as conn, conn.transaction():
         current = await (
@@ -333,7 +361,8 @@ async def update_agent(
                 ),
             )
         ).fetchone()
-    assert row is not None
+    if row is None:
+        raise RuntimeError(f"Agent update returned no row for {agent_id}")
     return hydrate(row, AgentSummary)
 
 
@@ -353,6 +382,7 @@ async def spawn_subagent(
     max_active_per_leta: int = 16,
     idempotency_key: str | None = None,
 ) -> AgentSummary:
+    """Create a child subagent under parent_agent_id and deliver its initial task."""
     async with db.connection() as conn, conn.transaction():
         parent = await (
             await conn.execute(
@@ -427,7 +457,8 @@ async def spawn_subagent(
                 ),
             )
         ).fetchone()
-    assert row is not None
+    if row is None:
+        raise RuntimeError(f"Subagent insert returned no row for {sub_id}")
 
     if activity is not None:
         await activity.emit(
@@ -441,7 +472,7 @@ async def spawn_subagent(
                 "name": name.strip(),
                 "title": title.strip(),
                 "depth": new_depth,
-                "appearance": {k: v for k, v in appearance.items()},
+                "appearance": dict(appearance.items()),
             },
         )
 
@@ -459,7 +490,7 @@ async def spawn_subagent(
                 handle=str(parent["handle"]),
             ),
             content=task,
-            metadata={"spawned_by": str(parent["handle"])},
+            metadata=InboxMetadata(spawned_by=str(parent["handle"])),
         )
     )
     return hydrate(row, AgentSummary)
@@ -473,6 +504,7 @@ async def stop_agent_tree(
     agent_id: UUID,
     include_self: bool = True,
 ) -> list[UUID]:
+    """Stop an agent's subtree in Postgres, signal workflows to stop, and emit events."""
     async with db.connection() as conn, conn.transaction():
         rows = await (
             await conn.execute(
@@ -528,6 +560,7 @@ async def stop_agent_tree(
 async def notify_parent_failure(
     *, db: Pool, inbox: InboxGateway, agent_id: UUID, error_message: str
 ) -> None:
+    """Deliver a failure notification to a subagent's parent inbox when a run fails."""
     async with db.connection() as conn:
         row = await (
             await conn.execute(
@@ -556,13 +589,13 @@ async def notify_parent_failure(
                 handle=str(row["handle"]),
             ),
             content="",
-            metadata={
-                "subagent_id": str(agent_id),
-                "subagent_handle": str(row["handle"]),
-                "subagent_name": str(row["name"]),
-                "error": error_message or "unknown error",
-                "event": "subagent_failed",
-            },
+            metadata=InboxMetadata(
+                subagent_id=str(agent_id),
+                subagent_handle=str(row["handle"]),
+                subagent_name=str(row["name"]),
+                error=error_message or "unknown error",
+                event="subagent_failed",
+            ),
         )
     )
 
@@ -570,6 +603,7 @@ async def notify_parent_failure(
 async def list_workspace_root_agents(
     db: Pool, workspace_id: UUID, *, limit: int | None = None
 ) -> list[RootAgentBrief]:
+    """List active Root Leta agents belonging to a workspace."""
     async with db.connection() as conn:
         if limit is not None:
             rows = await (
@@ -605,6 +639,7 @@ async def resolve_leta_agent(
     *,
     active_only: bool = True,
 ) -> ResolvedAgent | None:
+    """Resolve an agent within a Leta tree by UUID or handle."""
     cleaned = raw_ref.strip().removeprefix("agent:").lstrip("@").strip()
     if not cleaned:
         return None
@@ -614,40 +649,29 @@ async def resolve_leta_agent(
     except ValueError:
         uid = None
     low = cleaned.lower()
-    state_clause = "AND a.state = 'active'" if active_only else ""
+    state_filter = sql.SQL("AND a.state = 'active'") if active_only else sql.SQL("")
+    match_col = (
+        sql.SQL("a.id = %s") if uid is not None else sql.SQL("lower(a.handle) = %s")
+    )
+    param: UUID | str = uid if uid is not None else low
+    query = sql.SQL(
+        """
+        SELECT a.id, a.parent_agent_id, a.name, a.title, a.handle, a.state,
+               EXISTS(SELECT 1 FROM runs r WHERE r.agent_id = a.id AND r.status = 'running') AS running
+        FROM agents a
+        WHERE a.leta_id = %s AND {match_col} {state_filter}
+        ORDER BY a.created_at DESC LIMIT 1
+        """
+    ).format(match_col=match_col, state_filter=state_filter)
     async with db.connection() as conn:
-        if uid is not None:
-            row = await (
-                await conn.execute(
-                    f"""
-                    SELECT a.id, a.parent_agent_id, a.name, a.title, a.handle, a.state,
-                           EXISTS(SELECT 1 FROM runs r WHERE r.agent_id = a.id AND r.status = 'running') AS running
-                    FROM agents a
-                    WHERE a.leta_id = %s AND a.id = %s {state_clause}
-                    ORDER BY a.created_at DESC LIMIT 1
-                    """,
-                    (leta_id, uid),
-                )
-            ).fetchone()
-        else:
-            row = await (
-                await conn.execute(
-                    f"""
-                    SELECT a.id, a.parent_agent_id, a.name, a.title, a.handle, a.state,
-                           EXISTS(SELECT 1 FROM runs r WHERE r.agent_id = a.id AND r.status = 'running') AS running
-                    FROM agents a
-                    WHERE a.leta_id = %s AND lower(a.handle) = %s {state_clause}
-                    ORDER BY a.created_at DESC LIMIT 1
-                    """,
-                    (leta_id, low),
-                )
-            ).fetchone()
+        row = await (await conn.execute(query, (leta_id, param))).fetchone()
     return hydrate(row, ResolvedAgent) if row is not None else None
 
 
 async def list_active_subagents_status(
     db: Pool, leta_id: UUID
 ) -> list[ActiveSubagentStatus]:
+    """List active subagents in a Leta tree ordered by running state and recency."""
     async with db.connection() as conn:
         rows = await (
             await conn.execute(

@@ -1,10 +1,11 @@
+"""Mirage BaseVFS drivers backed by LetFS gRPC services."""
+
 from __future__ import annotations
 
 import asyncio
 import base64
 import errno
 import posixpath
-from collections.abc import Awaitable
 from contextlib import suppress
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, override
@@ -23,19 +24,30 @@ from mirage.utils.key_prefix import mounted_path
 from mirage.vfs.call import vfs_call
 from mirage.vfs.types import Effect, Target
 from openlet_api.letfs.v1 import letfs_pb2 as fs
-from openlet_sdk.config import LetFSSettings
 from openlet_sdk.file_types import classify_file
 
-from ..auth import Actor
-from .types import GlobHit, GlobResult, GrepHit, GrepResult, SemanticHit, VersionedText
+from leta.filesystem.types import (
+    GlobHit,
+    GlobResult,
+    GrepHit,
+    GrepResult,
+    SemanticHit,
+    VersionedText,
+)
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable
+
     from openlet_api.letfs.v1.letfs_pb2_grpc import LetFSServiceAsyncStub
+    from openlet_sdk.config import LetFSSettings
+
+    from leta.auth import Actor
 
 current_operation: ContextVar[UUID | None] = ContextVar("file_operation", default=None)
 
 
 def node_to_stat(node: fs.Node) -> FileStat:
+    """Convert a LetFS protobuf Node into a Mirage FileStat."""
     content = None
     if node.HasField("file"):
         if node.file.type == fs.FILE_TYPE_TEXT:
@@ -93,11 +105,13 @@ def _req_id(method: str, storage_id: str, root_id: str, vfs_path: str) -> str:
 
 
 class LetFS(BaseVFS):
+    """Mirage VFS driver mounted at a specific LetFS storage root node."""
+
     name = "letfs"
     caches_reads = True
     sizes_always_known = True
 
-    def __init__(
+    def __init__(  # noqa: PLR0917  # Positional constructor signature shared across internal mount builders
         self,
         stub: LetFSServiceAsyncStub,
         actor: Actor,
@@ -120,10 +134,12 @@ class LetFS(BaseVFS):
         )
 
     def locator(self, path: PathSpec) -> fs.NodeLocator:
+        """Build a LetFS NodeLocator relative to this mount's root_node_id."""
         return fs.NodeLocator(path=path.vfs_path or ".", root_node_id=str(self.root))
 
     @override
     async def stat(self, path: PathSpec) -> FileStat:
+        """Fetch file or directory metadata for path."""
         node = await _grpc_call(
             self.stub.Stat(
                 fs.NodeRequest(
@@ -139,6 +155,7 @@ class LetFS(BaseVFS):
 
     @override
     async def readdir(self, path: PathSpec) -> list[FileStat] | DirListing:
+        """List directory entries beneath path."""
         rows: list[FileStat] = []
         token = ""
         while True:
@@ -162,6 +179,7 @@ class LetFS(BaseVFS):
 
     @override
     async def read(self, path: PathSpec) -> bytes:
+        """Read the full UTF-8 text bytes of a file."""
         resp = await _grpc_call(
             self.stub.ReadText(
                 fs.ReadTextRequest(
@@ -177,6 +195,7 @@ class LetFS(BaseVFS):
 
     @override
     async def first_lines(self, path: PathSpec, n: int) -> bytes:
+        """Read the first n lines of a text file."""
         resp = await _grpc_call(
             self.stub.ReadText(
                 fs.ReadTextRequest(
@@ -193,6 +212,7 @@ class LetFS(BaseVFS):
 
     @override
     async def last_lines(self, path: PathSpec, n: int) -> bytes:
+        """Read the last n lines of a text file."""
         resp = await _grpc_call(
             self.stub.ReadText(
                 fs.ReadTextRequest(
@@ -209,6 +229,7 @@ class LetFS(BaseVFS):
 
     @override
     async def line_count(self, path: PathSpec) -> int:
+        """Return the line count reported by LetFS for a text file."""
         resp = await _grpc_call(
             self.stub.ReadText(
                 fs.ReadTextRequest(
@@ -228,6 +249,7 @@ class LetFS(BaseVFS):
     async def files_containing(
         self, path: PathSpec, text: str, *, whole_word: bool, ignore_case: bool
     ) -> list[PathSpec] | None:
+        """Find files beneath path containing literal text via server-side grep."""
         if whole_word:
             return None
         resp = await _grpc_call(
@@ -265,6 +287,7 @@ class LetFS(BaseVFS):
     async def lines_containing(
         self, path: PathSpec, text: str, *, ignore_case: bool
     ) -> bytes | None:
+        """Return matching lines beneath path via server-side grep."""
         resp = await _grpc_call(
             self.stub.Grep(
                 fs.GrepRequest(
@@ -286,6 +309,7 @@ class LetFS(BaseVFS):
 
     @override
     async def read_tree(self, path: PathSpec) -> dict[str, FileStat] | None:
+        """Fetch a bounded recursive subtree snapshot beneath path."""
         resp = await _grpc_call(
             self.stub.ReadTree(
                 fs.ReadTreeRequest(
@@ -312,9 +336,11 @@ class LetFS(BaseVFS):
         self,
         path: PathSpec,
         pattern: str,
+        *,
         include_hidden: bool = False,
         limit: int = 100,
     ) -> GlobResult:
+        """Search paths beneath path matching a glob pattern."""
         resp = await _grpc_call(
             self.stub.Glob(
                 fs.GlobRequest(
@@ -348,11 +374,13 @@ class LetFS(BaseVFS):
         self,
         path: PathSpec,
         pattern: str,
+        *,
         include_glob: str = "",
         literal: bool = False,
         case_sensitive: bool = True,
         limit: int = 100,
     ) -> GrepResult:
+        """Search file contents beneath path using regex or literal matching."""
         resp = await _grpc_call(
             self.stub.Grep(
                 fs.GrepRequest(
@@ -389,6 +417,7 @@ class LetFS(BaseVFS):
 
     @vfs_call(effect=Effect.READ, target=Target.FILE)
     async def read_text_with_version(self, path: PathSpec) -> VersionedText:
+        """Read a text file along with its optimistic-concurrency version."""
         resp = await _grpc_call(
             self.stub.ReadText(
                 fs.ReadTextRequest(
@@ -404,6 +433,7 @@ class LetFS(BaseVFS):
 
     @vfs_call(effect=Effect.READ, target=Target.FILE)
     async def read_raw_bytes(self, path: PathSpec, max_bytes: int) -> bytes:
+        """Download raw file bytes up to max_bytes from text or presigned blob storage."""
         dl = await _grpc_call(
             self.stub.GetDownload(
                 fs.NodeRequest(
@@ -423,15 +453,17 @@ class LetFS(BaseVFS):
         if dl.HasField("blob") and dl.blob.url:
 
             async def _fetch_blob() -> bytes:
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    async with client.stream("GET", dl.blob.url) as resp:
-                        resp.raise_for_status()
-                        buf = bytearray()
-                        async for chunk in resp.aiter_bytes():
-                            buf.extend(chunk)
-                            if len(buf) > max_bytes:
-                                raise ValueError(f"file exceeds {max_bytes} bytes")
-                        return bytes(buf)
+                async with (
+                    httpx.AsyncClient(timeout=30.0) as client,
+                    client.stream("GET", dl.blob.url) as resp,
+                ):
+                    resp.raise_for_status()
+                    buf = bytearray()
+                    async for chunk in resp.aiter_bytes():
+                        buf.extend(chunk)
+                        if len(buf) > max_bytes:
+                            raise ValueError(f"file exceeds {max_bytes} bytes")
+                    return bytes(buf)
 
             return await run_with_network(None, _fetch_blob())
         raise FileNotFoundError(errno.ENOENT, "download unavailable")
@@ -445,6 +477,7 @@ class LetFS(BaseVFS):
         *,
         baggage: str | None = None,
     ) -> list[SemanticHit]:
+        """Run semantic search scoped to path with optional W3C trace baggage."""
         scope_path = "/" + path.vfs_path.lstrip("/") if path.vfs_path else "/"
         meta = (
             (*self.actor.metadata, ("baggage", baggage))
@@ -486,6 +519,7 @@ class LetFS(BaseVFS):
         content: str,
         expected_version: int | None = None,
     ) -> FileStat:
+        """Write or create a text file with optional optimistic-concurrency version check."""
         if expected_version is not None:
             node = await _grpc_call(
                 self.stub.MutateText(
@@ -549,7 +583,7 @@ class LetFS(BaseVFS):
                         name=name,
                         text=fs.TextContent(
                             content=content,
-                            media_type=media if media else "text/plain",
+                            media_type=media or "text/plain",
                         ),
                         request_id=_req_id(
                             "create", str(self.storage), str(self.root), path.vfs_path
@@ -659,6 +693,7 @@ class LetFS(BaseVFS):
 
     @override
     async def write(self, path: PathSpec, data: ByteSource) -> None:
+        """Write a text or binary file to LetFS based on filename classification."""
         raw = await materialize(ensure_stream(data))
         _, name = posixpath.split(path.vfs_path)
         kind, media = classify_file(name)
@@ -673,6 +708,7 @@ class LetFS(BaseVFS):
 
     @override
     async def append(self, path: PathSpec, data: ByteSource) -> None:
+        """Append UTF-8 text to an existing file or create it if absent."""
         raw = await materialize(ensure_stream(data))
         text = raw.decode("utf-8")
         try:
@@ -696,6 +732,7 @@ class LetFS(BaseVFS):
 
     @override
     async def mkdir(self, path: PathSpec, parents: bool = False) -> None:
+        """Create a directory node or missing parent hierarchy in LetFS."""
         if parents:
             await _grpc_call(
                 self.stub.CreateDirectories(
@@ -731,6 +768,7 @@ class LetFS(BaseVFS):
         )
 
     async def remove(self, path: PathSpec, *, recursive: bool = False) -> None:
+        """Move a file or directory node to the LetFS trash."""
         _ = recursive
         await _grpc_call(
             self.stub.TrashNode(
@@ -749,6 +787,7 @@ class LetFS(BaseVFS):
 
     @override
     async def rename(self, src: PathSpec, dst: PathSpec) -> None:
+        """Move or rename a node within the same LetFS storage."""
         parent, name = posixpath.split(dst.vfs_path)
         await _grpc_call(
             self.stub.MoveNode(
@@ -827,6 +866,7 @@ class LetFSByID(BaseVFS):
 
     @override
     async def stat(self, path: PathSpec) -> FileStat:
+        """Stat a node addressed via /letfs/<storage_id>/<node_id>."""
         if not path.vfs_path.strip("/"):
             return FileStat(name="letfs", type=FileType.DIRECTORY)
         driver, sub = self._delegate(path)
@@ -834,6 +874,7 @@ class LetFSByID(BaseVFS):
 
     @override
     async def readdir(self, path: PathSpec) -> list[FileStat] | DirListing:
+        """List directory entries beneath path."""
         if not path.vfs_path.strip("/"):
             return []
         driver, sub = self._delegate(path)
@@ -841,11 +882,13 @@ class LetFSByID(BaseVFS):
 
     @override
     async def read(self, path: PathSpec) -> bytes:
+        """Read the full UTF-8 text bytes of a file."""
         driver, sub = self._delegate(path)
         return await driver.read(sub)
 
     @override
     async def write(self, path: PathSpec, data: ByteSource) -> None:
+        """Write a text or binary file to LetFS based on filename classification."""
         driver, sub = self._delegate(path)
         await driver.write(sub, data)
 
@@ -854,34 +897,47 @@ class LetFSByID(BaseVFS):
         self,
         path: PathSpec,
         pattern: str,
+        *,
         include_hidden: bool = False,
         limit: int = 100,
     ) -> GlobResult:
+        """Search paths beneath path matching a glob pattern."""
         driver, sub = self._delegate(path)
-        return await driver.glob_files(sub, pattern, include_hidden, limit)
+        return await driver.glob_files(
+            sub, pattern, include_hidden=include_hidden, limit=limit
+        )
 
     @vfs_call(effect=Effect.READ, target=Target.ANY)
     async def grep_files(
         self,
         path: PathSpec,
         pattern: str,
+        *,
         include_glob: str = "",
         literal: bool = False,
         case_sensitive: bool = True,
         limit: int = 100,
     ) -> GrepResult:
+        """Search file contents beneath path using regex or literal matching."""
         driver, sub = self._delegate(path)
         return await driver.grep_files(
-            sub, pattern, include_glob, literal, case_sensitive, limit
+            sub,
+            pattern,
+            include_glob=include_glob,
+            literal=literal,
+            case_sensitive=case_sensitive,
+            limit=limit,
         )
 
     @vfs_call(effect=Effect.READ, target=Target.FILE)
     async def read_text_with_version(self, path: PathSpec) -> VersionedText:
+        """Read a text file along with its optimistic-concurrency version."""
         driver, sub = self._delegate(path)
         return await driver.read_text_with_version(sub)
 
     @vfs_call(effect=Effect.READ, target=Target.FILE)
     async def read_raw_bytes(self, path: PathSpec, max_bytes: int) -> bytes:
+        """Download raw file bytes up to max_bytes via the delegated LetFS driver."""
         driver, sub = self._delegate(path)
         return await driver.read_raw_bytes(sub, max_bytes)
 
@@ -892,5 +948,6 @@ class LetFSByID(BaseVFS):
         content: str,
         expected_version: int | None = None,
     ) -> FileStat:
+        """Write or create a text file with optional optimistic-concurrency version check."""
         driver, sub = self._delegate(path)
         return await driver.write_text_optimistic(sub, content, expected_version)

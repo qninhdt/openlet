@@ -2,29 +2,25 @@
 
 from __future__ import annotations
 
-import json
-import sys
-from collections.abc import Mapping, Sequence
+import logging
 from contextlib import ExitStack
-from pathlib import Path
-from types import TracebackType
-from typing import Self
+from typing import TYPE_CHECKING, Self
 from uuid import uuid4
 
 import httpx
 import psycopg
 from pydantic import BaseModel
 
-from .auth import LocalAuth
-from .dataset import ensure_dataset, read_seed_specs
-from .loader import (
+from openlet_env.auth import LocalAuth
+from openlet_env.dataset import ensure_dataset, read_seed_specs
+from openlet_env.loader import (
     ServiceConnections,
     prepare_workspace_cache,
     reset_all_data,
     seed_workspaces,
     unseed_workspace,
 )
-from .models import (
+from openlet_env.models import (
     Account,
     Endpoints,
     EnvMode,
@@ -34,14 +30,35 @@ from .models import (
     PrepareCacheReport,
     SeedResult,
 )
-from .stack import ComposeStack
-from .wiremock import WireMockClient
+from openlet_env.stack import ComposeStack
+from openlet_env.wiremock import WireMockClient
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+    from pathlib import Path
+    from types import TracebackType
+
+logger = logging.getLogger(__name__)
 
 DEV_TOKEN_TTL_SECONDS = 7 * 24 * 3600
 
 
 class _IdResponse(BaseModel):
     id: str
+
+
+class _DevAccountEntry(BaseModel):
+    handle: str
+    user_id: str
+    clerk_user_id: str
+    email: str
+    name: str
+    token: str
+
+
+class _DevAccountsFile(BaseModel):
+    project: str
+    accounts: list[_DevAccountEntry]
 
 
 class Environment:
@@ -75,33 +92,39 @@ class Environment:
 
     @property
     def project(self) -> str:
+        """Return the Docker Compose project name."""
         return self.stack.project
 
     @property
     def state(self) -> EnvState:
+        """Load and cache the persisted environment state."""
         if self._state is None:
             self._state = self.stack.load_state()
         return self._state
 
     @property
     def endpoints(self) -> Endpoints:
+        """Resolve and cache host loopback endpoints for running services."""
         if self._endpoints is None:
             self._endpoints = self.stack.endpoints()
         return self._endpoints
 
     @property
     def auth(self) -> LocalAuth:
+        """Load or create the project's local RS256 token signer."""
         if self._auth is None:
             self._auth = LocalAuth.load_or_create(self.stack.directory)
         return self._auth
 
     @property
     def wiremock(self) -> WireMockClient:
+        """Return a WireMock admin client for the active environment."""
         if self._wiremock is None:
             self._wiremock = WireMockClient(self.endpoints.wiremock_url)
         return self._wiremock
 
     def up(self, *, build: bool = False, wait_timeout: int = 180) -> Endpoints:
+        """Start the Compose stack, configure auth stubs, and return service endpoints."""
         state, fell_back = self.stack.up(
             mode=self.requested_mode,
             profiles=self.profiles,
@@ -112,9 +135,8 @@ class Environment:
             wait_timeout=wait_timeout,
         )
         if fell_back:
-            print(
-                "[openlet-env] OPENAI_API_KEY not set — falling back to offline mock mode.",
-                file=sys.stderr,
+            logger.warning(
+                "OPENAI_API_KEY not set — falling back to offline mock mode."
             )
         self._state = state
         self._endpoints = self.stack.endpoints()
@@ -125,6 +147,7 @@ class Environment:
         return self._endpoints
 
     def sync_wiremock_auth(self) -> None:
+        """Register the project JWKS and persisted Clerk user stubs in WireMock."""
         self.wiremock.register_jwks(self.auth.jwks())
         claim_key = self.stack.load_config()["auth"]["clerk"].get(
             "user_id_metadata_key", "openlet_user_id"
@@ -141,7 +164,7 @@ class Environment:
 
     def _write_dev_accounts(self) -> None:
         dev_file = self.stack.directory / "dev-accounts.json"
-        entries: list[dict[str, str]] = []
+        entries: list[_DevAccountEntry] = []
         for handle, info in sorted(self.state.accounts.items()):
             token = self.auth.sign(
                 info.clerk_user_id,
@@ -149,17 +172,20 @@ class Environment:
                 ttl_seconds=DEV_TOKEN_TTL_SECONDS,
             )
             entries.append(
-                {
-                    "handle": handle,
-                    "user_id": info.user_id,
-                    "clerk_user_id": info.clerk_user_id,
-                    "email": info.email,
-                    "name": f"{info.first_name} {info.last_name}".strip() or handle,
-                    "token": token,
-                }
+                _DevAccountEntry(
+                    handle=handle,
+                    user_id=info.user_id,
+                    clerk_user_id=info.clerk_user_id,
+                    email=info.email,
+                    name=f"{info.first_name} {info.last_name}".strip() or handle,
+                    token=token,
+                )
             )
         dev_file.write_text(
-            json.dumps({"project": self.project, "accounts": entries}, indent=2) + "\n",
+            _DevAccountsFile(project=self.project, accounts=entries).model_dump_json(
+                indent=2
+            )
+            + "\n",
             encoding="utf-8",
         )
         dev_file.chmod(0o600)
@@ -379,6 +405,7 @@ class Environment:
         return self.auth.sign(info.clerk_user_id, info.user_id, ttl_seconds=ttl_seconds)
 
     def status(self) -> EnvStatus:
+        """Return a summary of active endpoints, seeded workspaces, and users."""
         state = self.state
         ep = self.endpoints
         return {
@@ -393,6 +420,7 @@ class Environment:
         }
 
     def logs(self, *services: str, tail: int = 100, follow: bool = False) -> str:
+        """Fetch or follow Docker Compose logs for the specified services."""
         args = ["logs", "--tail", str(tail)]
         if follow:
             args.append("--follow")
@@ -400,6 +428,7 @@ class Environment:
         return self.stack.compose(*args, capture=not follow)
 
     def down(self, *, volumes: bool = False, remove_state: bool = False) -> None:
+        """Stop the Compose stack and optionally remove volumes and state."""
         self.stack.down(volumes=volumes, remove_state=remove_state)
 
     def __enter__(self) -> Self:

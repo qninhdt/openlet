@@ -1,8 +1,8 @@
 """General-purpose Openlet non-production environment manager."""
 
-from .auth import LocalAuth
-from .environment import Environment
-from .models import (
+from openlet_env.auth import LocalAuth
+from openlet_env.environment import Environment
+from openlet_env.models import (
     Account,
     Endpoints,
     EnvMode,
@@ -16,7 +16,7 @@ from .models import (
     WireMockRequest,
     WorkspaceSpec,
 )
-from .wiremock import WireMockClient
+from openlet_env.wiremock import WireMockClient
 
 __all__ = [
     "Account",

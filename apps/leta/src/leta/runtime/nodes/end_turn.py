@@ -1,12 +1,18 @@
+"""LangGraph fast-exit end-turn node emitting a synthetic final assistant message."""
+
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from langchain_core.messages import AIMessage
-from langgraph.runtime import Runtime
 
-from ...channels.base import CallerContext
-from ..state import AgentState, AgentStateUpdate, RuntimeContext
+from leta.channels.base import CallerContext
+
+if TYPE_CHECKING:
+    from langgraph.runtime import Runtime
+
+    from leta.runtime.state import AgentState, AgentStateUpdate, RuntimeContext
 
 SYNTHETIC_END_TURN_TEXT = "Message delivered. Standing by."
 
@@ -27,7 +33,7 @@ async def end_turn_node(
     )
     for addr in list(rt.active_typing):
         rt.active_typing.discard(addr)
-        await rt.router.set_typing(caller, addr, False)
+        await rt.router.set_typing(caller, addr, active=False)
 
     msg = AIMessage(
         id=str(uuid4()),

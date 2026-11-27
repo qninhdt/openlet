@@ -1,3 +1,5 @@
+"""Temporal worker entrypoint for Leta orchestration and runtime task queues."""
+
 from __future__ import annotations
 
 import argparse
@@ -10,18 +12,19 @@ from openlet_sdk.config import load
 from temporalio.contrib.opentelemetry import TracingInterceptor
 from temporalio.worker import Worker
 
-from ..config import Services
-from ..hitl.workflow import HitlWorkflow
-from ..observability import setup_observability
-from ..schedules.workflow import ScheduleFireWorkflow
-from .activities import OrchestrationActivities, RuntimeActivities
-from .agent_workflow import AgentWorkflow
-from .lifecycle_workflow import LetaLifecycleWorkflow
+from leta.config import Services
+from leta.hitl.workflow import HitlWorkflow
+from leta.observability import setup_observability
+from leta.orchestration.activities import OrchestrationActivities, RuntimeActivities
+from leta.orchestration.agent_workflow import AgentWorkflow
+from leta.orchestration.lifecycle_workflow import LetaLifecycleWorkflow
+from leta.schedules.workflow import ScheduleFireWorkflow
 
 logger = logging.getLogger(__name__)
 
 
 async def run_worker(role: Literal["all", "orchestration", "runtime"] = "all") -> None:
+    """Start Temporal workers for orchestration, runtime, or both until signaled to stop."""
     cfg = load()
     shutdown_obs, lf = setup_observability("openlet-leta-worker", cfg)
     services = await Services.create(cfg, langfuse=lf)
@@ -91,6 +94,7 @@ async def run_worker(role: Literal["all", "orchestration", "runtime"] = "all") -
 
 
 def main() -> None:
+    """Parse CLI arguments and launch the Leta Temporal worker process."""
     parser = argparse.ArgumentParser(description="Run Leta Temporal worker")
     parser.add_argument(
         "--role",
@@ -98,8 +102,12 @@ def main() -> None:
         default="all",
     )
     args = parser.parse_args()
+    raw_role: object = args.role
+    role: Literal["all", "orchestration", "runtime"] = (
+        raw_role if raw_role in ("all", "orchestration", "runtime") else "all"
+    )
     logging.basicConfig(level=logging.INFO)
-    asyncio.run(run_worker(args.role))
+    asyncio.run(run_worker(role))
 
 
 if __name__ == "__main__":

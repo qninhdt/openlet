@@ -1,23 +1,30 @@
+"""LangGraph checkpoint state, mutable runtime context, and LLM client helpers."""
+
 from __future__ import annotations
 
-import asyncio
-from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Annotated, TypedDict
-from uuid import UUID
+from typing import TYPE_CHECKING, Annotated, TypedDict
 
-from langchain_core.messages import BaseMessage
-from langchain_core.tools import BaseTool
+from langchain_core.messages import BaseMessage  # noqa: TC002  # Evaluated at runtime by LangGraph StateGraph.get_type_hints.
 from langchain_litellm import ChatLiteLLM
 from langgraph.graph.message import (  # pyright: ignore[reportMissingTypeStubs]
     add_messages,
 )
-from openlet_sdk.config import ReasoningEffort, secret
+from openlet_sdk.config import secret
 
-from ..activity import ActivityEmitter
-from ..channels.router import ChannelRouter
-from ..config import ModelSpec, Services
-from ..filesystem.workspace import Filesystem
+if TYPE_CHECKING:
+    import asyncio
+    from collections.abc import Sequence
+    from uuid import UUID
+
+    from langchain_core.messages import AIMessage
+    from langchain_core.tools import BaseTool
+    from openlet_sdk.config import JSON, ReasoningEffort
+
+    from leta.activity import ActivityEmitter
+    from leta.channels.router import ChannelRouter
+    from leta.config import ModelSpec, Services
+    from leta.filesystem.workspace import Filesystem
 
 
 class AgentState(TypedDict):
@@ -36,6 +43,8 @@ class AgentStateUpdate(TypedDict, total=False):
 
 @dataclass(slots=True)
 class UsageTotals:
+    """Mutable token, cost, and LLM-call accumulator for a run."""
+
     input_tokens: int = 0
     cached_input_tokens: int = 0
     output_tokens: int = 0
@@ -53,6 +62,7 @@ class UsageTotals:
         cost_usd: float = 0.0,
         llm_calls: int = 1,
     ) -> None:
+        """Accumulate clamped usage metrics from a single LLM invocation."""
         self.input_tokens += max(0, input_tokens)
         self.cached_input_tokens += max(0, cached_input_tokens)
         self.output_tokens += max(0, output_tokens)
@@ -61,6 +71,7 @@ class UsageTotals:
         self.llm_calls += max(0, llm_calls)
 
     def merge(self, other: UsageTotals) -> None:
+        """Add another ``UsageTotals`` instance into this accumulator."""
         self.input_tokens += other.input_tokens
         self.cached_input_tokens += other.cached_input_tokens
         self.output_tokens += other.output_tokens
@@ -69,6 +80,7 @@ class UsageTotals:
         self.llm_calls += other.llm_calls
 
     def to_dict(self) -> dict[str, int | float]:
+        """Serialize accumulated usage totals to a JSON-friendly dictionary."""
         return {
             "input_tokens": self.input_tokens,
             "cached_input_tokens": self.cached_input_tokens,
@@ -86,6 +98,7 @@ def compute_cost_usd(
     cached_input_tokens: int,
     output_tokens: int,
 ) -> float:
+    """Calculate USD cost from token counts and model pricing rates."""
     uncached = max(0, input_tokens - cached_input_tokens)
     cached_rate = spec.cache_read_input_token_cost or spec.input_cost_per_token
     return (
@@ -95,8 +108,40 @@ def compute_cost_usd(
     )
 
 
+def usage_from_ai_message(msg: AIMessage, spec: ModelSpec) -> UsageTotals:
+    """Extract ``UsageTotals`` from an ``AIMessage``'s ``usage_metadata``."""
+    u = UsageTotals()
+    meta = msg.usage_metadata
+    if meta is None:
+        u.add(llm_calls=1)
+        return u
+    in_tok = int(meta.get("input_tokens", 0) or 0)
+    out_tok = int(meta.get("output_tokens", 0) or 0)
+    in_details = meta.get("input_token_details") or {}
+    out_details = meta.get("output_token_details") or {}
+    cached = int(in_details.get("cache_read", 0) or 0)
+    reasoning = int(out_details.get("reasoning", 0) or 0)
+    cost = compute_cost_usd(
+        spec,
+        input_tokens=in_tok,
+        cached_input_tokens=cached,
+        output_tokens=out_tok,
+    )
+    u.add(
+        input_tokens=in_tok,
+        cached_input_tokens=cached,
+        output_tokens=out_tok,
+        reasoning_tokens=reasoning,
+        cost_usd=cost,
+        llm_calls=1,
+    )
+    return u
+
+
 @dataclass(slots=True)
 class PrecomputedCompaction:
+    """Handle and anchor metadata for an in-flight background compaction task."""
+
     first_id: str | None
     keep_id: str
     tail_limit: int
@@ -106,6 +151,8 @@ class PrecomputedCompaction:
 
 @dataclass(slots=True)
 class RuntimeContext:
+    """Per-turn dependency and mutable execution state injected into LangGraph nodes."""
+
     agent_id: UUID
     leta_id: UUID
     workspace_id: UUID
@@ -140,7 +187,7 @@ class RuntimeContext:
 
 def reasoning_kwargs_for_model(
     model_id: str, effort: ReasoningEffort
-) -> dict[str, object]:
+) -> dict[str, JSON]:
     """Map reasoning_effort cleanly across provider families (OpenAI / Anthropic / Gemini)."""
     if effort is None:
         return {}
@@ -161,6 +208,7 @@ def build_chat_model(
     max_tokens: int,
     streaming: bool = True,
 ) -> ChatLiteLLM:
+    """Build a configured ``ChatLiteLLM`` client pointing at the LiteLLM gateway."""
     gw = services.config["models"]["gateway"]
     base_url = gw["base_url"].rstrip("/")
     api_key = secret(gw["api_key"])

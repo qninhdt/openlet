@@ -1,8 +1,10 @@
+"""File extension classification backed by the shared file-types contract."""
+
 import json
 from pathlib import Path, PurePosixPath
 from typing import Literal
 
-from .types import is_str_mapping
+from openlet_sdk.types import is_str_mapping
 
 type FileKind = Literal["text", "blob", "unsupported"]
 
@@ -42,6 +44,7 @@ _types = _load_file_types(_data)
 
 
 def classify_extension(extension: str) -> tuple[FileKind, str]:
+    """Classify a file extension into its ingest kind and media type."""
     extension = extension.removeprefix(".").lower()
     if media := _types["text"].get(extension):
         return "text", media
@@ -51,4 +54,5 @@ def classify_extension(extension: str) -> tuple[FileKind, str]:
 
 
 def classify_file(name: str) -> tuple[FileKind, str]:
+    """Classify a filename into its ingest kind and media type."""
     return classify_extension(PurePosixPath(name).suffix)

@@ -1,8 +1,10 @@
+"""Temporal orchestration and runtime activity implementations."""
+
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
-from typing import Literal
+from datetime import datetime  # noqa: TC003  # Temporal @activity.defn evaluates hints at runtime
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 import grpc
@@ -14,9 +16,8 @@ from psycopg.types.json import Jsonb
 from temporalio import activity
 from temporalio.service import RPCError, RPCStatusCode
 
-from ..auth import relation, touch
-from ..config import Services
-from ..hitl.service import (
+from leta.auth import relation, touch
+from leta.hitl.service import (
     HitlDecisionInput,
     HitlRecord,
     OpenHitlInput,
@@ -25,19 +26,26 @@ from ..hitl.service import (
     open_hitl,
     resolve_hitl,
 )
-from ..runs import finish_run
-from ..schedules.service import fire_schedule, temporal_schedule_id
-from ..subagents.service import (
+from leta.orchestration.agent_workflow import RunInput, RunResult
+from leta.orchestration.lifecycle_workflow import (
+    LetaCreateInput,  # noqa: TC001  # Temporal @activity.defn evaluates hints at runtime
+)
+from leta.runs import finish_run
+from leta.schedules.service import fire_schedule, temporal_schedule_id
+from leta.subagents.service import (
     allocate_unique_root_handle,
     notify_parent_failure,
     random_appearance,
     stop_agent_tree,
 )
-from .agent_workflow import RunInput, RunResult
-from .lifecycle_workflow import LetaCreateInput
+
+if TYPE_CHECKING:
+    from leta.config import Services
 
 
 class OrchestrationActivities:
+    """Layer 1 Temporal activities for Leta lifecycle, HITL, schedules, and run cleanup."""
+
     def __init__(self, services: Services) -> None:
         self.s = services
 
@@ -49,6 +57,7 @@ class OrchestrationActivities:
         status: Literal["completed", "failed", "cancelled"],
         error_code: str | None,
     ) -> None:
+        """Finalize a run row and emit its completion activity event."""
         await finish_run(
             self.s.db,
             self.s.activity,
@@ -60,6 +69,7 @@ class OrchestrationActivities:
 
     @activity.defn(name="notify_parent_failure")
     async def notify_parent_failure(self, agent_id: UUID, error_message: str) -> None:
+        """Notify a subagent's parent inbox that its child run failed."""
         await notify_parent_failure(
             db=self.s.db,
             inbox=self.s.inbox,
@@ -69,6 +79,7 @@ class OrchestrationActivities:
 
     @activity.defn(name="stop_child_agents")
     async def stop_child_agents(self, agent_id: UUID) -> None:
+        """Stop all descendant subagents beneath agent_id."""
         await stop_agent_tree(
             db=self.s.db,
             temporal=self.s.temporal,
@@ -79,6 +90,7 @@ class OrchestrationActivities:
 
     @activity.defn(name="prepare_leta_db")
     async def prepare_leta_db(self, data: LetaCreateInput) -> str:
+        """Insert Leta and Root Agent rows idempotently and allocate a unique handle."""
         appearance = data.appearance or random_appearance()
         async with self.s.db.connection() as conn, conn.transaction():
             existing = await (
@@ -128,6 +140,7 @@ class OrchestrationActivities:
 
     @activity.defn(name="provision_leta_resources")
     async def provision_leta_resources(self, data: LetaCreateInput) -> None:
+        """Provision SpiceDB relations and private LetFS storage for a new Leta."""
         await self.s.platform_internal.CheckWorkspaceActive(
             plat_int_pb.CheckWorkspaceActiveRequest(
                 workspace_id=str(data.workspace_id)
@@ -170,6 +183,7 @@ class OrchestrationActivities:
 
     @activity.defn(name="mark_leta_deleting")
     async def mark_leta_deleting(self, leta_id: UUID) -> None:
+        """Mark a Leta record as deleting unless already archived."""
         async with self.s.db.connection() as conn:
             await conn.execute(
                 "UPDATE letas SET state = 'deleting' WHERE id = %s AND state <> 'archived'",
@@ -178,6 +192,7 @@ class OrchestrationActivities:
 
     @activity.defn(name="cleanup_leta_schedules")
     async def cleanup_leta_schedules(self, leta_id: UUID) -> None:
+        """Soft-delete Postgres schedules and remove their Temporal Schedules."""
         async with self.s.db.connection() as conn:
             rows = await (
                 await conn.execute(
@@ -200,6 +215,7 @@ class OrchestrationActivities:
 
     @activity.defn(name="cleanup_leta_hitl")
     async def cleanup_leta_hitl(self, leta_id: UUID) -> None:
+        """Cancel all pending HITL workflows owned by leta_id."""
         async with self.s.db.connection() as conn:
             rows = await (
                 await conn.execute(
@@ -221,6 +237,7 @@ class OrchestrationActivities:
 
     @activity.defn(name="cleanup_leta_agents")
     async def cleanup_leta_agents(self, leta_id: UUID) -> None:
+        """Stop the entire agent tree for leta_id including the Root Leta."""
         await stop_agent_tree(
             db=self.s.db,
             temporal=self.s.temporal,
@@ -231,6 +248,7 @@ class OrchestrationActivities:
 
     @activity.defn(name="cleanup_leta_resources")
     async def cleanup_leta_resources(self, workspace_id: UUID, leta_id: UUID) -> None:
+        """Remove chat membership, SpiceDB tuples, and mark the Leta archived."""
         try:
             await self.s.chat_internal.RemoveAgent(
                 chat_int_pb.RemoveAgentRequest(
@@ -256,6 +274,7 @@ class OrchestrationActivities:
 
     @activity.defn(name="open_hitl")
     async def open_hitl(self, request: OpenHitlInput) -> HitlRecord:
+        """Open an HITL request in Postgres and emit an update event."""
         return await open_hitl(
             db=self.s.db,
             auth=self.s.auth,
@@ -266,12 +285,14 @@ class OrchestrationActivities:
 
     @activity.defn(name="resolve_hitl")
     async def resolve_hitl(self, decision: HitlDecisionInput) -> HitlRecord:
+        """Persist a recipient decision on a pending HITL request."""
         return await resolve_hitl(
             db=self.s.db, activity=self.s.activity, decision=decision
         )
 
     @activity.defn(name="apply_hitl_effect")
     async def apply_hitl_effect(self, request_id: UUID) -> HitlRecord:
+        """Apply LetFS storage access grants for an accepted approval request."""
         return await apply_hitl_effect(
             db=self.s.db,
             auth=self.s.auth,
@@ -282,12 +303,14 @@ class OrchestrationActivities:
 
     @activity.defn(name="deliver_hitl_result")
     async def deliver_hitl_result(self, request_id: UUID) -> None:
+        """Deliver the resolved HITL result to the requesting agent's inbox."""
         await deliver_hitl_result(
             db=self.s.db, inbox=self.s.inbox, request_id=request_id
         )
 
     @activity.defn(name="fire_schedule")
     async def fire_schedule(self, schedule_id: UUID, nominal_time: datetime) -> None:
+        """Deliver a scheduled prompt to the target agent's inbox."""
         await fire_schedule(
             db=self.s.db,
             inbox=self.s.inbox,
@@ -297,12 +320,16 @@ class OrchestrationActivities:
 
 
 class RuntimeActivities:
+    """Layer 2 Temporal activity host executing agent turns."""
+
     def __init__(self, services: Services) -> None:
         self.s = services
 
     @activity.defn(name="run_agent_turn")
     async def run_agent_turn(self, payload: RunInput) -> RunResult:
-        from ..runtime.runner import run_agent_turn
+        """Execute one agent turn in the Layer 2 runtime and return updated cursors."""
+        # Layer 2 runtime is imported lazily so orchestration-only workers stay lightweight.
+        from leta.runtime.runner import run_agent_turn  # noqa: PLC0415
 
         outcome = await run_agent_turn(
             self.s,

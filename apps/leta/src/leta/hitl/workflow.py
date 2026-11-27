@@ -1,18 +1,22 @@
+"""Temporal workflow orchestrating human-in-the-loop ask and approval lifecycles."""
+
 from __future__ import annotations
 
 from datetime import timedelta
-from uuid import UUID
+from uuid import UUID  # noqa: TC003  # Temporal @workflow.signal inspects hints at runtime
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ApplicationError
 
 with workflow.unsafe.imports_passed_through():
-    from .service import HitlDecisionInput, HitlRecord, OpenHitlInput
+    from leta.hitl.service import HitlDecisionInput, HitlRecord, OpenHitlInput
 
 
 @workflow.defn(name="HitlWorkflow")
 class HitlWorkflow:
+    """Durable workflow coordinating HITL opening, decision updates, effects, and delivery."""
+
     @workflow.init
     def __init__(self, request: OpenHitlInput) -> None:
         self._decision: HitlDecisionInput | None = None
@@ -21,6 +25,7 @@ class HitlWorkflow:
 
     @workflow.update
     async def decide(self, decision: HitlDecisionInput) -> HitlRecord:
+        """Validate and persist a recipient decision for an open HITL request."""
         if self._decision is not None:
             raise ApplicationError("HITL request already resolved", non_retryable=True)
         if decision.actor_id != self._request.recipient_user_id:
@@ -45,6 +50,7 @@ class HitlWorkflow:
 
     @workflow.signal
     def cancel(self, actor_id: UUID) -> None:
+        """Cancel the pending HITL request if not yet decided."""
         if self._decision is None:
             self._decision = HitlDecisionInput(
                 request_id=self._request.id,
@@ -55,6 +61,7 @@ class HitlWorkflow:
 
     @workflow.run
     async def run(self, request: OpenHitlInput) -> HitlRecord:
+        """Execute the full HITL request lifecycle until resolution and delivery."""
         request = self._request
         opened: HitlRecord = await workflow.execute_activity(
             "open_hitl",
@@ -83,7 +90,8 @@ class HitlWorkflow:
                 resolved_at=workflow.now(),
             )
 
-        assert self._decision is not None
+        if self._decision is None:
+            raise RuntimeError("HITL decision missing after wait_condition")
         if self._resolved is None:
             self._resolved = await workflow.execute_activity(
                 "resolve_hitl",
@@ -109,5 +117,6 @@ class HitlWorkflow:
             retry_policy=RetryPolicy(maximum_attempts=5),
         )
         await workflow.wait_condition(workflow.all_handlers_finished)
-        assert self._resolved is not None
+        if self._resolved is None:
+            raise RuntimeError("HITL resolved record missing before return")
         return self._resolved

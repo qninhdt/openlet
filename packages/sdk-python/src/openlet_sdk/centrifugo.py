@@ -1,3 +1,5 @@
+"""Centrifugo JWT token signing helpers."""
+
 import base64
 import hashlib
 import hmac

@@ -1,14 +1,30 @@
+"""Temporal activities for enriching and indexing parsed blob artifacts."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from openlet_api.letfs.v1 import internal_pb2 as internal
-from openlet_sdk.config import Config
 from temporalio import activity
 
-from .enrich import enrich
-from .index import index
-from .protocols import BlobReader, IngestModels, LetFSProcessorStub, VectorStore
-from .telemetry import ProcessingIdentity, heartbeats, stage
+from letfs_ingest.enrich import enrich
+from letfs_ingest.index import index
+from letfs_ingest.telemetry import ProcessingIdentity, heartbeats, stage
+
+if TYPE_CHECKING:
+    from openlet_sdk.config import Config
+
+    from letfs_ingest.protocols import (
+        BlobReader,
+        IngestModels,
+        LetFSProcessorStub,
+        VectorStore,
+    )
 
 
 class Processor:
+    """Temporal activity host for blob enrichment and vector indexing."""
+
     def __init__(
         self,
         stub: LetFSProcessorStub,
@@ -25,6 +41,7 @@ class Processor:
 
     @activity.defn(name="EnrichBlob")
     async def enrich(self, blob_id: str) -> None:
+        """Run multimodal enrichment for ``blob_id`` if not already enriched or obsolete."""
         identity: ProcessingIdentity = {"blob_id": blob_id}
         async with heartbeats():
             with stage("enrich", identity):
@@ -37,6 +54,7 @@ class Processor:
 
     @activity.defn(name="IndexBlob")
     async def index(self, blob_id: str) -> None:
+        """Embed and upsert Qdrant chunks for ``blob_id`` and mark indexing complete."""
         identity: ProcessingIdentity = {"blob_id": blob_id}
         async with heartbeats():
             with stage("index", identity):

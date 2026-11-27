@@ -6,11 +6,16 @@ import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import TYPE_CHECKING
 
 import numpy as np
-from openlet_sdk.config import Config
 
-from .models import CacheInput, CacheMetadata, CachePointMeta
+from openlet_env.models import CacheInput, CacheMetadata, CachePointMeta
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
+    from openlet_sdk.config import Config
 
 CACHE_DIR = ".letfs-cache"
 CACHE_FORMAT = 7
@@ -20,12 +25,15 @@ INDEXED = PARSED | frozenset({".gif", ".jpeg", ".jpg", ".png", ".webp"})
 
 @dataclass(frozen=True, slots=True)
 class CachedIngest:
+    """Loaded `.letfs-cache` directory contents and embeddings."""
+
     folder: Path
     metadata: CacheMetadata
-    vectors: dict[bytes, list[float]]
+    vectors: Mapping[bytes, Sequence[float]]
 
 
 def text_key(text: str) -> bytes:
+    """Return the SHA-256 digest key for a cached text chunk."""
     return hashlib.sha256(text.encode("utf-8")).digest()
 
 
@@ -69,6 +77,7 @@ def fingerprint(path: Path, config: Config) -> CacheInput:
 
 
 def read_cache(path: Path, config: Config) -> CachedIngest | None:
+    """Read and validate cached ingest artifacts for ``path``, or return ``None``."""
     folder = path.parent / CACHE_DIR / path.name
     metadata_path = folder / "metadata.json"
     if not metadata_path.is_file():
@@ -99,12 +108,13 @@ def save_cache(
     source: Path,
     input_settings: CacheInput,
     files: dict[str, list[str]],
+    *,
     points: list[CachePointMeta],
     vectors: dict[bytes, list[float]],
     artifacts: dict[str, bytes | None],
-    *,
     dimensions: int,
 ) -> None:
+    """Atomically write cached ingest artifacts and embeddings for ``source``."""
     parent = source.parent / CACHE_DIR
     parent.mkdir(exist_ok=True)
     target = parent / source.name

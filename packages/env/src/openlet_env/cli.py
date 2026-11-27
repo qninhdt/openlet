@@ -5,12 +5,16 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from collections.abc import Sequence
 from dataclasses import asdict
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from .environment import Environment
-from .models import EnvMode
+from openlet_env.environment import Environment
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from openlet_env.models import EnvMode
 
 
 def _parse_profiles(raw: str) -> tuple[str, ...]:
@@ -18,6 +22,7 @@ def _parse_profiles(raw: str) -> tuple[str, ...]:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the CLI argument parser for ``openlet-env``."""
     parser = argparse.ArgumentParser(
         prog="openlet-env",
         description="Manage non-production Openlet environments (local dev, E2E, evaluation).",
@@ -88,6 +93,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Run the ``openlet-env`` CLI entrypoint and return an exit status."""
     args = build_parser().parse_args(argv)
 
     if args.command == "up":

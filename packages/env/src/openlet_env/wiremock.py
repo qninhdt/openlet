@@ -2,13 +2,85 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from typing import TYPE_CHECKING, NotRequired, TypedDict
 from uuid import uuid4
 
 import httpx
 from pydantic import BaseModel, Field
 
-from .models import WireMockRequest
+from openlet_env.models import WireMockRequest
+
+if TYPE_CHECKING:
+    from openlet_sdk.types import JsonObject
+
+    from openlet_env.auth import Jwks
+
+
+class ClerkVerification(TypedDict):
+    """Clerk email verification status object."""
+
+    status: str
+
+
+class ClerkEmailAddress(TypedDict):
+    """Clerk user email address entry."""
+
+    id: str
+    email_address: str
+    verification: ClerkVerification
+
+
+class ClerkUserProfile(TypedDict):
+    """Stubbed Clerk ``/v1/users`` response payload."""
+
+    id: str
+    first_name: str
+    last_name: str
+    image_url: str
+    email_addresses: list[ClerkEmailAddress]
+    public_metadata: dict[str, str]
+
+
+class WireMockMappingRequest(TypedDict):
+    """WireMock stub request matcher."""
+
+    method: str
+    urlPath: str
+
+
+class WireMockMappingResponse(TypedDict):
+    """WireMock stub HTTP JSON response definition."""
+
+    status: int
+    jsonBody: Jwks | ClerkUserProfile | JsonObject
+    headers: dict[str, str]
+
+
+class WireMockMapping(TypedDict):
+    """WireMock ``/__admin/mappings`` registration payload."""
+
+    priority: NotRequired[int]
+    request: WireMockMappingRequest
+    response: WireMockMappingResponse
+
+
+class WireMockBodyPattern(TypedDict, total=False):
+    """WireMock request body match pattern."""
+
+    contains: str
+    equalTo: str
+    matches: str
+    equalToJson: str
+
+
+class WireMockRequestCriteria(TypedDict, total=False):
+    """WireMock ``/__admin/requests/find`` query criteria."""
+
+    method: str
+    urlPath: str
+    url: str
+    urlPattern: str
+    bodyPatterns: list[WireMockBodyPattern]
 
 
 class _WireMockFindResponse(BaseModel):
@@ -22,7 +94,8 @@ class WireMockClient:
         self.base_url = base_url.rstrip("/")
         self._timeout = timeout
 
-    def register_mapping(self, mapping: Mapping[str, object]) -> None:
+    def register_mapping(self, mapping: WireMockMapping | JsonObject) -> None:
+        """Register a dynamic WireMock stub mapping."""
         response = httpx.post(
             f"{self.base_url}/__admin/mappings",
             json=mapping,
@@ -30,7 +103,8 @@ class WireMockClient:
         )
         response.raise_for_status()
 
-    def register_jwks(self, jwks: Mapping[str, object]) -> None:
+    def register_jwks(self, jwks: Jwks | JsonObject) -> None:
+        """Register the local JWKS endpoint stub."""
         self.register_mapping(
             {
                 "priority": 1,
@@ -53,8 +127,9 @@ class WireMockClient:
         user_id: str | None = None,
         user_id_claim: str = "openlet_user_id",
     ) -> None:
+        """Register Clerk user GET and metadata PATCH stubs for ``subject``."""
         metadata: dict[str, str] = {user_id_claim: user_id} if user_id else {}
-        profile: dict[str, object] = {
+        profile: ClerkUserProfile = {
             "id": subject,
             "first_name": first_name,
             "last_name": last_name,
@@ -84,7 +159,10 @@ class WireMockClient:
                 }
             )
 
-    def find_requests(self, criteria: Mapping[str, object]) -> list[WireMockRequest]:
+    def find_requests(
+        self, criteria: WireMockRequestCriteria | JsonObject
+    ) -> list[WireMockRequest]:
+        """Query WireMock's request journal for matching recorded requests."""
         response = httpx.post(
             f"{self.base_url}/__admin/requests/find",
             json=criteria,

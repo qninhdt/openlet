@@ -4,16 +4,15 @@ from __future__ import annotations
 
 import os
 import time
-from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from deepeval import evaluate  # pyright: ignore[reportUnknownVariableType]
 from deepeval.evaluate.configs import AsyncConfig, CacheConfig, DisplayConfig
 from deepeval.metrics import ContextualPrecisionMetric, ContextualRecallMetric
 from deepeval.test_case import LLMTestCase
 from dotenv import dotenv_values
-from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from openlet_evals.core.judge import make_judge
 from openlet_evals.core.report import (
@@ -23,12 +22,24 @@ from openlet_evals.core.report import (
     render_markdown,
     save_run,
 )
+from openlet_evals.suites.retrieval.corpus import (
+    COLLECTION,
+    EphemeralQdrant,
+    embed_queries,
+    load_shared_corpus,
+)
+from openlet_evals.suites.retrieval.search import SearchHit, SearchMode, search_qdrant
 
-from .corpus import COLLECTION, EphemeralQdrant, embed_queries, load_shared_corpus
-from .search import SearchHit, SearchMode, search_qdrant
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from pathlib import Path
+
+    from openlet_sdk.types import JsonObject
 
 
 class RetrievalGoldenMetadata(BaseModel):
+    """Metadata identifying a retrieval golden and its expected files."""
+
     model_config = ConfigDict(extra="forbid")
 
     id: str
@@ -37,6 +48,8 @@ class RetrievalGoldenMetadata(BaseModel):
 
 
 class RetrievalGolden(BaseModel):
+    """Retrieval evaluation golden entry."""
+
     model_config = ConfigDict(extra="forbid")
 
     input: str
@@ -48,6 +61,8 @@ _GOLDENS_ADAPTER = TypeAdapter(list[RetrievalGolden])
 
 
 class RetrievalConfig(BaseModel):
+    """Configuration for running the retrieval evaluation suite."""
+
     model_config = ConfigDict(extra="forbid")
 
     name: str = "retrieval-baseline"
@@ -66,12 +81,21 @@ class RetrievalConfig(BaseModel):
     use_cache: bool = False
 
 
+class RetrievalEvalSample(EvalSample):
+    """Retrieval evaluation sample including expected and retrieved file paths."""
+
+    relevant_files: list[str] = Field(default_factory=list[str])
+    top_files: list[str] = Field(default_factory=list[str])
+
+
 def recall_at_k(relevant: Sequence[str], hit_files: Sequence[str], k: int) -> float:
+    """Compute recall@k over unique relevant file paths."""
     rel = set(relevant)
     return len(rel & set(hit_files[:k])) / len(rel) if rel else 0.0
 
 
 def mrr_at_k(relevant: Sequence[str], hit_files: Sequence[str], k: int) -> float:
+    """Compute reciprocal rank of the first relevant file within ``k`` hits."""
     rel = set(relevant)
     for rank, path in enumerate(hit_files[:k], start=1):
         if path in rel:
@@ -80,13 +104,15 @@ def mrr_at_k(relevant: Sequence[str], hit_files: Sequence[str], k: int) -> float
 
 
 def load_goldens(path: Path) -> list[RetrievalGolden]:
+    """Load and validate retrieval goldens from JSON at ``path``."""
     return _GOLDENS_ADAPTER.validate_json(path.read_text(encoding="utf-8"))
 
 
 def validate_goldens(
-    goldens: Sequence[RetrievalGolden | Mapping[str, object]],
+    goldens: Sequence[RetrievalGolden | JsonObject],
     indexed_by_ws: dict[str, set[str]],
 ) -> list[str]:
+    """Validate golden schemas, ID uniqueness, and presence in cached workspace indexes."""
     errors: list[str] = []
     seen: set[str] = set()
     for i, raw in enumerate(goldens):
@@ -107,15 +133,18 @@ def validate_goldens(
         if ws_idx is None:
             errors.append(f"{sid}: unknown workspace {ws}")
             continue
-        for rf in rels:
-            if rf not in ws_idx:
-                errors.append(f"{sid}: missing from {ws}/shared index: {rf}")
+        errors.extend(
+            f"{sid}: missing from {ws}/shared index: {rf}"
+            for rf in rels
+            if rf not in ws_idx
+        )
     return errors
 
 
 def validate_retrieval(
     repo_root: Path, cfg: RetrievalConfig
 ) -> tuple[int, dict[str, int], dict[str, int], list[str]]:
+    """Load the shared retrieval corpus and return counts plus validation errors."""
     goldens = load_goldens(repo_root / cfg.dataset_file)
     _, _, indexed_by_ws, blobs_by_ws, pts_by_ws = load_shared_corpus(
         repo_root / cfg.datasets_dir
@@ -135,6 +164,7 @@ def run_retrieval(
     limit: int | None = None,
     output_path: Path | None = None,
 ) -> tuple[EvalRun, Path, Path]:
+    """Execute the retrieval evaluation against ephemeral Qdrant and save reports."""
     env = {
         **{k: v for k, v in dotenv_values(repo_root / ".env").items() if v is not None},
         **os.environ,
@@ -247,14 +277,12 @@ def run_retrieval(
             **jscores,
         }
         samples.append(
-            EvalSample.model_validate(
-                {
-                    "id": meta.id,
-                    "group": meta.workspace,
-                    "scores": scores,
-                    "relevant_files": rels,
-                    "top_files": hit_files,
-                }
+            RetrievalEvalSample(
+                id=meta.id,
+                group=meta.workspace,
+                scores=scores,
+                relevant_files=rels,
+                top_files=hit_files,
             )
         )
 

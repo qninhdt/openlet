@@ -1,17 +1,23 @@
+"""Real-time activity persistence and Centrifugo streaming publisher."""
+
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
-from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import Literal
-from uuid import UUID
+from typing import TYPE_CHECKING, Literal
 
 import httpx
-from openlet_sdk.config import JSON
 from psycopg.types.json import Jsonb
 
-from .db import Pool
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from uuid import UUID
+
+    from openlet_sdk.config import JSON
+
+    from leta.db import Pool
 
 logger = logging.getLogger(__name__)
 
@@ -36,14 +42,18 @@ type ActivityType = Literal[
 
 
 def activity_channel(leta_id: UUID | str) -> str:
+    """Return the Centrifugo channel name for a Leta instance's activity stream."""
     return f"leta:activity:{leta_id}"
 
 
 def leta_user_channel(user_id: UUID | str) -> str:
+    """Return the Centrifugo channel name for user-scoped Leta updates."""
     return f"leta:user#{user_id}"
 
 
 class CentrifugoPublisher:
+    """Best-effort async HTTP publisher for Centrifugo real-time broadcasts."""
+
     def __init__(self, *, api_url: str, api_key: str) -> None:
         self._api_url = api_url.rstrip("/")
         self._api_key = api_key
@@ -60,6 +70,7 @@ class CentrifugoPublisher:
         )
 
     async def close(self) -> None:
+        """Cancel pending background publish tasks and close the HTTP client."""
         for task in list(self._bg_tasks):
             task.cancel()
         if self._bg_tasks:
@@ -76,6 +87,7 @@ class CentrifugoPublisher:
         *,
         skip_history: bool = False,
     ) -> None:
+        """Schedule a fire-and-forget Centrifugo broadcast if capacity allows."""
         if self._client is None or not channels:
             return
         if len(self._bg_tasks) >= 256:
@@ -94,6 +106,7 @@ class CentrifugoPublisher:
         *,
         skip_history: bool = False,
     ) -> None:
+        """Publish an event to a single Centrifugo channel."""
         await self.broadcast([channel], event_type, data, skip_history=skip_history)
 
     async def broadcast(
@@ -104,6 +117,7 @@ class CentrifugoPublisher:
         *,
         skip_history: bool = False,
     ) -> None:
+        """Broadcast an event payload to one or more Centrifugo channels."""
         if self._client is None or not channels:
             return
         try:
@@ -126,6 +140,8 @@ class CentrifugoPublisher:
 
 
 class ActivityEmitter:
+    """Persists agent activity events to Postgres and broadcasts them via Centrifugo."""
+
     def __init__(self, db: Pool, centrifugo: CentrifugoPublisher) -> None:
         self.db = db
         self.centrifugo = centrifugo
@@ -141,6 +157,7 @@ class ActivityEmitter:
         realtime_data: Mapping[str, JSON] | None = None,
         extra_channels: list[str] | None = None,
     ) -> int:
+        """Record an activity event with a monotonic sequence number and broadcast it."""
         async with self.db.connection() as conn, conn.transaction():
             row = await (
                 await conn.execute(
@@ -181,6 +198,7 @@ class ActivityEmitter:
         delta: str,
         tool_call_id: str | None = None,
     ) -> None:
+        """Publish an ephemeral streaming delta chunk without writing to history."""
         if not delta:
             return
         payload: dict[str, JSON] = {
@@ -223,6 +241,7 @@ class StreamCoalescer:
         *,
         tool_call_id: str | None = None,
     ) -> None:
+        """Buffer a streaming delta chunk and schedule a delayed flush if needed."""
         if not delta:
             return
         key = (kind, tool_call_id)
@@ -235,6 +254,7 @@ class StreamCoalescer:
         await self.flush()
 
     async def flush(self) -> None:
+        """Publish all buffered streaming deltas immediately."""
         if not self._buffers:
             return
         pending = self._buffers
@@ -253,10 +273,9 @@ class StreamCoalescer:
             )
 
     async def close(self) -> None:
+        """Cancel any scheduled flush timer and flush remaining buffered deltas."""
         if self._flush_task is not None and not self._flush_task.done():
             self._flush_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._flush_task
-            except asyncio.CancelledError:
-                pass
         await self.flush()

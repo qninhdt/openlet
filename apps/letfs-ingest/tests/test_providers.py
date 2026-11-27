@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 import json
+from dataclasses import dataclass, field
 from io import BytesIO
-from types import SimpleNamespace
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
 import pytest
 from letfs_ingest.providers import (
@@ -12,28 +14,27 @@ from letfs_ingest.providers import (
     pack_batches,
     vision,
 )
-from openlet_sdk.config import Config
+from litellm.exceptions import ServiceUnavailableError
 from openlet_sdk.types import is_object_list, is_str_mapping
 from PIL import Image
+
+if TYPE_CHECKING:
+    from openlet_sdk.config import Config
 
 
 def test_evidence_samples_text_and_csv_within_budget() -> None:
     text = ("HEAD " * 40) + ("MID " * 80) + ("TAIL " * 40)
     sampled = evidence(text, "text/plain", 160)
-    assert (
-        len(sampled) <= 160
-        and "HEAD" in sampled
-        and "TAIL" in sampled
-        and "..." in sampled
-    )
+    assert len(sampled) <= 160
+    assert "HEAD" in sampled
+    assert "TAIL" in sampled
+    assert "..." in sampled
 
     rows = ["colA,colB", "a,1", "b,2"] + [f"row{i},{i}" for i in range(20)] + ["z,99"]
     csv_sample = evidence("\n".join(rows), "text/csv", 120)
-    assert (
-        "colA,colB" in csv_sample
-        and "z,99" in csv_sample
-        and "Total rows: 24" in csv_sample
-    )
+    assert "colA,colB" in csv_sample
+    assert "z,99" in csv_sample
+    assert "Total rows: 24" in csv_sample
 
 
 def test_batch_enrichment_validates_expected_ids() -> None:
@@ -126,6 +127,98 @@ def test_vision_resizes_image(config: Config) -> None:
     assert len(b64) > 0
 
 
+class _DummyObs:
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        pass
+
+    def update(self, **kwargs: object) -> None:
+        pass
+
+
+@dataclass(frozen=True, slots=True)
+class _FakePrompt:
+    prompt: str
+    config: dict[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class _FakeToolFunction:
+    name: str
+    arguments: str
+
+
+@dataclass(frozen=True, slots=True)
+class _FakeToolCall:
+    id: str
+    type: str
+    function: _FakeToolFunction
+
+
+@dataclass(frozen=True, slots=True)
+class _FakeMessage:
+    role: str
+    content: str | None
+    tool_calls: list[_FakeToolCall]
+
+    def model_dump(self, **_k: object) -> dict[str, object]:
+        return {
+            "role": self.role,
+            "content": self.content,
+            "tool_calls": [
+                {
+                    "id": tc.id,
+                    "type": tc.type,
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    },
+                }
+                for tc in self.tool_calls
+            ],
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class _FakeChoice:
+    finish_reason: str
+    index: int
+    message: _FakeMessage
+
+    def model_dump(self, **_k: object) -> dict[str, object]:
+        return {
+            "message": self.message.model_dump(),
+            "finish_reason": self.finish_reason,
+            "index": self.index,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class _FakeResponse:
+    id: str
+    choices: list[_FakeChoice]
+    usage: None = None
+    _hidden_params: dict[str, object] = field(default_factory=dict[str, object])
+
+
+@dataclass(frozen=True, slots=True)
+class _FakeSimpleChoice:
+    content: str = "ok"
+
+    def model_dump(self) -> dict[str, object]:
+        return {"message": {"content": self.content}}
+
+
+@dataclass(frozen=True, slots=True)
+class _FakeSimpleResponse:
+    id: str
+    choices: list[_FakeSimpleChoice]
+    usage: None = None
+    _hidden_params: dict[str, object] = field(default_factory=dict[str, object])
+
+
 async def test_describe_batch_interleaves_artifacts_and_retries_with_instructor(
     monkeypatch: pytest.MonkeyPatch, config: Config
 ) -> None:
@@ -133,27 +226,17 @@ async def test_describe_batch_interleaves_artifacts_and_retries_with_instructor(
     captured_messages: list[object] = []
     calls = 0
 
-    class DummyObs:
-        def __enter__(self) -> Self:
-            return self
-
-        def __exit__(self, *args: object) -> None:
-            pass
-
-        def update(self, **kwargs: object) -> None:
-            pass
-
     class DummyLangfuse:
-        def get_prompt(self, *args: object, **kwargs: object) -> SimpleNamespace:
-            return SimpleNamespace(
+        def get_prompt(self, *args: object, **kwargs: object) -> _FakePrompt:
+            return _FakePrompt(
                 prompt="Enrich items cleanly.",
                 config={"model": "gpt-4o-mini", "max_tokens": 512},
             )
 
-        def start_as_current_observation(self, **kwargs: object) -> DummyObs:
-            return DummyObs()
+        def start_as_current_observation(self, **kwargs: object) -> _DummyObs:
+            return _DummyObs()
 
-    async def fake_acompletion(**kwargs: object) -> SimpleNamespace:
+    async def fake_acompletion(**kwargs: object) -> _FakeResponse:
         nonlocal calls
         calls += 1
         captured_messages.append(kwargs["messages"])
@@ -184,52 +267,24 @@ async def test_describe_batch_interleaves_artifacts_and_retries_with_instructor(
                 ]
             }
         )
-
-        def _msg_dump(**_k: object) -> dict[str, object]:
-            return {
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [
-                    {
-                        "id": f"call_{calls}",
-                        "type": "function",
-                        "function": {"name": "BatchEnrichment", "arguments": content},
-                    }
-                ],
-            }
-
-        def _choice_dump(**_k: object) -> dict[str, object]:
-            return {"message": _msg_dump(), "finish_reason": "tool_calls", "index": 0}
-
-        tool_call = SimpleNamespace(
+        tool_call = _FakeToolCall(
             id=f"call_{calls}",
             type="function",
-            function=SimpleNamespace(name="BatchEnrichment", arguments=content),
+            function=_FakeToolFunction(name="BatchEnrichment", arguments=content),
         )
-        msg = SimpleNamespace(
-            role="assistant",
-            content=None,
-            tool_calls=[tool_call],
-            model_dump=_msg_dump,
-        )
-        choice = SimpleNamespace(
-            finish_reason="tool_calls",
-            index=0,
-            message=msg,
-            model_dump=_choice_dump,
-        )
-        return SimpleNamespace(
+        msg = _FakeMessage(role="assistant", content=None, tool_calls=[tool_call])
+        choice = _FakeChoice(finish_reason="tool_calls", index=0, message=msg)
+        return _FakeResponse(
             id=f"resp_{calls}",
             choices=[choice],
-            usage=None,
             _hidden_params={"response_cost": 0.001},
         )
 
     def _get_langfuse() -> DummyLangfuse:
         return DummyLangfuse()
 
-    def _propagate(**_kw: object) -> DummyObs:
-        return DummyObs()
+    def _propagate(**_kw: object) -> _DummyObs:
+        return _DummyObs()
 
     monkeypatch.setenv("LITELLM_MASTER_KEY", "test-key")
     monkeypatch.setattr("letfs_ingest.providers.get_client", _get_langfuse)
@@ -274,46 +329,28 @@ async def test_describe_batch_interleaves_artifacts_and_retries_with_instructor(
 async def test_complete_retries_transient_errors(
     monkeypatch: pytest.MonkeyPatch, config: Config
 ) -> None:
-    from litellm.exceptions import ServiceUnavailableError
-
     monkeypatch.setenv("LITELLM_MASTER_KEY", "test-key")
     attempts = 0
-
-    class DummyObs:
-        def __enter__(self) -> Self:
-            return self
-
-        def __exit__(self, *args: object) -> None:
-            pass
-
-        def update(self, **kwargs: object) -> None:
-            pass
 
     async def no_sleep(_: float) -> None:
         return None
 
-    async def fake_acompletion(**kwargs: object) -> SimpleNamespace:
+    async def fake_acompletion(**kwargs: object) -> _FakeSimpleResponse:
         nonlocal attempts
         attempts += 1
         if attempts < 3:
             raise ServiceUnavailableError(
                 message="overloaded", llm_provider="openai", model="gpt"
             )
-        choice = SimpleNamespace(model_dump=lambda: {"message": {"content": "ok"}})
-        return SimpleNamespace(
-            id="ok",
-            choices=[choice],
-            usage=None,
-            _hidden_params={},
-        )
+        return _FakeSimpleResponse(id="ok", choices=[_FakeSimpleChoice()])
 
     class DummyLangfuse:
-        def start_as_current_observation(self, **_k: object) -> DummyObs:
-            return DummyObs()
+        def start_as_current_observation(self, **_k: object) -> _DummyObs:
+            return _DummyObs()
 
     monkeypatch.setattr("letfs_ingest.providers.asyncio.sleep", no_sleep)
     monkeypatch.setattr("letfs_ingest.providers.litellm.acompletion", fake_acompletion)
-    monkeypatch.setattr("letfs_ingest.providers.get_client", lambda: DummyLangfuse())
+    monkeypatch.setattr("letfs_ingest.providers.get_client", DummyLangfuse)
 
     ai = Models(config)
     resp = await ai.complete(model="gpt-4o-mini", messages=[])

@@ -15,8 +15,7 @@ def _iter_imports(path: Path) -> list[str]:
     pkg_parts = list(rel_parts[:-1])
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            for alias in node.names:
-                found.append(alias.name)
+            found.extend(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom):
             if node.level > 0:
                 up = node.level - 1
@@ -54,9 +53,11 @@ def test_layer2_runtime_has_no_temporal_workflow_or_raw_sql() -> None:
     violations: list[str] = []
     for path in sorted((LETA_SRC / "runtime").rglob("*.py")):
         rel = path.relative_to(LETA_SRC).as_posix()
-        for mod in _iter_imports(path):
-            if mod.startswith(forbidden_prefixes):
-                violations.append(f"{rel} imports {mod}")
+        violations.extend(
+            f"{rel} imports {mod}"
+            for mod in _iter_imports(path)
+            if mod.startswith(forbidden_prefixes)
+        )
         text = path.read_text(encoding="utf-8")
         if ".db.connection(" in text:
             violations.append(f"{rel} opens raw DB connection directly")

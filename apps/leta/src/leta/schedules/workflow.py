@@ -1,3 +1,5 @@
+"""Temporal workflow executed when a Leta schedule fires."""
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta
@@ -9,8 +11,11 @@ from temporalio.common import RetryPolicy
 
 @workflow.defn(name="ScheduleFireWorkflow")
 class ScheduleFireWorkflow:
+    """Stateless workflow dispatching a scheduled firing to the fire_schedule activity."""
+
     @workflow.run
     async def run(self, schedule_id: str) -> None:
+        """Execute the fire_schedule activity with the nominal scheduled start time."""
         attrs = workflow.info().search_attributes
         raw_times = attrs.get("TemporalScheduledStartTime")
         if raw_times and isinstance(raw_times[0], datetime):

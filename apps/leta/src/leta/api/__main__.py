@@ -1,13 +1,16 @@
+"""CLI entrypoint for launching the Leta HTTP + internal gRPC server."""
+
 from __future__ import annotations
 
 import uvicorn
 from openlet_sdk.config import load
 
-from ..observability import setup_observability
-from .app import create_app
+from leta.api.app import create_app
+from leta.observability import setup_observability
 
 
 def main() -> None:
+    """Initialize observability and serve the Leta FastAPI application."""
     cfg = load()
     shutdown, lf = setup_observability("openlet-leta-api", cfg)
     listen = cfg["services"]["leta"]["http_listen"]

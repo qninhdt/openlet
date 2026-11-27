@@ -1,3 +1,5 @@
+"""Context-window token estimation, OpenCode v2 compaction, and background precomputation."""
+
 from __future__ import annotations
 
 import asyncio
@@ -5,10 +7,9 @@ import json
 import logging
 import math
 import time
-from collections.abc import Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from langchain_core.messages import (
     AIMessage,
@@ -18,24 +19,33 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
-from openlet_sdk.config import JSON
 from openlet_sdk.types import is_str_mapping
 
-from ..config import CompactionConfig, ModelConfig, ModelSpec
-from ..hitl.service import list_leta_hitl
-from ..runs import record_run_usage
-from ..schedules.service import list_schedules
-from ..subagents.service import list_active_subagents_status
-from .prompts import render_system_prompt
-from .retry import ContextOverflowError, compute_output_limit, retry_one_shot
-from .state import (
-    AgentState,
+from leta.hitl.service import list_leta_hitl
+from leta.runs import record_run_usage
+from leta.runtime.prompts import render_system_prompt
+from leta.runtime.retry import (
+    ContextOverflowError,
+    compute_output_limit,
+    retry_one_shot,
+)
+from leta.runtime.state import (
     PrecomputedCompaction,
     RuntimeContext,
     UsageTotals,
     build_chat_model,
-    compute_cost_usd,
+    usage_from_ai_message,
 )
+from leta.schedules.service import list_schedules
+from leta.subagents.service import list_active_subagents_status
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from openlet_sdk.config import JSON
+
+    from leta.config import CompactionConfig, ModelConfig, ModelSpec
+    from leta.runtime.state import AgentState
 
 logger = logging.getLogger(__name__)
 
@@ -60,18 +70,21 @@ NUDGE_PROMPT = (
 
 
 def is_checkpoint_message(msg: BaseMessage) -> bool:
+    """Return True if ``msg`` is a serialized conversation checkpoint."""
     return isinstance(msg, HumanMessage) and msg.text.lstrip().startswith(
         CHECKPOINT_OPEN
     )
 
 
 def estimate_text_tokens(text: str, chars_per_token: int = 4) -> int:
+    """Estimate token count for plain text using a character-per-token divisor."""
     if not text:
         return 0
     return max(0, round(len(text) / max(1, chars_per_token)))
 
 
 def estimate_message_tokens(msg: BaseMessage, cfg: ModelConfig) -> int:
+    """Estimate token count for a single LangChain message including tool calls and media."""
     total = 0
     content = msg.content
     if isinstance(content, str):
@@ -103,12 +116,15 @@ def estimate_message_tokens(msg: BaseMessage, cfg: ModelConfig) -> int:
 
 @dataclass(frozen=True, slots=True)
 class PromptTokenEstimate:
+    """Anchor-based prompt token breakdown combining measured usage and tail estimates."""
+
     measured: int
     estimated: int
     anchor_index: int | None
 
     @property
     def total(self) -> int:
+        """Return total measured plus estimated prompt tokens."""
         return self.measured + self.estimated
 
 
@@ -153,6 +169,7 @@ def estimate_prompt_tokens(
 
 
 def compaction_ceiling(model: ModelSpec, cfg: CompactionConfig) -> float:
+    """Return the token threshold at which automatic compaction triggers."""
     window = model.context_window_tokens
     if window <= 0:
         return math.inf
@@ -341,6 +358,7 @@ def flatten_and_drop_oldest(
 
 
 def build_summary_prompt(*, is_update: bool) -> str:
+    """Build the Markdown section-structured summarization instruction prompt."""
     mode_note = (
         "This conversation already contains an earlier <conversation-checkpoint>. "
         "Update that summary with all newer progress: newer history always takes precedence; "
@@ -373,35 +391,6 @@ def _has_template_headings(text: str) -> bool:
     return any(heading in text for heading in SUMMARY_SECTIONS)
 
 
-def _usage_from_ai_message(msg: AIMessage, spec: ModelSpec) -> UsageTotals:
-    u = UsageTotals()
-    meta = msg.usage_metadata
-    if meta is None:
-        u.add(llm_calls=1)
-        return u
-    in_tok = int(meta.get("input_tokens", 0) or 0)
-    out_tok = int(meta.get("output_tokens", 0) or 0)
-    in_details = meta.get("input_token_details") or {}
-    out_details = meta.get("output_token_details") or {}
-    cached = int(in_details.get("cache_read", 0) or 0)
-    reasoning = int(out_details.get("reasoning", 0) or 0)
-    cost = compute_cost_usd(
-        spec,
-        input_tokens=in_tok,
-        cached_input_tokens=cached,
-        output_tokens=out_tok,
-    )
-    u.add(
-        input_tokens=in_tok,
-        cached_input_tokens=cached,
-        output_tokens=out_tok,
-        reasoning_tokens=reasoning,
-        cost_usd=cost,
-        llm_calls=1,
-    )
-    return u
-
-
 async def _invoke_summary_call(
     rt: RuntimeContext,
     prompt_messages: list[BaseMessage],
@@ -417,7 +406,7 @@ async def _invoke_summary_call(
         streaming=False,
     )
     runnable = (
-        llm.bind_tools(  # pyright: ignore[reportUnknownMemberType]
+        llm.bind_tools(  # pyright: ignore[reportUnknownMemberType]  # langchain_litellm bind_tools lacks complete typing.
             list(rt.tools.values()),
             tool_choice="none",
         )
@@ -440,7 +429,7 @@ async def _invoke_summary_call(
                 )
             )
         ai_msg = await retry_one_shot(_call, cfg=rt.services.settings.model.retry)
-        usage = _usage_from_ai_message(ai_msg, rt.model_spec)
+        usage = usage_from_ai_message(ai_msg, rt.model_spec)
         text = ai_msg.text.strip()
 
         if not _has_template_headings(text):
@@ -454,7 +443,7 @@ async def _invoke_summary_call(
                 return await runnable.ainvoke(nudge_msgs)
 
             ai_msg2 = await retry_one_shot(_nudge, cfg=rt.services.settings.model.retry)
-            usage.merge(_usage_from_ai_message(ai_msg2, rt.model_spec))
+            usage.merge(usage_from_ai_message(ai_msg2, rt.model_spec))
             text2 = ai_msg2.text.strip()
             if text2:
                 text = text2
@@ -620,14 +609,14 @@ async def build_live_db_snapshots(rt: RuntimeContext) -> tuple[str, str, str]:
             sub_lines.append(
                 f"- {r.name} ({r.title}) | handle: agent:{r.handle} | status: {st_str}"
             )
-        for h in hitl_rows:
-            hitl_lines.append(
-                f"- {h.id} | {h.type} | status: {h.status} | {h.title} (user: {h.recipient_user_id})"
-            )
-        for sc in sched_rows[:20]:
-            sched_lines.append(
-                f"- {sc.id} | {sc.title} | {sc.type} | paused={sc.paused}"
-            )
+        hitl_lines.extend(
+            f"- {h.id} | {h.type} | status: {h.status} | {h.title} (user: {h.recipient_user_id})"
+            for h in hitl_rows
+        )
+        sched_lines.extend(
+            f"- {sc.id} | {sc.title} | {sc.type} | paused={sc.paused}"
+            for sc in sched_rows[:20]
+        )
     except Exception:
         logger.warning("live DB snapshot query failed during compaction", exc_info=True)
 
@@ -642,6 +631,7 @@ def assemble_checkpoint_xml(
     hitl_text: str,
     schedules_text: str,
 ) -> HumanMessage:
+    """Wrap compaction summary, recent context, and live DB snapshots in checkpoint XML."""
     sections: list[str] = [
         CHECKPOINT_OPEN,
         (
@@ -722,7 +712,7 @@ def maybe_start_background_compaction(
         return
 
     created_ts = anchor.additional_kwargs.get("openlet_created_at")
-    if isinstance(created_ts, (int, float)):
+    if isinstance(created_ts, int | float) and not isinstance(created_ts, bool):
         age = time.time() - float(created_ts)
         if age > (bg.cache_lifetime_seconds - bg.cache_margin_seconds):
             return

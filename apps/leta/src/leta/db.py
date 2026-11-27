@@ -1,9 +1,11 @@
+"""PostgreSQL pool management, lease fencing, idempotency receipts, and row helpers."""
+
 from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping
 from datetime import datetime
+from typing import TYPE_CHECKING
 from urllib.parse import quote
 from uuid import UUID
 
@@ -14,6 +16,9 @@ from psycopg.rows import DictRow, dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 type Pool = AsyncConnectionPool[AsyncConnection[DictRow]]
 type Row = DictRow
@@ -33,6 +38,7 @@ class LeaseLostError(RuntimeError):
 
 
 def database_dsn(cfg: Config) -> str:
+    """Build the PostgreSQL connection string from Leta configuration."""
     pg = cfg["dependencies"]["postgres"]
     db = cfg["services"]["leta"]["database"]
     pw = secret(db["password"])
@@ -43,6 +49,7 @@ def database_dsn(cfg: Config) -> str:
 
 
 async def open_pool(cfg: Config, *, min_size: int = 2, max_size: int = 24) -> Pool:
+    """Open and verify an async psycopg connection pool."""
     pool: Pool = AsyncConnectionPool(
         conninfo=database_dsn(cfg),
         min_size=min_size,
@@ -61,6 +68,7 @@ async def open_pool(cfg: Config, *, min_size: int = 2, max_size: int = 24) -> Po
 async def acquire_lease(
     pool: Pool, agent_id: UUID, lease_token: UUID, ttl_seconds: int = 30
 ) -> None:
+    """Acquire an exclusive writer lease for an active agent or raise WriterBusyError."""
     async with pool.connection() as conn:
         row = await (
             await conn.execute(
@@ -83,6 +91,7 @@ async def acquire_lease(
 async def renew_lease(
     pool: Pool, agent_id: UUID, lease_token: UUID, ttl_seconds: int = 30
 ) -> bool:
+    """Extend an active agent writer lease and return whether the token still holds it."""
     async with pool.connection() as conn:
         row = await (
             await conn.execute(
@@ -99,6 +108,7 @@ async def renew_lease(
 
 
 async def release_lease(pool: Pool, agent_id: UUID, lease_token: UUID) -> None:
+    """Release an agent writer lease if the given token currently owns it."""
     async with pool.connection() as conn:
         await conn.execute(
             """
@@ -111,6 +121,7 @@ async def release_lease(pool: Pool, agent_id: UUID, lease_token: UUID) -> None:
 
 
 def hash_request(payload: object) -> str:
+    """Return a deterministic SHA-256 hex digest for an idempotency payload."""
     raw = json.dumps(payload, sort_keys=True, default=str, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
@@ -118,6 +129,7 @@ def hash_request(payload: object) -> str:
 async def get_receipt(
     pool: Pool, scope: str, action: str, request_id: UUID, request_hash: str
 ) -> dict[str, JSON] | None:
+    """Fetch a stored idempotency receipt and verify its payload hash."""
     async with pool.connection() as conn:
         row = await (
             await conn.execute(
@@ -144,9 +156,11 @@ async def save_receipt(
     scope: str,
     action: str,
     request_id: UUID,
+    *,
     request_hash: str,
     response: dict[str, JSON],
 ) -> None:
+    """Persist an idempotency receipt without overwriting an existing entry."""
     async with pool.connection() as conn:
         await conn.execute(
             """
@@ -159,6 +173,7 @@ async def save_receipt(
 
 
 async def sweep_receipts(pool: Pool, retention_days: int = 7) -> int:
+    """Delete expired idempotency receipts and return the number of removed rows."""
     async with pool.connection() as conn:
         cur = await conn.execute(
             """
@@ -171,7 +186,8 @@ async def sweep_receipts(pool: Pool, retention_days: int = 7) -> int:
 
 
 def json_value(value: object) -> JSON:
-    if value is None or isinstance(value, (bool, int, float, str)):
+    """Convert an arbitrary Python or Postgres value into a JSON-serializable value."""
+    if value is None or isinstance(value, bool | int | float | str):
         return value
     if isinstance(value, UUID):
         return str(value)
@@ -185,4 +201,5 @@ def json_value(value: object) -> JSON:
 
 
 def json_row(row: Mapping[str, object]) -> dict[str, JSON]:
+    """Convert all values in a database mapping row to JSON-serializable values."""
     return {str(k): json_value(v) for k, v in row.items()}

@@ -1,9 +1,9 @@
+"""SpiceDB authorization client and relationship helpers."""
+
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Awaitable
 from dataclasses import dataclass
-from typing import Literal, Protocol, cast, override
-from uuid import UUID
+from typing import TYPE_CHECKING, Literal, Protocol, cast, override
 
 import grpc.aio
 from authzed.api.v1 import (
@@ -29,14 +29,21 @@ from authzed.api.v1 import (
 from authzed.api.v1.permission_service_pb2_grpc import PermissionsServiceStub
 from openlet_sdk.config import Config, secret
 
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Awaitable
+    from uuid import UUID
+
 
 @dataclass(frozen=True, slots=True)
 class Actor:
+    """Authenticated principal performing a permission-checked operation."""
+
     type: Literal["user", "agent"]
     id: UUID
 
     @property
     def metadata(self) -> tuple[tuple[str, str], ...]:
+        """Return gRPC metadata headers identifying this actor."""
         key = "x-openlet-user-id" if self.type == "user" else "x-openlet-agent-id"
         return ((key, str(self.id)),)
 
@@ -46,10 +53,12 @@ class Actor:
 
 
 def obj_ref(kind: str, object_id: UUID | str) -> ObjectReference:
+    """Build a SpiceDB ObjectReference."""
     return ObjectReference(object_type=kind, object_id=str(object_id))
 
 
 def subj_ref(kind: str, object_id: UUID | str, relation: str = "") -> SubjectReference:
+    """Build a SpiceDB SubjectReference."""
     return SubjectReference(object=obj_ref(kind, object_id), optional_relation=relation)
 
 
@@ -59,8 +68,10 @@ def relation(
     rel: str,
     subject_type: str,
     subject_id: UUID | str,
+    *,
     subject_relation: str = "",
 ) -> Relationship:
+    """Build a SpiceDB Relationship tuple."""
     return Relationship(
         resource=obj_ref(resource_type, resource_id),
         relation=rel,
@@ -69,6 +80,7 @@ def relation(
 
 
 def touch(rel: Relationship) -> RelationshipUpdate:
+    """Create an idempotent TOUCH update for a SpiceDB relationship."""
     return RelationshipUpdate(
         operation=RelationshipUpdate.Operation.OPERATION_TOUCH,
         relationship=rel,
@@ -76,6 +88,7 @@ def touch(rel: Relationship) -> RelationshipUpdate:
 
 
 def delete_rel(rel: Relationship) -> RelationshipUpdate:
+    """Create a DELETE update for a SpiceDB relationship."""
     return RelationshipUpdate(
         operation=RelationshipUpdate.Operation.OPERATION_DELETE,
         relationship=rel,
@@ -83,6 +96,7 @@ def delete_rel(rel: Relationship) -> RelationshipUpdate:
 
 
 def consistency_for(zed_token: str | None) -> Consistency:
+    """Return SpiceDB Consistency using a ZedToken when provided or minimize_latency."""
     if zed_token:
         return Consistency(at_least_as_fresh=ZedToken(token=zed_token))
     return Consistency(minimize_latency=True)
@@ -91,7 +105,7 @@ def consistency_for(zed_token: str | None) -> Consistency:
 class _AsyncPermissionsStub(Protocol):
     """Async view of authzed PermissionsServiceStub (upstream generates sync-only stubs)."""
 
-    def CheckPermission(
+    def CheckPermission(  # noqa: N802  # Matches upstream authzed gRPC stub method name
         self,
         request: CheckPermissionRequest,
         *,
@@ -99,7 +113,7 @@ class _AsyncPermissionsStub(Protocol):
         timeout: float,
     ) -> Awaitable[CheckPermissionResponse]: ...
 
-    def WriteRelationships(
+    def WriteRelationships(  # noqa: N802  # Matches upstream authzed gRPC stub method name
         self,
         request: WriteRelationshipsRequest,
         *,
@@ -107,7 +121,7 @@ class _AsyncPermissionsStub(Protocol):
         timeout: float,
     ) -> Awaitable[WriteRelationshipsResponse]: ...
 
-    def DeleteRelationships(
+    def DeleteRelationships(  # noqa: N802  # Matches upstream authzed gRPC stub method name
         self,
         request: DeleteRelationshipsRequest,
         *,
@@ -115,7 +129,7 @@ class _AsyncPermissionsStub(Protocol):
         timeout: float,
     ) -> Awaitable[DeleteRelationshipsResponse]: ...
 
-    def ReadRelationships(
+    def ReadRelationships(  # noqa: N802  # Matches upstream authzed gRPC stub method name
         self,
         request: ReadRelationshipsRequest,
         *,
@@ -123,7 +137,7 @@ class _AsyncPermissionsStub(Protocol):
         timeout: float,
     ) -> AsyncIterator[ReadRelationshipsResponse]: ...
 
-    def LookupResources(
+    def LookupResources(  # noqa: N802  # Matches upstream authzed gRPC stub method name
         self,
         request: LookupResourcesRequest,
         *,
@@ -133,6 +147,8 @@ class _AsyncPermissionsStub(Protocol):
 
 
 class Authorization:
+    """Async SpiceDB authorization client for checking and mutating relationships."""
+
     def __init__(self, channel: grpc.aio.Channel, token: str) -> None:
         self._channel = channel
         # authzed's generated PermissionsServiceStub types RPCs synchronously even on grpc.aio.Channel.
@@ -143,6 +159,7 @@ class Authorization:
 
     @classmethod
     def from_config(cls, cfg: Config) -> Authorization:
+        """Create an Authorization client from Openlet SpiceDB dependency config."""
         s = cfg["dependencies"]["spicedb"]
         channel = (
             grpc.aio.secure_channel(s["address"], grpc.ssl_channel_credentials())
@@ -152,6 +169,7 @@ class Authorization:
         return cls(channel, secret(s["key"]))
 
     async def close(self) -> None:
+        """Close the underlying gRPC channel."""
         await self._channel.close()
 
     async def allowed(
@@ -163,6 +181,7 @@ class Authorization:
         *,
         zed_token: str | None = None,
     ) -> bool:
+        """Return whether actor holds permission on the target resource."""
         resp = await self._stub.CheckPermission(
             CheckPermissionRequest(
                 resource=obj_ref(resource_type, resource_id),
@@ -197,12 +216,14 @@ class Authorization:
         *,
         zed_token: str | None = None,
     ) -> None:
+        """Raise PermissionError if actor lacks permission on the resource."""
         if not await self.allowed(
             actor, resource_type, resource_id, permission, zed_token=zed_token
         ):
             raise PermissionError(f"{resource_type}#{permission} denied")
 
     async def write(self, *updates: RelationshipUpdate) -> str:
+        """Write relationship updates to SpiceDB and return the resulting ZedToken."""
         if not updates:
             return ""
         resp = await self._stub.WriteRelationships(
@@ -221,6 +242,7 @@ class Authorization:
         subject_type: str | None = None,
         subject_id: UUID | str | None = None,
     ) -> None:
+        """Delete SpiceDB relationships matching the provided filter criteria."""
         flt = RelationshipFilter(
             resource_type=resource_type,
             optional_resource_id=str(resource_id) if resource_id is not None else "",
@@ -249,6 +271,7 @@ class Authorization:
         subject_id: UUID | str | None = None,
         zed_token: str | None = None,
     ) -> list[Relationship]:
+        """Read SpiceDB relationships matching the provided filter criteria."""
         flt = RelationshipFilter(
             resource_type=resource_type,
             optional_resource_id=str(resource_id) if resource_id is not None else "",
@@ -269,10 +292,7 @@ class Authorization:
             metadata=self._headers,
             timeout=15,
         )
-        out: list[Relationship] = []
-        async for item in stream:
-            out.append(item.relationship)
-        return out
+        return [item.relationship async for item in stream]
 
     async def lookup_resources(
         self,
@@ -282,6 +302,7 @@ class Authorization:
         *,
         zed_token: str | None = None,
     ) -> list[str]:
+        """List resource IDs of resource_type for which actor has permission."""
         stream = self._stub.LookupResources(
             LookupResourcesRequest(
                 resource_object_type=resource_type,
@@ -292,7 +313,4 @@ class Authorization:
             metadata=self._headers,
             timeout=15,
         )
-        out: list[str] = []
-        async for item in stream:
-            out.append(str(item.resource_object_id))
-        return out
+        return [str(item.resource_object_id) async for item in stream]

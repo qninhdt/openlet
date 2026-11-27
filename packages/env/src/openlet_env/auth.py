@@ -3,15 +3,46 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING, Literal, TypedDict
 from uuid import uuid4
 
 import jwt
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.algorithms import RSAAlgorithm
+from pydantic import BaseModel, ConfigDict
 
-from .models import SigningKeyMeta
+from openlet_env.models import SigningKeyMeta
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from openlet_sdk.types import MutableJsonObject
+
+
+class _RsaPublicJwk(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    kty: Literal["RSA"]
+    n: str
+    e: str
+
+
+class RsaJwk(TypedDict):
+    """RSA public JSON Web Key entry."""
+
+    kty: Literal["RSA"]
+    n: str
+    e: str
+    kid: str
+    alg: Literal["RS256"]
+    use: Literal["sig"]
+
+
+class Jwks(TypedDict):
+    """JWKS document containing active signing keys."""
+
+    keys: list[RsaJwk]
 
 
 class LocalAuth:
@@ -45,6 +76,7 @@ class LocalAuth:
         audience: str = "openlet",
         user_id_claim: str = "openlet_user_id",
     ) -> LocalAuth:
+        """Load an existing RS256 signing keypair from ``directory`` or generate one."""
         pem_path = directory / "signing-key.pem"
         meta_path = directory / "signing-key.json"
         if pem_path.is_file() and meta_path.is_file():
@@ -78,11 +110,16 @@ class LocalAuth:
             user_id_claim=user_id_claim,
         )
 
-    def jwks(self) -> dict[str, list[dict[str, object]]]:
+    def jwks(self) -> Jwks:
+        """Return the public JWKS payload for the active signing key."""
         public_key = self._private_key.public_key()
-        raw_jwk = RSAAlgorithm.to_jwk(public_key, as_dict=True)
-        jwk: dict[str, object] = {
-            **raw_jwk,
+        raw_jwk = _RsaPublicJwk.model_validate(
+            RSAAlgorithm.to_jwk(public_key, as_dict=True)
+        )
+        jwk: RsaJwk = {
+            "kty": raw_jwk.kty,
+            "n": raw_jwk.n,
+            "e": raw_jwk.e,
             "kid": self.kid,
             "alg": "RS256",
             "use": "sig",
@@ -96,8 +133,9 @@ class LocalAuth:
         *,
         ttl_seconds: int = 3600,
     ) -> str:
+        """Sign an RS256 JWT for ``subject`` with an optional Openlet user ID claim."""
         now = int(time.time())
-        payload: dict[str, object] = {
+        payload: MutableJsonObject = {
             "sub": subject,
             "iss": self.issuer,
             "aud": self.audience,

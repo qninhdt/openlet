@@ -1,22 +1,30 @@
+"""Internal gRPC service hosting Leta inbox delivery and workspace agent teardown."""
+
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
-from typing import Literal, override
+from typing import TYPE_CHECKING, Literal, override
 from uuid import UUID
 
 import grpc
 import grpc.aio
 from openlet_api.leta.v1 import internal_pb2 as pb
 from openlet_api.leta.v1 import internal_pb2_grpc as pb_grpc
-from openlet_sdk.config import JSON
 from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
 
-from ..config import Services
-from ..db import json_value
-from ..inbox import InboxItem, InboxSender
-from ..orchestration.lifecycle_workflow import LetaLifecycleInput, LetaLifecycleWorkflow
+from leta.db import json_value
+from leta.inbox import InboxAttachment, InboxItem, InboxMetadata, InboxSender
+from leta.orchestration.lifecycle_workflow import (
+    LetaLifecycleInput,
+    LetaLifecycleWorkflow,
+)
+
+if TYPE_CHECKING:
+    from openlet_sdk.config import JSON
+
+    from leta.config import Services
 
 logger = logging.getLogger(__name__)
 
@@ -34,17 +42,20 @@ def _parse_actor(actor: pb.ActorRef) -> InboxSender:
 
 
 class LetaInternalServicer(pb_grpc.LetaInternalServiceServicer):
+    """gRPC servicer for internal inbox delivery and workspace-level agent deletion."""
+
     def __init__(self, services: Services) -> None:
         self.s = services
 
     @override
-    async def DeliverInbox(
+    async def DeliverInbox(  # Matches generated gRPC LetaInternalServiceServicer method name
         self,
         request: pb.DeliverInboxRequest,
         context: grpc.aio.ServicerContext[
             pb.DeliverInboxRequest, pb.DeliverInboxResponse
         ],
     ) -> pb.DeliverInboxResponse:
+        """Validate an inbound chat event and deliver it to the target agent inbox."""
         try:
             agent_id = UUID(request.agent_id)
         except ValueError:
@@ -62,38 +73,44 @@ class LetaInternalServicer(pb_grpc.LetaInternalServiceServicer):
                 reply_address=f"chat:{ev.conversation_id}",
                 sender=_parse_actor(ev.actor),
                 content="",
-                metadata={
-                    "workspace_id": ev.workspace_id,
-                    "conversation_id": ev.conversation_id,
-                    "target_message_id": ev.message_id,
-                    "emoji": ev.emoji,
-                    "action": ev.action,
-                },
+                metadata=InboxMetadata(
+                    workspace_id=ev.workspace_id,
+                    conversation_id=ev.conversation_id,
+                    target_message_id=ev.message_id,
+                    emoji=ev.emoji,
+                    action=ev.action,
+                ),
                 silent=True,
             )
         elif event_kind == "chat_message":
             ev = request.chat_message
-            extra_meta: JSON = {}
+            extra_meta: dict[str, JSON] = {}
             if ev.metadata_json:
                 try:
-                    extra_meta = json_value(
+                    parsed_meta = json_value(
                         json.loads(ev.metadata_json.decode("utf-8"))
                     )
-                except Exception:
+                except UnicodeDecodeError, json.JSONDecodeError:
                     await context.abort(
                         grpc.StatusCode.INVALID_ARGUMENT, "invalid metadata_json"
                     )
                     return pb.DeliverInboxResponse()
-            attachments: list[dict[str, JSON]] = [
-                {
-                    "storage_id": att.storage_id,
-                    "node_id": att.node_id,
-                    "name": att.name,
-                    "media_type": att.media_type,
-                }
+                if not isinstance(parsed_meta, dict):
+                    await context.abort(
+                        grpc.StatusCode.INVALID_ARGUMENT, "invalid metadata_json"
+                    )
+                    return pb.DeliverInboxResponse()
+                extra_meta = parsed_meta
+            attachments = [
+                InboxAttachment(
+                    storage_id=att.storage_id,
+                    node_id=att.node_id,
+                    name=att.name,
+                    media_type=att.media_type,
+                )
                 for att in ev.attachments
             ]
-            mentions: list[JSON] = [
+            mentions: list[dict[str, JSON]] = [
                 {
                     "kind": m.kind,
                     "id": m.id,
@@ -112,18 +129,18 @@ class LetaInternalServicer(pb_grpc.LetaInternalServiceServicer):
                 sender=_parse_actor(ev.sender),
                 content=ev.content,
                 attachments=attachments,
-                metadata={
-                    "workspace_id": ev.workspace_id,
-                    "conversation_id": ev.conversation_id,
-                    "conversation_type": ev.conversation_type,
-                    "title": ev.title,
-                    "handle": ev.handle or None,
-                    "message_id": ev.message_id,
-                    "seq": ev.seq,
-                    "reply_to_message_id": ev.reply_to_message_id or None,
-                    "mentions": mentions,
-                    "metadata": extra_meta,
-                },
+                metadata=InboxMetadata(
+                    workspace_id=ev.workspace_id,
+                    conversation_id=ev.conversation_id,
+                    conversation_type=ev.conversation_type,
+                    title=ev.title,
+                    handle=ev.handle or None,
+                    message_id=ev.message_id,
+                    seq=ev.seq,
+                    reply_to_message_id=ev.reply_to_message_id or None,
+                    mentions=mentions,
+                    metadata=extra_meta,
+                ),
                 silent=False,
             )
         else:
@@ -143,13 +160,14 @@ class LetaInternalServicer(pb_grpc.LetaInternalServiceServicer):
         )
 
     @override
-    async def DeleteWorkspaceAgents(
+    async def DeleteWorkspaceAgents(  # Matches generated gRPC LetaInternalServiceServicer method name
         self,
         request: pb.DeleteWorkspaceAgentsRequest,
         context: grpc.aio.ServicerContext[
             pb.DeleteWorkspaceAgentsRequest, pb.DeleteWorkspaceAgentsResponse
         ],
     ) -> pb.DeleteWorkspaceAgentsResponse:
+        """Archive all non-archived Leta instances belonging to a workspace."""
         try:
             workspace_id = UUID(request.workspace_id)
         except ValueError:
@@ -188,6 +206,7 @@ class LetaInternalServicer(pb_grpc.LetaInternalServiceServicer):
 
 
 async def start_internal_grpc(services: Services) -> grpc.aio.Server:
+    """Start and bind the internal gRPC server for Leta service-to-service RPCs."""
     server = grpc.aio.server()
     pb_grpc.add_LetaInternalServiceServicer_to_server(
         LetaInternalServicer(services), server

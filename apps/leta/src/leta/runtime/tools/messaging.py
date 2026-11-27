@@ -1,26 +1,34 @@
+"""Messaging, reaction, channel-listing, and outbound link-normalization tools."""
+
 from __future__ import annotations
 
+import contextlib
 import xml.sax.saxutils as sax
 from time import monotonic
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
+import grpc
 import regex as re
-from langchain_core.tools import BaseTool, ToolException
-from langgraph.prebuilt import ToolRuntime
-from openlet_sdk.config import JSON
+from langchain_core.tools import ToolException
+from langgraph.prebuilt import ToolRuntime  # noqa: TC002  # Evaluated at runtime by LangGraph ToolNode.get_type_hints.
 from pydantic import Field
 
-from ...channels.base import (
+from leta.channels.base import (
     CallerContext,
     OutboundAttachment,
     OutboundMention,
     OutboundMessage,
 )
-from ...filesystem.workspace import Filesystem
-from ...inbox import InboxSender
-from ..state import AgentState, RuntimeContext
-from .base import ToolArgs, ToolResult, idempotency_key, make_tool
-from .files import missing_path_recovery, normalize_workspace_path
+from leta.inbox import InboxSender
+from leta.runtime.state import AgentState, RuntimeContext  # noqa: TC001  # Evaluated at runtime by LangGraph ToolNode.get_type_hints.
+from leta.runtime.tools.base import ToolArgs, ToolResult, idempotency_key, make_tool
+from leta.runtime.tools.files import missing_path_recovery, normalize_workspace_path
+
+if TYPE_CHECKING:
+    from langchain_core.tools import BaseTool
+    from openlet_sdk.config import JSON
+
+    from leta.filesystem.workspace import Filesystem
 
 _MD_LINK_RE = re.compile(r"(?<!!)\[([^\]]+)\]\(([^)\s]+)\)")
 _FENCED_CODE_RE = re.compile(r"```[\s\S]*?```|~~~[\s\S]*?~~~")
@@ -77,7 +85,7 @@ async def normalize_outbound_links(
         if href.startswith(("/", "~")):
             try:
                 ref = await fs.resolve_ref(href)
-            except Exception:
+            except OSError, ValueError, grpc.aio.AioRpcError:
                 continue
             if ref.storage_id and ref.node_id:
                 canonical = f"/letfs/{ref.storage_id}/{ref.node_id}"
@@ -105,6 +113,8 @@ async def normalize_outbound_links(
 
 
 class RootSendMessageArgs(ToolArgs):
+    """Input schema for root Leta ``send_message``."""
+
     to: str = Field(
         min_length=1,
         description=(
@@ -134,6 +144,8 @@ class RootSendMessageArgs(ToolArgs):
 
 
 class SubagentSendMessageArgs(ToolArgs):
+    """Input schema for subagent ``send_message``."""
+
     to: str = Field(
         min_length=1,
         description="Parent or sibling handle ('agent:<handle>' or plain handle) or UUID.",
@@ -146,6 +158,8 @@ class SubagentSendMessageArgs(ToolArgs):
 
 
 class ReactMessageArgs(ToolArgs):
+    """Input schema for ``react_message``."""
+
     to: str = Field(min_length=1, description="Conversation address or handle.")
     message_id: str = Field(min_length=1)
     emoji: str = Field(min_length=1, max_length=64)
@@ -156,6 +170,8 @@ class ReactMessageArgs(ToolArgs):
 
 
 class ReadMessagesArgs(ToolArgs):
+    """Input schema for ``read_messages``."""
+
     to: str = Field(
         min_length=1, description="Conversation address ('chat:<conv_id>') or handle."
     )
@@ -169,6 +185,8 @@ class ReadMessagesArgs(ToolArgs):
 
 
 class ListChannelsArgs(ToolArgs):
+    """Input schema for ``list_channels``."""
+
     query: str = ""
     limit: int = Field(default=20, ge=1, le=100)
 
@@ -198,6 +216,55 @@ def _format_sender_label(rt: RuntimeContext, sender_type: str, sender_id: str) -
     if name:
         return name
     return f"{sender_type}:{sender_id}"
+
+
+async def _resolve_outbound_attachments(
+    rt: RuntimeContext, raw_atts: list[str]
+) -> list[OutboundAttachment]:
+    attachments: list[OutboundAttachment] = []
+    for att_path in raw_atts:
+        abs_att = normalize_workspace_path(att_path)
+        try:
+            ref = await rt.fs.resolve_ref(abs_att)
+        except FileNotFoundError:
+            _, err_msg = await missing_path_recovery(rt, abs_att, allow_alternate=False)
+            raise ToolException(f"Cannot attach missing file: {err_msg}") from None
+        if not ref.storage_id or not ref.node_id:
+            raise ToolException(f"Cannot attach unresolved path: {att_path}")
+        attachments.append(
+            OutboundAttachment(
+                storage_id=ref.storage_id,
+                node_id=ref.node_id,
+                kind=ref.kind,
+                name=ref.name,
+                media_type=ref.media_type,
+                size_bytes=ref.size_bytes,
+            )
+        )
+    return attachments
+
+
+async def _resolve_outbound_sources(
+    rt: RuntimeContext, sources: list[str]
+) -> list[JSON]:
+    resolved_sources: list[JSON] = []
+    for src in sources:
+        if src.startswith(("http://", "https://")):
+            resolved_sources.append({"kind": "web", "url": src})
+            continue
+        try:
+            ref = await rt.fs.resolve_ref(normalize_workspace_path(src))
+            resolved_sources.append(
+                {
+                    "kind": ref.kind,
+                    "path": ref.path,
+                    "storage_id": ref.storage_id,
+                    "node_id": ref.node_id,
+                }
+            )
+        except OSError, ValueError, grpc.aio.AioRpcError:
+            resolved_sources.append({"kind": "path", "path": src})
+    return resolved_sources
 
 
 async def _send_message_impl(
@@ -230,46 +297,9 @@ async def _send_message_impl(
 
     if is_external:
         content, mentions = await normalize_outbound_links(content, rt.fs)
-        for att_path in raw_atts:
-            abs_att = normalize_workspace_path(att_path)
-            try:
-                ref = await rt.fs.resolve_ref(abs_att)
-            except FileNotFoundError:
-                _, err_msg = await missing_path_recovery(
-                    rt, abs_att, allow_alternate=False
-                )
-                raise ToolException(f"Cannot attach missing file: {err_msg}") from None
-            if not ref.storage_id or not ref.node_id:
-                raise ToolException(f"Cannot attach unresolved path: {att_path}")
-            attachments.append(
-                OutboundAttachment(
-                    storage_id=ref.storage_id,
-                    node_id=ref.node_id,
-                    kind=ref.kind,
-                    name=ref.name,
-                    media_type=ref.media_type,
-                    size_bytes=ref.size_bytes,
-                )
-            )
+        attachments = await _resolve_outbound_attachments(rt, raw_atts)
         if sources:
-            resolved_sources: list[JSON] = []
-            for src in sources:
-                if src.startswith(("http://", "https://")):
-                    resolved_sources.append({"kind": "web", "url": src})
-                else:
-                    try:
-                        ref = await rt.fs.resolve_ref(normalize_workspace_path(src))
-                        resolved_sources.append(
-                            {
-                                "kind": ref.kind,
-                                "path": ref.path,
-                                "storage_id": ref.storage_id,
-                                "node_id": ref.node_id,
-                            }
-                        )
-                    except Exception:
-                        resolved_sources.append({"kind": "path", "path": src})
-            metadata["sources"] = resolved_sources
+            metadata["sources"] = await _resolve_outbound_sources(rt, sources)
 
     receipt = await adapter.send(
         caller,
@@ -291,7 +321,7 @@ async def _send_message_impl(
         for addr in (canonical_addr, to):
             if addr in rt.active_typing:
                 rt.active_typing.discard(addr)
-                await rt.router.set_typing(caller, addr, False)
+                await rt.router.set_typing(caller, addr, active=False)
 
     artifact: dict[str, JSON] = {
         "to": canonical_addr,
@@ -304,7 +334,7 @@ async def _send_message_impl(
         ],
     }
     if receipt.recipient is not None:
-        artifact["recipient"] = receipt.recipient
+        artifact["recipient"] = receipt.recipient.to_json()
 
     return (
         f"Delivered to {canonical_addr} (message_id={receipt.message_id})",
@@ -315,13 +345,14 @@ async def _send_message_impl(
 async def handle_root_send_message(
     to: str,
     content: str,
+    *,
     attachments: list[str] | None = None,
     sources: list[str] | None = None,
     reply_to_message_id: str | None = None,
     end_turn: bool = True,
-    *,
     runtime: ToolRuntime[RuntimeContext, AgentState],
 ) -> ToolResult:
+    """Deliver a message from the root Leta to an external channel or internal agent."""
     return await _send_message_impl(
         runtime=runtime,
         to=to,
@@ -336,10 +367,11 @@ async def handle_root_send_message(
 async def handle_subagent_send_message(
     to: str,
     content: str,
-    end_turn: bool = True,
     *,
+    end_turn: bool = True,
     runtime: ToolRuntime[RuntimeContext, AgentState],
 ) -> ToolResult:
+    """Deliver a message from a subagent to its parent or sibling subagent."""
     return await _send_message_impl(
         runtime=runtime,
         to=to,
@@ -355,16 +387,17 @@ async def handle_react_message(
     to: str,
     message_id: str,
     emoji: str,
-    end_turn: bool = False,
     *,
+    end_turn: bool = False,
     runtime: ToolRuntime[RuntimeContext, AgentState],
 ) -> ToolResult:
+    """Add an emoji reaction to a message in an external chat channel."""
     rt = runtime.context
     caller = _caller(rt)
     await rt.router.react(caller, to, message_id, emoji)
     if to in rt.active_typing:
         rt.active_typing.discard(to)
-        await rt.router.set_typing(caller, to, False)
+        await rt.router.set_typing(caller, to, active=False)
     return (
         f"Reacted {emoji} on {message_id} in {to}",
         {
@@ -384,16 +417,15 @@ async def handle_read_messages(
     *,
     runtime: ToolRuntime[RuntimeContext, AgentState],
 ) -> ToolResult:
+    """Read paginated message history from a chat or agent channel."""
     rt = runtime.context
     caller = _caller(rt)
     msgs = await rt.router.read_history(
         caller, to, before_seq=before, limit=limit, query=query
     )
     rt.active_channels[to] = monotonic()
-    try:
+    with contextlib.suppress(Exception):
         await rt.fs.discover()
-    except Exception:
-        pass
 
     # Mark any previewed inbox rows for this channel as delivered.
     await rt.services.inbox.mark_channel_delivered(rt.agent_id, to)
@@ -416,10 +448,10 @@ async def handle_read_messages(
         if m.attachments:
             lines.append("    <attachments>")
             for att in m.attachments:
-                sid = str(att.get("storage_id") or "")
-                nid = str(att.get("node_id") or "")
-                name = str(att.get("name") or "")
-                mtype = str(att.get("media_type") or "")
+                sid = att.storage_id
+                nid = att.node_id
+                name = att.name
+                mtype = att.media_type
                 letfs_path = f"/letfs/{sid}/{nid}" if sid and nid else ""
                 lines.append(
                     f"      <attachment name={sax.quoteattr(name)} media_type={sax.quoteattr(mtype)} "
@@ -440,15 +472,14 @@ async def handle_list_channels(
     *,
     runtime: ToolRuntime[RuntimeContext, AgentState],
 ) -> ToolResult:
+    """List active DMs, group chats, and subagent channels visible to the caller."""
     rt = runtime.context
     caller = _caller(rt)
     channels = await rt.router.list_channels(caller, query=query, limit=limit)
     if not channels:
         return "No active channels found.", {"channels": []}
-    try:
+    with contextlib.suppress(Exception):
         await rt.fs.discover()
-    except Exception:
-        pass
     lines: list[str] = []
     out_items: list[JSON] = []
     for c in channels:
@@ -473,6 +504,7 @@ async def handle_list_channels(
 def build_messaging_tools(
     *, is_root: bool, enable_react: bool = True
 ) -> list[BaseTool]:
+    """Build messaging, channel-reading, and optional reaction tools for the agent."""
     if not is_root:
         return [
             make_tool(

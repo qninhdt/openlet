@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -16,6 +16,9 @@ from openlet_evals.core.report import (
     save_run,
 )
 from openlet_evals.suites.retrieval.suite import mrr_at_k, recall_at_k, validate_goldens
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_make_judge_configures_model_and_reasoning_effort() -> None:

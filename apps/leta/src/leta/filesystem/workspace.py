@@ -1,15 +1,18 @@
+"""Workspace mount discovery, Mirage session lifecycle, and sandboxed shell runner."""
+
 from __future__ import annotations
 
 import asyncio
+import logging
 import posixpath
-from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from time import monotonic
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from uuid import UUID
 
+import grpc.aio
 from mirage import (
     FileStat,
     Mount,
@@ -32,17 +35,30 @@ from openlet_api.chat.v1 import chat_pb2 as chat_pb
 from openlet_api.letfs.v1 import letfs_pb2 as fs
 from openlet_api.platform.v1 import internal_pb2 as plat_pb
 
-from ..auth import Actor
-from ..config import Services
-from ..inbox import InboxSender
-from ..runs import AgentRuntimeRecord
-from ..truncation import (
+from leta.auth import Actor
+from leta.filesystem.letfs import LetFS, LetFSByID
+from leta.filesystem.types import (
+    FileRef,
+    GlobResult,
+    GrepResult,
+    SemanticHit,
+    VersionedText,
+    parse_stat_extra,
+)
+from leta.truncation import (
     format_tail_truncated,
     spill_filename,
     truncate_tail,
 )
-from .letfs import LetFS, LetFSByID
-from .types import FileRef, GlobResult, GrepResult, SemanticHit, VersionedText
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator, Mapping, Sequence
+
+    from leta.config import Services
+    from leta.inbox import InboxSender
+    from leta.runs import AgentRuntimeRecord
+
+logger = logging.getLogger(__name__)
 
 PUBLIC_ONLY_DENIED_DOMAINS: list[str] = [
     "127.0.0.0/8",
@@ -61,10 +77,12 @@ PUBLIC_ONLY_DENIED_DOMAINS: list[str] = [
 
 
 def canonical_path(value: str = "~") -> str:
+    """Normalize a workspace-relative or tilde path into an absolute virtual path."""
     return norm(posixpath.join("/home", expand_tilde(value.strip() or "~", "/home")))
 
 
 def path_spec(value: str) -> PathSpec:
+    """Build a Mirage PathSpec from a virtual workspace path."""
     absolute = canonical_path(value)
     return PathSpec(
         virtual=absolute, directory=posixpath.dirname(absolute), vfs_path=""
@@ -79,6 +97,7 @@ class KeyedMutex:
 
     @asynccontextmanager
     async def lock(self, *paths: str) -> AsyncGenerator[None]:
+        """Acquire locks for all normalized paths in deterministic sorted order."""
         keys = sorted({canonical_path(p) for p in paths})
         acquired: list[asyncio.Lock] = []
         try:
@@ -94,6 +113,8 @@ class KeyedMutex:
 
 @dataclass(frozen=True, slots=True)
 class StorageMount:
+    """Resolved LetFS storage binding and writability for a virtual mount point."""
+
     root: UUID
     writable: bool
     storage: UUID
@@ -101,6 +122,8 @@ class StorageMount:
 
 @dataclass(frozen=True, slots=True)
 class ShellOutcome:
+    """Structured output, exit status, and spill path from a sandboxed shell run."""
+
     output: str
     exit_code: int
     wall_time_ms: int
@@ -109,6 +132,8 @@ class ShellOutcome:
 
 
 class Filesystem:
+    """Per-agent Mirage workspace facade managing dynamic mounts, files, and shell."""
+
     def __init__(self, services: Services, agent: AgentRuntimeRecord) -> None:
         self.s = services
         self.agent = agent
@@ -131,12 +156,9 @@ class Filesystem:
         )
         return ReadSpec(policy=policy)
 
-    async def discover(self, *, force: bool = False) -> None:
-        if not force and monotonic() - self.discovered < 30.0:
-            return
-        actor = Actor("agent", self.agent.leta_id)
-        workspace_id = str(self.agent.workspace_id)
-
+    async def _fetch_storages(
+        self, actor: Actor, workspace_id: str
+    ) -> list[fs.Storage]:
         storages: list[fs.Storage] = []
         token = ""
         while True:
@@ -150,9 +172,11 @@ class Filesystem:
             storages.extend(resp.storages)
             token = resp.next_page_token
             if not token:
-                break
+                return storages
 
-        # Query apps/chat for conversations to map conversation_id -> flat /chat/<handle>.
+    async def _fetch_conversations(
+        self, actor: Actor, workspace_id: str
+    ) -> list[chat_pb.Conversation]:
         convs: list[chat_pb.Conversation] = []
         c_token = ""
         while True:
@@ -164,24 +188,34 @@ class Filesystem:
                     metadata=actor.metadata,
                     timeout=15,
                 )
-            except Exception:
-                break
+            except grpc.aio.AioRpcError:
+                logger.debug(
+                    "ListConversations failed during mount discovery", exc_info=True
+                )
+                return convs
             convs.extend(c_resp.conversations)
             c_token = c_resp.next_page_token
             if not c_token:
-                break
+                return convs
 
+    async def _resolve_directory_handles(
+        self,
+        actor: Actor,
+        storages: list[fs.Storage],
+        convs: list[chat_pb.Conversation],
+    ) -> tuple[dict[str, str], dict[str, tuple[str, str]], dict[str, str]]:
         user_ids: set[str] = {
             st.ownership.user_id for st in storages if st.ownership.user_id
         }
         peer_agent_ids: set[str] = set()
         for c in convs:
-            if c.type == "dm":
-                for m in c.members:
-                    if m.actor_type == "user":
-                        user_ids.add(m.actor_id)
-                    elif m.actor_type == "agent" and m.actor_id != str(actor.id):
-                        peer_agent_ids.add(m.actor_id)
+            if c.type != "dm":
+                continue
+            for m in c.members:
+                if m.actor_type == "user":
+                    user_ids.add(m.actor_id)
+                elif m.actor_type == "agent" and m.actor_id != str(actor.id):
+                    peer_agent_ids.add(m.actor_id)
 
         user_handles: dict[str, str] = {}
         user_info: dict[str, tuple[str, str]] = {}
@@ -206,28 +240,36 @@ class Filesystem:
                 ).fetchall()
             for r in rows:
                 agent_handles[str(r["id"])] = str(r["handle"])
+        return user_handles, user_info, agent_handles
 
-        # Build flat /chat/<handle> map: DM handles first, then group handles (disambiguating rare collisions with -group).
+    @staticmethod
+    def _build_conv_handles(
+        actor: Actor,
+        convs: list[chat_pb.Conversation],
+        user_handles: dict[str, str],
+        agent_handles: dict[str, str],
+    ) -> dict[str, str]:
         dm_conv_handles: dict[str, str] = {}
         group_conv_handles: dict[str, str] = {}
         used_chat_handles: set[str] = set()
         for c in convs:
-            if c.type == "dm":
-                peer_handle: str | None = None
-                for m in c.members:
-                    if m.actor_type == "user" and m.actor_id in user_handles:
-                        peer_handle = user_handles[m.actor_id]
-                        break
-                    if (
-                        m.actor_type == "agent"
-                        and m.actor_id != str(actor.id)
-                        and m.actor_id in agent_handles
-                    ):
-                        peer_handle = agent_handles[m.actor_id]
-                        break
-                if peer_handle:
-                    dm_conv_handles[c.id] = peer_handle
-                    used_chat_handles.add(peer_handle)
+            if c.type != "dm":
+                continue
+            peer_handle: str | None = None
+            for m in c.members:
+                if m.actor_type == "user" and m.actor_id in user_handles:
+                    peer_handle = user_handles[m.actor_id]
+                    break
+                if (
+                    m.actor_type == "agent"
+                    and m.actor_id != str(actor.id)
+                    and m.actor_id in agent_handles
+                ):
+                    peer_handle = agent_handles[m.actor_id]
+                    break
+            if peer_handle:
+                dm_conv_handles[c.id] = peer_handle
+                used_chat_handles.add(peer_handle)
 
         for c in convs:
             if c.type == "group" and c.HasField("handle") and c.handle:
@@ -237,7 +279,59 @@ class Filesystem:
                 group_conv_handles[c.id] = gh
                 used_chat_handles.add(gh)
 
-        conv_handles = {**dm_conv_handles, **group_conv_handles}
+        return {**dm_conv_handles, **group_conv_handles}
+
+    async def _ensure_active_conv_bindings(
+        self,
+        *,
+        actor: Actor,
+        workspace_id: str,
+        convs: list[chat_pb.Conversation],
+        conv_handles: dict[str, str],
+        bound_conv_ids: set[str],
+        bindings: dict[str, StorageMount],
+    ) -> None:
+        for c in convs:
+            if c.id in bound_conv_ids or c.last_seq <= 0:
+                continue
+            ch = conv_handles.get(c.id)
+            if not ch:
+                continue
+            try:
+                ensured = await self.s.chat.EnsureConversationStorage(
+                    chat_pb.ConversationRequest(
+                        workspace_id=workspace_id, conversation_id=c.id
+                    ),
+                    metadata=actor.metadata,
+                    timeout=15,
+                )
+            except grpc.aio.AioRpcError:
+                logger.debug(
+                    "EnsureConversationStorage failed for %s", c.id, exc_info=True
+                )
+                continue
+            if ensured.storage_id and ensured.root_node_id:
+                bindings[f"/chat/{ch}"] = StorageMount(
+                    root=UUID(ensured.root_node_id),
+                    writable=True,
+                    storage=UUID(ensured.storage_id),
+                )
+
+    async def discover(self, *, force: bool = False) -> None:
+        """Discover workspace, user, and conversation storages and refresh mount bindings."""
+        if not force and monotonic() - self.discovered < 30.0:
+            return
+        actor = Actor("agent", self.agent.leta_id)
+        workspace_id = str(self.agent.workspace_id)
+
+        storages = await self._fetch_storages(actor, workspace_id)
+        convs = await self._fetch_conversations(actor, workspace_id)
+        user_handles, user_info, agent_handles = await self._resolve_directory_handles(
+            actor, storages, convs
+        )
+        conv_handles = self._build_conv_handles(
+            actor, convs, user_handles, agent_handles
+        )
 
         bindings: dict[str, StorageMount] = {}
         bound_conv_ids: set[str] = set()
@@ -262,28 +356,14 @@ class Filesystem:
 
         # Lazily provision conversation storages for active conversations so /chat/<handle>
         # is immediately writable for deliverables even on the very first turn.
-        for c in convs:
-            if c.id in bound_conv_ids or c.last_seq <= 0:
-                continue
-            ch = conv_handles.get(c.id)
-            if not ch:
-                continue
-            try:
-                ensured = await self.s.chat.EnsureConversationStorage(
-                    chat_pb.ConversationRequest(
-                        workspace_id=workspace_id, conversation_id=c.id
-                    ),
-                    metadata=actor.metadata,
-                    timeout=15,
-                )
-            except Exception:
-                continue
-            if ensured.storage_id and ensured.root_node_id:
-                bindings[f"/chat/{ch}"] = StorageMount(
-                    root=UUID(ensured.root_node_id),
-                    writable=True,
-                    storage=UUID(ensured.storage_id),
-                )
+        await self._ensure_active_conv_bindings(
+            actor=actor,
+            workspace_id=workspace_id,
+            convs=convs,
+            conv_handles=conv_handles,
+            bound_conv_ids=bound_conv_ids,
+            bindings=bindings,
+        )
         self.bindings = bindings
         self.conv_mounts = {
             cid: f"/chat/{ch}"
@@ -295,6 +375,7 @@ class Filesystem:
         self.discovered = monotonic() if "/shared" in bindings else 0.0
 
     def chat_mount_for(self, reply_address: str) -> str | None:
+        """Return the virtual /chat/<handle> mount path for a chat reply address."""
         addr = reply_address.strip()
         if addr.startswith("chat:"):
             conv_id = addr.removeprefix("chat:").strip()
@@ -302,6 +383,7 @@ class Filesystem:
         return self.conv_mounts.get(addr)
 
     def enrich_sender(self, sender: InboxSender) -> InboxSender:
+        """Populate missing handle/name fields on an InboxSender using discovered directories."""
         if sender.handle:
             return sender
         if sender.type == "user" and sender.id in self.user_info:
@@ -317,16 +399,19 @@ class Filesystem:
         return sender
 
     def writable_mounts(self) -> list[str]:
+        """Return sorted virtual mount paths that allow write operations."""
         mounts = ["/home"]
         mounts.extend(sorted(m for m, b in self.bindings.items() if b.writable))
         return mounts
 
     def all_mounts(self) -> list[str]:
+        """Return all sorted virtual mount paths visible in this workspace."""
         mounts = ["/home"]
         mounts.extend(sorted(self.bindings.keys()))
         return mounts
 
     async def open(self) -> Session:
+        """Open or refresh the Mirage workspace session under a concurrency lock."""
         async with self._lock:
             return await self._open_locked()
 
@@ -415,8 +500,10 @@ class Filesystem:
         return self.session
 
     async def notify_changed(self, target_path: str) -> None:
+        """Notify the Mirage workspace cache that target_path was modified."""
         await self.open()
-        assert self.workspace is not None
+        if self.workspace is None:
+            raise RuntimeError("workspace not initialized after open()")
         await self.workspace.notify(
             FileEvent(
                 path=path_spec(target_path),
@@ -426,15 +513,19 @@ class Filesystem:
         )
 
     async def write_spill(self, prefix: str, full_text: str) -> str | None:
+        """Best-effort spill of truncated output to /home/.tool-output."""
         try:
             target = spill_filename(prefix, self.s.settings.tool_output)
             await self.write_text_optimistic(target, content=full_text)
             await self.notify_changed(target)
-            return target
-        except Exception:
+        except OSError, grpc.aio.AioRpcError:
+            logger.warning("failed to write tool output spill file", exc_info=True)
             return None
+        else:
+            return target
 
     async def sweep_spill_dir(self) -> None:
+        """Best-effort cleanup of expired tool-output spill files."""
         try:
             session = await self.open()
             spill_dir = self.s.settings.tool_output.spill_dir
@@ -447,29 +538,32 @@ class Filesystem:
                 full = posixpath.join(spill_dir, name)
                 try:
                     st = await session.vfs.stat(full)
-                except Exception:
+                except OSError, grpc.aio.AioRpcError:
+                    logger.debug(
+                        "sweep_spill_dir stat failed for %s", full, exc_info=True
+                    )
                     continue
                 mod = st.modified
                 if not mod:
                     continue
                 try:
-                    mod_ts = datetime.fromisoformat(
-                        mod.replace("Z", "+00:00")
-                    ).timestamp()
+                    mod_ts = datetime.fromisoformat(mod).timestamp()
                 except ValueError:
                     continue
                 if mod_ts < cutoff:
                     await session.vfs.unlink(full)
-        except Exception:
-            return
+        except OSError, grpc.aio.AioRpcError:
+            logger.debug("sweep_spill_dir failed", exc_info=True)
 
     async def read_text_with_version(self, path: str) -> VersionedText:
+        """Read a virtual file's text and optimistic-concurrency version."""
         session = await self.open()
         # mirage's vfs.dispatch returns untyped object; LetFS returns VersionedText.
         val, _ = await session.vfs.dispatch("read_text_with_version", path_spec(path))
         return cast("VersionedText", val)
 
     async def read_raw_bytes(self, path: str, *, max_bytes: int) -> bytes:
+        """Read raw bytes from a virtual file up to max_bytes."""
         session = await self.open()
         val, _ = await session.vfs.dispatch(
             "read_raw_bytes", path_spec(path), max_bytes=max_bytes
@@ -483,6 +577,7 @@ class Filesystem:
         content: str,
         expected_version: int | None = None,
     ) -> FileStat:
+        """Write text to path with an optional expected_version check."""
         session = await self.open()
         val, _ = await session.vfs.dispatch(
             "write_text_optimistic",
@@ -500,6 +595,7 @@ class Filesystem:
         include_hidden: bool = False,
         limit: int = 100,
     ) -> GlobResult:
+        """Run glob search under root via the Mirage VFS dispatcher."""
         session = await self.open()
         val, _ = await session.vfs.dispatch(
             "glob_files",
@@ -520,6 +616,7 @@ class Filesystem:
         case_sensitive: bool = True,
         limit: int = 100,
     ) -> GrepResult:
+        """Run grep search under root via the Mirage VFS dispatcher."""
         session = await self.open()
         val, _ = await session.vfs.dispatch(
             "grep_files",
@@ -540,6 +637,7 @@ class Filesystem:
         limit: int = 10,
         baggage: str | None = None,
     ) -> list[SemanticHit]:
+        """Run semantic search under root via the Mirage VFS dispatcher."""
         session = await self.open()
         val, _ = await session.vfs.dispatch(
             "semantic_search",
@@ -551,23 +649,29 @@ class Filesystem:
         return cast("list[SemanticHit]", val)
 
     async def resolve_ref(self, virtual_path: str) -> FileRef:
+        """Resolve a virtual path into its storage ID, node ID, and file metadata."""
         session = await self.open()
         abs_path = canonical_path(virtual_path)
         st = await session.vfs.stat(abs_path)
-        extra = st.extra or {}
+        extra = parse_stat_extra(st.extra)
         return FileRef(
             path=abs_path,
-            storage_id=str(extra.get("storage_id", "")),
-            node_id=str(extra.get("node_id", "")),
+            storage_id=extra.storage_id,
+            node_id=extra.node_id,
             name=st.name or posixpath.basename(abs_path),
             kind="folder" if st.type.value == "directory" else "file",
-            media_type=str(extra.get("media_type", "")),
+            media_type=extra.media_type,
             size_bytes=int(st.size or 0),
         )
 
     async def run_shell(
-        self, command: str, *, workdir: str | None = None, timeout: int | None = None
+        self,
+        command: str,
+        *,
+        workdir: str | None = None,
+        timeout: int | None = None,  # noqa: ASYNC109  # Kept for leta.runtime callers; enforced via wait_for
     ) -> ShellOutcome:
+        """Execute a command in the Mirage sandboxed shell with timeout and truncation."""
         session = await self.open()
         bash_cfg = self.s.settings.bash
         eff_timeout = (
@@ -584,12 +688,12 @@ class Filesystem:
             exit_code = int(result.exit_code)
             stdout = (
                 (result.stdout or b"").decode("utf-8", errors="replace")
-                if isinstance(result.stdout, (bytes, bytearray))
+                if isinstance(result.stdout, bytes | bytearray)
                 else str(result.stdout or "")
             )
             stderr = (
                 (result.stderr or b"").decode("utf-8", errors="replace")
-                if isinstance(result.stderr, (bytes, bytearray))
+                if isinstance(result.stderr, bytes | bytearray)
                 else str(result.stderr or "")
             )
         except TimeoutError:
@@ -633,6 +737,7 @@ class Filesystem:
         )
 
     async def close(self) -> None:
+        """Close the Mirage workspace and release any active session."""
         if self.workspace is not None:
             await self.workspace.close()
             self.workspace = None

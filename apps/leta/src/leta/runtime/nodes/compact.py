@@ -1,17 +1,22 @@
+"""LangGraph compaction node checking context limits and rewriting checkpoints."""
+
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
 
-from langgraph.runtime import Runtime
-
-from ..compaction import (
+from leta.runtime.compaction import (
     compaction_ceiling,
     estimate_prompt_tokens,
     is_checkpoint_message,
     run_compaction,
 )
-from ..prompts import render_system_prompt
-from ..state import AgentState, AgentStateUpdate, RuntimeContext
+from leta.runtime.prompts import render_system_prompt
+
+if TYPE_CHECKING:
+    from langgraph.runtime import Runtime
+
+    from leta.runtime.state import AgentState, AgentStateUpdate, RuntimeContext
 
 
 async def compact_node(

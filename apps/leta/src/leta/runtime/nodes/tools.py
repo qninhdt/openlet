@@ -1,34 +1,43 @@
+"""LangGraph tool-execution node with argument repair, truncation spill, and activity events."""
+
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
-from collections.abc import Awaitable, Callable, Sequence
 from time import monotonic
-from typing import Any, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
-from langchain_core.messages import AIMessage, ToolCall, ToolMessage
-from langchain_core.tools import BaseTool
+from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.prebuilt import ToolNode
-from langgraph.prebuilt.tool_node import ToolCallRequest, ToolInvocationError
-from langgraph.runtime import Runtime
-from langgraph.types import Command
-from openlet_sdk.config import JSON
+from langgraph.prebuilt.tool_node import ToolInvocationError
 from openlet_sdk.types import is_object_list, is_str_mapping
 from pydantic import BaseModel
 
-from ...truncation import format_head_truncated, truncate_head
-from ..content import (
+from leta.runtime.content import (
     extract_text_from_content,
     message_artifact_dict,
     parse_tool_artifact,
 )
-from ..state import AgentState, AgentStateUpdate, RuntimeContext
-from ..tool_repair import (
+from leta.runtime.tool_repair import (
     format_tool_error,
     repair_tool_args_with_notes,
     resolve_tool_alias,
 )
+from leta.truncation import format_head_truncated, truncate_head
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable, Sequence
+    from typing import Literal
+
+    from langchain_core.messages import ToolCall
+    from langchain_core.tools import BaseTool
+    from langgraph.prebuilt.tool_node import ToolCallRequest
+    from langgraph.runtime import Runtime
+    from langgraph.types import Command
+    from openlet_sdk.config import JSON
+
+    from leta.runtime.state import AgentState, AgentStateUpdate, RuntimeContext
 
 logger = logging.getLogger(__name__)
 
@@ -111,11 +120,170 @@ def _is_truncated_by_length(state: object) -> bool:
 
 
 class ToolsNodeFn(Protocol):
+    """Async callable signature for the LangGraph tools node."""
+
     async def __call__(
         self,
         state: AgentState,
         runtime: Runtime[RuntimeContext],
-    ) -> AgentStateUpdate: ...
+    ) -> AgentStateUpdate:
+        """Execute pending tool calls in ``state`` and return ``ToolMessage`` updates."""
+        ...
+
+
+def _truncated_call_error_message(raw_args: object, excerpt_limit: int) -> str:
+    dumped = json.dumps(raw_args, ensure_ascii=False, default=str)
+    if len(dumped) > excerpt_limit:
+        dumped = dumped[:excerpt_limit] + "... [truncated]"
+    return (
+        "Tool call arguments were truncated because the model hit the output token limit "
+        "(finish_reason=length). Do not retry the same oversized call; split the operation "
+        f"into smaller pieces.\n\nPartial arguments:\n{dumped}"
+    )
+
+
+async def _finalize_tool_message(
+    rt: RuntimeContext,
+    result: ToolMessage,
+    *,
+    call_id: str,
+    called_name: str,
+    resolved_name: str,
+    repair_note: str | None,
+    heal_notes: list[str],
+    duration_ms: int,
+) -> ToolMessage:
+    if result.status == "error":
+        err_text = extract_text_from_content(result.content)
+        await _emit_tool_result(
+            rt,
+            call_id=call_id,
+            name=resolved_name,
+            status="error",
+            full_text=err_text,
+            artifact={},
+            duration_ms=duration_ms,
+        )
+        return ToolMessage(
+            content=result.content,
+            tool_call_id=call_id,
+            name=called_name,
+            status="error",
+        )
+
+    to_cfg = rt.services.settings.tool_output
+    artifact = message_artifact_dict(result)
+    art_meta = parse_tool_artifact(result)
+    artifact.pop("_pre_truncated", None)
+    artifact.pop("_note", None)
+    if art_meta.note:
+        heal_notes.append(art_meta.note)
+
+    raw_content = result.content
+    truncated = art_meta.truncated
+    spill_path = art_meta.output_path
+
+    prefix_parts: list[str] = []
+    if repair_note:
+        prefix_parts.append(repair_note.rstrip("\n"))
+    if heal_notes:
+        prefix_parts.append("\n".join(heal_notes))
+    prefix = "\n".join(prefix_parts) + "\n" if prefix_parts else ""
+
+    if isinstance(raw_content, str):
+        text_out = raw_content
+        if not art_meta.pre_truncated:
+            trunc = truncate_head(
+                text_out,
+                max_lines=to_cfg.max_lines,
+                max_bytes=to_cfg.max_bytes,
+                max_line_length=to_cfg.max_line_length,
+            )
+            if trunc.truncated:
+                truncated = True
+                spill_path = await rt.fs.write_spill(resolved_name, text_out)
+                text_out = format_head_truncated(trunc, spill_path)
+                artifact["truncated"] = True
+                if spill_path:
+                    artifact["output_path"] = spill_path
+        out_content: str | list[str | dict[Any, Any]] = (
+            prefix + text_out if prefix else text_out
+        )
+    else:
+        out_content = (
+            [{"type": "text", "text": prefix}, *raw_content] if prefix else raw_content
+        )
+
+    safe_artifact = _safe_artifact_for_event(artifact)
+    full_text = extract_text_from_content(out_content)
+    await _emit_tool_result(
+        rt,
+        call_id=call_id,
+        name=resolved_name,
+        status="success",
+        full_text=full_text,
+        artifact={
+            **safe_artifact,
+            "truncated": truncated,
+            "output_path": spill_path,
+        },
+        truncated=truncated,
+        output_path=spill_path,
+        duration_ms=duration_ms,
+    )
+    return ToolMessage(
+        content=out_content,
+        tool_call_id=call_id,
+        name=called_name,
+        status="success",
+        artifact=safe_artifact,
+    )
+
+
+async def _process_invalid_tool_calls(
+    rt: RuntimeContext, ai_msg: AIMessage
+) -> list[ToolMessage]:
+    to_cfg = rt.services.settings.tool_output
+    finish_reason = str(ai_msg.response_metadata.get("finish_reason") or "").lower()
+    truncated_by_length = finish_reason == "length"
+    out_msgs: list[ToolMessage] = []
+    for itc in ai_msg.invalid_tool_calls:
+        cid = str(itc.get("id") or "")
+        cname = str(itc.get("name") or "")
+        raw = str(itc.get("args") or "")
+        if len(raw) > to_cfg.input_excerpt_limit:
+            raw = raw[: to_cfg.input_excerpt_limit] + "... [truncated]"
+        if truncated_by_length:
+            err_msg = (
+                "Tool call arguments were truncated because the model hit the output token limit "
+                "(finish_reason=length). Do not retry the same oversized call; split the operation "
+                f"into smaller pieces.\n\nPartial arguments:\n{raw}"
+            )
+        else:
+            parse_err = str(itc.get("error") or "malformed JSON arguments")
+            err_msg = (
+                f"Invalid tool arguments ({parse_err}).\n\n"
+                f"Raw arguments:\n{raw}\n\n"
+                "Provide valid JSON arguments and call the tool again."
+            )
+        await _emit_tool_result(
+            rt,
+            call_id=cid,
+            name=cname,
+            status="error",
+            full_text=err_msg,
+            artifact={"truncated": False},
+            duration_ms=0,
+        )
+        out_msgs.append(
+            ToolMessage(
+                content=err_msg,
+                tool_call_id=cid,
+                name=cname,
+                status="error",
+            )
+        )
+    return out_msgs
 
 
 def build_tools_node(tools: Sequence[BaseTool]) -> ToolsNodeFn:
@@ -136,7 +304,7 @@ def build_tools_node(tools: Sequence[BaseTool]) -> ToolsNodeFn:
         request: ToolCallRequest,
         execute: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
     ) -> ToolMessage | Command[Any]:
-        rt = cast("RuntimeContext", request.runtime.context)  # pyright: ignore[reportUnknownMemberType]
+        rt = cast("RuntimeContext", request.runtime.context)  # pyright: ignore[reportUnknownMemberType]  # LangGraph ToolCallRequest.runtime is untyped.
         to_cfg = rt.services.settings.tool_output
         call = request.tool_call
         call_id = str(call.get("id") or "")
@@ -145,13 +313,8 @@ def build_tools_node(tools: Sequence[BaseTool]) -> ToolsNodeFn:
         start = monotonic()
 
         if _is_truncated_by_length(request.state):
-            dumped = json.dumps(raw_args, ensure_ascii=False, default=str)
-            if len(dumped) > to_cfg.input_excerpt_limit:
-                dumped = dumped[: to_cfg.input_excerpt_limit] + "... [truncated]"
-            err_msg = (
-                "Tool call arguments were truncated because the model hit the output token limit "
-                "(finish_reason=length). Do not retry the same oversized call; split the operation "
-                f"into smaller pieces.\n\nPartial arguments:\n{dumped}"
+            err_msg = _truncated_call_error_message(
+                raw_args, to_cfg.input_excerpt_limit
             )
             await _emit_tool_result(
                 rt,
@@ -211,85 +374,15 @@ def build_tools_node(tools: Sequence[BaseTool]) -> ToolsNodeFn:
         if not isinstance(result, ToolMessage):
             return result
 
-        if result.status == "error":
-            err_text = extract_text_from_content(result.content)
-            await _emit_tool_result(
-                rt,
-                call_id=call_id,
-                name=resolved_name,
-                status="error",
-                full_text=err_text,
-                artifact={},
-                duration_ms=duration_ms,
-            )
-            return ToolMessage(
-                content=result.content,
-                tool_call_id=call_id,
-                name=called_name,
-                status="error",
-            )
-
-        artifact = message_artifact_dict(result)
-        art_meta = parse_tool_artifact(result)
-        artifact.pop("_pre_truncated", None)
-        artifact.pop("_note", None)
-        if art_meta.note:
-            heal_notes.append(art_meta.note)
-
-        content: str | list[str | dict[Any, Any]] = result.content
-        truncated = art_meta.truncated
-        spill_path = art_meta.output_path
-
-        if isinstance(content, str) and not art_meta.pre_truncated:
-            trunc = truncate_head(
-                content,
-                max_lines=to_cfg.max_lines,
-                max_bytes=to_cfg.max_bytes,
-                max_line_length=to_cfg.max_line_length,
-            )
-            if trunc.truncated:
-                truncated = True
-                spill_path = await rt.fs.write_spill(resolved_name, content)
-                content = format_head_truncated(trunc, spill_path)
-                artifact["truncated"] = True
-                if spill_path:
-                    artifact["output_path"] = spill_path
-
-        prefix_parts: list[str] = []
-        if repair_note:
-            prefix_parts.append(repair_note.rstrip("\n"))
-        if heal_notes:
-            prefix_parts.append("\n".join(heal_notes))
-        if prefix_parts:
-            prefix = "\n".join(prefix_parts) + "\n"
-            if isinstance(content, str):
-                content = prefix + content
-            else:
-                content = [{"type": "text", "text": prefix}, *content]
-
-        safe_artifact = _safe_artifact_for_event(artifact)
-        full_text = extract_text_from_content(content)
-        await _emit_tool_result(
+        return await _finalize_tool_message(
             rt,
+            result,
             call_id=call_id,
-            name=resolved_name,
-            status="success",
-            full_text=full_text,
-            artifact={
-                **safe_artifact,
-                "truncated": truncated,
-                "output_path": spill_path,
-            },
-            truncated=truncated,
-            output_path=spill_path,
+            called_name=called_name,
+            resolved_name=resolved_name,
+            repair_note=repair_note,
+            heal_notes=heal_notes,
             duration_ms=duration_ms,
-        )
-        return ToolMessage(
-            content=content,
-            tool_call_id=call_id,
-            name=called_name,
-            status="success",
-            artifact=safe_artifact,
         )
 
     native_tool_node = ToolNode(
@@ -316,48 +409,7 @@ def build_tools_node(tools: Sequence[BaseTool]) -> ToolsNodeFn:
                     out_msgs.extend(m for m in res_msgs if isinstance(m, ToolMessage))
 
         if ai_msg.invalid_tool_calls:
-            rt = runtime.context
-            to_cfg = rt.services.settings.tool_output
-            finish_reason = str(
-                ai_msg.response_metadata.get("finish_reason") or ""
-            ).lower()
-            truncated_by_length = finish_reason == "length"
-            for itc in ai_msg.invalid_tool_calls:
-                cid = str(itc.get("id") or "")
-                cname = str(itc.get("name") or "")
-                raw = str(itc.get("args") or "")
-                if len(raw) > to_cfg.input_excerpt_limit:
-                    raw = raw[: to_cfg.input_excerpt_limit] + "... [truncated]"
-                if truncated_by_length:
-                    err_msg = (
-                        "Tool call arguments were truncated because the model hit the output token limit "
-                        "(finish_reason=length). Do not retry the same oversized call; split the operation "
-                        f"into smaller pieces.\n\nPartial arguments:\n{raw}"
-                    )
-                else:
-                    parse_err = str(itc.get("error") or "malformed JSON arguments")
-                    err_msg = (
-                        f"Invalid tool arguments ({parse_err}).\n\n"
-                        f"Raw arguments:\n{raw}\n\n"
-                        "Provide valid JSON arguments and call the tool again."
-                    )
-                await _emit_tool_result(
-                    rt,
-                    call_id=cid,
-                    name=cname,
-                    status="error",
-                    full_text=err_msg,
-                    artifact={"truncated": False},
-                    duration_ms=0,
-                )
-                out_msgs.append(
-                    ToolMessage(
-                        content=err_msg,
-                        tool_call_id=cid,
-                        name=cname,
-                        status="error",
-                    )
-                )
+            out_msgs.extend(await _process_invalid_tool_calls(runtime.context, ai_msg))
 
         return {"messages": out_msgs} if out_msgs else {}
 

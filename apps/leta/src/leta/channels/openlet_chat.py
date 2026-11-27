@@ -1,5 +1,8 @@
+"""Openlet Chat gRPC channel adapter for user DMs, peer Root Letas, and group channels."""
+
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -7,17 +10,19 @@ import grpc
 from google.protobuf.struct_pb2 import Struct
 from openlet_api.chat.v1 import chat_pb2 as chat_pb
 from openlet_api.platform.v1 import internal_pb2 as plat_int_pb
-from openlet_sdk.config import JSON
 
-from ..auth import Actor
-from ..db import Pool
-from .base import (
+from leta.auth import Actor
+from leta.channels.base import (
     CallerContext,
     ChannelError,
+    ChannelMember,
     ChannelMessage,
+    ChannelReaction,
     ChannelSummary,
+    OutboundAttachment,
     OutboundMessage,
     OutboundReceipt,
+    OutboundRecipient,
     PlainTargetMatch,
 )
 
@@ -27,8 +32,14 @@ if TYPE_CHECKING:
         PlatformInternalServiceAsyncStub,
     )
 
+    from leta.db import Pool
+
+logger = logging.getLogger(__name__)
+
 
 class OpenletChatAdapter:
+    """ChannelAdapter bridging Leta agents to Openlet Chat service via gRPC."""
+
     scheme = "chat"
 
     def __init__(
@@ -192,27 +203,32 @@ class OpenletChatAdapter:
         # 3. Exact group conversation handle
         try:
             convs = await self._list_workspace_conversations(caller)
-            for c in convs:
-                if (
-                    c.type == "group"
-                    and c.HasField("handle")
-                    and c.handle.strip().lower() == low
-                ):
-                    matches.append((f"chat:{c.id}", f"{c.title or c.handle} (group)"))
-        except Exception:
-            pass
+            matches.extend(
+                (f"chat:{c.id}", f"{c.title or c.handle} (group)")
+                for c in convs
+                if c.type == "group"
+                and c.HasField("handle")
+                and c.handle.strip().lower() == low
+            )
+        except grpc.aio.AioRpcError:
+            logger.debug(
+                "failed to list workspace conversations for plain match",
+                exc_info=True,
+            )
 
         return matches
 
     async def resolve_uuid_target(
         self, caller: CallerContext, raw_id: str
     ) -> str | None:
+        """Accept any bare UUID as a candidate chat conversation ID."""
         _ = caller
         return raw_id
 
     async def resolve_plain_targets(
         self, caller: CallerContext, query: str
     ) -> list[PlainTargetMatch]:
+        """Return matching users, peer Root Letas, or group conversations for query."""
         return [
             PlainTargetMatch(
                 target=addr.removeprefix("chat:"),
@@ -259,6 +275,7 @@ class OpenletChatAdapter:
         msg: OutboundMessage,
         idempotency_key: UUID,
     ) -> OutboundReceipt:
+        """Send an outbound message to a chat conversation and return its receipt."""
         conv_id = await self._resolve_conversation_id(caller, target)
         meta_struct: Struct | None = None
         if msg.metadata:
@@ -305,7 +322,7 @@ class OpenletChatAdapter:
         )
         meta = Actor("agent", caller.leta_id).metadata
         sent = await self.chat.SendMessage(req, metadata=meta, timeout=30)
-        recipient: dict[str, JSON] | None = None
+        recipient: OutboundRecipient | None = None
         try:
             conv = await self.chat.GetConversation(
                 chat_pb.ConversationRequest(
@@ -316,20 +333,23 @@ class OpenletChatAdapter:
                 timeout=10,
             )
             if conv.type == "group":
-                recipient = {
-                    "kind": "box",
-                    "id": str(conv.id),
-                    "name": conv.title or conv.handle or "Group",
-                }
+                recipient = OutboundRecipient(
+                    kind="box",
+                    id=str(conv.id),
+                    name=conv.title or conv.handle or "Group",
+                )
             else:
                 for member in conv.members:
                     if str(member.actor_id) != str(caller.leta_id):
-                        recipient = {
-                            "kind": "agent" if member.actor_type == "agent" else "user",
-                            "id": str(member.actor_id),
-                        }
+                        recipient = OutboundRecipient(
+                            kind="agent" if member.actor_type == "agent" else "user",
+                            id=str(member.actor_id),
+                        )
                         break
-        except Exception:
+        except grpc.aio.AioRpcError:
+            logger.debug(
+                "GetConversation lookup failed after SendMessage", exc_info=True
+            )
             recipient = None
         return OutboundReceipt(
             channel="chat",
@@ -342,6 +362,7 @@ class OpenletChatAdapter:
     async def react(
         self, caller: CallerContext, target: str, message_id: str, emoji: str
     ) -> None:
+        """Add an emoji reaction to a chat message."""
         conv_id = await self._resolve_conversation_id(caller, target)
         await self.chat.AddReaction(
             chat_pb.ReactionRequest(
@@ -363,6 +384,7 @@ class OpenletChatAdapter:
         limit: int = 20,
         query: str = "",
     ) -> list[ChannelMessage]:
+        """Fetch historical messages from a chat conversation."""
         conv_id = await self._resolve_conversation_id(caller, target)
         req = chat_pb.ListMessagesRequest(
             workspace_id=str(caller.workspace_id),
@@ -376,23 +398,23 @@ class OpenletChatAdapter:
         )
         out: list[ChannelMessage] = []
         for m in resp.messages:
-            atts: list[dict[str, JSON]] = [
-                {
-                    "storage_id": a.storage_id,
-                    "node_id": a.node_id,
-                    "kind": a.kind,
-                    "name": a.name,
-                    "media_type": a.media_type,
-                    "size_bytes": int(a.size_bytes),
-                }
+            atts = [
+                OutboundAttachment(
+                    storage_id=a.storage_id,
+                    node_id=a.node_id,
+                    kind=a.kind,
+                    name=a.name,
+                    media_type=a.media_type,
+                    size_bytes=int(a.size_bytes),
+                )
                 for a in m.attachments
             ]
-            rx: list[dict[str, JSON]] = [
-                {
-                    "actor_type": r.actor_type,
-                    "actor_id": r.actor_id,
-                    "emoji": r.emoji,
-                }
+            rx = [
+                ChannelReaction(
+                    actor_type=r.actor_type,
+                    actor_id=r.actor_id,
+                    emoji=r.emoji,
+                )
                 for r in m.reactions
             ]
             out.append(
@@ -413,6 +435,7 @@ class OpenletChatAdapter:
     async def list_channels(
         self, caller: CallerContext, *, query: str = "", limit: int = 20
     ) -> list[ChannelSummary]:
+        """List workspace conversations visible to the caller Leta."""
         convs = await self._list_workspace_conversations(caller, limit=limit)
         needle = query.strip().lstrip("@#").lower()
         out: list[ChannelSummary] = []
@@ -425,12 +448,12 @@ class OpenletChatAdapter:
                 and (not handle or needle not in handle.lower())
             ):
                 continue
-            members: list[dict[str, JSON]] = [
-                {
-                    "actor_type": m.actor_type,
-                    "actor_id": m.actor_id,
-                    "role": m.role,
-                }
+            members = [
+                ChannelMember(
+                    actor_type=m.actor_type,
+                    actor_id=m.actor_id,
+                    role=m.role,
+                )
                 for m in c.members
             ]
             snippet = (
@@ -453,8 +476,12 @@ class OpenletChatAdapter:
         return out[:limit]
 
     async def set_typing(
-        self, caller: CallerContext, target: str, active: bool
+        self,
+        caller: CallerContext,
+        target: str,
+        active: bool,  # noqa: FBT001  # Matches ChannelAdapter protocol for leta.runtime callers
     ) -> None:
+        """Update the typing indicator state for a chat conversation."""
         conv_id = await self._resolve_conversation_id(caller, target)
         await self.chat.SetTyping(
             chat_pb.SetTypingRequest(
@@ -467,6 +494,7 @@ class OpenletChatAdapter:
         )
 
     async def mark_read(self, caller: CallerContext, target: str, seq: int) -> None:
+        """Advance the agent's read cursor in a chat conversation."""
         if seq <= 0:
             return
         conv_id = await self._resolve_conversation_id(caller, target)

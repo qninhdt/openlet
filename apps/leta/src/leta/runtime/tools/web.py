@@ -1,21 +1,26 @@
+"""Public web search and SSRF-guarded URL fetch tools."""
+
 from __future__ import annotations
 
 import asyncio
 import ipaddress
 import socket
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from urllib.parse import urljoin, urlparse
 
 import html_to_markdown as h2m
 import httpx
-from langchain_core.tools import BaseTool, ToolException
-from langgraph.prebuilt import ToolRuntime
-from openlet_sdk.config import JSON
+from langchain_core.tools import ToolException
+from langgraph.prebuilt import ToolRuntime  # noqa: TC002  # Evaluated at runtime by LangGraph ToolNode.get_type_hints.
 from pydantic import Field
 from tinyfish import AsyncTinyFish, FetchFormat, SDKError
 
-from ..state import AgentState, RuntimeContext
-from .base import ToolArgs, ToolResult, make_tool
+from leta.runtime.state import AgentState, RuntimeContext  # noqa: TC001  # Evaluated at runtime by LangGraph ToolNode.get_type_hints.
+from leta.runtime.tools.base import ToolArgs, ToolResult, make_tool
+
+if TYPE_CHECKING:
+    from langchain_core.tools import BaseTool
+    from openlet_sdk.config import JSON
 
 
 def _is_public_ip(ip_str: str) -> bool:
@@ -35,6 +40,7 @@ def _is_public_ip(ip_str: str) -> bool:
 
 
 def normalize_public_url(url: str) -> str:
+    """Trim whitespace and prepend ``https://`` when the URL omits a scheme."""
     cleaned = url.strip()
     if not cleaned:
         raise ToolException("URL cannot be empty.")
@@ -44,6 +50,7 @@ def normalize_public_url(url: str) -> str:
 
 
 async def assert_public_url(url: str) -> None:
+    """Validate that ``url`` uses HTTP(S) and does not resolve to a private/internal IP."""
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
         raise ToolException(
@@ -58,11 +65,12 @@ async def assert_public_url(url: str) -> None:
         raise ToolException(f"Blocked private or internal host: {host}")
     try:
         ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
         if not _is_public_ip(host):
             raise ToolException(f"Blocked non-public IP address: {host}")
         return
-    except ValueError:
-        pass
     loop = asyncio.get_running_loop()
     try:
         infos = await loop.getaddrinfo(
@@ -92,10 +100,12 @@ _H2M_PLAIN_OPTIONS = h2m.ConversionOptions(
 
 
 def html_to_markdown(html: str) -> str:
+    """Convert an HTML document string into cleaned Markdown."""
     return (h2m.convert(html, _H2M_MARKDOWN_OPTIONS).content or "").strip()
 
 
 def html_to_text(html: str) -> str:
+    """Convert an HTML document string into stripped plain text."""
     return (h2m.convert(html, _H2M_PLAIN_OPTIONS).content or "").strip()
 
 
@@ -116,6 +126,8 @@ def _looks_like_empty_js_shell(text: str) -> bool:
 
 
 class WebFetchArgs(ToolArgs):
+    """Input schema for the ``webfetch`` tool."""
+
     url: str = Field(
         min_length=1,
         description="Public URL (https:// auto-prepended if omitted).",
@@ -130,6 +142,8 @@ class WebFetchArgs(ToolArgs):
 
 
 class WebSearchArgs(ToolArgs):
+    """Input schema for the ``websearch`` tool."""
+
     query: str = Field(min_length=1, max_length=500)
 
 
@@ -146,12 +160,12 @@ async def _tinyfish_fetch(
     *,
     norm_url: str,
     fmt: Literal["markdown", "text", "html"],
-    timeout: float,
+    timeout_seconds: float,
 ) -> ToolResult:
     tf_format: FetchFormat = "html" if fmt in ("html", "text") else "markdown"
-    timeout_ms = max(1, min(int(timeout * 1000), 110_000))
+    timeout_ms = max(1, min(int(timeout_seconds * 1000), 110_000))
     try:
-        async with AsyncTinyFish(api_key=api_key, timeout=timeout) as client:
+        async with AsyncTinyFish(api_key=api_key, timeout=timeout_seconds) as client:
             resp = await client.fetch.get_contents(
                 urls=[url],
                 format=tf_format,
@@ -184,7 +198,12 @@ async def _tinyfish_fetch(
 
 
 async def _direct_fetch(
-    url: str, *, fmt: str, timeout: float, max_redirects: int, max_bytes: int
+    url: str,
+    *,
+    fmt: str,
+    timeout_seconds: float,
+    max_redirects: int,
+    max_bytes: int,
 ) -> tuple[str, str, str, int]:
     cur_url = url
     headers = {
@@ -192,7 +211,7 @@ async def _direct_fetch(
         "Accept": "text/markdown, text/html;q=0.9, text/plain;q=0.8, */*;q=0.5",
     }
     async with httpx.AsyncClient(
-        follow_redirects=False, timeout=timeout, headers=headers
+        follow_redirects=False, timeout=timeout_seconds, headers=headers
     ) as client:
         for _ in range(max_redirects + 1):
             await assert_public_url(cur_url)
@@ -225,7 +244,7 @@ async def _direct_fetch(
                     return body, cur_url, ctype, status_code
             except httpx.TimeoutException:
                 raise ToolException(
-                    f"Request timed out after {int(timeout)}s fetching {cur_url}."
+                    f"Request timed out after {int(timeout_seconds)}s fetching {cur_url}."
                 ) from None
             except httpx.HTTPError as exc:
                 raise ToolException(
@@ -236,11 +255,12 @@ async def _direct_fetch(
 
 async def handle_webfetch(
     url: str,
-    format: Literal["markdown", "text", "html"] = "markdown",
-    timeout: int | None = None,
+    format: Literal["markdown", "text", "html"] = "markdown",  # noqa: A002  # Matches WebFetchArgs.format field passed by StructuredTool and tests.
+    timeout: int | None = None,  # noqa: ASYNC109  # Matches WebFetchArgs.timeout field passed by StructuredTool and tests.
     *,
     runtime: ToolRuntime[RuntimeContext, AgentState],
 ) -> ToolResult:
+    """Fetch a public URL via direct HTTP or TinyFish fallback."""
     rt = runtime.context
     web_cfg = rt.services.settings.web
     api_key = rt.services.settings.web_search_api_key
@@ -263,13 +283,13 @@ async def handle_webfetch(
             norm_url,
             norm_url=norm_url,
             fmt=format,
-            timeout=eff_timeout,
+            timeout_seconds=eff_timeout,
         )
 
     body, final_url, ctype, status_code = await _direct_fetch(
         norm_url,
         fmt=format,
-        timeout=eff_timeout,
+        timeout_seconds=eff_timeout,
         max_redirects=web_cfg.fetch_max_redirects,
         max_bytes=web_cfg.fetch_max_response_bytes,
     )
@@ -283,7 +303,7 @@ async def handle_webfetch(
             final_url,
             norm_url=norm_url,
             fmt=format,
-            timeout=eff_timeout,
+            timeout_seconds=eff_timeout,
         )
     if status_code >= 400:
         hint = (
@@ -309,6 +329,7 @@ async def handle_websearch(
     *,
     runtime: ToolRuntime[RuntimeContext, AgentState],
 ) -> ToolResult:
+    """Search the public web via TinyFish and return ranked Markdown snippets."""
     rt = runtime.context
     web_cfg = rt.services.settings.web
     api_key = rt.services.settings.web_search_api_key
@@ -352,6 +373,7 @@ async def handle_websearch(
 
 
 def build_web_tools() -> list[BaseTool]:
+    """Build ``websearch`` and ``webfetch`` tools."""
     return [
         make_tool(
             name="websearch",

@@ -1,3 +1,5 @@
+"""HITL request validation, persistence, workflow control, and side-effect application."""
+
 from __future__ import annotations
 
 import asyncio
@@ -8,40 +10,28 @@ from uuid import UUID
 import grpc
 from openlet_api.letfs.v1 import letfs_pb2 as fs
 from openlet_sdk.config import JSON
-from openlet_sdk.types import is_str_mapping
+from openlet_sdk.types import is_object_list, is_str_mapping
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from temporalio.client import Client as TemporalClient
 from temporalio.service import RPCError, RPCStatusCode
 
-from ..activity import ActivityEmitter, leta_user_channel
-from ..auth import Actor, Authorization
-from ..db import Pool, hydrate
-from ..inbox import InboxGateway, InboxItem, InboxSender
-from .models import (
-    ApprovalPayload as ApprovalPayload,
+from leta.activity import ActivityEmitter, leta_user_channel
+from leta.auth import Actor, Authorization
+from leta.db import Pool, hydrate
+from leta.hitl.models import (
+    ApprovalPayload,
+    ApprovalResponse,
+    AskOption,
+    AskPayload,
+    AskQuestionForm,
+    AskResponse,
+    HitlOutcome,
 )
-from .models import (
-    ApprovalResponse as ApprovalResponse,
-)
-from .models import (
-    AskOption as AskOption,
-)
-from .models import (
-    AskPayload as AskPayload,
-)
-from .models import (
-    AskQuestionForm as AskQuestionForm,
-)
-from .models import (
-    AskResponse as AskResponse,
-)
-from .models import (
-    HitlOutcome as HitlOutcome,
-)
+from leta.inbox import InboxGateway, InboxItem, InboxMetadata, InboxSender
 
 if TYPE_CHECKING:
     from openlet_api.letfs.v1.letfs_pb2_grpc import LetFSServiceAsyncStub
+    from temporalio.client import Client as TemporalClient
 
 type HitlType = Literal["ask", "approval"]
 type HitlStatus = Literal[
@@ -59,10 +49,14 @@ type HitlOpenStatus = Literal[
 
 
 class HitlInput(BaseModel):
+    """Base strict input model for HITL service operations."""
+
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
 
 class HitlRecord(BaseModel):
+    """Hydrated HITL request row persisted in PostgreSQL."""
+
     id: UUID
     leta_id: UUID
     workspace_id: UUID | None = None
@@ -82,11 +76,15 @@ class HitlRecord(BaseModel):
 
 
 class RecipientHitlList(BaseModel):
+    """Paginated HITL items and pending count for a recipient user."""
+
     items: list[HitlRecord]
     pending_count: int
 
 
 class Question(HitlInput):
+    """Authoring schema for a single question in an ask_user tool call."""
+
     text: str = Field(min_length=1, max_length=4000)
     options: list[str] | None = Field(
         default=None,
@@ -102,6 +100,7 @@ class Question(HitlInput):
     @model_validator(mode="before")
     @classmethod
     def coerce_empty_options(cls, data: object) -> object:
+        """Normalize an empty options list to None so free-text questions validate cleanly."""
         if is_str_mapping(data):
             d = dict(data)
             if d.get("options") == []:
@@ -111,6 +110,7 @@ class Question(HitlInput):
 
     @model_validator(mode="after")
     def validate_choices(self) -> Question:
+        """Ensure multiple selection has options and all option labels are unique and non-empty."""
         if self.multiple and self.options is None:
             raise ValueError("multiple selection requires options")
         if self.options is not None and (
@@ -122,16 +122,20 @@ class Question(HitlInput):
 
 
 class OpenHitlInput(HitlInput):
+    """Validated workflow input used to open an HITL request."""
+
     id: UUID
     requester_agent_id: UUID
     recipient_user_id: UUID
     type: HitlType
     title: str = Field(min_length=1, max_length=255)
-    payload: dict[str, JSON]
+    payload: AskPayload | ApprovalPayload
     expires_at: datetime | None = None
 
 
 class HitlDecisionInput(HitlInput):
+    """Validated decision payload submitted by a recipient or cancellation."""
+
     request_id: UUID
     actor_type: Literal["user", "agent"] = "user"
     actor_id: UUID
@@ -141,6 +145,7 @@ class HitlDecisionInput(HitlInput):
 
 
 def build_ask_form(questions: list[Question]) -> AskPayload:
+    """Compile authored Question inputs into an AskPayload with stable IDs."""
     items: list[AskQuestionForm] = []
     for idx, q in enumerate(questions):
         qtype: Literal["text", "single_choice", "multiple_choice"] = (
@@ -164,13 +169,42 @@ def build_ask_form(questions: list[Question]) -> AskPayload:
     return AskPayload(questions=items)
 
 
+def _validate_question_answer(q: AskQuestionForm, ans: object) -> str | list[str]:
+    if q.type == "text":
+        if not isinstance(ans, str) or not ans.strip():
+            raise ValueError(f"question {q.id} requires a non-empty text answer")
+        return ans.strip()
+    valid_opts = {o.id for o in q.options}
+    if q.type == "single_choice":
+        if not isinstance(ans, str) or ans not in valid_opts:
+            raise ValueError(f"question {q.id} requires one valid option id")
+        return ans
+    if not is_object_list(ans) or not ans:
+        raise ValueError(
+            f"question {q.id} requires a non-empty list of unique valid option ids"
+        )
+    chosen: list[str] = []
+    for v in ans:
+        if not isinstance(v, str) or v not in valid_opts:
+            raise ValueError(
+                f"question {q.id} requires a non-empty list of unique valid option ids"
+            )
+        chosen.append(v)
+    if len(set(chosen)) != len(chosen):
+        raise ValueError(
+            f"question {q.id} requires a non-empty list of unique valid option ids"
+        )
+    return chosen
+
+
 def validate_ask_response(
     payload: AskPayload | dict[str, JSON], response: dict[str, JSON] | None
 ) -> AskResponse:
-    if not isinstance(response, dict):
+    """Validate an ask response payload against the expected form questions."""
+    if not is_str_mapping(response):
         raise ValueError("response is required for ask requests")
     raw_answers = response.get("answers")
-    if not isinstance(raw_answers, dict):
+    if not is_str_mapping(raw_answers):
         raise ValueError("response.answers object is required")
     form = (
         payload
@@ -186,34 +220,7 @@ def validate_ask_response(
     for q in form.questions:
         if q.id not in raw_answers:
             raise ValueError(f"missing answer for question {q.id}")
-        ans = raw_answers[q.id]
-        if q.type == "text":
-            if not isinstance(ans, str) or not ans.strip():
-                raise ValueError(f"question {q.id} requires a non-empty text answer")
-            cleaned[q.id] = ans.strip()
-        elif q.type == "single_choice":
-            valid_opts = {o.id for o in q.options}
-            if not isinstance(ans, str) or ans not in valid_opts:
-                raise ValueError(f"question {q.id} requires one valid option id")
-            cleaned[q.id] = ans
-        else:
-            valid_opts = {o.id for o in q.options}
-            if not isinstance(ans, list) or not ans:
-                raise ValueError(
-                    f"question {q.id} requires a non-empty list of unique valid option ids"
-                )
-            chosen: list[str] = []
-            for v in ans:
-                if not isinstance(v, str) or v not in valid_opts:
-                    raise ValueError(
-                        f"question {q.id} requires a non-empty list of unique valid option ids"
-                    )
-                chosen.append(v)
-            if len(set(chosen)) != len(chosen):
-                raise ValueError(
-                    f"question {q.id} requires a non-empty list of unique valid option ids"
-                )
-            cleaned[q.id] = chosen
+        cleaned[q.id] = _validate_question_answer(q, raw_answers[q.id])
 
     clean_note: str | None = None
     if "note" in response and response["note"] is not None:
@@ -233,6 +240,7 @@ async def open_hitl(
     activity: ActivityEmitter | None,
     request: OpenHitlInput,
 ) -> HitlRecord:
+    """Persist a new pending HITL request (or detect already-granted approval access)."""
     async with db.connection() as conn:
         agent = await (
             await conn.execute(
@@ -256,12 +264,12 @@ async def open_hitl(
         "participate",
     )
 
-    payload = dict(request.payload)
+    payload_model: AskPayload | ApprovalPayload = request.payload
     already_granted = False
     if request.type == "approval":
-        role = str(payload.get("role", "viewer"))
-        if role not in ("viewer", "editor"):
-            raise ValueError("approval role must be 'viewer' or 'editor'")
+        if not isinstance(payload_model, ApprovalPayload):
+            raise ValueError("approval request requires ApprovalPayload")
+        role = payload_model.role
         query = fs.ListStoragesRequest(
             workspace_id=str(workspace_id),
             visibility=fs.STORAGE_VISIBILITY_PRIVATE,
@@ -295,18 +303,22 @@ async def open_hitl(
                 "recipient must have exactly one Personal storage in this workspace"
             )
         storage_id = personal_storages[0].id
-        payload["storage_id"] = storage_id
+        payload_model = payload_model.model_copy(update={"storage_id": storage_id})
         perm = "write" if role == "editor" else "read"
         if await auth.allowed(Actor("agent", leta_id), "storage", storage_id, perm):
             already_granted = True
+    elif not isinstance(payload_model, AskPayload):
+        raise ValueError("ask request requires AskPayload")
 
     if already_granted:
         return HitlRecord(
             id=request.id,
             leta_id=leta_id,
             status="already_granted",
-            payload=payload,
+            payload=payload_model,
         )
+
+    payload_json = payload_model.model_dump(mode="json")
 
     async with db.connection() as conn, conn.transaction():
         row = await (
@@ -326,12 +338,13 @@ async def open_hitl(
                     request.recipient_user_id,
                     request.type,
                     request.title,
-                    Jsonb(payload),
+                    Jsonb(payload_json),
                     request.expires_at,
                 ),
             )
         ).fetchone()
-    assert row is not None
+    if row is None:
+        raise RuntimeError(f"HITL insert returned no row for {request.id}")
     record = hydrate(row, HitlRecord)
     if activity is not None:
         await activity.emit(
@@ -350,6 +363,7 @@ async def resolve_hitl(
     activity: ActivityEmitter | None,
     decision: HitlDecisionInput,
 ) -> HitlRecord:
+    """Validate and record a decision on a pending HITL request."""
     now = decision.resolved_at or datetime.now(UTC)
     async with db.connection() as conn, conn.transaction():
         row = await (
@@ -377,8 +391,9 @@ async def resolve_hitl(
                 raise ValueError(
                     "accepted/denied status is only valid for approval requests"
                 )
-            if decision.response and "note" in decision.response:
-                note = str(decision.response["note"]).strip()
+            if decision.response is not None:
+                parsed_approval = ApprovalResponse.model_validate(decision.response)
+                note = (parsed_approval.note or "").strip()
                 clean_response = {"note": note[:4000]} if note else None
             else:
                 clean_response = None
@@ -399,7 +414,8 @@ async def resolve_hitl(
                 ),
             )
         ).fetchone()
-    assert updated is not None
+    if updated is None:
+        raise RuntimeError(f"HITL update returned no row for {decision.request_id}")
     record = hydrate(updated, HitlRecord)
     if activity is not None and record.requester_agent_id is not None:
         extra = (
@@ -425,6 +441,7 @@ async def apply_hitl_effect(
     activity: ActivityEmitter | None,
     request_id: UUID,
 ) -> HitlRecord:
+    """Apply the storage access grant for an accepted approval HITL request."""
     async with db.connection() as conn:
         row = await (
             await conn.execute(
@@ -452,7 +469,8 @@ async def apply_hitl_effect(
     )
     workspace_id = str(record.workspace_id or "")
     recipient_id = record.recipient_user_id
-    assert recipient_id is not None
+    if recipient_id is None:
+        raise RuntimeError(f"HITL request {request_id} is missing recipient_user_id")
     leta_id = record.leta_id
 
     outcome: HitlOutcome
@@ -491,7 +509,8 @@ async def apply_hitl_effect(
                 (Jsonb(outcome.model_dump(exclude_none=True)), request_id),
             )
         ).fetchone()
-    assert updated is not None
+    if updated is None:
+        raise RuntimeError(f"HITL outcome update returned no row for {request_id}")
     updated_record = hydrate(updated, HitlRecord)
     if activity is not None and updated_record.requester_agent_id is not None:
         await activity.emit(
@@ -510,7 +529,8 @@ async def start_hitl_workflow(
     orchestration_queue: str,
     request: OpenHitlInput,
 ) -> None:
-    from .workflow import HitlWorkflow
+    """Start the Temporal HitlWorkflow for a newly requested HITL interaction."""
+    from leta.hitl.workflow import HitlWorkflow  # noqa: PLC0415  # Avoids circular import with hitl.workflow
 
     await temporal.start_workflow(
         HitlWorkflow.run,
@@ -526,30 +546,23 @@ async def cancel_hitl_workflow(
     request_id: UUID,
     actor_id: UUID,
 ) -> bool:
+    """Signal a running HitlWorkflow to cancel, returning False if already closed."""
     try:
         await temporal.get_workflow_handle(f"hitl/{request_id}").signal(
             "cancel", actor_id
         )
-        return True
     except RPCError as exc:
         if exc.status == RPCStatusCode.NOT_FOUND:
             return False
         raise
-
-
-def _to_json_dict(
-    value: BaseModel | dict[str, JSON] | None,
-) -> dict[str, JSON] | None:
-    if value is None:
-        return None
-    if isinstance(value, BaseModel):
-        return value.model_dump(mode="json", exclude_none=True)
-    return value
+    else:
+        return True
 
 
 async def deliver_hitl_result(
     *, db: Pool, inbox: InboxGateway, request_id: UUID
 ) -> None:
+    """Deliver the resolved HITL request outcome to the requesting agent's inbox."""
     async with db.connection() as conn:
         row = await (
             await conn.execute(
@@ -573,20 +586,21 @@ async def deliver_hitl_result(
                 id=str(record.recipient_user_id or ""),
             ),
             content="",
-            metadata={
-                "request_id": str(request_id),
-                "title": record.title,
-                "type": record.type or "",
-                "status": record.status,
-                "payload": _to_json_dict(record.payload),
-                "outcome": _to_json_dict(record.outcome),
-                "response": _to_json_dict(record.response),
-            },
+            metadata=InboxMetadata(
+                request_id=str(request_id),
+                title=record.title,
+                type=record.type or "",
+                status=record.status,
+                payload=record.payload,
+                outcome=record.outcome,
+                response=record.response,
+            ),
         )
     )
 
 
 async def get_hitl(db: Pool, request_id: UUID) -> HitlRecord:
+    """Fetch a single HITL request record by ID."""
     async with db.connection() as conn:
         row = await (
             await conn.execute(
@@ -613,6 +627,7 @@ async def list_recipient_hitl(
     status: str | None = None,
     limit: int = 50,
 ) -> RecipientHitlList:
+    """List HITL requests addressed to recipient_user_id along with pending count."""
     async with db.connection() as conn:
         rows = await (
             await conn.execute(
@@ -666,6 +681,7 @@ async def list_leta_hitl(
     status: str | None = None,
     limit: int = 50,
 ) -> list[HitlRecord]:
+    """List HITL requests belonging to a Leta instance."""
     async with db.connection() as conn:
         rows = await (
             await conn.execute(

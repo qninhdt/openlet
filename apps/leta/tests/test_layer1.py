@@ -16,6 +16,8 @@ from leta.channels.base import (
 from leta.channels.router import ChannelRouter, outbound_idempotency_key, parse_address
 from leta.config import LetaRuntimeConfig
 from leta.hitl.service import Question, build_ask_form, validate_ask_response
+from leta.observability import build_rag_baggage, mask_trace_data
+from leta.runtime.prompts import prompt_version_hash
 from leta.schedules.service import Timing, build_temporal_schedule, normalize_timing
 from leta.subagents.service import random_appearance, root_handle_base, slugify_handle
 from openlet_sdk.config import load_path
@@ -108,7 +110,8 @@ async def test_channel_router_enforces_root_vs_subagent_and_idempotency() -> Non
     sub_r = await router.send(
         sub, "agent:nora-the-analyst", OutboundMessage("done"), tool_call_id="call-2"
     )
-    assert sub_r.channel == "agent" and sub_r.target == "nora-the-analyst"
+    assert sub_r.channel == "agent"
+    assert sub_r.target == "nora-the-analyst"
 
 
 def test_hitl_question_types_and_validation() -> None:
@@ -129,11 +132,11 @@ def test_hitl_question_types_and_validation() -> None:
     assert valid.note == "Use Q4 data"
     assert valid.answers["q3"] == ["o1", "o3"]
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="requires one valid option id"):
         validate_ask_response(
             form, {"answers": {"q1": "ok", "q2": "bad_opt", "q3": ["o1"]}}
         )
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="non-empty list of unique valid option ids"):
         validate_ask_response(
             form, {"answers": {"q1": "ok", "q2": "o1", "q3": ["o1", "o1"]}}
         )
@@ -153,7 +156,8 @@ def test_schedule_timing_normalization_and_temporal_spec() -> None:
         paused=False,
         orchestration_queue="openlet-leta-orchestration",
     )
-    assert sched.state.limited_actions is True and sched.state.remaining_actions == 1
+    assert sched.state.limited_actions is True
+    assert sched.state.remaining_actions == 1
 
     normalized_cal = normalize_timing(
         Timing(calendar={"hour": [9], "minute": [30], "day_of_week": [1, 3, 5]}), now
@@ -179,7 +183,8 @@ def test_handles_appearance_and_yaml_config_loading(
     )
     assert slugify_handle("   ") == "agent"
     app = random_appearance()
-    assert "shape" in app and "color" in app
+    assert "shape" in app
+    assert "color" in app
 
     raw = load_path(Path("infra/config/openlet.example.yaml"))
     cfg = LetaRuntimeConfig.from_openlet_config(raw)
@@ -193,9 +198,6 @@ def test_handles_appearance_and_yaml_config_loading(
 
 
 def test_observability_masking_baggage_and_prompt_hash() -> None:
-    from leta.observability import build_rag_baggage, mask_trace_data
-    from leta.runtime.prompts import prompt_version_hash
-
     payload = {
         "text": "hello",
         "nested": [
@@ -207,7 +209,8 @@ def test_observability_masking_baggage_and_prompt_hash() -> None:
     assert is_str_mapping(masked)
     nested = masked["nested"]
     assert is_object_list(nested)
-    assert is_str_mapping(nested[0]) and is_str_mapping(nested[1])
+    assert is_str_mapping(nested[0])
+    assert is_str_mapping(nested[1])
     assert masked["text"] == "hello"
     assert "[omitted" in str(nested[0]["url"])
     assert "AAAA" not in str(nested[0]["url"])
@@ -220,4 +223,6 @@ def test_observability_masking_baggage_and_prompt_hash() -> None:
 
     h_root = prompt_version_hash(True)
     h_sub = prompt_version_hash(False)
-    assert len(h_root) == 12 and len(h_sub) == 12 and h_root != h_sub
+    assert len(h_root) == 12
+    assert len(h_sub) == 12
+    assert h_root != h_sub

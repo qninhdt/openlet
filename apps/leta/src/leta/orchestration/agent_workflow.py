@@ -1,3 +1,5 @@
+"""Durable Temporal workflow managing an agent's wake, pause, cancel, and turn loop."""
+
 from __future__ import annotations
 
 import asyncio
@@ -12,6 +14,8 @@ from temporalio.exceptions import ActivityError, CancelledError
 
 
 class AgentWorkflowState(BaseModel):
+    """Serializable workflow state preserved across continue-as-new rotations."""
+
     agent_id: UUID
     leta_id: UUID
     is_root: bool
@@ -25,16 +29,22 @@ class AgentWorkflowState(BaseModel):
 
 
 class RunInput(BaseModel):
+    """Input passed to the Layer 2 run_agent_turn activity."""
+
     agent_id: UUID
     run_id: UUID
 
 
 class RunResult(BaseModel):
+    """Result returned by run_agent_turn with updated inbox cursors."""
+
     inbox_cursor: int
     latest_wake_seq: int
 
 
 class AgentStatus(BaseModel):
+    """Query snapshot describing an agent workflow's current phase and cursors."""
+
     state: Literal["idle", "running", "paused", "stopping"]
     active_run_id: UUID | None
     processed_seq: int
@@ -44,6 +54,8 @@ class AgentStatus(BaseModel):
 
 @workflow.defn(name="AgentWorkflow")
 class AgentWorkflow:
+    """Long-lived workflow serializing turn execution and signals for a single agent."""
+
     @workflow.init
     def __init__(self, state: AgentWorkflowState) -> None:
         self._state: AgentWorkflowState = state
@@ -55,10 +67,12 @@ class AgentWorkflow:
 
     @workflow.signal
     def wake(self, seq: int) -> None:
+        """Advance known_seq so the workflow schedules a turn if unpaused."""
         self._state.known_seq = max(self._state.known_seq, seq)
 
     @workflow.signal
     def cancel_run(self, run_id: UUID | None = None) -> None:
+        """Cancel the active run (or specific run_id) and suppress pending wakes."""
         if run_id is not None and self._active_run_id != run_id:
             return
         self._state.suppressed_through = max(
@@ -69,7 +83,11 @@ class AgentWorkflow:
             self._active_handle.cancel()
 
     @workflow.signal
-    def pause(self, cancel_active: bool = False) -> None:
+    def pause(
+        self,
+        cancel_active: bool = False,  # noqa: FBT001, FBT002  # Temporal @workflow.signal receives positional args
+    ) -> None:
+        """Pause new turn execution and optionally cancel the active run."""
         self._state.paused = True
         if cancel_active:
             self._cancel_requested = True
@@ -78,16 +96,19 @@ class AgentWorkflow:
 
     @workflow.signal
     def resume(self) -> None:
+        """Clear the paused flag so queued wakes can execute."""
         self._state.paused = False
 
     @workflow.signal
     def stop(self) -> None:
+        """Signal the agent workflow to cancel any active run and shut down."""
         self._stopping = True
         if self._active_handle is not None and not self._active_handle.done():
             self._active_handle.cancel()
 
     @workflow.query
     def status(self) -> AgentStatus:
+        """Return the current execution phase and sequence cursors."""
         st = self._state
         if self._stopping:
             phase: Literal["idle", "running", "paused", "stopping"] = "stopping"
@@ -112,7 +133,6 @@ class AgentWorkflow:
     ]:
         try:
             res = await handle
-            return "completed", None, res
         except CancelledError:
             return "cancelled", "cancelled", None
         except ActivityError as exc:
@@ -121,11 +141,14 @@ class AgentWorkflow:
             return "failed", str(exc.cause or exc), None
         except asyncio.CancelledError:
             return "cancelled", "cancelled", None
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001  # Workflow boundary records any unexpected activity failure
             return "failed", str(exc), None
+        else:
+            return "completed", None, res
 
     @workflow.run
     async def run(self, state: AgentWorkflowState) -> None:
+        """Run the main agent wake/execute loop until stopped or rotated."""
         state = self._state
         while not self._stopping:
             await workflow.wait_condition(

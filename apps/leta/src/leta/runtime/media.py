@@ -1,18 +1,26 @@
+"""Image media-type detection, optimization, and history image hysteresis pruning."""
+
 from __future__ import annotations
 
 import base64
 from dataclasses import dataclass
 from io import BytesIO
+from typing import TYPE_CHECKING
 
-from langchain_core.messages import BaseMessage
 from PIL import Image
 
-from ..config import MediaConfig
-from .content import image_block_data_url_bytes, parse_tool_artifact
+from leta.runtime.content import image_block_data_url_bytes, parse_tool_artifact
+
+if TYPE_CHECKING:
+    from langchain_core.messages import BaseMessage
+
+    from leta.config import MediaConfig
 
 
 @dataclass(frozen=True, slots=True)
 class PreparedImage:
+    """Optimized inline image payload ready for multimodal model messages."""
+
     media_type: str
     data_url: str
     base64_bytes: int
@@ -21,6 +29,7 @@ class PreparedImage:
 
 
 def detect_media_type(data: bytes) -> str | None:
+    """Detect common image or PDF MIME types from magic bytes."""
     if data.startswith(b"\x89PNG\r\n\x1a\n"):
         return "image/png"
     if data.startswith(b"\xff\xd8\xff"):
@@ -59,6 +68,61 @@ def _b64_len(raw_len: int) -> int:
     return ((raw_len + 2) // 3) * 4
 
 
+def _prepared_image(
+    data: bytes, *, media_type: str, width: int, height: int
+) -> PreparedImage:
+    b64 = base64.b64encode(data).decode("ascii")
+    return PreparedImage(
+        media_type=media_type,
+        data_url=f"data:{media_type};base64,{b64}",
+        base64_bytes=len(b64),
+        width=width,
+        height=height,
+    )
+
+
+def _resize_to_fit(img: Image.Image, cfg: MediaConfig) -> Image.Image:
+    w, h = img.size
+    if w <= cfg.image_max_width and h <= cfg.image_max_height:
+        return img
+    scale = min(cfg.image_max_width / max(1, w), cfg.image_max_height / max(1, h))
+    nw = max(1, round(w * scale))
+    nh = max(1, round(h * scale))
+    return img.resize((nw, nh), Image.Resampling.LANCZOS)
+
+
+def _compress_under_budget(
+    img: Image.Image, cfg: MediaConfig, *, transparent: bool
+) -> PreparedImage | None:
+    cur = _resize_to_fit(img, cfg)
+    qualities = cfg.jpeg_qualities or (80, 70, 55, 40)
+    for _ in range(8):
+        if transparent:
+            png_bytes = _encode_png(cur)
+            if _b64_len(len(png_bytes)) <= cfg.image_max_base64_bytes:
+                return _prepared_image(
+                    png_bytes,
+                    media_type="image/png",
+                    width=cur.size[0],
+                    height=cur.size[1],
+                )
+        for q in qualities:
+            jpg_bytes = _encode_jpeg(cur, q)
+            if _b64_len(len(jpg_bytes)) <= cfg.image_max_base64_bytes:
+                return _prepared_image(
+                    jpg_bytes,
+                    media_type="image/jpeg",
+                    width=cur.size[0],
+                    height=cur.size[1],
+                )
+        nw = max(1, int(cur.size[0] * 0.75))
+        nh = max(1, int(cur.size[1] * 0.75))
+        if (nw, nh) == cur.size:
+            break
+        cur = cur.resize((nw, nh), Image.Resampling.LANCZOS)
+    return None
+
+
 def optimize_image_bytes(data: bytes, cfg: MediaConfig) -> PreparedImage | str:
     """Optimize an image using OpenCode v2 rules (2000x2000, 5 MiB base64 cap, smart PNG->JPEG)."""
     if len(data) > cfg.max_ingest_bytes:
@@ -74,7 +138,7 @@ def optimize_image_bytes(data: bytes, cfg: MediaConfig) -> PreparedImage | str:
         with Image.open(BytesIO(data)) as opened:
             opened.load()
             img = opened.copy()
-    except Exception:
+    except OSError, ValueError, EOFError, SyntaxError, Image.DecompressionBombError:
         return "[Image could not be decoded; omitted]"
 
     w, h = img.size
@@ -87,87 +151,25 @@ def optimize_image_bytes(data: bytes, cfg: MediaConfig) -> PreparedImage | str:
             return (
                 "[Image exceeds base64 size limit and auto-resize is disabled; omitted]"
             )
-        b64 = base64.b64encode(data).decode("ascii")
-        return PreparedImage(
-            media_type=detected,
-            data_url=f"data:{detected};base64,{b64}",
-            base64_bytes=len(b64),
-            width=w,
-            height=h,
-        )
+        return _prepared_image(data, media_type=detected, width=w, height=h)
 
     is_small_png = detected == "image/png" and (
         orig_b64 <= cfg.png_passthrough_max_base64_bytes
         or (w * h) <= cfg.small_png_max_pixels
     )
     if fits_dims and fits_bytes and (detected != "image/png" or is_small_png):
-        b64 = base64.b64encode(data).decode("ascii")
-        return PreparedImage(
-            media_type=detected,
-            data_url=f"data:{detected};base64,{b64}",
-            base64_bytes=len(b64),
-            width=w,
-            height=h,
-        )
+        return _prepared_image(data, media_type=detected, width=w, height=h)
 
     transparent = _has_significant_transparency(img)
     if fits_dims and fits_bytes and detected == "image/png" and not transparent:
         jpg = _encode_jpeg(img, cfg.jpeg_qualities[0] if cfg.jpeg_qualities else 80)
         if len(jpg) < len(data):
-            b64 = base64.b64encode(jpg).decode("ascii")
-            return PreparedImage(
-                media_type="image/jpeg",
-                data_url=f"data:image/jpeg;base64,{b64}",
-                base64_bytes=len(b64),
-                width=w,
-                height=h,
-            )
-        b64 = base64.b64encode(data).decode("ascii")
-        return PreparedImage(
-            media_type="image/png",
-            data_url=f"data:image/png;base64,{b64}",
-            base64_bytes=len(b64),
-            width=w,
-            height=h,
-        )
+            return _prepared_image(jpg, media_type="image/jpeg", width=w, height=h)
+        return _prepared_image(data, media_type="image/png", width=w, height=h)
 
-    cur = img
-    if not fits_dims:
-        scale = min(cfg.image_max_width / max(1, w), cfg.image_max_height / max(1, h))
-        nw = max(1, int(round(w * scale)))
-        nh = max(1, int(round(h * scale)))
-        cur = cur.resize((nw, nh), Image.Resampling.LANCZOS)
-
-    qualities = cfg.jpeg_qualities or (80, 70, 55, 40)
-    for _ in range(8):
-        if transparent:
-            png_bytes = _encode_png(cur)
-            if _b64_len(len(png_bytes)) <= cfg.image_max_base64_bytes:
-                b64 = base64.b64encode(png_bytes).decode("ascii")
-                return PreparedImage(
-                    media_type="image/png",
-                    data_url=f"data:image/png;base64,{b64}",
-                    base64_bytes=len(b64),
-                    width=cur.size[0],
-                    height=cur.size[1],
-                )
-        for q in qualities:
-            jpg_bytes = _encode_jpeg(cur, q)
-            if _b64_len(len(jpg_bytes)) <= cfg.image_max_base64_bytes:
-                b64 = base64.b64encode(jpg_bytes).decode("ascii")
-                return PreparedImage(
-                    media_type="image/jpeg",
-                    data_url=f"data:image/jpeg;base64,{b64}",
-                    base64_bytes=len(b64),
-                    width=cur.size[0],
-                    height=cur.size[1],
-                )
-        nw = max(1, int(cur.size[0] * 0.75))
-        nh = max(1, int(cur.size[1] * 0.75))
-        if (nw, nh) == cur.size:
-            break
-        cur = cur.resize((nw, nh), Image.Resampling.LANCZOS)
-
+    compressed = _compress_under_budget(img, cfg, transparent=transparent)
+    if compressed is not None:
+        return compressed
     return "[Image could not be resized under base64 size limit; omitted]"
 
 

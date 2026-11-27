@@ -1,14 +1,16 @@
 import base64
 import hashlib
 import hmac
-import json
 
 from openlet_sdk.centrifugo import sign_centrifugo_token
+from pydantic import TypeAdapter
+
+_CLAIMS_ADAPTER = TypeAdapter(dict[str, str | int])
 
 
-def _decode_part(part: str) -> dict[str, object]:
+def _decode_part(part: str) -> dict[str, str | int]:
     padded = part + "=" * (-len(part) % 4)
-    return json.loads(base64.urlsafe_b64decode(padded))
+    return _CLAIMS_ADAPTER.validate_json(base64.urlsafe_b64decode(padded))
 
 
 def test_sign_centrifugo_token_connect_and_subscription() -> None:

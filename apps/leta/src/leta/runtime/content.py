@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Literal, TypedDict
+from typing import TYPE_CHECKING, Literal, TypedDict
 
-from langchain_core.messages import AIMessageChunk, BaseMessage, ToolMessage
-from openlet_sdk.config import JSON
+from langchain_core.messages import ToolMessage
 from openlet_sdk.types import is_mapping, is_object_sequence, is_str_mapping
 from pydantic import BaseModel, ConfigDict, Field
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from langchain_core.messages import AIMessageChunk, BaseMessage
+    from openlet_sdk.config import JSON
 
 
 class ToolArtifactMeta(BaseModel):
@@ -25,15 +29,21 @@ class ToolArtifactMeta(BaseModel):
 
 
 class TextContentBlock(TypedDict):
+    """Typed multimodal text block."""
+
     type: Literal["text"]
     text: str
 
 
 class ImageUrlPayload(TypedDict):
+    """Nested URL payload inside an image content block."""
+
     url: str
 
 
 class ImageUrlContentBlock(TypedDict):
+    """Typed multimodal image_url block."""
+
     type: Literal["image_url"]
     image_url: ImageUrlPayload
 
@@ -121,7 +131,7 @@ def parse_tool_artifact(msg: BaseMessage) -> ToolArtifactMeta:
 
 
 def _coerce_json_value(value: object) -> JSON:
-    if value is None or isinstance(value, (bool, int, float, str)):
+    if value is None or isinstance(value, bool | int | float | str):
         return value
     if is_mapping(value):
         return {str(k): _coerce_json_value(v) for k, v in value.items()}

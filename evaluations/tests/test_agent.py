@@ -4,25 +4,25 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Sequence
-from pathlib import Path
-from types import SimpleNamespace
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
 import httpx
 import pytest
-from deepeval.test_case import LLMTestCase
+from deepeval.evaluate.types import EvaluationResult, TestResult
+from deepeval.tracing.api import MetricData
 
 from openlet_evals.core.report import diff_runs, render_markdown
 from openlet_evals.suites.agent import runner as agent_runner
 from openlet_evals.suites.agent import suite as agent_suite
 from openlet_evals.suites.agent.runner import (
+    ActivityEventItem,
     AssistantMessage,
     Attachment,
     RunStatusResp,
     RunUsage,
     ToolStats,
     TrialArtifact,
+    WorkspaceContext,
     collect_outputs,
     execute_trial,
     parse_history,
@@ -40,6 +40,12 @@ from openlet_evals.suites.agent.suite import (
     parse_expectation_verdicts,
     validate_tasks,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from pathlib import Path
+
+    from deepeval.test_case import LLMTestCase
 
 
 def test_load_goldens_and_validate_tasks(tmp_path: Path) -> None:
@@ -66,7 +72,8 @@ def test_load_goldens_and_validate_tasks(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     loaded = load_tasks(ds)
-    assert len(loaded) == 1 and loaded[0].id == "ws-01"
+    assert len(loaded) == 1
+    assert loaded[0].id == "ws-01"
     assert loaded[0].must_not == ["Must not cite draft figures."]
 
     shared = tmp_path / "ws-a" / "storages" / "shared"
@@ -113,50 +120,52 @@ def test_mentions_and_deliverable_rendering() -> None:
 
 
 def test_parse_history_pairs_calls_and_counts_errors() -> None:
+    raw_entries = [
+        {
+            "seq": 2,
+            "kind": "tool_result",
+            "payload": {
+                "tool_call_id": "1",
+                "name": "file_read",
+                "text": "ok",
+                "status": "success",
+            },
+        },
+        {
+            "seq": 1,
+            "kind": "tool_call",
+            "payload": {
+                "tool_call_id": "1",
+                "name": "file_read",
+                "args": {"path": "/shared/a.md"},
+            },
+        },
+        {
+            "seq": 3,
+            "kind": "tool_call",
+            "payload": {
+                "tool_call_id": "2",
+                "name": "execute",
+                "args": {"command": "false"},
+            },
+        },
+        {
+            "seq": 4,
+            "kind": "tool_result",
+            "payload": {
+                "tool_call_id": "2",
+                "name": "execute",
+                "text": "err",
+                "status": "error",
+            },
+        },
+    ]
     calls, stats = parse_history(
-        [
-            {
-                "seq": 2,
-                "kind": "tool_result",
-                "payload": {
-                    "tool_call_id": "1",
-                    "name": "file_read",
-                    "text": "ok",
-                    "status": "success",
-                },
-            },
-            {
-                "seq": 1,
-                "kind": "tool_call",
-                "payload": {
-                    "tool_call_id": "1",
-                    "name": "file_read",
-                    "args": {"path": "/shared/a.md"},
-                },
-            },
-            {
-                "seq": 3,
-                "kind": "tool_call",
-                "payload": {
-                    "tool_call_id": "2",
-                    "name": "execute",
-                    "args": {"command": "false"},
-                },
-            },
-            {
-                "seq": 4,
-                "kind": "tool_result",
-                "payload": {
-                    "tool_call_id": "2",
-                    "name": "execute",
-                    "text": "err",
-                    "status": "error",
-                },
-            },
-        ]
+        [ActivityEventItem.model_validate(item) for item in raw_entries]
     )
     assert [c.name for c in calls] == ["file_read", "execute"]
-    assert calls[0].output == "ok" and calls[1].status == "error"
+    assert calls[0].output == "ok"
+    assert calls[1].status == "error"
     assert stats == ToolStats(total=2, errors=1, by_tool={"execute": 1, "file_read": 1})
 
 
@@ -175,7 +184,8 @@ def test_verdict_parsing_and_multi_trial_aggregation() -> None:
             }
         )
     )
-    assert len(verdicts) == 1 and verdicts[0].status == "pass"
+    assert len(verdicts) == 1
+    assert verdicts[0].status == "pass"
     assert parse_expectation_verdicts("bad") == []
 
     trials = [
@@ -281,6 +291,28 @@ def test_grade_trials_matches_by_name_and_zeros_empty_trials(
 
     seen_names: list[str] = []
 
+    def _metric_data(
+        *,
+        success: bool,
+        score: float,
+        reason: str,
+        verdicts: list[dict[str, str]],
+    ) -> MetricData:
+        return MetricData(
+            name="Expectations",
+            success=success,
+            score=score,
+            reason=reason,
+            strictMode=False,
+            evaluationModel=None,
+            error=None,
+            evaluationCost=None,
+            inputTokenCount=None,
+            outputTokenCount=None,
+            verboseLogs=json.dumps({"verdicts": verdicts}),
+            expectationsData=None,
+        )
+
     def fake_eval(
         *,
         test_cases: Sequence[LLMTestCase],
@@ -289,59 +321,55 @@ def test_grade_trials_matches_by_name_and_zeros_empty_trials(
         cache_config: object,
         error_config: object,
         display_config: object,
-    ) -> SimpleNamespace:
+    ) -> EvaluationResult:
         _ = (identifier, async_config, cache_config, error_config, display_config)
         seen_names.extend(str(c.name) for c in test_cases)
         # Return results in reverse completion order to ensure positional zip isn't used.
-        return SimpleNamespace(
+        return EvaluationResult(
             test_results=[
-                SimpleNamespace(
+                TestResult(
                     name="t2#t1",
+                    success=False,
+                    conversational=False,
                     metrics_data=[
-                        SimpleNamespace(
+                        _metric_data(
                             success=False,
                             score=0.0,
                             reason="bad2",
-                            error=None,
-                            verbose_logs=json.dumps(
+                            verdicts=[
                                 {
-                                    "verdicts": [
-                                        {
-                                            "id": "must[0]",
-                                            "status": "fail",
-                                            "reason": "no",
-                                            "evidence": "x",
-                                        }
-                                    ]
+                                    "id": "must[0]",
+                                    "status": "fail",
+                                    "reason": "no",
+                                    "evidence": "x",
                                 }
-                            ),
+                            ],
                         )
                     ],
                 ),
-                SimpleNamespace(
+                TestResult(
                     name="t1#t1",
+                    success=True,
+                    conversational=False,
                     metrics_data=[
-                        SimpleNamespace(
+                        _metric_data(
                             success=True,
                             score=1.0,
                             reason="ok1",
-                            error=None,
-                            verbose_logs=json.dumps(
+                            verdicts=[
                                 {
-                                    "verdicts": [
-                                        {
-                                            "id": "must[0]",
-                                            "status": "pass",
-                                            "reason": "yes",
-                                            "evidence": "y",
-                                        }
-                                    ]
+                                    "id": "must[0]",
+                                    "status": "pass",
+                                    "reason": "yes",
+                                    "evidence": "y",
                                 }
-                            ),
+                            ],
                         )
                     ],
                 ),
-            ]
+            ],
+            confident_link=None,
+            test_run_id=None,
         )
 
     def fake_judge(
@@ -364,9 +392,12 @@ def test_grade_trials_matches_by_name_and_zeros_empty_trials(
         api_key="k",
     )
     assert seen_names == ["t1#t1", "t2#t1"]
-    assert graded[0].passed is False and graded[0].rubric_score == 0.0
-    assert graded[1].passed is True and graded[1].judge_reason == "ok1"
-    assert graded[2].passed is False and graded[2].judge_reason == "bad2"
+    assert graded[0].passed is False
+    assert graded[0].rubric_score == 0.0
+    assert graded[1].passed is True
+    assert graded[1].judge_reason == "ok1"
+    assert graded[2].passed is False
+    assert graded[2].judge_reason == "bad2"
 
 
 def test_wait_for_run_survives_cancel_read_timeout(
@@ -425,14 +456,15 @@ def test_execute_trial_isolates_http_error(monkeypatch: pytest.MonkeyPatch) -> N
         execute_trial(
             AgentEvalConfig(name="test"),
             "http://test",
-            ("wid", {}, {}, {}),
+            WorkspaceContext("wid", {}, {}, {}),
             task,
             trial=1,
             idx=0,
         )
     )
     assert art.status == "error"
-    assert art.error_code and "ConnectError" in art.error_code
+    assert art.error_code
+    assert "ConnectError" in art.error_code
     assert art.task_id == "t-err"
 
 
@@ -517,8 +549,8 @@ def test_collect_outputs_keeps_only_final_message_chat_attachments() -> None:
                 "/v1/workspaces/w1/letas/a1",
                 "a1",
                 "conv-1",
-                {"shared": "/shared"},
-                {("shared", "sroot"): "/shared"},
+                storage_prefixes={"shared": "/shared"},
+                path_cache={("shared", "sroot"): "/shared"},
             )
             return atts
 

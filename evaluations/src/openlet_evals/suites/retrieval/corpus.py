@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import posixpath
+import shutil
 import socket
 import subprocess
 import time
 from collections import Counter, defaultdict
-from collections.abc import Sequence
-from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import NAMESPACE_URL, uuid5
 
 import httpx
@@ -20,6 +21,10 @@ from openlet_env.cache import CACHE_DIR
 from openlet_env.models import CacheMetadata
 from pydantic import TypeAdapter
 from qdrant_client import QdrantClient, models
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from pathlib import Path
 
 _EMBED_CACHE_ADAPTER = TypeAdapter(dict[str, list[float]])
 
@@ -154,14 +159,19 @@ class EphemeralQdrant:
         self._dimensions = dimensions
         self._image = image
         self._name = ""
+        self._docker_bin = shutil.which("docker") or "docker"
         self._client: QdrantClient | None = None
 
     def __enter__(self) -> QdrantClient:
+        docker_bin = shutil.which("docker")
+        if docker_bin is None:
+            raise FileNotFoundError("docker executable not found on PATH")
+        self._docker_bin = docker_bin
         hp, gp = _free_port(), _free_port()
         self._name = f"openlet-eval-qdrant-{hp}"
-        subprocess.run(
+        subprocess.run(  # noqa: S603  # Trusted local docker CLI for ephemeral Qdrant test container.
             [
-                "docker",
+                docker_bin,
                 "run",
                 "-d",
                 "--rm",
@@ -177,14 +187,12 @@ class EphemeralQdrant:
             stdout=subprocess.DEVNULL,
         )
         for _ in range(75):
-            try:
+            with contextlib.suppress(httpx.HTTPError):
                 if (
                     httpx.get(f"http://127.0.0.1:{hp}/readyz", timeout=2.0).status_code
                     == 200
                 ):
                     break
-            except Exception:
-                pass
             time.sleep(0.2)
         else:
             self.__exit__(None, None, None)
@@ -219,8 +227,8 @@ class EphemeralQdrant:
             self._client.close()
             self._client = None
         if self._name:
-            subprocess.run(
-                ["docker", "rm", "-f", self._name],
+            subprocess.run(  # noqa: S603  # Trusted local docker CLI cleaning up ephemeral Qdrant container.
+                [self._docker_bin, "rm", "-f", self._name],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 check=False,

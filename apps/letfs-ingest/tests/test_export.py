@@ -1,8 +1,10 @@
+from __future__ import annotations
+
 import csv
 import zipfile
 from copy import deepcopy
 from io import BytesIO, StringIO
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import openpyxl
 import pytest
@@ -10,19 +12,23 @@ from letfs_ingest.convert import (
     PDF_MEDIA,
     PPTX_MEDIA,
     XLSX_MEDIA,
-    InvalidDocument,
+    InvalidDocumentError,
     convert,
     preflight,
     validate_output,
 )
 from lxml import etree
-from openlet_sdk.config import Config
 from PIL import Image, ImageDraw
 from pptx import Presentation
 from pptx.chart.data import ChartData
 from pptx.enum.chart import XL_CHART_TYPE
 from pptx.util import Inches
 from pypdf import PdfWriter
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from openlet_sdk.config import Config
 
 
 def _textured_png(size: tuple[int, int] = (120, 80), accent: str = "navy") -> bytes:
@@ -97,7 +103,8 @@ def test_powerpoint_extracts_charts_notes_groups_and_drops_noise_images(
 
     combined = "\n".join(p.read_text() for p in out.glob("*.md"))
     assert "Sales Review" in combined
-    assert "### Chart" in combined and "| Q1 | 100.0 |" in combined
+    assert "### Chart" in combined
+    assert "| Q1 | 100.0 |" in combined
     assert "> Speaker Notes: Focus on Q2 surge" in combined
 
     saved_images = list((out / "images").glob("*"))
@@ -238,7 +245,7 @@ def test_input_limits_reject_expanded_office_and_oversized_spreadsheet(
     small_zip = tmp_path / "large.pptx"
     with zipfile.ZipFile(small_zip, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("ppt/slides/slide1.xml", etree.tostring(etree.Element("sld")) * 20)
-    with pytest.raises(InvalidDocument, match="expanded size"):
+    with pytest.raises(InvalidDocumentError, match="expanded size"):
         preflight(small_zip, PPTX_MEDIA, cfg)
 
     cfg = deepcopy(config)
@@ -252,7 +259,7 @@ def test_input_limits_reject_expanded_office_and_oversized_spreadsheet(
     xlsx_path = tmp_path / "cells.xlsx"
     wb.save(xlsx_path)
     wb.close()
-    with pytest.raises(InvalidDocument, match="cell count"):
+    with pytest.raises(InvalidDocumentError, match="cell count"):
         preflight(xlsx_path, XLSX_MEDIA, cfg)
 
 
@@ -262,7 +269,7 @@ def test_conversion_rejects_text_limit_before_publish(
     cfg = deepcopy(config)
     cfg["services"]["letfs"]["processing"]["max_manifest_text_bytes"] = 10
     (tmp_path / "README.md").write_text("more than ten bytes")
-    with pytest.raises(InvalidDocument, match="max_manifest_text_bytes"):
+    with pytest.raises(InvalidDocumentError, match="max_manifest_text_bytes"):
         validate_output(tmp_path, cfg)
 
 
@@ -282,17 +289,17 @@ def test_pdf_preflight_validates_pages_pixels_and_corrupt_files(
     preflight(ok_pdf, PDF_MEDIA, cfg)
 
     cfg["services"]["letfs_ingest"]["cpu"]["limits"]["max_pages"] = 1
-    with pytest.raises(InvalidDocument, match="exceeding limit 1"):
+    with pytest.raises(InvalidDocumentError, match="exceeding limit 1"):
         preflight(ok_pdf, PDF_MEDIA, cfg)
 
     cfg["services"]["letfs_ingest"]["cpu"]["limits"]["max_pages"] = 2
     cfg["services"]["letfs_ingest"]["cpu"]["limits"]["max_page_pixels"] = 50_000
-    with pytest.raises(InvalidDocument, match="pixel limit"):
+    with pytest.raises(InvalidDocumentError, match="pixel limit"):
         preflight(ok_pdf, PDF_MEDIA, cfg)
 
     bad_pdf = tmp_path / "bad.pdf"
     bad_pdf.write_bytes(b"not a pdf")
-    with pytest.raises(InvalidDocument, match="invalid PDF"):
+    with pytest.raises(InvalidDocumentError, match="invalid PDF"):
         preflight(bad_pdf, PDF_MEDIA, cfg)
 
 

@@ -1,10 +1,16 @@
-from collections.abc import Sequence
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from letfs_ingest.index import index, points
 from openlet_api.letfs.v1 import internal_pb2 as internal
 from openlet_api.letfs.v1 import letfs_pb2 as letfs
-from openlet_sdk.config import Config
-from qdrant_client import models
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from openlet_sdk.config import Config
+    from qdrant_client import models
 
 
 async def test_index_uses_content_scoped_payload_and_clears_old_blob_points(
@@ -105,7 +111,8 @@ async def test_index_uses_content_scoped_payload_and_clears_old_blob_points(
 
     await index(info, FakeAI(), FakeQdrant(), config)
     assert len(deleted) == 1
-    assert len(upserts) == 1 and len(upserts[0]) == 3
+    assert len(upserts) == 1
+    assert len(upserts[0]) == 3
 
 
 def test_standalone_image_and_multichunk_markdown_points(config: Config) -> None:
@@ -145,7 +152,8 @@ def test_standalone_image_and_multichunk_markdown_points(config: Config) -> None
     )
     multi_pts = points(multi, config)
     kinds = [p["kind"] for _, p in multi_pts]
-    assert kinds[0] == "text" and kinds.count("text_chunk") >= 2
+    assert kinds[0] == "text"
+    assert kinds.count("text_chunk") >= 2
 
     with_header = internal.GetBlobArtifactsResponse(
         workspace_id="ws-1",

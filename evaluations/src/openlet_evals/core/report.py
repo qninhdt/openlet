@@ -3,15 +3,22 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
-from pathlib import Path
+from typing import TYPE_CHECKING
 
-from openlet_sdk.types import is_mapping
-from pydantic import BaseModel, ConfigDict, Field
+from openlet_sdk.types import JsonObject, MutableJsonObject
+from pydantic import BaseModel, ConfigDict, Field, SerializeAsAny
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+    from pathlib import Path
+
+type TelemetryValue = int | float | str | dict[str, int]
 
 
 class EvalSample(BaseModel):
+    """Per-sample evaluation score record."""
+
     model_config = ConfigDict(extra="allow")
 
     id: str
@@ -20,27 +27,29 @@ class EvalSample(BaseModel):
 
 
 class EvalRun(BaseModel):
+    """Aggregated evaluation run summary, config snapshot, and sample rows."""
+
     suite: str
     name: str
     created_at: str
     wall_s: float
     sample_count: int
-    config: dict[str, object] = Field(default_factory=dict)
+    config: MutableJsonObject = Field(default_factory=dict)
     metrics: dict[str, float] = Field(default_factory=dict)
     perfect: dict[str, int] = Field(default_factory=dict)
     by_group: dict[str, dict[str, int | float]] = Field(default_factory=dict)
-    samples: list[EvalSample] = Field(default_factory=list[EvalSample])
-    telemetry: dict[str, object] | None = None
+    samples: list[SerializeAsAny[EvalSample]] = Field(default_factory=list[EvalSample])
+    telemetry: dict[str, TelemetryValue] | None = None
 
 
 def build_run(
     *,
     suite: str,
     name: str,
-    config: Mapping[str, object],
+    config: JsonObject,
     samples: Sequence[EvalSample],
     wall_s: float,
-    telemetry: Mapping[str, object] | None = None,
+    telemetry: Mapping[str, TelemetryValue] | None = None,
 ) -> EvalRun:
     """Aggregate overall and per-group metrics across evaluation samples."""
     sample_list = list(samples)
@@ -86,6 +95,7 @@ def build_run(
 
 
 def save_run(run: EvalRun, path: Path) -> None:
+    """Serialize an ``EvalRun`` to JSON at ``path``."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         run.model_dump_json(indent=2, exclude_none=True) + "\n", encoding="utf-8"
@@ -93,16 +103,18 @@ def save_run(run: EvalRun, path: Path) -> None:
 
 
 def load_run(path: Path) -> EvalRun:
+    """Load an ``EvalRun`` from a saved JSON file."""
     return EvalRun.model_validate_json(path.read_text(encoding="utf-8"))
 
 
-def _fmt(value: object) -> str:
-    if is_mapping(value):
+def _fmt(value: TelemetryValue) -> str:
+    if isinstance(value, dict):
         return ", ".join(f"{k}={v}" for k, v in value.items()) or "-"
     return f"{value:.4f}" if isinstance(value, float) else str(value)
 
 
 def render_markdown(run: EvalRun) -> str:
+    """Render an ``EvalRun`` as a Markdown summary table."""
     n = run.sample_count
     metrics = run.metrics
     perfect = run.perfect
@@ -148,13 +160,15 @@ def render_markdown(run: EvalRun) -> str:
 
 
 def _diff_table(
-    base_map: Mapping[str, object], cand_map: Mapping[str, object], keys: list[str]
+    base_map: Mapping[str, int | float],
+    cand_map: Mapping[str, int | float],
+    keys: list[str],
 ) -> list[str]:
     rows = ["| Metric | Base | Candidate | Delta |", "|---|---:|---:|---:|"]
     for k in keys:
         bv, cv = base_map.get(k), cand_map.get(k)
-        b = float(bv) if isinstance(bv, int | float) else None
-        c = float(cv) if isinstance(cv, int | float) else None
+        b = float(bv) if bv is not None else None
+        c = float(cv) if cv is not None else None
         delta = f"{c - b:+.4f}" if (b is not None and c is not None) else "n/a"
         rows.append(
             f"| `{k}` | `{f'{b:.4f}' if b is not None else 'n/a'}` | "
@@ -164,6 +178,7 @@ def _diff_table(
 
 
 def diff_runs(base: EvalRun, cand: EvalRun, *, metric: str | None = None) -> str:
+    """Render a Markdown comparison between ``base`` and ``cand`` evaluation runs."""
     keys = list(dict.fromkeys([*base.metrics, *cand.metrics]))
     lines = [
         f"# Eval Diff: `{base.name}` → `{cand.name}`",
@@ -172,15 +187,20 @@ def diff_runs(base: EvalRun, cand: EvalRun, *, metric: str | None = None) -> str
     ]
     b_tel = base.telemetry or {}
     c_tel = cand.telemetry or {}
-    tel_keys = [
-        k
-        for k in dict.fromkeys([*b_tel, *c_tel])
-        if isinstance(b_tel.get(k), int | float)
-        or isinstance(c_tel.get(k), int | float)
-    ]
+    b_num: dict[str, int | float] = {
+        k: v
+        for k, v in b_tel.items()
+        if isinstance(v, int | float) and not isinstance(v, bool)
+    }
+    c_num: dict[str, int | float] = {
+        k: v
+        for k, v in c_tel.items()
+        if isinstance(v, int | float) and not isinstance(v, bool)
+    }
+    tel_keys = list(dict.fromkeys([*b_num, *c_num]))
     if tel_keys:
         lines.extend(
-            ["", "## Telemetry Diff", "", *_diff_table(b_tel, c_tel, tel_keys)]
+            ["", "## Telemetry Diff", "", *_diff_table(b_num, c_num, tel_keys)]
         )
 
     focus = metric or (

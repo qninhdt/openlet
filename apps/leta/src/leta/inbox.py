@@ -1,24 +1,29 @@
+"""Database-backed unified inbox gateway for agents, channels, HITL, and schedules."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 from openlet_sdk.config import JSON
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, ConfigDict, Field
-from temporalio.client import Client as TemporalClient
 
-from .activity import ActivityEmitter
-from .db import Pool, hydrate
-from .hitl.models import (
+from leta.db import Pool, hydrate
+from leta.hitl.models import (
     ApprovalPayload,
     ApprovalResponse,
     AskPayload,
     AskResponse,
     HitlOutcome,
 )
+
+if TYPE_CHECKING:
+    from temporalio.client import Client as TemporalClient
+
+    from leta.activity import ActivityEmitter
 
 type InboxKind = Literal[
     "channel", "reaction", "agent", "hitl", "schedule", "notification"
@@ -27,6 +32,8 @@ type DeliveryState = Literal["pending", "previewed", "delivered"]
 
 
 class InboxSender(BaseModel):
+    """Sender identity attached to an inbox item."""
+
     type: Literal["user", "agent", "system"]
     id: str
     name: str = ""
@@ -34,6 +41,8 @@ class InboxSender(BaseModel):
 
 
 class InboxAttachment(BaseModel):
+    """File or media attachment metadata carried by an inbox item."""
+
     storage_id: str = ""
     node_id: str = ""
     name: str = ""
@@ -48,9 +57,18 @@ class InboxMetadata(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     # channel / chat
+    workspace_id: str = ""
+    conversation_id: str = ""
+    conversation_type: str = ""
+    handle: str | None = None
     message_id: str = ""
     reply_to_message_id: str | None = None
     seq: int | None = None
+    mentions: list[dict[str, JSON]] = Field(default_factory=list[dict[str, JSON]])
+    metadata: dict[str, JSON] | None = None
+    # agent / subagent
+    from_handle: str = ""
+    spawned_by: str = ""
     # schedule
     schedule_id: str = ""
     title: str = ""
@@ -75,6 +93,8 @@ class InboxMetadata(BaseModel):
 
 
 class InboxRecord(BaseModel):
+    """Hydrated inbox item row persisted in PostgreSQL."""
+
     seq: int
     kind: InboxKind
     channel: str | None = None
@@ -89,6 +109,8 @@ class InboxRecord(BaseModel):
 
 
 class InboxItem(BaseModel):
+    """Validated input item submitted to InboxGateway.deliver."""
+
     agent_id: UUID
     idempotency_key: str = Field(min_length=1)
     kind: InboxKind
@@ -96,13 +118,15 @@ class InboxItem(BaseModel):
     reply_address: str | None = None
     sender: InboxSender
     content: str
-    attachments: list[dict[str, JSON]] = Field(default_factory=list[dict[str, JSON]])
-    metadata: dict[str, JSON] = Field(default_factory=dict[str, JSON])
+    attachments: list[InboxAttachment] = Field(default_factory=list[InboxAttachment])
+    metadata: InboxMetadata = Field(default_factory=InboxMetadata)
     silent: bool = False
 
 
 @dataclass(frozen=True, slots=True)
 class DeliveryResult:
+    """Outcome of an idempotent inbox delivery attempt."""
+
     delivered: bool
     skipped: bool
     seq: int | None
@@ -131,6 +155,7 @@ class InboxGateway:
         self.activity = activity
 
     async def deliver(self, item: InboxItem) -> DeliveryResult:
+        """Persist an inbox item idempotently and wake the target AgentWorkflow if non-silent."""
         async with self.db.connection() as conn, conn.transaction():
             agent = await (
                 await conn.execute(
@@ -167,7 +192,10 @@ class InboxGateway:
                         (item.agent_id,),
                     )
                 ).fetchone()
-                assert row is not None
+                if row is None:
+                    raise RuntimeError(
+                        f"Agent {item.agent_id} missing when incrementing inbox_seq"
+                    )
                 seq = int(row["inbox_seq"])
                 await conn.execute(
                     """
@@ -185,8 +213,10 @@ class InboxGateway:
                         item.reply_address,
                         Jsonb(item.sender.model_dump()),
                         item.content,
-                        Jsonb(item.attachments),
-                        Jsonb(item.metadata),
+                        Jsonb([a.model_dump() for a in item.attachments]),
+                        Jsonb(
+                            item.metadata.model_dump(mode="json", exclude_unset=True)
+                        ),
                         item.silent,
                     ),
                 )
@@ -194,7 +224,10 @@ class InboxGateway:
             leta_id = UUID(str(agent["leta_id"]))
 
         if not item.silent and self.temporal is not None:
-            from .orchestration.agent_workflow import AgentWorkflow, AgentWorkflowState
+            from leta.orchestration.agent_workflow import (  # noqa: PLC0415  # Avoids circular import with orchestration
+                AgentWorkflow,
+                AgentWorkflowState,
+            )
 
             await self.temporal.start_workflow(
                 AgentWorkflow.run,
@@ -230,6 +263,7 @@ class InboxGateway:
     async def fetch_pending(
         self, agent_id: UUID, *, include_previewed: bool
     ) -> list[InboxRecord]:
+        """Return ordered pending (and optionally previewed) inbox items for an agent."""
         async with self.db.connection() as conn:
             if include_previewed:
                 rows = await (
@@ -266,6 +300,7 @@ class InboxGateway:
         delivered_seqs: list[int],
         previewed_seqs: list[int],
     ) -> None:
+        """Transition inbox item delivery states for the specified sequence numbers."""
         if not delivered_seqs and not previewed_seqs:
             return
         async with self.db.connection() as conn, conn.transaction():
@@ -289,6 +324,7 @@ class InboxGateway:
                 )
 
     async def has_pending(self, agent_id: UUID) -> bool:
+        """Return whether the agent has any unconsumed pending inbox items."""
         async with self.db.connection() as conn:
             row = await (
                 await conn.execute(
@@ -304,6 +340,7 @@ class InboxGateway:
         return row is not None
 
     async def mark_channel_delivered(self, agent_id: UUID, reply_address: str) -> None:
+        """Promote previewed items matching reply_address to delivered."""
         async with self.db.connection() as conn:
             await conn.execute(
                 """
@@ -317,6 +354,7 @@ class InboxGateway:
     async def compute_wake_cursors(
         self, agent_id: UUID, final_cursor: int
     ) -> tuple[int, int]:
+        """Compute (reported_cursor, latest_wake_seq) for workflow state convergence."""
         async with self.db.connection() as conn:
             row = await (
                 await conn.execute(

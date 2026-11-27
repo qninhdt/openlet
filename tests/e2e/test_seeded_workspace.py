@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
-import httpx
-from openlet_env import Environment
+from typing import TYPE_CHECKING
 
-from .conftest import DATASET_DIR, json_object, json_object_list, poll
+import httpx
+
+from .conftest import DATASET_DIR, ReadTreeResponse, poll
+
+if TYPE_CHECKING:
+    from openlet_env import Environment
 
 
 def test_seeded_workspace_acls_artifacts_search_and_unseed(
@@ -85,12 +89,11 @@ def test_seeded_workspace_acls_artifacts_search_and_unseed(
                 json={"root": {"nodeId": pdf_id}, "maxDepth": 4, "maxNodes": 50},
             )
             assert tree.is_success, tree.text
-            entries = json_object_list(json_object(tree.json())["entries"])
-            readme = next((e for e in entries if e.get("path") == "README.md"), None)
+            entries = ReadTreeResponse.model_validate(tree.json()).entries
+            readme = next((e for e in entries if e.path == "README.md"), None)
             assert readme is not None
-            readme_node = json_object(readme["node"])
             artifact_text = alice_api.get(
-                f"/v1/workspaces/{wid}/storages/{shared_id}/nodes/{readme_node['id']}/text"
+                f"/v1/workspaces/{wid}/storages/{shared_id}/nodes/{readme.node.id}/text"
             )
             assert "European expansion" in artifact_text.json()["content"]
 

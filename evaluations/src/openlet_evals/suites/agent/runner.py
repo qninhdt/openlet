@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import logging
 import re
 import time
 from collections import Counter
-from collections.abc import Mapping, Sequence
-from pathlib import Path
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -15,10 +16,16 @@ import httpx
 import jinja2
 from openlet_env import Environment
 from openlet_env.dataset import read_seed_specs
-from pydantic import BaseModel, ConfigDict, Field
+from openlet_sdk.types import JSON, MutableJsonObject
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 if TYPE_CHECKING:
-    from .suite import AgentEvalConfig, AgentTask
+    from collections.abc import Mapping, Sequence
+    from pathlib import Path
+
+    from openlet_evals.suites.agent.suite import AgentEvalConfig, AgentTask
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_PROMPT_TEMPLATE = """{{ task }}
 
@@ -31,7 +38,7 @@ Instructions:
 - In that final message, put ONLY the final deliverable/result file(s) in `attachments` (not inline mentions in text, and do not attach scratch files, scripts, intermediate drafts, or `/shared` source files).
 - Keep the final message text to a brief summary of what was completed; do not put the detailed analysis or findings in the message text."""
 
-_JINJA = jinja2.Environment(trim_blocks=True, lstrip_blocks=True, autoescape=False)
+_JINJA = jinja2.Environment(trim_blocks=True, lstrip_blocks=True, autoescape=False)  # noqa: S701  # LLM prompt template, not HTML.
 _LETFS_LINK_RE = re.compile(
     r"(?<!!)\[((?:\\.|[^\]\\\n]){1,1024})\]\(/letfs/([\w-]+)/([\w-]+)(?:/[^)\s]*)?\)"
 )
@@ -39,6 +46,8 @@ _TERMINAL_STATES = frozenset({"completed", "failed", "cancelled", "paused"})
 
 
 class RunUsage(BaseModel):
+    """Token, LLM call, and USD cost totals for one agent run."""
+
     input_tokens: int = 0
     cached_input_tokens: int = 0
     output_tokens: int = 0
@@ -48,13 +57,27 @@ class RunUsage(BaseModel):
 
 
 class ToolCallRecord(BaseModel):
+    """Single paired tool call and result extracted from activity history."""
+
     name: str
-    input_parameters: dict[str, object] = Field(default_factory=dict)
+    input_parameters: MutableJsonObject = Field(default_factory=dict)
     output: str | None = None
     status: str = "unknown"
 
 
+@dataclass(slots=True)
+class WorkspaceContext:
+    """Per-workspace auth headers and storage-node path resolution cache."""
+
+    workspace_id: str
+    headers: dict[str, str]
+    storage_prefixes: Mapping[str, str]
+    path_cache: dict[tuple[str, str], str]
+
+
 class ToolStats(BaseModel):
+    """Aggregated tool call counts, errors, and compactions for one trial."""
+
     total: int = 0
     errors: int = 0
     compactions: int = 0
@@ -62,6 +85,8 @@ class ToolStats(BaseModel):
 
 
 class MessageSource(BaseModel):
+    """Citation source attached to an assistant message."""
+
     model_config = ConfigDict(extra="allow")
 
     kind: str = ""
@@ -72,6 +97,8 @@ class MessageSource(BaseModel):
 
 
 class AssistantMessage(BaseModel):
+    """Normalized assistant message captured from a conversation."""
+
     id: str = ""
     content: str = ""
     sources: list[MessageSource] = Field(default_factory=list[MessageSource])
@@ -79,6 +106,8 @@ class AssistantMessage(BaseModel):
 
 
 class Attachment(BaseModel):
+    """Deliverable file attached to the agent's final message."""
+
     path: str
     mime: str | None = None
     size: int | None = None
@@ -86,6 +115,8 @@ class Attachment(BaseModel):
 
 
 class TrialArtifact(BaseModel):
+    """Full captured transcript, telemetry, and deliverables for one trial."""
+
     task_id: str
     workspace: str
     trial: int
@@ -105,13 +136,15 @@ class TrialArtifact(BaseModel):
 
 
 class _NodeResp(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
-    parentId: str | None = None
+    parent_id: str | None = Field(default=None, alias="parentId")
     name: str = ""
 
 
 class RunStatusResp(BaseModel):
+    """Run status and usage payload returned by the Leta runs API."""
+
     model_config = ConfigDict(extra="ignore")
 
     id: str = ""
@@ -132,22 +165,22 @@ class _RunsListResp(BaseModel):
 
 
 class _EnsureStorageResp(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
-    storageId: str = ""
-    rootNodeId: str = ""
+    storage_id: str = Field(default="", alias="storageId")
+    root_node_id: str = Field(default="", alias="rootNodeId")
 
 
 class _ChatAttachmentRef(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
-    storageId: str = ""
-    nodeId: str = ""
+    storage_id: str = Field(default="", alias="storageId")
+    node_id: str = Field(default="", alias="nodeId")
     name: str = ""
     kind: str = ""
-    mediaType: str = ""
+    media_type: str = Field(default="", alias="mediaType")
     mime: str = ""
-    sizeBytes: int | str | None = None
+    size_bytes: int | str | None = Field(default=None, alias="sizeBytes")
     size: int | str | None = None
 
 
@@ -158,11 +191,11 @@ class _ChatMessageMetadata(BaseModel):
 
 
 class _ChatMessageItem(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     id: str = ""
     seq: int = 0
-    senderType: str = ""
+    sender_type: str = Field(default="", alias="senderType")
     content: str = ""
     metadata: _ChatMessageMetadata = Field(default_factory=_ChatMessageMetadata)
     attachments: list[_ChatAttachmentRef] = Field(
@@ -171,10 +204,10 @@ class _ChatMessageItem(BaseModel):
 
 
 class _MessagesPageResp(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     messages: list[_ChatMessageItem] = Field(default_factory=list[_ChatMessageItem])
-    hasBefore: bool = False
+    has_before: bool = Field(default=False, alias="hasBefore")
 
 
 class _ActivityToolPayload(BaseModel):
@@ -182,14 +215,16 @@ class _ActivityToolPayload(BaseModel):
 
     tool_call_id: str = ""
     name: str = "unknown"
-    args: dict[str, object] = Field(default_factory=dict)
+    args: MutableJsonObject = Field(default_factory=dict)
     status: str = "success"
-    content: object | None = None
-    preview: object | None = None
-    text: object | None = None
+    content: JSON = None
+    preview: JSON = None
+    text: JSON = None
 
 
 class ActivityEventItem(BaseModel):
+    """Single agent activity stream item."""
+
     model_config = ConfigDict(extra="ignore")
 
     seq: int = 0
@@ -230,10 +265,10 @@ class _LetaStateResp(BaseModel):
 
 
 class _StorageSummary(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     id: str
-    rootNodeId: str = ""
+    root_node_id: str = Field(default="", alias="rootNodeId")
     visibility: str = ""
 
 
@@ -246,6 +281,8 @@ class _StoragesListResp(BaseModel):
 def resolve_inline_mentions(
     content: str, path_map: Mapping[tuple[str, str], str]
 ) -> str:
+    """Replace ``/letfs/<storage>/<node>`` links in Markdown with resolved paths."""
+
     def _sub_letfs(m: re.Match[str]) -> str:
         label = re.sub(r"\\(.)", r"\1", m.group(1))
         path = path_map.get((m.group(2), m.group(3)))
@@ -258,20 +295,16 @@ def resolve_inline_mentions(
 
 
 def parse_history(
-    entries: Sequence[ActivityEventItem | Mapping[str, object]],
+    entries: Sequence[ActivityEventItem],
 ) -> tuple[list[ToolCallRecord], ToolStats]:
     """Pair tool_call and tool_result activity rows + count compactions."""
-    normalized = [
-        e if isinstance(e, ActivityEventItem) else ActivityEventItem.model_validate(e)
-        for e in entries
-    ]
     by_id: dict[str, ToolCallRecord] = {}
     calls: list[ToolCallRecord] = []
     counts: Counter[str] = Counter()
     errors = 0
     compactions = 0
 
-    for entry in sorted(normalized, key=lambda e: e.seq):
+    for entry in sorted(entries, key=lambda e: e.seq):
         ev_type = entry.type or entry.kind
         p = entry.data if entry.data is not None else entry.payload
         if p is None:
@@ -335,6 +368,7 @@ async def _resolve_path(
     wid: str,
     prefixes: Mapping[str, str],
     cache: dict[tuple[str, str], str],
+    *,
     sid: str,
     nid: str,
 ) -> str | None:
@@ -347,11 +381,11 @@ async def _resolve_path(
     if not r.is_success:
         return None
     node = _NodeResp.model_validate(r.json())
-    if not node.parentId:
+    if not node.parent_id:
         path = prefix
     else:
         parent_path = await _resolve_path(
-            client, wid, prefixes, cache, sid, node.parentId
+            client, wid, prefixes, cache, sid=sid, nid=node.parent_id
         )
         path = f"{(parent_path or prefix).rstrip('/')}/{node.name or nid}"
     cache[(sid, nid)] = path
@@ -361,6 +395,7 @@ async def _resolve_path(
 async def wait_for_run(
     client: httpx.AsyncClient, root_path: str, agent_id: str, timeout_s: float
 ) -> tuple[RunStatusResp, bool]:
+    """Poll the agent's latest run until terminal status or timeout cancellation."""
     deadline = time.monotonic() + timeout_s
     run_id: str | None = None
     run_row = RunStatusResp()
@@ -385,14 +420,12 @@ async def wait_for_run(
         await asyncio.sleep(1.0)
 
     if run_id:
-        try:
+        with contextlib.suppress(httpx.HTTPError):
             await client.post(
                 f"{root_path}/agents/{agent_id}/cancel",
                 json={"run_id": run_id},
                 timeout=15.0,
             )
-        except httpx.HTTPError:
-            pass
         await asyncio.sleep(1.0)
         try:
             resp = await client.get(
@@ -405,27 +438,9 @@ async def wait_for_run(
     return run_row, True
 
 
-async def collect_outputs(
-    client: httpx.AsyncClient,
-    wid: str,
-    root_path: str,
-    leta_id: str,
-    conv_id: str,
-    storage_prefixes: Mapping[str, str],
-    path_cache: dict[tuple[str, str], str],
-) -> tuple[list[AssistantMessage], list[Attachment], list[ToolCallRecord], ToolStats]:
-    prefixes = dict(storage_prefixes)
-    conv_sid: str | None = None
-    conv = await client.post(
-        f"/v1/workspaces/{wid}/conversations/{conv_id}:ensureStorage", json={}
-    )
-    if conv.is_success:
-        cd = _EnsureStorageResp.model_validate(conv.json())
-        conv_sid = cd.storageId
-        if conv_sid and cd.rootNodeId:
-            prefixes[conv_sid] = "/chat"
-            path_cache[(conv_sid, cd.rootNodeId)] = "/chat"
-
+async def _fetch_agent_messages(
+    client: httpx.AsyncClient, wid: str, conv_id: str
+) -> list[_ChatMessageItem]:
     raw_msgs: list[_ChatMessageItem] = []
     before_seq: int | None = None
     while True:
@@ -439,16 +454,20 @@ async def collect_outputs(
         page = _MessagesPageResp.model_validate(r.json())
         if not page.messages:
             break
-        raw_msgs.extend(m for m in page.messages if m.senderType == "agent")
-        if not page.hasBefore:
+        raw_msgs.extend(m for m in page.messages if m.sender_type == "agent")
+        if not page.has_before:
             break
         seqs = [m.seq for m in page.messages if m.seq > 0]
         if not seqs or min(seqs) <= 1:
             break
         before_seq = min(seqs)
-
     raw_msgs.sort(key=lambda m: (m.seq, m.id))
+    return raw_msgs
 
+
+async def _fetch_activity_events(
+    client: httpx.AsyncClient, root_path: str, leta_id: str
+) -> list[ActivityEventItem]:
     activity: list[ActivityEventItem] = []
     after = 0
     while True:
@@ -465,7 +484,58 @@ async def collect_outputs(
         if len(items) < 100 or max_seq <= after:
             break
         after = max_seq
+    return activity
 
+
+async def _download_attachment(
+    client: httpx.AsyncClient,
+    wid: str,
+    ref: _ChatAttachmentRef,
+    path: str,
+) -> Attachment:
+    text: str | None = None
+    if ref.kind != "folder":
+        tr = await client.get(
+            f"/v1/workspaces/{wid}/storages/{ref.storage_id}/nodes/{ref.node_id}:download"
+        )
+        if tr.is_success:
+            dl = _DownloadResp.model_validate(tr.json())
+            if dl.text is not None and dl.text.content is not None:
+                text = dl.text.content
+    raw_sz = ref.size_bytes if ref.size_bytes is not None else ref.size
+    return Attachment(
+        path=path,
+        mime=(ref.media_type or ref.mime) or None,
+        size=int(raw_sz) if raw_sz is not None else None,
+        text=text,
+    )
+
+
+async def collect_outputs(
+    client: httpx.AsyncClient,
+    wid: str,
+    root_path: str,
+    leta_id: str,
+    conv_id: str,
+    *,
+    storage_prefixes: Mapping[str, str],
+    path_cache: dict[tuple[str, str], str],
+) -> tuple[list[AssistantMessage], list[Attachment], list[ToolCallRecord], ToolStats]:
+    """Collect agent messages, final attachments, and tool history for a finished run."""
+    prefixes = dict(storage_prefixes)
+    conv_sid: str | None = None
+    conv = await client.post(
+        f"/v1/workspaces/{wid}/conversations/{conv_id}:ensureStorage", json={}
+    )
+    if conv.is_success:
+        cd = _EnsureStorageResp.model_validate(conv.json())
+        conv_sid = cd.storage_id
+        if conv_sid and cd.root_node_id:
+            prefixes[conv_sid] = "/chat"
+            path_cache[(conv_sid, cd.root_node_id)] = "/chat"
+
+    raw_msgs = await _fetch_agent_messages(client, wid, conv_id)
+    activity = await _fetch_activity_events(client, root_path, leta_id)
     tool_calls, tool_stats = parse_history(activity)
     messages: list[AssistantMessage] = []
     attachments: list[Attachment] = []
@@ -476,7 +546,12 @@ async def collect_outputs(
         is_final = idx == last_idx
         for match in _LETFS_LINK_RE.finditer(m.content):
             await _resolve_path(
-                client, wid, prefixes, path_cache, match.group(2), match.group(3)
+                client,
+                wid,
+                prefixes,
+                path_cache,
+                sid=match.group(2),
+                nid=match.group(3),
             )
 
         sources: list[MessageSource] = []
@@ -485,40 +560,23 @@ async def collect_outputs(
                 sources.append(s)
                 continue
             resolved = await _resolve_path(
-                client, wid, prefixes, path_cache, s.storage_id, s.node_id
+                client, wid, prefixes, path_cache, sid=s.storage_id, nid=s.node_id
             )
             sources.append(s.model_copy(update={"path": resolved or s.path or s.label}))
 
         att_paths: list[str] = []
         for ref in m.attachments:
-            sid = ref.storageId
-            nid = ref.nodeId
+            sid = ref.storage_id
+            nid = ref.node_id
             name = ref.name or nid
             path = (
-                await _resolve_path(client, wid, prefixes, path_cache, sid, nid)
+                await _resolve_path(client, wid, prefixes, path_cache, sid=sid, nid=nid)
                 or f"/chat/{name}"
             )
             att_paths.append(path)
             if is_final and conv_sid and sid == conv_sid and (sid, nid) not in seen_att:
                 seen_att.add((sid, nid))
-                text: str | None = None
-                if ref.kind != "folder":
-                    tr = await client.get(
-                        f"/v1/workspaces/{wid}/storages/{sid}/nodes/{nid}:download"
-                    )
-                    if tr.is_success:
-                        dl = _DownloadResp.model_validate(tr.json())
-                        if dl.text is not None and dl.text.content is not None:
-                            text = dl.text.content
-                raw_sz = ref.sizeBytes if ref.sizeBytes is not None else ref.size
-                attachments.append(
-                    Attachment(
-                        path=path,
-                        mime=(ref.mediaType or ref.mime) or None,
-                        size=int(raw_sz) if raw_sz is not None else None,
-                        text=text,
-                    )
-                )
+                attachments.append(await _download_attachment(client, wid, ref, path))
         messages.append(
             AssistantMessage(
                 id=m.id,
@@ -530,15 +588,32 @@ async def collect_outputs(
     return messages, attachments, tool_calls, tool_stats
 
 
+async def _wait_for_active_leta(
+    client: httpx.AsyncClient, root: str, leta_id: str, timeout_s: float = 60.0
+) -> None:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        st = await client.get(root)
+        if st.is_success and _LetaStateResp.model_validate(st.json()).state == "active":
+            return
+        await asyncio.sleep(0.5)
+    raise TimeoutError(f"Leta {leta_id} did not become active within {timeout_s:g}s")
+
+
 async def execute_trial(
     cfg: AgentEvalConfig,
     api_url: str,
-    ws_ctx: tuple[str, dict[str, str], Mapping[str, str], dict[tuple[str, str], str]],
+    ws_ctx: WorkspaceContext,
     task: AgentTask,
+    *,
     trial: int,
     idx: int,
 ) -> TrialArtifact:
-    wid, headers, storage_prefixes, path_cache = ws_ctx
+    """Provision an ephemeral Leta agent, run one task trial, and capture outputs."""
+    wid = ws_ctx.workspace_id
+    headers = ws_ctx.headers
+    storage_prefixes = ws_ctx.storage_prefixes
+    path_cache = ws_ctx.path_cache
     t0 = time.perf_counter()
     leta_id: str | None = None
     async with httpx.AsyncClient(
@@ -559,18 +634,7 @@ async def execute_trial(
             res.raise_for_status()
             leta_id = _IdResp.model_validate(res.json()).id
             root = f"/v1/workspaces/{wid}/letas/{leta_id}"
-
-            deadline = time.monotonic() + 60.0
-            while time.monotonic() < deadline:
-                st = await client.get(root)
-                if (
-                    st.is_success
-                    and _LetaStateResp.model_validate(st.json()).state == "active"
-                ):
-                    break
-                await asyncio.sleep(0.5)
-            else:
-                raise TimeoutError(f"Leta {leta_id} did not become active within 60s")
+            await _wait_for_active_leta(client, root, leta_id)
 
             dm_resp = await client.post(
                 f"/v1/workspaces/{wid}/conversations:dm",
@@ -593,7 +657,13 @@ async def execute_trial(
             )
             latency_s = round(time.perf_counter() - t0, 3)
             messages, attachments, tool_calls, tool_stats = await collect_outputs(
-                client, wid, root, leta_id, conv_id, storage_prefixes, path_cache
+                client,
+                wid,
+                root,
+                leta_id,
+                conv_id,
+                storage_prefixes=storage_prefixes,
+                path_cache=path_cache,
             )
             return TrialArtifact(
                 task_id=task.id,
@@ -620,7 +690,14 @@ async def execute_trial(
                 attachments=attachments,
                 deliverable=render_deliverable(attachments),
             )
-        except Exception as exc:
+        except (
+            httpx.HTTPError,
+            ValidationError,
+            TimeoutError,
+            ValueError,
+            RuntimeError,
+        ) as exc:
+            logger.warning("Trial %s#%s failed", task.id, trial, exc_info=True)
             return TrialArtifact(
                 task_id=task.id,
                 workspace=task.workspace,
@@ -635,15 +712,13 @@ async def execute_trial(
             )
         finally:
             if leta_id:
-                try:
+                with contextlib.suppress(httpx.HTTPError):
                     await client.request(
                         "DELETE",
                         f"/v1/workspaces/{wid}/letas/{leta_id}",
                         json={"request_id": str(uuid4())},
                         timeout=15.0,
                     )
-                except httpx.HTTPError:
-                    pass
 
 
 def run_trials(
@@ -677,10 +752,7 @@ def run_trials(
         owners = {s.handle: s.manifest.owner for s in specs}
 
         async def _run_all() -> list[TrialArtifact]:
-            ws_ctx: dict[
-                str,
-                tuple[str, dict[str, str], dict[str, str], dict[tuple[str, str], str]],
-            ] = {}
+            ws_ctx: dict[str, WorkspaceContext] = {}
             for slug in workspaces:
                 wid = env.state.seeded_workspaces[slug]
                 token = env.token(owners[slug], ttl_seconds=12 * 3600)
@@ -699,8 +771,13 @@ def run_trials(
                     for st in _StoragesListResp.model_validate(r.json()).storages:
                         if st.visibility == "STORAGE_VISIBILITY_PUBLIC":
                             prefixes[st.id] = "/shared"
-                            cache[(st.id, st.rootNodeId)] = "/shared"
-                ws_ctx[slug] = (wid, headers, prefixes, cache)
+                            cache[(st.id, st.root_node_id)] = "/shared"
+                ws_ctx[slug] = WorkspaceContext(
+                    workspace_id=wid,
+                    headers=headers,
+                    storage_prefixes=prefixes,
+                    path_cache=cache,
+                )
 
             sem = asyncio.Semaphore(cfg.concurrency)
             jobs = [
@@ -713,7 +790,7 @@ def run_trials(
             async def _bounded(t: AgentTask, tr: int, i: int) -> TrialArtifact:
                 async with sem:
                     return await execute_trial(
-                        cfg, api_url, ws_ctx[t.workspace], t, tr, i
+                        cfg, api_url, ws_ctx[t.workspace], t, trial=tr, idx=i
                     )
 
             return list(

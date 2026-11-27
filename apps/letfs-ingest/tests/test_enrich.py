@@ -1,15 +1,19 @@
-from collections.abc import Sequence
-from io import BytesIO
-from typing import override
+from __future__ import annotations
 
-import pytest
+from io import BytesIO
+from typing import TYPE_CHECKING, override
+
 from letfs_ingest.enrich import enrich
 from letfs_ingest.naming import artifact_paths, rewrite_artifact_links, rich_csv_paths
 from letfs_ingest.providers import ArtifactEnrichment, EnrichItem
 from openlet_api.letfs.v1 import internal_pb2 as internal
 from openlet_api.letfs.v1 import letfs_pb2 as letfs
-from openlet_sdk.config import Config
 from PIL import Image, ImageDraw
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from openlet_sdk.config import Config
 
 
 def _png_bytes() -> bytes:
@@ -87,7 +91,7 @@ def test_link_rewrite_preserves_code_and_plain_csv_but_updates_rich_cells() -> N
 
 
 async def test_enrichment_batches_all_artifacts_and_rewrites_links(
-    config: Config, monkeypatch: pytest.MonkeyPatch
+    config: Config,
 ) -> None:
     saved: list[internal.SaveEnrichedArtifactsRequest] = []
     batched_items: list[list[EnrichItem]] = []
@@ -98,7 +102,7 @@ async def test_enrichment_batches_all_artifacts_and_rewrites_links(
             return _png_bytes()
 
     class FakeStub:
-        async def SaveEnrichedArtifacts(
+        async def SaveEnrichedArtifacts(  # noqa: N802  # Matches gRPC service method name.
             self, req: internal.SaveEnrichedArtifactsRequest
         ) -> internal.BlobProcessingOutcome:
             saved.append(req)
@@ -370,7 +374,7 @@ async def test_standalone_image_enriches_directly_on_blob(config: Config) -> Non
             return _png_bytes()
 
     class FakeStub:
-        async def SaveEnrichedArtifacts(
+        async def SaveEnrichedArtifacts(  # noqa: N802  # Matches gRPC service method name.
             self, req: internal.SaveEnrichedArtifactsRequest
         ) -> internal.BlobProcessingOutcome:
             saved.append(req)
@@ -380,11 +384,9 @@ async def test_standalone_image_enriches_directly_on_blob(config: Config) -> Non
         async def describe_batch(
             self, items: Sequence[EnrichItem]
         ) -> dict[str, ArtifactEnrichment]:
-            assert (
-                len(items) == 1
-                and items[0].id == "."
-                and items[0].image_b64 is not None
-            )
+            assert len(items) == 1
+            assert items[0].id == "."
+            assert items[0].image_b64 is not None
             return {
                 ".": ArtifactEnrichment(
                     id=".",

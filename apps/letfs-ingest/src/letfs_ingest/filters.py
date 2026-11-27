@@ -1,9 +1,16 @@
+"""Image filtering, deduplication, and artifact persistence for parsed documents."""
+
+from __future__ import annotations
+
 import hashlib
-from collections.abc import Mapping
 from io import BytesIO
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from PIL import Image, ImageOps, ImageStat, UnidentifiedImageError
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from pathlib import Path
 
 _MIN_DIMENSION = 48
 _MICRO_ICON_SIDE = 96
@@ -18,12 +25,14 @@ _DECORATIVE_BLOCK_TYPES = frozenset({"PageHeader", "PageFooter", "Footnote"})
 
 
 def image_digest(data: bytes) -> bytes:
+    """Return the SHA-256 digest of raw image bytes."""
     return hashlib.sha256(data).digest()
 
 
 def ignored_repeated_digests(
     counts: Mapping[bytes, int], min_count: int = 3
 ) -> set[bytes]:
+    """Return image digests that repeat at least ``min_count`` times."""
     return {digest for digest, count in counts.items() if count >= min_count}
 
 
@@ -77,6 +86,8 @@ def normalize_image(
 
 
 class ImageDeduplicator:
+    """Track seen image digests and skip ignored or duplicate images."""
+
     def __init__(self, ignored_digests: set[bytes] | None = None) -> None:
         self.ignored = ignored_digests or set()
         self.seen: dict[bytes, str] = {}
@@ -102,6 +113,7 @@ class ImageDeduplicator:
         return True, None, out_bytes, media, ext
 
     def register(self, raw_data: bytes, out_bytes: bytes, rel_path: str) -> None:
+        """Record raw and normalized digests against the saved relative path."""
         self.seen[image_digest(raw_data)] = rel_path
         self.seen[image_digest(out_bytes)] = rel_path
 
@@ -128,6 +140,7 @@ class ImageArtifactWriter:
     def save(
         self, raw_data: bytes, block_type: str | None = None
     ) -> tuple[bool, str | None]:
+        """Filter, deduplicate, and persist ``raw_data`` under ``images/``."""
         keep, dup_path, out_bytes, _, ext = self.dedup.accept(
             raw_data, block_type=block_type
         )

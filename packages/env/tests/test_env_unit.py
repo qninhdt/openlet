@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import jwt
 import numpy as np
@@ -13,10 +13,15 @@ from jwt.algorithms import RSAAlgorithm
 from openlet_env import cache, config, dataset
 from openlet_env.auth import LocalAuth
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from openlet_sdk.types import MutableJsonObject
+
 
 def test_deep_merge_is_pure_and_recursive() -> None:
-    base: dict[str, object] = {"a": {"x": 1, "y": 2}, "b": 3}
-    override: dict[str, object] = {"a": {"y": 99, "z": 4}}
+    base: MutableJsonObject = {"a": {"x": 1, "y": 2}, "b": 3}
+    override: MutableJsonObject = {"a": {"y": 99, "z": 4}}
     merged = config.deep_merge(base, override)
     assert merged == {"a": {"x": 1, "y": 99, "z": 4}, "b": 3}
     assert base == {"a": {"x": 1, "y": 2}, "b": 3}

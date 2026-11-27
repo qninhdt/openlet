@@ -1,19 +1,25 @@
+"""Internal peer-to-peer agent messaging adapter backed by InboxGateway."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 from uuid import UUID
 
-from ..db import Pool
-from ..inbox import InboxGateway, InboxItem, InboxSender
-from .base import (
+from leta.channels.base import (
     CallerContext,
     ChannelError,
     ChannelMessage,
     ChannelSummary,
     OutboundMessage,
     OutboundReceipt,
+    OutboundRecipient,
     PlainTargetMatch,
 )
+from leta.inbox import InboxGateway, InboxItem, InboxMetadata, InboxSender
+
+if TYPE_CHECKING:
+    from leta.db import Pool
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +65,7 @@ class InternalAgentAdapter:
     async def resolve_target(
         self, caller: CallerContext, target: str
     ) -> _PeerAgent | None:
+        """Resolve an active peer agent in the caller's Leta tree by UUID or handle."""
         cleaned = target.strip().removeprefix("agent:").lstrip("@").strip()
         if not cleaned:
             return None
@@ -105,12 +112,14 @@ class InternalAgentAdapter:
     async def resolve_uuid_target(
         self, caller: CallerContext, raw_id: str
     ) -> str | None:
+        """Resolve a peer agent UUID to its handle if active in the caller's tree."""
         found = await self.resolve_target(caller, raw_id)
         return found.handle if found is not None else None
 
     async def resolve_plain_targets(
         self, caller: CallerContext, query: str
     ) -> list[PlainTargetMatch]:
+        """Resolve an unprefixed handle query against active peer agents."""
         sub = await self.resolve_target(caller, query)
         if sub is None:
             return []
@@ -129,6 +138,7 @@ class InternalAgentAdapter:
         msg: OutboundMessage,
         idempotency_key: UUID,
     ) -> OutboundReceipt:
+        """Deliver an internal message to a peer agent's inbox."""
         peer = await self.resolve_target(caller, target)
         if peer is None:
             peers = await self._list_active_peers(caller)
@@ -157,7 +167,7 @@ class InternalAgentAdapter:
                     handle=caller.handle,
                 ),
                 content=msg.content,
-                metadata={"from_handle": caller.handle},
+                metadata=InboxMetadata(from_handle=caller.handle),
             )
         )
         if not result.delivered:
@@ -167,16 +177,18 @@ class InternalAgentAdapter:
             target=peer.handle,
             message_id=str(idempotency_key),
             seq=result.seq,
-            recipient={
-                "kind": "agent",
-                "id": str(peer.id),
-                "name": peer.name,
-            },
+            recipient=OutboundRecipient(
+                kind="agent",
+                id=str(peer.id),
+                name=peer.name,
+            ),
         )
 
     async def react(
         self, caller: CallerContext, target: str, message_id: str, emoji: str
     ) -> None:
+        """Raise ChannelError since internal agent channels do not support reactions."""
+        _ = (caller, target, message_id, emoji)
         raise ChannelError("Reactions are not supported on internal agent channels.")
 
     async def read_history(
@@ -188,11 +200,14 @@ class InternalAgentAdapter:
         limit: int = 20,
         query: str = "",
     ) -> list[ChannelMessage]:
+        """Return an empty list since internal agent IPC has no shared channel log."""
+        _ = (caller, target, before_seq, limit, query)
         return []
 
     async def list_channels(
         self, caller: CallerContext, *, query: str = "", limit: int = 20
     ) -> list[ChannelSummary]:
+        """List active peer agents reachable in the caller's Leta tree."""
         peers = await self._list_active_peers(caller)
         needle = query.strip().lstrip("@").lower()
         out: list[ChannelSummary] = []
@@ -215,9 +230,14 @@ class InternalAgentAdapter:
         return out[: max(1, min(limit, 50))]
 
     async def set_typing(
-        self, caller: CallerContext, target: str, active: bool
+        self,
+        caller: CallerContext,
+        target: str,
+        active: bool,  # noqa: FBT001  # Matches ChannelAdapter protocol for leta.runtime callers
     ) -> None:
-        return
+        """No-op for internal agent IPC channels."""
+        _ = (caller, target, active)
 
     async def mark_read(self, caller: CallerContext, target: str, seq: int) -> None:
-        return None
+        """No-op for internal agent IPC channels."""
+        _ = (caller, target, seq)

@@ -1,16 +1,24 @@
+"""OpenTelemetry spans, stage metrics, retry helper, and Temporal heartbeats."""
+
+from __future__ import annotations
+
 import asyncio
 import random
-from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 from contextlib import asynccontextmanager, contextmanager
 from time import perf_counter
-from typing import TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
 from opentelemetry import metrics, trace
 from opentelemetry.trace import StatusCode
 from temporalio import activity
 
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
+
 
 class ProcessingIdentity(TypedDict):
+    """Structured logging identity attached to ingest stage logs."""
+
     blob_id: str
 
 
@@ -40,13 +48,14 @@ async def retry_transient[T](
         except Exception as exc:
             if attempt == attempts or not should_retry(exc):
                 raise
-            await sleep(delay + random.uniform(0.0, 0.5))
+            await sleep(delay + random.uniform(0.0, 0.5))  # noqa: S311  # Non-cryptographic retry jitter.
             delay = min(max_delay, delay * 2.0)
     raise AssertionError("unreachable")
 
 
 @contextmanager
 def stage(name: str, identity: ProcessingIdentity) -> Generator[None]:
+    """Instrument a processing stage with an OpenTelemetry span, histogram, and log."""
     started, outcome = perf_counter(), "success"
     with tracer.start_as_current_span(
         f"ingest.{name}",
@@ -75,6 +84,7 @@ def stage(name: str, identity: ProcessingIdentity) -> Generator[None]:
 
 @asynccontextmanager
 async def heartbeats(interval: float = 10.0) -> AsyncGenerator[None]:
+    """Send periodic Temporal activity heartbeats until the context exits."""
     stop = asyncio.Event()
 
     async def beat() -> None:

@@ -1,38 +1,48 @@
+"""LangGraph model-invocation node with streaming deltas, retry, and overflow recovery."""
+
 from __future__ import annotations
 
 import logging
 import time
-from typing import Literal
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from langchain_core.messages import (
     AIMessage,
     AIMessageChunk,
-    BaseMessage,
     HumanMessage,
     SystemMessage,
 )
-from langgraph.runtime import Runtime
 
-from ...activity import StreamCoalescer
-from ...db import json_value
-from ...runs import record_run_usage
-from ..compaction import (
+from leta.activity import StreamCoalescer
+from leta.db import json_value
+from leta.runs import record_run_usage
+from leta.runtime.compaction import (
     estimate_prompt_tokens,
     maybe_start_background_compaction,
 )
-from ..content import extract_chunk_reasoning_delta, extract_chunk_text_delta
-from ..media import bound_history_images
-from ..prompts import render_system_prompt
-from ..retry import ContextOverflowError, compute_output_limit, invoke_with_retry
-from ..state import (
-    AgentState,
-    AgentStateUpdate,
-    RuntimeContext,
-    UsageTotals,
-    build_chat_model,
-    compute_cost_usd,
+from leta.runtime.content import extract_chunk_reasoning_delta, extract_chunk_text_delta
+from leta.runtime.media import bound_history_images
+from leta.runtime.prompts import render_system_prompt
+from leta.runtime.retry import (
+    ContextOverflowError,
+    compute_output_limit,
+    invoke_with_retry,
 )
+from leta.runtime.state import (
+    build_chat_model,
+    usage_from_ai_message,
+)
+
+if TYPE_CHECKING:
+    from typing import Literal
+
+    from langchain_core.language_models import LanguageModelInput
+    from langchain_core.messages import BaseMessage
+    from langchain_core.runnables import Runnable
+    from langgraph.runtime import Runtime
+
+    from leta.runtime.state import AgentState, AgentStateUpdate, RuntimeContext
 
 logger = logging.getLogger(__name__)
 
@@ -47,32 +57,7 @@ class ContextLimitError(RuntimeError):
 
 
 async def _record_step_usage(rt: RuntimeContext, msg: AIMessage) -> None:
-    meta = msg.usage_metadata
-    delta = UsageTotals()
-    if meta is not None:
-        in_tok = int(meta.get("input_tokens", 0) or 0)
-        out_tok = int(meta.get("output_tokens", 0) or 0)
-        in_details = meta.get("input_token_details") or {}
-        out_details = meta.get("output_token_details") or {}
-        cached = int(in_details.get("cache_read", 0) or 0)
-        reasoning = int(out_details.get("reasoning", 0) or 0)
-        cost = compute_cost_usd(
-            rt.model_spec,
-            input_tokens=in_tok,
-            cached_input_tokens=cached,
-            output_tokens=out_tok,
-        )
-        delta.add(
-            input_tokens=in_tok,
-            cached_input_tokens=cached,
-            output_tokens=out_tok,
-            reasoning_tokens=reasoning,
-            cost_usd=cost,
-            llm_calls=1,
-        )
-    else:
-        delta.add(llm_calls=1)
-
+    delta = usage_from_ai_message(msg, rt.model_spec)
     rt.usage.merge(delta)
     try:
         await record_run_usage(
@@ -87,6 +72,95 @@ async def _record_step_usage(rt: RuntimeContext, msg: AIMessage) -> None:
         )
     except Exception:
         logger.warning("failed to persist model usage to runs", exc_info=True)
+
+
+async def _stream_model_once(
+    runnable: Runnable[LanguageModelInput, AIMessage],
+    prompt_messages: list[BaseMessage],
+    coalescer: StreamCoalescer,
+    *,
+    model_id: str,
+    reasoning_buf: list[str],
+    mark_output_started: list[bool],
+) -> AIMessage:
+    combined: AIMessageChunk | None = None
+    async for raw_chunk in runnable.astream(prompt_messages):
+        if not isinstance(raw_chunk, AIMessageChunk):
+            continue
+        r_delta = extract_chunk_reasoning_delta(raw_chunk)
+        if r_delta:
+            mark_output_started[0] = True
+            reasoning_buf.append(r_delta)
+            coalescer.push("stream.thinking_delta", r_delta)
+        t_delta = extract_chunk_text_delta(raw_chunk)
+        if t_delta:
+            mark_output_started[0] = True
+            coalescer.push("stream.text_delta", t_delta)
+        for tc_chunk in raw_chunk.tool_call_chunks:
+            args_delta = tc_chunk.get("args") or ""
+            cid = tc_chunk.get("id")
+            if args_delta:
+                mark_output_started[0] = True
+                coalescer.push(
+                    "stream.tool_args_delta",
+                    str(args_delta),
+                    tool_call_id=str(cid) if cid else None,
+                )
+        combined = raw_chunk if combined is None else combined + raw_chunk
+
+    if combined is None:
+        return AIMessage(content="", id=str(uuid4()))
+
+    extra_kw = dict(combined.additional_kwargs)
+    extra_kw["openlet_created_at"] = time.time()
+    extra_kw["openlet_model_id"] = model_id
+    if reasoning_buf and "reasoning_content" not in extra_kw:
+        extra_kw["reasoning_content"] = "".join(reasoning_buf)
+
+    return AIMessage(
+        id=combined.id or str(uuid4()),
+        content=combined.content,
+        tool_calls=list(combined.tool_calls),
+        invalid_tool_calls=list(combined.invalid_tool_calls),
+        additional_kwargs=extra_kw,
+        response_metadata=dict(combined.response_metadata),
+        usage_metadata=combined.usage_metadata,
+    )
+
+
+async def _emit_model_activity(
+    rt: RuntimeContext, ai_msg: AIMessage, reasoning_buf: list[str]
+) -> None:
+    text = ai_msg.text.strip()
+    reasoning_text = (
+        "".join(reasoning_buf).strip()
+        or str(ai_msg.additional_kwargs.get("reasoning_content") or "").strip()
+    )
+    if text or reasoning_text:
+        await rt.emitter.emit(
+            leta_id=rt.leta_id,
+            agent_id=rt.agent_id,
+            run_id=rt.run_id,
+            event_type="activity.message",
+            data={
+                "message_id": ai_msg.id or "",
+                "text": text,
+                "reasoning": reasoning_text or None,
+                "synthetic": False,
+            },
+        )
+    for tc in ai_msg.tool_calls:
+        await rt.emitter.emit(
+            leta_id=rt.leta_id,
+            agent_id=rt.agent_id,
+            run_id=rt.run_id,
+            event_type="activity.tool_call",
+            data={
+                "tool_call_id": str(tc.get("id", "")),
+                "name": str(tc.get("name", "")),
+                "args": json_value(tc.get("args", {})),
+            },
+        )
 
 
 async def model_node(
@@ -147,63 +221,26 @@ async def model_node(
         agent_id=rt.agent_id,
         run_id=rt.run_id,
     )
-    output_started = False
+    mark_output_started = [False]
     reasoning_buf: list[str] = []
 
     async def _stream_once() -> AIMessage:
-        nonlocal output_started
-        combined: AIMessageChunk | None = None
-        async for raw_chunk in runnable.astream(prompt_messages):
-            if not isinstance(raw_chunk, AIMessageChunk):
-                continue
-            r_delta = extract_chunk_reasoning_delta(raw_chunk)
-            if r_delta:
-                output_started = True
-                reasoning_buf.append(r_delta)
-                coalescer.push("stream.thinking_delta", r_delta)
-            t_delta = extract_chunk_text_delta(raw_chunk)
-            if t_delta:
-                output_started = True
-                coalescer.push("stream.text_delta", t_delta)
-            for tc_chunk in raw_chunk.tool_call_chunks:
-                args_delta = tc_chunk.get("args") or ""
-                cid = tc_chunk.get("id")
-                if args_delta:
-                    output_started = True
-                    coalescer.push(
-                        "stream.tool_args_delta",
-                        str(args_delta),
-                        tool_call_id=str(cid) if cid else None,
-                    )
-            combined = raw_chunk if combined is None else combined + raw_chunk
-
-        if combined is None:
-            return AIMessage(content="", id=str(uuid4()))
-
-        extra_kw = dict(combined.additional_kwargs)
-        extra_kw["openlet_created_at"] = time.time()
-        extra_kw["openlet_model_id"] = rt.model_spec.model_id
-        if reasoning_buf and "reasoning_content" not in extra_kw:
-            extra_kw["reasoning_content"] = "".join(reasoning_buf)
-
-        return AIMessage(
-            id=combined.id or str(uuid4()),
-            content=combined.content,
-            tool_calls=list(combined.tool_calls),
-            invalid_tool_calls=list(combined.invalid_tool_calls),
-            additional_kwargs=extra_kw,
-            response_metadata=dict(combined.response_metadata),
-            usage_metadata=combined.usage_metadata,
+        return await _stream_model_once(
+            runnable,
+            prompt_messages,
+            coalescer,
+            model_id=rt.model_spec.model_id,
+            reasoning_buf=reasoning_buf,
+            mark_output_started=mark_output_started,
         )
 
     try:
         ai_msg = await invoke_with_retry(
             _stream_once,
             cfg=model_cfg.retry,
-            has_output_started=lambda: output_started,
+            has_output_started=lambda: mark_output_started[0],
         )
     except ContextOverflowError as exc:
-        await coalescer.close()
         if not rt.overflow_recovered_this_step:
             rt.overflow_recovered_this_step = True
             rt.pending_overflow_compact = True
@@ -217,39 +254,7 @@ async def model_node(
     rt.step_count += 1
     rt.overflow_recovered_this_step = False
     await _record_step_usage(rt, ai_msg)
-
-    text = ai_msg.text.strip()
-    reasoning_text = (
-        "".join(reasoning_buf).strip()
-        or str(ai_msg.additional_kwargs.get("reasoning_content") or "").strip()
-    )
-
-    if text or reasoning_text:
-        await rt.emitter.emit(
-            leta_id=rt.leta_id,
-            agent_id=rt.agent_id,
-            run_id=rt.run_id,
-            event_type="activity.message",
-            data={
-                "message_id": ai_msg.id or "",
-                "text": text,
-                "reasoning": reasoning_text or None,
-                "synthetic": False,
-            },
-        )
-
-    for tc in ai_msg.tool_calls:
-        await rt.emitter.emit(
-            leta_id=rt.leta_id,
-            agent_id=rt.agent_id,
-            run_id=rt.run_id,
-            event_type="activity.tool_call",
-            data={
-                "tool_call_id": str(tc.get("id", "")),
-                "name": str(tc.get("name", "")),
-                "args": json_value(tc.get("args", {})),
-            },
-        )
+    await _emit_model_activity(rt, ai_msg, reasoning_buf)
 
     # Check if background compaction should start now that we have a fresh measured anchor.
     updated_history = [*bounded_history, ai_msg]
@@ -286,6 +291,7 @@ async def model_node(
 async def after_model_router(
     state: AgentState, runtime: Runtime[RuntimeContext]
 ) -> Literal["compact", "tools", "inbox", "__end__"]:
+    """Route model output to compaction, tool execution, inbox recheck, or completion."""
     rt = runtime.context
     if rt.pending_overflow_compact:
         return "compact"

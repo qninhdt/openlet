@@ -1,3 +1,5 @@
+"""Run lifecycle persistence, usage accounting, and activity event projections."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -8,17 +10,21 @@ from uuid import UUID
 from openlet_sdk.config import JSON, ReasoningEffort
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .activity import ActivityEmitter, ActivityType
-from .db import Pool, hydrate
+from leta.activity import ActivityEmitter, ActivityType
+from leta.db import Pool, hydrate
 
 
 @dataclass(frozen=True, slots=True)
 class RunOutcome:
+    """Inbox cursor positions returned upon completing an agent run."""
+
     inbox_cursor: int
     latest_wake_seq: int
 
 
 class AgentRuntimeRecord(BaseModel):
+    """Hydrated agent and workspace configuration loaded for a single run."""
+
     id: UUID
     leta_id: UUID
     parent_agent_id: UUID | None = None
@@ -42,6 +48,8 @@ class AgentRuntimeRecord(BaseModel):
 
 
 class MessageEventData(BaseModel):
+    """Serialized payload for an assistant message activity event."""
+
     model_config = ConfigDict(extra="ignore")
 
     text: str = ""
@@ -49,6 +57,8 @@ class MessageEventData(BaseModel):
 
 
 class ToolCallEventData(BaseModel):
+    """Serialized payload for a tool invocation activity event."""
+
     model_config = ConfigDict(extra="ignore")
 
     name: str = "tool"
@@ -57,6 +67,8 @@ class ToolCallEventData(BaseModel):
 
 
 class ToolResultEventData(BaseModel):
+    """Serialized payload for a tool execution result activity event."""
+
     model_config = ConfigDict(extra="ignore")
 
     name: str = "tool"
@@ -67,6 +79,8 @@ class ToolResultEventData(BaseModel):
 
 
 class AgentMessageSender(BaseModel):
+    """Sender metadata inside an inter-agent message activity event."""
+
     model_config = ConfigDict(extra="ignore")
 
     handle: str = ""
@@ -74,6 +88,8 @@ class AgentMessageSender(BaseModel):
 
 
 class AgentMessageEventData(BaseModel):
+    """Serialized payload for an inter-agent message activity event."""
+
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     sender: AgentMessageSender | None = Field(default=None, alias="from")
@@ -81,12 +97,16 @@ class AgentMessageEventData(BaseModel):
 
 
 class InboxBatchItemSummary(BaseModel):
+    """Summary entry for an item in an inbox batch received event."""
+
     model_config = ConfigDict(extra="ignore")
 
     preview: str = ""
 
 
 class InboxReceivedEventData(BaseModel):
+    """Serialized payload for an inbox batch received activity event."""
+
     model_config = ConfigDict(extra="ignore")
 
     items: list[InboxBatchItemSummary] = Field(
@@ -95,6 +115,8 @@ class InboxReceivedEventData(BaseModel):
 
 
 class RunFinishedEventData(BaseModel):
+    """Serialized payload for a run completion activity event."""
+
     model_config = ConfigDict(extra="ignore")
 
     status: str = "done"
@@ -102,6 +124,8 @@ class RunFinishedEventData(BaseModel):
 
 
 class ActivityEventRecord(BaseModel):
+    """Hydrated activity event row returned for prompt history inspection."""
+
     seq: int
     type: ActivityType
     data: dict[str, JSON] = Field(default_factory=dict[str, JSON])
@@ -109,6 +133,7 @@ class ActivityEventRecord(BaseModel):
 
 
 async def load_agent_runtime_record(db: Pool, agent_id: UUID) -> AgentRuntimeRecord:
+    """Load the runtime configuration record for an agent and its Leta workspace."""
     async with db.connection() as conn:
         row = await (
             await conn.execute(
@@ -156,6 +181,7 @@ async def start_run(db: Pool, run_id: UUID, agent_id: UUID) -> int:
 
 
 async def touch_run_heartbeat(db: Pool, run_id: UUID) -> None:
+    """Update the heartbeat timestamp for an in-progress run."""
     async with db.connection() as conn:
         await conn.execute(
             "UPDATE runs SET heartbeat_at = now() WHERE id = %s",
@@ -174,6 +200,7 @@ async def record_run_usage(
     cost_usd: float,
     llm_calls: int,
 ) -> None:
+    """Increment cumulative token, cost, and call counters for a run."""
     async with db.connection() as conn:
         await conn.execute(
             """
@@ -208,6 +235,7 @@ async def finish_run(
     status: Literal["completed", "failed", "cancelled"],
     error_code: str | None,
 ) -> None:
+    """Finalize a running run row and emit a run.finished activity event."""
     async with db.connection() as conn:
         row = await (
             await conn.execute(
@@ -248,6 +276,7 @@ async def finish_run(
 async def list_recent_activity(
     db: Pool, agent_id: UUID, limit: int
 ) -> list[ActivityEventRecord]:
+    """Return the most recent activity event records for an agent in descending seq order."""
     async with db.connection() as conn:
         rows = await (
             await conn.execute(

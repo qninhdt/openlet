@@ -8,11 +8,15 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class AskOption(BaseModel):
+    """Selectable option inside an HITL ask question."""
+
     id: str
     label: str
 
 
 class AskQuestionForm(BaseModel):
+    """Normalized question schema stored in an ask request payload."""
+
     id: str
     text: str
     type: Literal["text", "single_choice", "multiple_choice"]
@@ -20,12 +24,16 @@ class AskQuestionForm(BaseModel):
 
 
 class AskPayload(BaseModel):
+    """Payload schema for HITL ask requests."""
+
     model_config = ConfigDict(extra="ignore")
 
     questions: list[AskQuestionForm]
 
 
 class ApprovalPayload(BaseModel):
+    """Payload schema for HITL storage access approval requests."""
+
     model_config = ConfigDict(extra="ignore")
 
     role: Literal["viewer", "editor"]
@@ -34,6 +42,8 @@ class ApprovalPayload(BaseModel):
 
 
 class AskResponse(BaseModel):
+    """Validated user response payload for an HITL ask request."""
+
     model_config = ConfigDict(extra="ignore")
 
     answers: dict[str, str | list[str]]
@@ -41,12 +51,16 @@ class AskResponse(BaseModel):
 
 
 class ApprovalResponse(BaseModel):
+    """Optional user response note for an HITL approval decision."""
+
     model_config = ConfigDict(extra="ignore")
 
     note: str | None = None
 
 
 class HitlOutcome(BaseModel):
+    """Recorded side-effect outcome after applying an approved HITL request."""
+
     model_config = ConfigDict(extra="ignore")
 
     applied: bool

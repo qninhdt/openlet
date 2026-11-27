@@ -1,5 +1,7 @@
 """Initialize fresh databases or native service resources from OPENLET_CONFIG."""
 
+from __future__ import annotations
+
 import argparse
 import asyncio
 import os
@@ -14,7 +16,6 @@ from authzed.api.v1.schema_service_pb2_grpc import SchemaServiceStub
 from botocore.exceptions import ClientError
 from configure import ROOT, load, secret
 from google.protobuf.duration_pb2 import Duration
-from openlet_sdk.config import Config, DatabaseSettings
 from psycopg import sql
 from qdrant_client import QdrantClient, models
 from temporalio.api.workflowservice.v1 import RegisterNamespaceRequest
@@ -33,6 +34,7 @@ from temporalio.service import RPCError, RPCStatusCode
 
 if TYPE_CHECKING:
     from mypy_boto3_s3.literals import BucketLocationConstraintType
+    from openlet_sdk.config import Config, DatabaseSettings
 
 
 def databases(c: Config) -> None:

@@ -4,21 +4,28 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import yaml
 from openlet_env.config import find_repo_root
 from openlet_sdk.types import is_str_mapping
 
-from .core.report import diff_runs, load_run, render_markdown
-from .suites.agent.suite import (
+from openlet_evals.core.report import diff_runs, load_run, render_markdown
+from openlet_evals.suites.agent.suite import (
     AgentEvalConfig,
     grade_artifacts,
     run_agent,
     validate_agent,
 )
-from .suites.retrieval.suite import RetrievalConfig, run_retrieval, validate_retrieval
+from openlet_evals.suites.retrieval.suite import (
+    RetrievalConfig,
+    run_retrieval,
+    validate_retrieval,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 def _load_yaml(repo_root: Path, config_path: Path | None) -> dict[str, object]:
@@ -32,6 +39,7 @@ def _load_yaml(repo_root: Path, config_path: Path | None) -> dict[str, object]:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Run the ``openlet-eval`` CLI entrypoint."""
     parser = argparse.ArgumentParser(prog="openlet-eval")
     sub = parser.add_subparsers(dest="suite", required=True)
 

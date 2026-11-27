@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 import re
 import struct
-import sys
-from collections.abc import Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple, cast
@@ -30,22 +28,21 @@ from authzed.api.v1 import (
 )
 from authzed.api.v1.permission_service_pb2_grpc import PermissionsServiceStub
 from botocore.config import Config as S3ClientConfig
-from openlet_sdk.config import Config, DatabaseSettings
+from botocore.exceptions import BotoCoreError, ClientError
 from openlet_sdk.file_types import classify_file
 from openlet_sdk.types import is_object_list
 from psycopg import sql
-from psycopg.rows import TupleRow
 from psycopg.types.json import Jsonb
+from pydantic import BaseModel, ConfigDict
 from qdrant_client import QdrantClient, models
-from qdrant_client.conversions.common_types import PointId
+from qdrant_client.http.exceptions import UnexpectedResponse
 from temporalio.client import Client
 from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
-from . import cache
-from .auth import LocalAuth
-from .dataset import iter_seed_files, referenced_users
-from .models import (
+from openlet_env import cache
+from openlet_env.dataset import iter_seed_files, referenced_users
+from openlet_env.models import (
     Account,
     CacheInput,
     CachePointMeta,
@@ -57,10 +54,31 @@ from .models import (
     UserProfile,
     WorkspaceSpec,
 )
-from .wiremock import WireMockClient
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator, Mapping, Sequence
+    from contextlib import ExitStack
+
     from mypy_boto3_s3 import S3Client
+    from openlet_sdk.config import Config, DatabaseSettings
+    from psycopg.rows import TupleRow
+    from qdrant_client.conversions.common_types import PointId
+
+    from openlet_env.auth import LocalAuth
+    from openlet_env.wiremock import WireMockClient
+
+logger = logging.getLogger(__name__)
+
+_CLEANUP_ERRORS = (
+    OSError,
+    RuntimeError,
+    ValueError,
+    psycopg.Error,
+    grpc.RpcError,
+    BotoCoreError,
+    ClientError,
+    UnexpectedResponse,
+)
 
 
 class _WorkspaceRow(NamedTuple):
@@ -188,7 +206,7 @@ def _as_uuid(value: object) -> UUID:
 
 def crc32c_base64(data: bytes) -> str:
     """Hardware/C-accelerated CRC32C encoded as AWS S3 base64 checksum."""
-    checksum = cast("int", google_crc32c.value(data))  # pyright: ignore[reportUnknownMemberType]
+    checksum = cast("int", google_crc32c.value(data))  # pyright: ignore[reportUnknownMemberType]  # Upstream C extension lacks type stubs.
     return base64.b64encode(struct.pack(">I", checksum)).decode("ascii")
 
 
@@ -198,6 +216,7 @@ def _graph_relation(
     relation: str,
     subject: str,
     subject_id: UUID,
+    *,
     subject_relation: str = "",
 ) -> Relationship:
     return Relationship(
@@ -293,7 +312,7 @@ class ServiceConnections:
 
         s3_cfg = config["dependencies"]["s3"]
         self.bucket = s3_cfg["bucket"]
-        self.s3: S3Client = boto3.client(  # pyright: ignore[reportUnknownMemberType]
+        self.s3: S3Client = boto3.client(  # pyright: ignore[reportUnknownMemberType]  # Only the S3 service overload has installed stubs.
             "s3",
             endpoint_url=endpoints.object_store_url,
             region_name=s3_cfg["region"],
@@ -388,7 +407,13 @@ class _SeedBatch:
 
         storages: dict[str, SeededStorage] = {}
         self._plan_storage(
-            workspace, spec, storages, "shared", "Shared", "workspace", workspace
+            workspace,
+            spec,
+            storages,
+            "shared",
+            name="Shared",
+            owner_type="workspace",
+            owner=workspace,
         )
         for handle in dict.fromkeys([owner_handle, *member_handles]):
             self._plan_storage(
@@ -396,9 +421,9 @@ class _SeedBatch:
                 spec,
                 storages,
                 f"personal/{handle}",
-                "Personal",
-                "user",
-                self.users[handle],
+                name="Personal",
+                owner_type="user",
+                owner=self.users[handle],
             )
 
         agents_map: dict[str, UUID] = {}
@@ -419,9 +444,9 @@ class _SeedBatch:
                 spec,
                 storages,
                 f"personal/{handle}",
-                agent_name,
-                "agent",
-                agent_id,
+                name=agent_name,
+                owner_type="agent",
+                owner=agent_id,
             )
             self.letas.append(_LetaRow(agent_id, workspace, storage_id, "active"))
             agent_handle = "-the-".join(
@@ -474,16 +499,22 @@ class _SeedBatch:
                 spec,
                 storages,
                 f"conversation/{handle}",
-                f"Conversation · {spec_agent.name} · user {user_id} · {conversation}",
-                "conversation",
-                conversation,
+                name=f"Conversation · {spec_agent.name} · user {user_id} · {conversation}",
+                owner_type="conversation",
+                owner=conversation,
             )
             conversations_out[handle] = str(conversation)
             dm_pair = sorted((f"agent:{agent_id}", f"user:{user_id}"))
             dm_key = f"{dm_pair[0]}|{dm_pair[1]}"
             self.conversations.append(
                 _ConversationRow(
-                    conversation, workspace, "dm", dm_key, storage_id, True, user_id
+                    conversation,
+                    workspace,
+                    "dm",
+                    dm_key,
+                    storage_id,
+                    storage_ready=True,
+                    created_by=user_id,
                 )
             )
             self.conversation_members.extend(
@@ -547,6 +578,7 @@ class _SeedBatch:
         spec: WorkspaceSpec,
         output: dict[str, SeededStorage],
         key: str,
+        *,
         name: str,
         owner_type: str,
         owner: UUID,
@@ -561,8 +593,8 @@ class _SeedBatch:
                 name,
                 "public" if public else "private",
                 root,
-                True,
-                True,
+                allow_blob_files=True,
+                allow_indexing=True,
             )
         )
         self.nodes.append(_NodeRow(root, storage, None, "", "directory"))
@@ -587,17 +619,22 @@ class _SeedBatch:
                     "owner",
                     owner_type,
                     owner,
-                    "owner" if public else "",
+                    subject_relation="owner" if public else "",
                 )
             )
             if owner_type == "agent":
                 self.relations.append(
                     _graph_relation(
-                        "storage", storage, "owner", "agent", owner, "owner"
+                        "storage",
+                        storage,
+                        "owner",
+                        "agent",
+                        owner,
+                        subject_relation="owner",
                     )
                 )
 
-        paths: dict[Path, UUID] = {Path("."): root}
+        paths: dict[Path, UUID] = {Path(): root}
         if path := spec.storages.get(key):
             for entry in iter_seed_files(path):
                 relative = entry.relative_to(path)
@@ -608,7 +645,13 @@ class _SeedBatch:
                     blob_id, media, size, checksum, object_key = blob_meta
                     if entry.suffix.lower() in cache.INDEXED:
                         self._plan_ingest(
-                            workspace, blob_id, entry, size, media, checksum, object_key
+                            workspace,
+                            blob_id,
+                            entry,
+                            size=size,
+                            media=media,
+                            checksum=checksum,
+                            object_key=object_key,
                         )
                     else:
                         self.blobs.append(
@@ -628,9 +671,7 @@ class _SeedBatch:
         output[key] = SeededStorage(
             id=str(storage),
             root_node_id=str(root),
-            nodes={
-                p.as_posix(): str(nid) for p, nid in paths.items() if p != Path(".")
-            },
+            nodes={p.as_posix(): str(nid) for p, nid in paths.items() if p != Path()},
         )
         return storage, root
 
@@ -678,6 +719,7 @@ class _SeedBatch:
         workspace: UUID,
         blob_id: UUID,
         path: Path,
+        *,
         size: int,
         media: str,
         checksum: str,
@@ -716,7 +758,7 @@ class _SeedBatch:
         for entry in all_entries:
             rel = entry.relative_to(artifact_root)
             rel_posix = rel.as_posix()
-            parent_posix = "" if rel.parent == Path(".") else rel.parent.as_posix()
+            parent_posix = "" if rel.parent == Path() else rel.parent.as_posix()
             art_id = uuid4()
             if entry.is_dir():
                 self.artifacts.append(
@@ -733,7 +775,7 @@ class _SeedBatch:
                         None,
                         "",
                         "",
-                        False,
+                        indexable=False,
                     )
                 )
                 continue
@@ -780,7 +822,7 @@ class _SeedBatch:
                         None,
                         title,
                         desc,
-                        True,
+                        indexable=True,
                     )
                 )
 
@@ -793,7 +835,7 @@ class _SeedBatch:
                             f"{blob_id}:{point.path}:{point.kind}:{point.chunk_index}",
                         )
                     ),
-                    vector=saved.vectors[cache.text_key(point.text)],
+                    vector=list(saved.vectors[cache.text_key(point.text)]),
                     payload={
                         "workspace_id": str(workspace),
                         "blob_id": str(blob_id),
@@ -959,8 +1001,18 @@ async def _process_cold_blobs(
             *(process(blob) for blob in group), return_exceptions=True
         )
         for result in results:
-            if isinstance(result, BaseException):
+            if result is not None:
                 raise RuntimeError(f"LetFS ingest failed: {result}") from result
+
+
+class _QdrantPointPayload(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    text: str
+    kind: str
+    artifact_path: str = ""
+    title: str = ""
+    chunk_index: int = 0
 
 
 def _as_float_vector(raw: object) -> list[float]:
@@ -968,8 +1020,8 @@ def _as_float_vector(raw: object) -> list[float]:
         raise ValueError(f"expected dense float vector from Qdrant, got {type(raw)}")
     out: list[float] = []
     for item in raw:
-        if not isinstance(item, int | float):
-            raise ValueError(f"expected numeric vector component, got {type(item)}")
+        if not isinstance(item, int | float) or isinstance(item, bool):
+            raise TypeError(f"expected numeric vector component, got {type(item)}")
         out.append(float(item))
     return out
 
@@ -1018,29 +1070,28 @@ def _capture_blob(services: ServiceConnections, blob: _ColdBlob) -> None:
             with_vectors=True,
         )
         for point in group:
-            payload = point.payload or {}
-            text = str(payload["text"])
-            raw_chunk_idx = payload.get("chunk_index", 0)
-            chunk_index = raw_chunk_idx if isinstance(raw_chunk_idx, int) else 0
+            parsed_payload = _QdrantPointPayload.model_validate(point.payload or {})
             points.append(
                 CachePointMeta(
-                    path=str(payload.get("artifact_path", "")),
-                    text=text,
-                    kind=str(payload["kind"]),
-                    title=str(payload.get("title", "")),
-                    chunk_index=chunk_index,
+                    path=parsed_payload.artifact_path,
+                    text=parsed_payload.text,
+                    kind=parsed_payload.kind,
+                    title=parsed_payload.title,
+                    chunk_index=parsed_payload.chunk_index,
                 )
             )
-            vectors.setdefault(cache.text_key(text), _as_float_vector(point.vector))
+            vectors.setdefault(
+                cache.text_key(parsed_payload.text), _as_float_vector(point.vector)
+            )
         if offset is None:
             break
     cache.save_cache(
         blob.path,
         blob.settings,
         file_meta,
-        points,
-        vectors,
-        artifacts,
+        points=points,
+        vectors=vectors,
+        artifacts=artifacts,
         dimensions=services.config["models"]["embedding"]["dimensions"],
     )
 
@@ -1114,8 +1165,8 @@ def seed_workspaces(
     except BaseException:
         try:
             batch.cleanup()
-        except Exception as exc:
-            print(f"seed cleanup failed: {exc}", file=sys.stderr)
+        except _CLEANUP_ERRORS:
+            logger.warning("Seed cleanup failed", exc_info=True)
         raise
 
     return SeedResult(
@@ -1209,8 +1260,8 @@ def prepare_workspace_cache(
     finally:
         try:
             unseed_workspace(services, workspace, delete_graph=False)
-        except Exception as exc:
-            print(f"prepare-cache cleanup failed: {exc}", file=sys.stderr)
+        except _CLEANUP_ERRORS:
+            logger.warning("prepare-cache cleanup failed", exc_info=True)
 
     return {"prepared": [str(blob.path) for blob in cold], "count": len(cold)}
 

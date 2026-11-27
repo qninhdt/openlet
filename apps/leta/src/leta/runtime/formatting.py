@@ -1,17 +1,22 @@
+"""Human-readable formatters for HITL responses and outcomes."""
+
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
-from openlet_sdk.types import JSON
-
-from ..hitl.models import (
-    ApprovalPayload,
+from leta.hitl.models import (
     ApprovalResponse,
     AskPayload,
     AskResponse,
-    HitlOutcome,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from openlet_sdk.types import JSON
+
+    from leta.hitl.models import ApprovalPayload, HitlOutcome
 
 
 def format_hitl_response(

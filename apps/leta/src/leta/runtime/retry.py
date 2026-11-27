@@ -1,13 +1,22 @@
+"""Model output-limit calculation and transient LLM retry policies."""
+
 from __future__ import annotations
 
 import asyncio
 import math
-import random
-from collections.abc import Awaitable, Callable
+import secrets
 from email.utils import parsedate_to_datetime
 from time import monotonic, time
+from typing import TYPE_CHECKING
 
-from ..config import ModelConfig, ModelRetryConfig, ModelSpec
+from openlet_sdk.types import is_mapping
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from leta.config import ModelConfig, ModelRetryConfig, ModelSpec
+
+_RNG = secrets.SystemRandom()
 
 
 class ContextOverflowError(RuntimeError):
@@ -46,6 +55,7 @@ def compute_output_limit(
     cfg: ModelConfig,
     headroom: float | None = None,
 ) -> int:
+    """Compute safe max output tokens inside the model's context window."""
     effective_headroom = cfg.window_headroom if headroom is None else headroom
     requested = min(
         model.max_output_tokens or cfg.output_token_fallback,
@@ -79,16 +89,13 @@ def _headers(exc: BaseException) -> dict[str, str]:
     raw = getattr(resp, "headers", None) if resp is not None else None
     if raw is None:
         raw = getattr(exc, "headers", None)
-    if raw is None:
+    if not is_mapping(raw):
         return {}
-    try:
-        items = raw.items()
-    except AttributeError:
-        return {}
-    return {str(k).lower(): str(v) for k, v in items}
+    return {str(k).lower(): str(v) for k, v in raw.items()}
 
 
 def is_context_overflow(exc: BaseException) -> bool:
+    """Return True when an exception indicates the prompt exceeded context limits."""
     if isinstance(exc, ContextOverflowError):
         return True
     msg = str(exc).lower()
@@ -96,18 +103,21 @@ def is_context_overflow(exc: BaseException) -> bool:
 
 
 def is_unreachable_error(exc: BaseException) -> bool:
+    """Return True when an exception indicates DNS or network unreachability."""
     msg = str(exc).lower()
     return any(marker in msg for marker in _UNREACHABLE_MARKERS)
 
 
 def is_timeout_error(exc: BaseException) -> bool:
-    if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
+    """Return True when an exception represents a request timeout."""
+    if isinstance(exc, TimeoutError):
         return True
     name = type(exc).__name__.lower()
     return "timeout" in name or "timed out" in str(exc).lower()
 
 
 def parse_retry_after(exc: BaseException, max_seconds: float) -> float | None:
+    """Parse ``Retry-After-Ms`` or ``Retry-After`` response headers into seconds."""
     hdrs = _headers(exc)
     val = hdrs.get("retry-after-ms")
     if val is not None:
@@ -125,11 +135,12 @@ def parse_retry_after(exc: BaseException, max_seconds: float) -> float | None:
     try:
         dt = parsedate_to_datetime(ra)
         return min(max_seconds, max(0.0, dt.timestamp() - time()))
-    except Exception:
+    except TypeError, ValueError, OverflowError:
         return None
 
 
 def should_retry_header(exc: BaseException) -> bool | None:
+    """Parse an explicit ``X-Should-Retry`` boolean header if present."""
     val = _headers(exc).get("x-should-retry")
     if val is None:
         return None
@@ -146,7 +157,39 @@ def _is_retryable_status(code: int | None) -> bool:
 
 
 def _jitter(delay: float) -> float:
-    return delay * (0.85 + random.random() * 0.3)
+    return delay * (0.85 + _RNG.random() * 0.3)
+
+
+def _backoff_delay(
+    cfg: ModelRetryConfig, attempt: int, exc: BaseException | None = None
+) -> float:
+    base = min(
+        cfg.max_interval_seconds,
+        cfg.initial_interval_seconds * (2 ** (attempt - 1)),
+    )
+    delay = _jitter(base)
+    if exc is not None:
+        ra = parse_retry_after(exc, cfg.retry_after_max_seconds)
+        if ra is not None:
+            delay = max(delay, ra)
+    return delay
+
+
+def _check_non_retryable(
+    exc: BaseException,
+    has_output_started: Callable[[], bool] | None,
+) -> tuple[bool | None, int | None]:
+    if has_output_started is not None and has_output_started():
+        raise exc
+    if is_context_overflow(exc):
+        raise ContextOverflowError(str(exc)) from exc
+    override = should_retry_header(exc)
+    if override is False:
+        raise exc
+    code = _status_code(exc)
+    if code in (400, 401, 403, 404, 422) and override is not True:
+        raise exc
+    return override, code
 
 
 async def invoke_with_retry[T](
@@ -168,18 +211,7 @@ async def invoke_with_retry[T](
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            if has_output_started is not None and has_output_started():
-                raise
-            if is_context_overflow(exc):
-                raise ContextOverflowError(str(exc)) from exc
-
-            override = should_retry_header(exc)
-            if override is False:
-                raise
-
-            code = _status_code(exc)
-            if code in (400, 401, 403, 404, 422) and override is not True:
-                raise
+            override, code = _check_non_retryable(exc, has_output_started)
 
             if is_unreachable_error(exc):
                 now = monotonic()
@@ -192,44 +224,29 @@ async def invoke_with_retry[T](
                     cfg.unreachable_gap_max_seconds,
                     cfg.initial_interval_seconds * (2 ** (unreachable_attempts - 1)),
                 )
-                delay = min(cfg.unreachable_gap_max_seconds, _jitter(base))
-                await sleep(delay)
+                await sleep(min(cfg.unreachable_gap_max_seconds, _jitter(base)))
                 continue
 
             if is_timeout_error(exc):
                 timeout_attempts += 1
-                if timeout_attempts > cfg.timeout_max_retries:
-                    raise
                 general_attempts += 1
-                if general_attempts > cfg.max_attempts:
+                if (
+                    timeout_attempts > cfg.timeout_max_retries
+                    or general_attempts > cfg.max_attempts
+                ):
                     raise
-                base = min(
-                    cfg.max_interval_seconds,
-                    cfg.initial_interval_seconds * (2 ** (general_attempts - 1)),
-                )
-                await sleep(_jitter(base))
+                await sleep(_backoff_delay(cfg, general_attempts))
                 continue
 
             retryable = (
                 override is True
                 or _is_retryable_status(code)
-                or isinstance(exc, (ConnectionError, OSError))
+                or isinstance(exc, OSError)
             )
-            if not retryable:
-                raise
-
             general_attempts += 1
-            if general_attempts > cfg.max_attempts:
+            if not retryable or general_attempts > cfg.max_attempts:
                 raise
-            base = min(
-                cfg.max_interval_seconds,
-                cfg.initial_interval_seconds * (2 ** (general_attempts - 1)),
-            )
-            delay = _jitter(base)
-            ra = parse_retry_after(exc, cfg.retry_after_max_seconds)
-            if ra is not None:
-                delay = max(delay, ra)
-            await sleep(delay)
+            await sleep(_backoff_delay(cfg, general_attempts, exc))
 
 
 async def retry_one_shot[T](
@@ -263,12 +280,4 @@ async def retry_one_shot[T](
             if not not_sent or attempts >= cfg.one_shot_retries:
                 raise
             attempts += 1
-            base = min(
-                cfg.max_interval_seconds,
-                cfg.initial_interval_seconds * (2 ** (attempts - 1)),
-            )
-            delay = _jitter(base)
-            ra = parse_retry_after(exc, cfg.retry_after_max_seconds)
-            if ra is not None:
-                delay = max(delay, ra)
-            await sleep(delay)
+            await sleep(_backoff_delay(cfg, attempts, exc))

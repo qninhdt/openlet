@@ -1,12 +1,15 @@
+"""Multimodal artifact enrichment and README synthesis for LetFS blobs."""
+
+from __future__ import annotations
+
 import asyncio
+from typing import TYPE_CHECKING
 
 from openlet_api.letfs.v1 import internal_pb2 as internal
 from openlet_api.letfs.v1 import letfs_pb2 as letfs
-from openlet_sdk.config import Config
 
-from .naming import artifact_paths, rewrite_artifact_links, rich_csv_paths
-from .protocols import BlobReader, EnrichmentModels, LetFSEnrichStub
-from .providers import (
+from letfs_ingest.naming import artifact_paths, rewrite_artifact_links, rich_csv_paths
+from letfs_ingest.providers import (
     ArtifactEnrichment,
     EnrichItem,
     adaptive_item_budget,
@@ -14,8 +17,106 @@ from .providers import (
     pack_batches,
     vision,
 )
-from .readme import own_body
-from .readme import render as render_readme
+from letfs_ingest.readme import own_body
+from letfs_ingest.readme import render as render_readme
+
+if TYPE_CHECKING:
+    from openlet_sdk.config import Config, EnrichmentSettings
+
+    from letfs_ingest.protocols import BlobReader, EnrichmentModels, LetFSEnrichStub
+
+
+async def _enrich_standalone_image(
+    info: internal.GetBlobArtifactsResponse,
+    stub: LetFSEnrichStub,
+    s3: BlobReader,
+    ai: EnrichmentModels,
+    *,
+    max_blob_bytes: int,
+    enrich_cfg: EnrichmentSettings,
+) -> internal.BlobProcessingOutcome:
+    if not info.media_type.startswith("image/"):
+        return internal.BlobProcessingOutcome(obsolete=False, stage=info.outcome.stage)
+    img_bytes = await s3.get_bytes(info.object_key, max_blob_bytes)
+    b64 = vision(img_bytes, enrich_cfg)
+    results = await ai.describe_batch(
+        [EnrichItem(id=".", media_type=info.media_type, image_b64=b64)]
+    )
+    res = results["."]
+    return await stub.SaveEnrichedArtifacts(
+        internal.SaveEnrichedArtifactsRequest(
+            blob_id=info.blob_id,
+            blob_title=res.title,
+            blob_description=res.description,
+        )
+    )
+
+
+def _collect_child_metadata(
+    file_arts: list[internal.BlobArtifact],
+    rename_map: dict[str, str],
+    results: dict[str, ArtifactEnrichment],
+) -> dict[str, tuple[str, str]]:
+    child_meta: dict[str, tuple[str, str]] = {}
+    for art in file_arts:
+        if art.path == "README.md":
+            continue
+        final_path = rename_map.get(art.path, art.path)
+        meta = results.get(art.path)
+        if meta is not None:
+            child_meta[final_path] = (meta.title, meta.description)
+        else:
+            child_meta[final_path] = (art.title or final_path, art.description or "")
+    return child_meta
+
+
+def _build_enriched_updates(
+    file_arts: list[internal.BlobArtifact],
+    contents_by_path: dict[str, str],
+    rename_map: dict[str, str],
+    results: dict[str, ArtifactEnrichment],
+    *,
+    max_text_bytes: int,
+) -> list[internal.EnrichedArtifactInput]:
+    rich_csvs = rich_csv_paths(contents_by_path)
+    child_meta = _collect_child_metadata(file_arts, rename_map, results)
+    updates: list[internal.EnrichedArtifactInput] = []
+    for art in file_arts:
+        new_path = rename_map.get(art.path, art.path)
+        meta = results.get(art.path)
+        updated_text: str | None = None
+        if art.path in contents_by_path:
+            raw_text = (
+                own_body(contents_by_path[art.path])
+                if art.path == "README.md"
+                else contents_by_path[art.path]
+            )
+            rewritten = rewrite_artifact_links(
+                raw_text,
+                new_path,
+                art.media_type,
+                rename_map,
+                is_rich_csv=(art.path in rich_csvs),
+            )
+            if art.path == "README.md" and meta is not None:
+                rendered = render_readme(
+                    meta.title, meta.description, child_meta, rewritten
+                )
+                if len(rendered.encode("utf-8")) <= max_text_bytes:
+                    rewritten = rendered
+            if rewritten != contents_by_path[art.path]:
+                updated_text = rewritten
+
+        entry = internal.EnrichedArtifactInput(artifact_id=art.id)
+        if new_path != art.path:
+            entry.path = new_path
+        if updated_text is not None:
+            entry.text_content = updated_text
+        if meta is not None:
+            entry.title = meta.title
+            entry.description = meta.description
+        updates.append(entry)
+    return updates
 
 
 async def enrich(
@@ -34,22 +135,13 @@ async def enrich(
     sem = asyncio.Semaphore(int(io_cfg["model_concurrency"]))
 
     if not info.artifacts:
-        if not info.media_type.startswith("image/"):
-            return internal.BlobProcessingOutcome(
-                obsolete=False, stage=info.outcome.stage
-            )
-        img_bytes = await s3.get_bytes(info.object_key, max_blob_bytes)
-        b64 = vision(img_bytes, enrich_cfg)
-        results = await ai.describe_batch(
-            [EnrichItem(id=".", media_type=info.media_type, image_b64=b64)]
-        )
-        res = results["."]
-        return await stub.SaveEnrichedArtifacts(
-            internal.SaveEnrichedArtifactsRequest(
-                blob_id=info.blob_id,
-                blob_title=res.title,
-                blob_description=res.description,
-            )
+        return await _enrich_standalone_image(
+            info,
+            stub,
+            s3,
+            ai,
+            max_blob_bytes=max_blob_bytes,
+            enrich_cfg=enrich_cfg,
         )
 
     file_arts = [a for a in info.artifacts if a.kind == letfs.NODE_KIND_FILE]
@@ -107,56 +199,13 @@ async def enrich(
         a.path: (results[a.path].slug if a.path in results else None) for a in file_arts
     }
     rename_map = artifact_paths(existing_paths, slugs)
-    rich_csvs = rich_csv_paths(contents_by_path)
-    max_text_bytes = int(storage_cfg["max_text_bytes"])
-
-    child_meta: dict[str, tuple[str, str]] = {}
-    for art in file_arts:
-        if art.path == "README.md":
-            continue
-        final_path = rename_map.get(art.path, art.path)
-        meta = results.get(art.path)
-        if meta is not None:
-            child_meta[final_path] = (meta.title, meta.description)
-        else:
-            child_meta[final_path] = (art.title or final_path, art.description or "")
-
-    updates: list[internal.EnrichedArtifactInput] = []
-    for art in file_arts:
-        new_path = rename_map.get(art.path, art.path)
-        meta = results.get(art.path)
-        updated_text: str | None = None
-        if art.path in contents_by_path:
-            raw_text = (
-                own_body(contents_by_path[art.path])
-                if art.path == "README.md"
-                else contents_by_path[art.path]
-            )
-            rewritten = rewrite_artifact_links(
-                raw_text,
-                new_path,
-                art.media_type,
-                rename_map,
-                is_rich_csv=(art.path in rich_csvs),
-            )
-            if art.path == "README.md" and meta is not None:
-                rendered = render_readme(
-                    meta.title, meta.description, child_meta, rewritten
-                )
-                if len(rendered.encode("utf-8")) <= max_text_bytes:
-                    rewritten = rendered
-            if rewritten != contents_by_path[art.path]:
-                updated_text = rewritten
-
-        entry = internal.EnrichedArtifactInput(artifact_id=art.id)
-        if new_path != art.path:
-            entry.path = new_path
-        if updated_text is not None:
-            entry.text_content = updated_text
-        if meta is not None:
-            entry.title = meta.title
-            entry.description = meta.description
-        updates.append(entry)
+    updates = _build_enriched_updates(
+        file_arts,
+        contents_by_path,
+        rename_map,
+        results,
+        max_text_bytes=int(storage_cfg["max_text_bytes"]),
+    )
 
     readme_meta = results.get("README.md")
     req = internal.SaveEnrichedArtifactsRequest(blob_id=info.blob_id, artifacts=updates)

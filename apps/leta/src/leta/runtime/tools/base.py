@@ -1,16 +1,21 @@
+"""Shared tool argument base class, type aliases, and StructuredTool factory."""
+
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 from uuid import UUID, uuid5
 
 from langchain_core.tools import InjectedToolArg, StructuredTool
-from langgraph.prebuilt import ToolRuntime
-from openlet_sdk.config import JSON
 from pydantic import BaseModel, ConfigDict
 
-from ..content import MessageContentBlock
-from ..state import AgentState, RuntimeContext
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from langgraph.prebuilt import ToolRuntime
+    from openlet_sdk.config import JSON
+
+    from leta.runtime.content import MessageContentBlock
+    from leta.runtime.state import AgentState, RuntimeContext
 
 type ToolContent = str | list[MessageContentBlock]
 type ToolResult = tuple[ToolContent, dict[str, JSON]]
@@ -24,6 +29,7 @@ class ToolArgs(BaseModel):
 
 
 def idempotency_key(runtime: ToolRuntime[RuntimeContext, AgentState]) -> UUID:
+    """Derive a deterministic idempotency UUID from the agent ID and tool call ID."""
     return uuid5(runtime.context.agent_id, runtime.tool_call_id or "")
 
 
@@ -34,6 +40,7 @@ def make_tool(
     args_schema: type[BaseModel],
     coroutine: Callable[..., Awaitable[ToolResult]],
 ) -> StructuredTool:
+    """Create a LangChain ``StructuredTool`` with ``content_and_artifact`` response format."""
     return StructuredTool.from_function(
         coroutine=coroutine,
         name=name,

@@ -1,18 +1,24 @@
+"""LangGraph StateGraph builder for the 5-node Openlet Leta agent loop."""
+
 from __future__ import annotations
 
-from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
-from langchain_core.tools import BaseTool
-from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph  # pyright: ignore[reportMissingTypeStubs]
-from langgraph.graph.state import CompiledStateGraph  # pyright: ignore[reportMissingTypeStubs]
 
-from .nodes.compact import compact_node
-from .nodes.end_turn import end_turn_node
-from .nodes.inbox import after_inbox_router, inbox_node
-from .nodes.model import after_model_router, model_node
-from .nodes.tools import after_tools_router, build_tools_node
-from .state import AgentState, RuntimeContext
+from leta.runtime.nodes.compact import compact_node
+from leta.runtime.nodes.end_turn import end_turn_node
+from leta.runtime.nodes.inbox import after_inbox_router, inbox_node
+from leta.runtime.nodes.model import after_model_router, model_node
+from leta.runtime.nodes.tools import after_tools_router, build_tools_node
+from leta.runtime.state import AgentState, RuntimeContext
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from langchain_core.tools import BaseTool
+    from langgraph.checkpoint.base import BaseCheckpointSaver
+    from langgraph.graph.state import CompiledStateGraph  # pyright: ignore[reportMissingTypeStubs]
 
 
 def build_agent_graph(

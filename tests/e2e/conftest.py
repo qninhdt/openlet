@@ -5,16 +5,18 @@ from __future__ import annotations
 import fcntl
 import os
 import time
-from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import httpx
 import pytest
 from openlet_env import Environment
-from openlet_sdk.types import is_object_list, is_str_mapping
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
 
 DATASET_DIR = Path(__file__).resolve().parent / "dataset"
 SAMPLE_FILES_DIR = DATASET_DIR / "workspaces/acme-review/storages/shared"
@@ -25,14 +27,33 @@ class _WorkerMeta(BaseModel):
     workers: int
 
 
-def json_object(value: object) -> dict[str, object]:
-    assert is_str_mapping(value), f"expected JSON object, got {type(value)}"
-    return dict(value)
+class _StorageSummary(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+    id: str
+    root_node_id: str = Field(alias="rootNodeId")
+    visibility: str = ""
 
 
-def json_object_list(value: object) -> list[dict[str, object]]:
-    assert is_object_list(value), f"expected JSON list, got {type(value)}"
-    return [json_object(item) for item in value]
+class _ListStoragesResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    storages: list[_StorageSummary] = []
+
+
+class TreeNode(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    readonly: bool = False
+
+
+class TreeEntry(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    path: str
+    node: TreeNode
+
+
+class ReadTreeResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    entries: list[TreeEntry] = []
 
 
 def poll[T](
@@ -102,16 +123,19 @@ class AccountFactory:
         )
         self._clients.append(client)
 
-        def find_private_storage() -> dict[str, object] | None:
+        def find_private_storage() -> _StorageSummary | None:
             resp = client.get(f"/v1/workspaces/{workspace_id}/storages?owned_only=true")
             if resp.status_code != 200:
                 return None
-            body = json_object(resp.json())
-            storages = json_object_list(body.get("storages", []))
-            for item in storages:
-                if item.get("visibility") == "STORAGE_VISIBILITY_PRIVATE":
-                    return item
-            return None
+            parsed = _ListStoragesResponse.model_validate(resp.json())
+            return next(
+                (
+                    item
+                    for item in parsed.storages
+                    if item.visibility == "STORAGE_VISIBILITY_PRIVATE"
+                ),
+                None,
+            )
 
         storage = poll(
             find_private_storage, timeout=30.0, desc="private storage provisioning"
@@ -121,8 +145,8 @@ class AccountFactory:
             api=client,
             id=acct.user_id,
             workspace_id=workspace_id,
-            storage_id=str(storage["id"]),
-            root_id=str(storage["rootNodeId"]),
+            storage_id=storage.id,
+            root_id=storage.root_node_id,
             email=acct.email,
             subject=acct.clerk_user_id,
             token=acct.token,
@@ -138,9 +162,10 @@ def _is_gateway_healthy(env: Environment) -> bool:
         return False
     try:
         resp = httpx.get(f"{env.endpoints.api_url}/v1/workspaces", timeout=2.0)
-        return resp.status_code == 401
-    except Exception:
+    except httpx.HTTPError:
         return False
+    else:
+        return resp.status_code == 401
 
 
 @pytest.fixture(scope="session")
@@ -204,12 +229,12 @@ def accounts(openlet_env: Environment) -> Iterator[AccountFactory]:
         factory.close()
 
 
-@pytest.fixture()
+@pytest.fixture
 def account(accounts: AccountFactory) -> AccountFixture:
     return accounts.create()
 
 
-@pytest.fixture()
+@pytest.fixture
 def raw_client(openlet_env: Environment) -> Iterator[httpx.Client]:
     with httpx.Client(base_url=openlet_env.endpoints.api_url, timeout=30.0) as client:
         yield client

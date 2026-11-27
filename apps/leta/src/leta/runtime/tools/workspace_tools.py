@@ -1,24 +1,27 @@
+"""Workspace directory, subagent, HITL, schedule, and todo LangChain tools."""
+
 from __future__ import annotations
 
 import json
+import logging
 import re
-from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import grpc
-from langchain_core.tools import BaseTool, ToolException
-from langgraph.prebuilt import ToolRuntime
+from langchain_core.tools import ToolException
+from langgraph.prebuilt import ToolRuntime  # noqa: TC002  # Evaluated at runtime by LangGraph ToolNode.get_type_hints.
 from openlet_api.chat.v1 import chat_pb2 as chat_pb
 from openlet_api.platform.v1 import internal_pb2 as plat_int_pb
 from openlet_api.platform.v1 import platform_pb2 as plat_pb
-from openlet_sdk.config import JSON
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from ...auth import Actor
-from ...hitl.service import (
+from leta.auth import Actor
+from leta.hitl.models import ApprovalPayload
+from leta.hitl.service import (
     OpenHitlInput,
     Question,
     build_ask_form,
@@ -27,7 +30,7 @@ from ...hitl.service import (
     list_leta_hitl,
     start_hitl_workflow,
 )
-from ...runs import (
+from leta.runs import (
     AgentMessageEventData,
     InboxReceivedEventData,
     MessageEventData,
@@ -36,7 +39,10 @@ from ...runs import (
     ToolResultEventData,
     list_recent_activity,
 )
-from ...schedules.service import (
+from leta.runtime.formatting import format_hitl_outcome, format_hitl_response
+from leta.runtime.state import AgentState, RuntimeContext  # noqa: TC001  # Evaluated at runtime by LangGraph ToolNode.get_type_hints.
+from leta.runtime.tools.base import ToolArgs, ToolResult, idempotency_key, make_tool
+from leta.schedules.service import (
     Timing,
     create_schedule,
     delete_schedule,
@@ -44,32 +50,88 @@ from ...schedules.service import (
     list_schedules,
     update_schedule,
 )
-from ...subagents.service import (
-    ResolvedAgent,
+from leta.subagents.service import (
     list_leta_agents,
     list_workspace_root_agents,
     resolve_leta_agent,
     spawn_subagent,
     stop_agent_tree,
 )
-from ..formatting import format_hitl_outcome, format_hitl_response
-from ..state import AgentState, RuntimeContext
-from .base import ToolArgs, ToolResult, idempotency_key, make_tool
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from langchain_core.tools import BaseTool
+    from openlet_sdk.config import JSON
+
+    from leta.subagents.service import ResolvedAgent
+
+logger = logging.getLogger(__name__)
 
 # --- Workspace Context & Directory ---
 
 
 class EmptyArgs(ToolArgs):
-    pass
+    """Empty input schema for parameterless tools."""
 
 
 class ListMembersArgs(ToolArgs):
+    """Input schema for ``list_members``."""
+
     query: str = ""
     kind: Literal["all", "user", "agent"] = "all"
     limit: int = Field(default=30, ge=1, le=100)
 
 
-async def _fetch_workspace_human_users(rt: RuntimeContext) -> list[dict[str, str]]:
+@dataclass(frozen=True, slots=True)
+class _WorkspaceUser:
+    id: str
+    name: str
+    handle: str
+    role: str
+
+    def to_json(self) -> dict[str, JSON]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "handle": self.handle,
+            "role": self.role,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class _GroupSummary:
+    id: str
+    title: str
+    handle: str
+
+    def to_json(self) -> dict[str, JSON]:
+        return {
+            "id": self.id,
+            "title": self.title,
+            "handle": self.handle,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class _MemberItem:
+    kind: Literal["user", "agent"]
+    id: str
+    name: str
+    handle: str
+    role: str
+
+    def to_json(self) -> dict[str, JSON]:
+        return {
+            "kind": self.kind,
+            "id": self.id,
+            "name": self.name,
+            "handle": self.handle,
+            "role": self.role,
+        }
+
+
+async def _fetch_workspace_human_users(rt: RuntimeContext) -> list[_WorkspaceUser]:
     s = rt.services
     rels = await s.auth.read_relationships("workspace", rt.workspace_id)
     roles = {
@@ -78,26 +140,27 @@ async def _fetch_workspace_human_users(rt: RuntimeContext) -> list[dict[str, str
         if r.subject.object.object_type == "user" and r.relation in ("owner", "member")
     }
     ids = list(roles)
-    out: list[dict[str, str]] = []
+    out: list[_WorkspaceUser] = []
     for i in range(0, len(ids), 100):
         resp = await s.platform_internal.BatchGetUsers(
             plat_int_pb.BatchGetUsersRequest(user_ids=ids[i : i + 100]), timeout=15
         )
-        for u in resp.users:
-            out.append(
-                {
-                    "id": str(u.id),
-                    "name": str(u.display_name),
-                    "handle": str(u.handle),
-                    "role": roles.get(str(u.id), "member"),
-                }
+        out.extend(
+            _WorkspaceUser(
+                id=str(u.id),
+                name=str(u.display_name),
+                handle=str(u.handle),
+                role=roles.get(str(u.id), "member"),
             )
+            for u in resp.users
+        )
     return out
 
 
 async def handle_get_context(
     *, runtime: ToolRuntime[RuntimeContext, AgentState]
 ) -> ToolResult:
+    """Return a workspace snapshot covering members, peers, groups, subagents, HITL, and schedules."""
     rt = runtime.context
     s = rt.services
     agents = await list_leta_agents(s.db, rt.leta_id)
@@ -110,11 +173,11 @@ async def handle_get_context(
             f"## Workspace Context (Subagent {rt.handle})",
             "Mounts: `/home` (~), `/shared`, `/user/<handle>`, `/chat/<handle>`, `/letfs/<storage_id>/<node_id>`",
             f"Active agents in this Leta ({len(agents)}):",
-        ]
-        for a in agents[:20]:
-            lines.append(
+            *(
                 f"- {a.handle} (agent:{a.handle}) | {a.name} ({a.title}) | {'running' if a.running else a.state}"
-            )
+                for a in agents[:20]
+            ),
+        ]
         return "\n".join(lines), {
             "subagents": [a.model_dump(mode="json") for a in subagents]
         }
@@ -127,7 +190,7 @@ async def handle_get_context(
 
     peers = await list_workspace_root_agents(s.db, rt.workspace_id, limit=20)
 
-    groups: list[dict[str, str]] = []
+    groups: list[_GroupSummary] = []
     try:
         c_resp = await s.chat.ListConversations(
             chat_pb.ListConversationsRequest(
@@ -136,17 +199,17 @@ async def handle_get_context(
             metadata=Actor("agent", rt.leta_id).metadata,
             timeout=15,
         )
-        for c in c_resp.conversations:
-            if c.type == "group":
-                groups.append(
-                    {
-                        "id": c.id,
-                        "title": c.title,
-                        "handle": c.handle if c.HasField("handle") else "",
-                    }
-                )
-    except Exception:
-        pass
+        groups.extend(
+            _GroupSummary(
+                id=c.id,
+                title=c.title,
+                handle=c.handle if c.HasField("handle") else "",
+            )
+            for c in c_resp.conversations
+            if c.type == "group"
+        )
+    except grpc.aio.AioRpcError:
+        logger.debug("failed to list workspace groups for context", exc_info=True)
 
     open_hitl = await list_leta_hitl(s.db, rt.leta_id, status="pending", limit=20)
     schedules = await list_schedules(s.db, rt.leta_id)
@@ -157,7 +220,7 @@ async def handle_get_context(
         "",
         f"### Human Members ({len(users_list)} shown of {len(all_users)})",
         *[
-            f"- {u['name']} | {u['handle']} | {u['role']} | /chat/{u['handle']} | /user/{u['handle']}"
+            f"- {u.name} | {u.handle} | {u.role} | /chat/{u.handle} | /user/{u.handle}"
             for u in users_list
         ],
         "",
@@ -168,10 +231,7 @@ async def handle_get_context(
         ],
         "",
         f"### Active Groups ({len(groups[:20])})",
-        *[
-            f"- {g['title']} | chat:{g['id']} | /chat/{g['handle']}"
-            for g in groups[:20]
-        ],
+        *[f"- {g.title} | chat:{g.id} | /chat/{g.handle}" for g in groups[:20]],
         "",
         f"### Active Subagents ({len(subagents)})",
         *[
@@ -192,9 +252,9 @@ async def handle_get_context(
         "\n".join(lines),
         {
             "workspace": {"id": ws_info.id, "name": ws_info.name},
-            "members": users_list,
+            "members": [u.to_json() for u in users_list],
             "letas": [p.model_dump(mode="json") for p in peers],
-            "groups": groups[:20],
+            "groups": [g.to_json() for g in groups[:20]],
             "subagents": [a.model_dump(mode="json") for a in subagents],
             "open_hitl": [h.model_dump(mode="json") for h in open_hitl],
             "schedules": [sc.model_dump(mode="json") for sc in schedules[:20]],
@@ -209,27 +269,28 @@ async def handle_list_members(
     *,
     runtime: ToolRuntime[RuntimeContext, AgentState],
 ) -> ToolResult:
+    """Search and list workspace humans and peer root agents."""
     rt = runtime.context
     s = rt.services
     needle = query.strip().lstrip("@").lower()
-    items: list[dict[str, str]] = []
+    items: list[_MemberItem] = []
 
     if kind in ("all", "user"):
         for u in await _fetch_workspace_human_users(rt):
             if (
                 needle
-                and needle not in u["name"].lower()
-                and needle not in u["handle"].lower()
+                and needle not in u.name.lower()
+                and needle not in u.handle.lower()
             ):
                 continue
             items.append(
-                {
-                    "kind": "user",
-                    "id": u["id"],
-                    "name": u["name"],
-                    "handle": u["handle"],
-                    "role": u["role"],
-                }
+                _MemberItem(
+                    kind="user",
+                    id=u.id,
+                    name=u.name,
+                    handle=u.handle,
+                    role=u.role,
+                )
             )
 
     if kind in ("all", "agent"):
@@ -243,23 +304,23 @@ async def handle_list_members(
             ):
                 continue
             items.append(
-                {
-                    "kind": "agent",
-                    "id": str(r.id),
-                    "name": r.name,
-                    "handle": r.handle,
-                    "role": r.title,
-                }
+                _MemberItem(
+                    kind="agent",
+                    id=str(r.id),
+                    name=r.name,
+                    handle=r.handle,
+                    role=r.title,
+                )
             )
 
     page = items[:limit]
     lines = [
-        f"- {it['name']} | {it['handle']} | {it['kind']} | {it['role']} | /chat/{it['handle']}"
+        f"- {it.name} | {it.handle} | {it.kind} | {it.role} | /chat/{it.handle}"
         for it in page
     ]
     return (
         "\n".join(lines) if lines else "No matching members found.",
-        {"items": page, "total": len(items)},
+        {"items": [it.to_json() for it in page], "total": len(items)},
     )
 
 
@@ -267,6 +328,8 @@ async def handle_list_members(
 
 
 class SpawnAgentArgs(ToolArgs):
+    """Input schema for ``spawn_agent``."""
+
     name: str = Field(
         min_length=1,
         max_length=255,
@@ -289,6 +352,8 @@ class SpawnAgentArgs(ToolArgs):
 
 
 class AgentStatusArgs(ToolArgs):
+    """Input schema for ``agent_status``."""
+
     agent: str = Field(
         min_length=1,
         description="Subagent handle, 'agent:<handle>', or UUID.",
@@ -302,6 +367,8 @@ class AgentStatusArgs(ToolArgs):
 
 
 class StopAgentArgs(ToolArgs):
+    """Input schema for ``stop_agent``."""
+
     agent: str = Field(
         min_length=1,
         description="Subagent handle, 'agent:<handle>', or UUID.",
@@ -341,6 +408,7 @@ async def handle_spawn_agent(
     *,
     runtime: ToolRuntime[RuntimeContext, AgentState],
 ) -> ToolResult:
+    """Spawn a background subagent and optionally dispatch its initial task."""
     rt = runtime.context
     sub_cfg = rt.services.settings.subagents
     try:
@@ -367,8 +435,10 @@ async def handle_spawn_agent(
         else f" Send it a task via send_message(to={created.handle!r}, content=...)."
     )
     return (
-        f"Spawned {created.name} The {created.title} "
-        f"(handle: {created.handle}, address: agent:{created.handle}, id: {created.id}, status: {status_label}).{guidance}",
+        (
+            f"Spawned {created.name} The {created.title} "
+            f"(handle: {created.handle}, address: agent:{created.handle}, id: {created.id}, status: {status_label}).{guidance}"
+        ),
         {
             "agent_id": str(created.id),
             "handle": created.handle,
@@ -382,6 +452,7 @@ async def handle_spawn_agent(
 async def handle_list_agents(
     *, runtime: ToolRuntime[RuntimeContext, AgentState]
 ) -> ToolResult:
+    """List active agents in the current Leta tree."""
     rt = runtime.context
     agents = await list_leta_agents(rt.services.db, rt.leta_id)
     active = [a for a in agents if a.state == "active"]
@@ -457,6 +528,7 @@ async def handle_agent_status(
     *,
     runtime: ToolRuntime[RuntimeContext, AgentState],
 ) -> ToolResult:
+    """Inspect a subagent's run state and recent activity summaries."""
     rt = runtime.context
     row = await _resolve_leta_agent(rt, agent, active_only=False)
     events = await list_recent_activity(rt.services.db, row.id, activity_limit)
@@ -482,6 +554,7 @@ async def handle_stop_agent(
     *,
     runtime: ToolRuntime[RuntimeContext, AgentState],
 ) -> ToolResult:
+    """Stop a subagent and all of its descendant subagents."""
     rt = runtime.context
     row = await _resolve_leta_agent(rt, agent, active_only=True)
     if row.parent_agent_id is None:
@@ -504,6 +577,8 @@ async def handle_stop_agent(
 
 
 class HitlAskArgs(ToolArgs):
+    """Input schema for ``hitl_ask``."""
+
     recipient: str = Field(
         min_length=1,
         description="Human handle, UUID, or full display name.",
@@ -519,6 +594,8 @@ class HitlAskArgs(ToolArgs):
 
 
 class HitlRequestAccessArgs(ToolArgs):
+    """Input schema for ``hitl_request_access``."""
+
     recipient: str = Field(
         min_length=1,
         description="Human handle, UUID, or full display name.",
@@ -539,10 +616,14 @@ class HitlRequestAccessArgs(ToolArgs):
 
 
 class HitlCancelArgs(ToolArgs):
+    """Input schema for ``hitl_cancel``."""
+
     request_id: UUID
 
 
 class HitlListArgs(ToolArgs):
+    """Input schema for ``hitl_list``."""
+
     request_id: UUID | None = None
     status: (
         Literal["pending", "answered", "accepted", "denied", "cancelled", "expired"]
@@ -580,17 +661,17 @@ async def _resolve_human_recipient(
     # 2. Fallback: unique display name match in workspace members
     users = await _fetch_workspace_human_users(rt)
     low = cleaned.lower()
-    name_matches = [u for u in users if u["name"].strip().lower() == low]
+    name_matches = [u for u in users if u.name.strip().lower() == low]
     if len(name_matches) == 1:
-        return UUID(name_matches[0]["id"]), name_matches[0]["handle"]
+        return UUID(name_matches[0].id), name_matches[0].handle
     if len(name_matches) > 1:
-        opts = ", ".join(f"{u['handle']} ({u['name']})" for u in name_matches)
+        opts = ", ".join(f"{u.handle} ({u.name})" for u in name_matches)
         raise ToolException(
             f"Recipient {recipient!r} matches multiple users. Specify a handle: {opts}"
         )
 
     if users:
-        opts = ", ".join(f"{u['handle']} ({u['name']})" for u in users[:15])
+        opts = ", ".join(f"{u.handle} ({u.name})" for u in users[:15])
         raise ToolException(
             f"Workspace user {recipient!r} not found. Available users: {opts}"
         )
@@ -605,6 +686,7 @@ async def handle_hitl_ask(
     *,
     runtime: ToolRuntime[RuntimeContext, AgentState],
 ) -> ToolResult:
+    """Open an asynchronous HITL question form for a workspace user."""
     rt = runtime.context
     recipient_id, recipient_label = await _resolve_human_recipient(rt, recipient)
     req_id = uuid4()
@@ -619,13 +701,15 @@ async def handle_hitl_ask(
             recipient_user_id=recipient_id,
             type="ask",
             title=title,
-            payload=payload.model_dump(mode="json"),
+            payload=payload,
             expires_at=expires,
         ),
     )
     return (
-        f"Opened HITL question form {req_id} ('{title}') for {recipient_label}. "
-        "Their response will arrive asynchronously in your <inbox>; continue independent work or end your turn without polling.",
+        (
+            f"Opened HITL question form {req_id} ('{title}') for {recipient_label}. "
+            "Their response will arrive asynchronously in your <inbox>; continue independent work or end your turn without polling."
+        ),
         {"request_id": str(req_id), "status": "pending", "type": "ask"},
     )
 
@@ -639,6 +723,7 @@ async def handle_hitl_request_access(
     *,
     runtime: ToolRuntime[RuntimeContext, AgentState],
 ) -> ToolResult:
+    """Request viewer or editor access to a human user's personal storage."""
     rt = runtime.context
     recipient_id, recipient_label = await _resolve_human_recipient(rt, recipient)
     req_id = uuid4()
@@ -652,13 +737,15 @@ async def handle_hitl_request_access(
             recipient_user_id=recipient_id,
             type="approval",
             title=title,
-            payload={"role": role, "reason": reason},
+            payload=ApprovalPayload(role=role, reason=reason),
             expires_at=expires,
         ),
     )
     return (
-        f"Opened HITL storage access request {req_id} ({role}) for {recipient_label}. "
-        "The decision will arrive asynchronously in your <inbox>; continue independent work or end your turn without polling.",
+        (
+            f"Opened HITL storage access request {req_id} ({role}) for {recipient_label}. "
+            "The decision will arrive asynchronously in your <inbox>; continue independent work or end your turn without polling."
+        ),
         {"request_id": str(req_id), "status": "pending", "type": "approval"},
     )
 
@@ -668,6 +755,7 @@ async def handle_hitl_cancel(
     *,
     runtime: ToolRuntime[RuntimeContext, AgentState],
 ) -> ToolResult:
+    """Cancel a pending HITL request."""
     rt = runtime.context
     cancelled = await cancel_hitl_workflow(
         temporal=rt.services.temporal,
@@ -699,6 +787,7 @@ async def handle_hitl_list(
     *,
     runtime: ToolRuntime[RuntimeContext, AgentState],
 ) -> ToolResult:
+    """List HITL requests or inspect a single request by ID."""
     rt = runtime.context
     if request_id is not None:
         try:
@@ -802,6 +891,7 @@ _TIMEZONE_ALIASES: dict[str, str] = {
 
 
 def normalize_timezone(tz: str) -> str:
+    """Validate and resolve common timezone aliases into a canonical IANA zone name."""
     cleaned = tz.strip()
     if not cleaned:
         return "UTC"
@@ -885,7 +975,8 @@ def parse_schedule_timing(
             return Timing(after_seconds=bare_secs, timezone=tz)
         return Timing(at=_parse_iso_datetime(val, tz), timezone=tz)
 
-    assert repeat is not None
+    if repeat is None:
+        raise ValueError("specify either run_at (one-shot) or repeat (recurring)")
     rep = repeat.strip()
     if rep.lower().startswith("every "):
         secs = _parse_duration_seconds(rep[6:])
@@ -911,6 +1002,8 @@ def parse_schedule_timing(
 
 
 class ScheduleCreateArgs(ToolArgs):
+    """Input schema for ``schedule_create``."""
+
     model_config = ConfigDict(
         extra="forbid", arbitrary_types_allowed=True, str_strip_whitespace=True
     )
@@ -943,6 +1036,8 @@ class ScheduleCreateArgs(ToolArgs):
 
 
 class ScheduleUpdateArgs(ToolArgs):
+    """Input schema for ``schedule_update``."""
+
     model_config = ConfigDict(
         extra="forbid", arbitrary_types_allowed=True, str_strip_whitespace=True
     )
@@ -968,10 +1063,14 @@ class ScheduleUpdateArgs(ToolArgs):
 
 
 class ScheduleDeleteArgs(ToolArgs):
+    """Input schema for ``schedule_delete``."""
+
     schedule_id: UUID
 
 
 class ScheduleListArgs(ToolArgs):
+    """Input schema for ``schedule_list``."""
+
     schedule_id: UUID | None = None
 
 
@@ -1005,14 +1104,15 @@ def _format_upcoming(upcoming: list[str]) -> str:
 async def handle_schedule_create(
     title: str,
     content: str,
+    *,
     run_at: str | None = None,
     repeat: str | None = None,
     timezone: str = "UTC",
     ends_at: str | None = None,
     target_agent: str | None = None,
-    *,
     runtime: ToolRuntime[RuntimeContext, AgentState],
 ) -> ToolResult:
+    """Create a one-shot or recurring schedule delivering alarms to <inbox>."""
     rt = runtime.context
     try:
         timing = parse_schedule_timing(
@@ -1046,6 +1146,7 @@ async def handle_schedule_create(
 
 async def handle_schedule_update(
     schedule_id: UUID,
+    *,
     title: str | None = None,
     content: str | None = None,
     run_at: str | None = None,
@@ -1054,9 +1155,9 @@ async def handle_schedule_update(
     ends_at: str | None = None,
     target_agent: str | None = None,
     paused: bool | None = None,
-    *,
     runtime: ToolRuntime[RuntimeContext, AgentState],
 ) -> ToolResult:
+    """Update an existing schedule's timing, content, target agent, or pause state."""
     rt = runtime.context
     has_timing = run_at is not None or repeat is not None
     try:
@@ -1100,6 +1201,7 @@ async def handle_schedule_delete(
     *,
     runtime: ToolRuntime[RuntimeContext, AgentState],
 ) -> ToolResult:
+    """Delete an existing schedule by ID."""
     rt = runtime.context
     try:
         await delete_schedule(
@@ -1122,6 +1224,7 @@ async def handle_schedule_list(
     *,
     runtime: ToolRuntime[RuntimeContext, AgentState],
 ) -> ToolResult:
+    """List active schedules or inspect a single schedule by ID."""
     rt = runtime.context
     if schedule_id is not None:
         try:
@@ -1149,12 +1252,16 @@ async def handle_schedule_list(
 
 
 class TodoItem(BaseModel):
+    """Single checklist entry in the optional ``todowrite`` scratchpad."""
+
     model_config = ConfigDict(extra="forbid")
     content: str = Field(min_length=1)
     status: Literal["pending", "in_progress", "completed", "cancelled"]
 
 
 class TodoWriteArgs(ToolArgs):
+    """Input schema for ``todowrite``."""
+
     todos: list[TodoItem]
 
 
@@ -1163,6 +1270,7 @@ async def handle_todowrite(
     *,
     runtime: ToolRuntime[RuntimeContext, AgentState],
 ) -> ToolResult:
+    """Replace the scratchpad checklist and return a completion summary."""
     _ = runtime
     total = len(todos)
     done = sum(1 for t in todos if t.status == "completed")
@@ -1182,6 +1290,7 @@ def build_domain_tools(
     enable_schedule: bool = True,
     enable_todo: bool = False,
 ) -> list[BaseTool]:
+    """Build workspace, subagent, HITL, schedule, and optional todo tools."""
     tools: list[BaseTool] = [
         make_tool(
             name="get_context",

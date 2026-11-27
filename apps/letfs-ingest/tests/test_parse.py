@@ -1,18 +1,30 @@
+from __future__ import annotations
+
+import asyncio
 import base64
 import hashlib
 import json
 from io import BytesIO
-from pathlib import Path
+from typing import TYPE_CHECKING
 
+import openpyxl
 import pytest
-from datalab_sdk import DatalabAPIError, DatalabAuthenticationError  # pyright: ignore[reportMissingTypeStubs]
-from letfs_ingest.convert import DOCX_MEDIA, PPTX_MEDIA
+from datalab_sdk import (  # pyright: ignore[reportMissingTypeStubs]
+    ConvertOptions,
+    DatalabAPIError,
+    DatalabAuthenticationError,
+)
+from letfs_ingest.convert import DOCX_MEDIA, convert_xlsx
 from letfs_ingest.datalab import export
 from letfs_ingest.parse import Parser
 from openlet_api.letfs.v1 import internal_pb2 as internal
-from openlet_sdk.config import Config
 from PIL import Image, ImageDraw
 from temporalio.exceptions import ApplicationError
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from openlet_sdk.config import Config
 
 
 def _textured_b64(accent: str = "blue") -> str:
@@ -67,7 +79,7 @@ def test_datalab_export_filters_noise_and_deduplicates_images(
         )
     )
     out = tmp_path / "out"
-    export(resp, True, out, config)
+    export(resp, out, config, success=True)
 
     readme = (out / "README.md").read_text()
     assert "![Revenue chart figure](images/01-img.png)" in readme
@@ -78,7 +90,8 @@ def test_datalab_export_filters_noise_and_deduplicates_images(
     assert "hdr.png" not in readme
     assert "Synthetic chart table" not in readme
     saved = list((out / "images").glob("*"))
-    assert len(saved) == 1 and saved[0].name == "01-img.png"
+    assert len(saved) == 1
+    assert saved[0].name == "01-img.png"
 
 
 async def test_parser_saves_artifacts_and_uploads_images_to_s3(
@@ -93,7 +106,7 @@ async def test_parser_saves_artifacts_and_uploads_images_to_s3(
 
         async def download_to_file(self, key: str, target: Path, limit: int) -> int:
             assert key == "workspaces/ws-1/blobs/blob-1/source"
-            target.write_bytes(b"fake-docx")
+            await asyncio.to_thread(target.write_bytes, b"fake-docx")
             return 9
 
         async def put_bytes(self, key: str, data: bytes, media_type: str) -> str:
@@ -101,7 +114,7 @@ async def test_parser_saves_artifacts_and_uploads_images_to_s3(
             return "crc=="
 
     class FakeStub:
-        async def GetBlobArtifacts(
+        async def GetBlobArtifacts(  # noqa: N802  # Matches gRPC service method name.
             self, req: internal.BlobRequest
         ) -> internal.GetBlobArtifactsResponse:
             return internal.GetBlobArtifactsResponse(
@@ -114,7 +127,7 @@ async def test_parser_saves_artifacts_and_uploads_images_to_s3(
                 source_name="C:/Users/Alice/report.docx",
             )
 
-        async def SaveParsedArtifacts(
+        async def SaveParsedArtifacts(  # noqa: N802  # Matches gRPC service method name.
             self, req: internal.SaveParsedArtifactsRequest
         ) -> internal.BlobProcessingOutcome:
             saved_req.append(req)
@@ -129,13 +142,14 @@ async def test_parser_saves_artifacts_and_uploads_images_to_s3(
             *,
             file_url: str | None = None,
             file_path: Path | None = None,
-            options: object = None,
+            options: ConvertOptions | None = None,
             stream_response_to: Path | None = None,
         ) -> FakeResult:
             assert file_url == "https://s3.example/presigned"
             assert file_path is None
             assert stream_response_to is not None
-            stream_response_to.write_text(
+            await asyncio.to_thread(
+                stream_response_to.write_text,
                 json.dumps(
                     {
                         "success": True,
@@ -143,7 +157,7 @@ async def test_parser_saves_artifacts_and_uploads_images_to_s3(
                         "markdown": "# Doc\n\n![Chart](chart.png)\n",
                         "images": {"chart.png": _textured_b64()},
                     }
-                )
+                ),
             )
             return FakeResult()
 
@@ -167,7 +181,6 @@ async def test_parser_saves_artifacts_and_uploads_images_to_s3(
     assert paths["images/01-img.png"].object_key.startswith(
         "workspaces/ws-1/blobs/blob-1/artifacts/"
     )
-    _ = PPTX_MEDIA
 
 
 def _raster_icon_b64(size: tuple[int, int], rows_of_noise: int = 8) -> str:
@@ -211,7 +224,7 @@ def test_datalab_drops_small_raster_icons_and_two_para_echoed_captions(
         )
     )
     out = tmp_path / "out"
-    export(resp, True, out, config)
+    export(resp, out, config, success=True)
 
     readme = (out / "README.md").read_text()
     assert "![Annual growth overview](images/01-img.png)" in readme
@@ -223,14 +236,14 @@ def test_datalab_drops_small_raster_icons_and_two_para_echoed_captions(
 
 
 async def test_parser_retries_transient_datalab_errors_and_stops_on_permanent(
-    tmp_path: Path, config: Config, monkeypatch: pytest.MonkeyPatch
+    config: Config, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     class MemS3:
         async def get_bytes(self, key: str, limit: int) -> bytes:
             return b""
 
         async def download_to_file(self, key: str, target: Path, limit: int) -> int:
-            target.write_bytes(b"fake-docx")
+            await asyncio.to_thread(target.write_bytes, b"fake-docx")
             return 9
 
         async def put_bytes(self, key: str, data: bytes, media_type: str) -> str:
@@ -240,7 +253,7 @@ async def test_parser_retries_transient_datalab_errors_and_stops_on_permanent(
         def __init__(self) -> None:
             self.saved = 0
 
-        async def GetBlobArtifacts(
+        async def GetBlobArtifacts(  # noqa: N802  # Matches gRPC service method name.
             self, req: internal.BlobRequest
         ) -> internal.GetBlobArtifactsResponse:
             return internal.GetBlobArtifactsResponse(
@@ -252,7 +265,7 @@ async def test_parser_retries_transient_datalab_errors_and_stops_on_permanent(
                 source_name="doc.docx",
             )
 
-        async def SaveParsedArtifacts(
+        async def SaveParsedArtifacts(  # noqa: N802  # Matches gRPC service method name.
             self, req: internal.SaveParsedArtifactsRequest
         ) -> internal.BlobProcessingOutcome:
             self.saved += 1
@@ -269,7 +282,7 @@ async def test_parser_retries_transient_datalab_errors_and_stops_on_permanent(
             *,
             file_url: str | None = None,
             file_path: Path | None = None,
-            options: object = None,
+            options: ConvertOptions | None = None,
             stream_response_to: Path | None = None,
         ) -> OkResult:
             nonlocal calls
@@ -280,7 +293,8 @@ async def test_parser_retries_transient_datalab_errors_and_stops_on_permanent(
                     status_code=None,
                 )
             assert stream_response_to is not None
-            stream_response_to.write_text(
+            await asyncio.to_thread(
+                stream_response_to.write_text,
                 json.dumps(
                     {
                         "success": True,
@@ -288,7 +302,7 @@ async def test_parser_retries_transient_datalab_errors_and_stops_on_permanent(
                         "markdown": "# Recovered\n\nRecovered document body.\n",
                         "images": {},
                     }
-                )
+                ),
             )
             return OkResult()
 
@@ -315,7 +329,7 @@ async def test_parser_retries_transient_datalab_errors_and_stops_on_permanent(
             *,
             file_url: str | None = None,
             file_path: Path | None = None,
-            options: object = None,
+            options: ConvertOptions | None = None,
             stream_response_to: Path | None = None,
         ) -> OkResult:
             nonlocal auth_calls
@@ -326,15 +340,11 @@ async def test_parser_retries_transient_datalab_errors_and_stops_on_permanent(
         await Parser(stub, MemS3(), config, AuthFailDatalab()).run("blob-perm")
     assert auth_calls == 1
     assert exc_info.value.non_retryable is True
-    _ = tmp_path
 
 
 def test_convert_xlsx_recovers_uncached_formula_cells(
     tmp_path: Path, config: Config
 ) -> None:
-    import openpyxl
-    from letfs_ingest.convert import convert_xlsx
-
     xlsx = tmp_path / "uncached.xlsx"
     wb = openpyxl.Workbook()
     ws1 = wb.active

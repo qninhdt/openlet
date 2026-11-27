@@ -1,51 +1,63 @@
+"""Layer 2 turn runner orchestrating leases, LangGraph execution, heartbeats, and tracing."""
+
 from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
-from contextlib import ExitStack
+from contextlib import ExitStack, suppress
 from time import monotonic
-from uuid import UUID, uuid4
+from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
-from langchain_core.runnables import RunnableConfig
-from langchain_core.tools import BaseTool
 from langfuse import propagate_attributes
 from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler
 from openlet_sdk.types import is_object_list, is_str_mapping
 
-from ..channels.base import CallerContext
-from ..channels.internal_agent import InternalAgentAdapter
-from ..channels.openlet_chat import OpenletChatAdapter
-from ..channels.router import ChannelRouter
-from ..config import Services
-from ..db import (
+from leta.channels.base import CallerContext
+from leta.channels.internal_agent import InternalAgentAdapter
+from leta.channels.openlet_chat import OpenletChatAdapter
+from leta.channels.router import ChannelRouter
+from leta.db import (
     LeaseLostError,
     WriterBusyError,
     acquire_lease,
     release_lease,
     renew_lease,
 )
-from ..filesystem.workspace import Filesystem
-from ..runs import (
+from leta.filesystem.workspace import Filesystem
+from leta.runs import (
     RunOutcome,
     load_agent_runtime_record,
     start_run,
     touch_run_heartbeat,
 )
-from .checkpoint import make_checkpointer
-from .graph import build_agent_graph
-from .prompts import prompt_version_hash
-from .state import AgentState, RuntimeContext
-from .tools.files import build_file_tools
-from .tools.messaging import build_messaging_tools
-from .tools.web import build_web_tools
-from .tools.workspace_tools import build_domain_tools
+from leta.runtime.checkpoint import make_checkpointer
+from leta.runtime.graph import build_agent_graph
+from leta.runtime.prompts import prompt_version_hash
+from leta.runtime.state import AgentState, RuntimeContext
+from leta.runtime.tools.files import build_file_tools
+from leta.runtime.tools.messaging import build_messaging_tools
+from leta.runtime.tools.web import build_web_tools
+from leta.runtime.tools.workspace_tools import build_domain_tools
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from uuid import UUID
+
+    from langchain_core.runnables import RunnableConfig
+    from langchain_core.tools import BaseTool
+    from langfuse import Langfuse
+    from langgraph.graph.state import CompiledStateGraph  # pyright: ignore[reportMissingTypeStubs]
+
+    from leta.config import ModelSpec, Services
+    from leta.runs import AgentRuntimeRecord
 
 logger = logging.getLogger(__name__)
 
 
 def build_tool_catalog(services: Services, *, is_root: bool) -> dict[str, BaseTool]:
+    """Assemble the enabled LangChain tool map for a root Leta or subagent."""
     flags = services.settings.tools
     tools: list[BaseTool] = []
     tools.extend(
@@ -95,17 +107,14 @@ def find_orphaned_tool_calls(messages: list[BaseMessage]) -> list[tuple[str, str
     return missing
 
 
-async def run_agent_turn(
+async def _acquire_lease_with_backoff(
     services: Services,
-    *,
     agent_id: UUID,
-    run_id: UUID,
-    heartbeat: Callable[[], None] | None = None,
-) -> RunOutcome:
-    """Layer 2 runner executing the 5-node LangGraph StateGraph."""
-    orch_cfg = services.settings.orchestration
-    lease_token = uuid4()
-
+    lease_token: UUID,
+    *,
+    ttl_seconds: int,
+    heartbeat: Callable[[], None] | None,
+) -> None:
     # Wait briefly if a prior attempt is still unwinding its finally block.
     lease_deadline = monotonic() + 15.0
     while True:
@@ -114,33 +123,39 @@ async def run_agent_turn(
                 services.db,
                 agent_id,
                 lease_token,
-                ttl_seconds=orch_cfg.lease_ttl_seconds,
+                ttl_seconds=ttl_seconds,
             )
-            break
         except WriterBusyError:
             if monotonic() >= lease_deadline:
                 raise
             if heartbeat is not None:
-                try:
+                with suppress(Exception):
                     heartbeat()
-                except Exception:
-                    pass
             await asyncio.sleep(1.5)
+        else:
+            return
 
-    try:
-        agent_row = await load_agent_runtime_record(services.db, agent_id)
-        leta_id = agent_row.leta_id
-        workspace_id = agent_row.workspace_id
-        storage_id = agent_row.storage_id
-        is_root = agent_row.parent_agent_id is None
-        handle = agent_row.handle
-        model_spec = await services.models.get(
-            agent_row.model_id, agent_row.reasoning_effort
-        )
-    except Exception:
-        await release_lease(services.db, agent_id, lease_token)
-        raise
 
+def _caller_for_rt(rt: RuntimeContext) -> CallerContext:
+    return CallerContext(
+        workspace_id=rt.workspace_id,
+        leta_id=rt.leta_id,
+        agent_id=rt.agent_id,
+        handle=rt.handle,
+        name=rt.agent_name,
+        is_root=rt.is_root,
+    )
+
+
+def _build_runtime_context(
+    services: Services,
+    *,
+    agent_id: UUID,
+    run_id: UUID,
+    agent_row: AgentRuntimeRecord,
+    model_spec: ModelSpec,
+) -> RuntimeContext:
+    is_root = agent_row.parent_agent_id is None
     router = ChannelRouter(
         [
             OpenletChatAdapter(services.chat, services.platform_internal, services.db),
@@ -149,14 +164,13 @@ async def run_agent_turn(
     )
     fs = Filesystem(services, agent_row)
     tools = build_tool_catalog(services, is_root=is_root)
-
-    rt = RuntimeContext(
+    return RuntimeContext(
         agent_id=agent_id,
-        leta_id=leta_id,
-        workspace_id=workspace_id,
-        storage_id=storage_id,
+        leta_id=agent_row.leta_id,
+        workspace_id=agent_row.workspace_id,
+        storage_id=agent_row.storage_id,
         is_root=is_root,
-        handle=handle,
+        handle=agent_row.handle,
         agent_name=agent_row.name,
         agent_title=agent_row.title,
         agent_description=agent_row.description,
@@ -172,39 +186,171 @@ async def run_agent_turn(
         tools=tools,
     )
 
+
+def _emit_langfuse_scores(
+    lf: Langfuse | None, outcome_label: str, rt: RuntimeContext
+) -> None:
+    if lf is None:
+        return
+    try:
+        lf.score_current_trace(
+            name="run_outcome",
+            value=outcome_label,
+            data_type="CATEGORICAL",
+        )
+        lf.score_current_trace(
+            name="llm_calls",
+            value=float(rt.usage.llm_calls),
+            data_type="NUMERIC",
+        )
+        lf.score_current_trace(
+            name="cost_usd",
+            value=round(rt.usage.cost_usd, 6),
+            data_type="NUMERIC",
+        )
+    except Exception:
+        logger.debug("langfuse score emit failed", exc_info=True)
+
+
+async def _heartbeat_loop(
+    interval_seconds: float, heartbeat: Callable[[], None] | None
+) -> None:
+    while True:
+        await asyncio.sleep(interval_seconds)
+        if heartbeat is not None:
+            with suppress(Exception):
+                heartbeat()
+
+
+async def _cancel_and_await(task: asyncio.Task[object] | None) -> None:
+    if task is None or task.done():
+        return
+    task.cancel()
+    with suppress(asyncio.CancelledError, Exception):
+        await task
+
+
+async def _invoke_graph_with_tracing(
+    compiled: CompiledStateGraph[AgentState, RuntimeContext, AgentState, AgentState],
+    config: RunnableConfig,
+    rt: RuntimeContext,
+    *,
+    resume_existing: bool,
+    final_cursor: int,
+) -> int:
+    lf = rt.services.langfuse
+    with ExitStack() as stack:
+        if lf is not None:
+            stack.enter_context(
+                lf.start_as_current_observation(
+                    name="leta.agent_turn",
+                    as_type="agent",
+                    metadata={
+                        "run_id": str(rt.run_id),
+                        "agent_id": str(rt.agent_id),
+                        "handle": rt.handle,
+                        "is_root": rt.is_root,
+                        "model_id": rt.model_spec.model_id,
+                        "prompt_hash": prompt_version_hash(rt.is_root),
+                    },
+                )
+            )
+            stack.enter_context(
+                propagate_attributes(
+                    session_id=str(rt.leta_id),
+                    user_id=str(rt.workspace_id),
+                    trace_name=f"leta.{'root' if rt.is_root else 'subagent'}.turn",
+                    tags=[
+                        "leta",
+                        "root" if rt.is_root else "subagent",
+                        rt.model_spec.model_id,
+                    ],
+                    metadata={
+                        "agent_id": str(rt.agent_id),
+                        "leta_id": str(rt.leta_id),
+                        "workspace_id": str(rt.workspace_id),
+                        "run_id": str(rt.run_id),
+                        "prompt_hash": prompt_version_hash(rt.is_root),
+                    },
+                )
+            )
+        outcome_label = "completed"
+        try:
+            if resume_existing:
+                out: object = await compiled.ainvoke(None, config, context=rt)  # pyright: ignore[reportUnknownMemberType]
+            else:
+                initial_state: AgentState = {
+                    "messages": [],
+                    "inbox_cursor": final_cursor,
+                }
+                out = await compiled.ainvoke(initial_state, config, context=rt)  # pyright: ignore[reportUnknownMemberType]
+        except asyncio.CancelledError:
+            outcome_label = "cancelled"
+            raise
+        except Exception:
+            outcome_label = "failed"
+            raise
+        else:
+            if is_str_mapping(out):
+                raw_out_cursor = out.get("inbox_cursor")
+                if isinstance(raw_out_cursor, int):
+                    return raw_out_cursor
+            return final_cursor
+        finally:
+            _emit_langfuse_scores(lf, outcome_label, rt)
+
+
+async def run_agent_turn(
+    services: Services,
+    *,
+    agent_id: UUID,
+    run_id: UUID,
+    heartbeat: Callable[[], None] | None = None,
+) -> RunOutcome:
+    """Layer 2 runner executing the 5-node LangGraph StateGraph."""
+    orch_cfg = services.settings.orchestration
+    lease_token = uuid4()
+
+    await _acquire_lease_with_backoff(
+        services,
+        agent_id,
+        lease_token,
+        ttl_seconds=orch_cfg.lease_ttl_seconds,
+        heartbeat=heartbeat,
+    )
+
+    try:
+        agent_row = await load_agent_runtime_record(services.db, agent_id)
+        model_spec = await services.models.get(
+            agent_row.model_id, agent_row.reasoning_effort
+        )
+    except Exception:
+        await release_lease(services.db, agent_id, lease_token)
+        raise
+
+    rt = _build_runtime_context(
+        services,
+        agent_id=agent_id,
+        run_id=run_id,
+        agent_row=agent_row,
+        model_spec=model_spec,
+    )
+    caller = _caller_for_rt(rt)
     trigger_seq = await start_run(services.db, run_id, agent_id)
 
     await services.activity.emit(
-        leta_id=leta_id,
+        leta_id=rt.leta_id,
         agent_id=agent_id,
         run_id=run_id,
         event_type="run.started",
-        data={"agent_handle": handle, "trigger_seq": trigger_seq},
+        data={"agent_handle": rt.handle, "trigger_seq": trigger_seq},
     )
 
-    # Independent heartbeat task (never blocks on DB or gRPC).
     graph_task: asyncio.Task[int] | None = None
     lease_lost = False
 
-    async def _heartbeat_loop() -> None:
-        while True:
-            await asyncio.sleep(orch_cfg.heartbeat_interval_seconds)
-            if heartbeat is not None:
-                try:
-                    heartbeat()
-                except Exception:
-                    pass
-
     async def _lease_renew_loop() -> None:
         nonlocal lease_lost
-        caller = CallerContext(
-            workspace_id=workspace_id,
-            leta_id=leta_id,
-            agent_id=agent_id,
-            handle=handle,
-            name=rt.agent_name,
-            is_root=is_root,
-        )
         while True:
             await asyncio.sleep(orch_cfg.lease_renew_interval_seconds)
             ok = await renew_lease(
@@ -218,32 +364,27 @@ async def run_agent_turn(
                 if graph_task is not None and not graph_task.done():
                     graph_task.cancel()
                 return
-            try:
+            with suppress(Exception):
                 await touch_run_heartbeat(services.db, run_id)
-            except Exception:
-                pass
             for addr in list(rt.active_typing):
-                try:
-                    await router.set_typing(caller, addr, True)
-                except Exception:
-                    pass
+                with suppress(Exception):
+                    await rt.router.set_typing(caller, addr, active=True)
 
-    hb_task = asyncio.create_task(_heartbeat_loop())
+    hb_task = asyncio.create_task(
+        _heartbeat_loop(orch_cfg.heartbeat_interval_seconds, heartbeat)
+    )
     lease_task = asyncio.create_task(_lease_renew_loop())
-    final_cursor = 0
 
     try:
-        # Opportunistically sweep expired spill files (non-blocking best-effort).
-        await fs.sweep_spill_dir()
+        await rt.fs.sweep_spill_dir()
 
         saver = make_checkpointer(services.db)
-        compiled = build_agent_graph(list(tools.values()), checkpointer=saver)
+        compiled = build_agent_graph(list(rt.tools.values()), checkpointer=saver)
         config: RunnableConfig = {
             "configurable": {"thread_id": str(agent_id)},
             "recursion_limit": 200,
         }
-        lf = services.langfuse
-        if lf is not None:
+        if services.langfuse is not None:
             lf_handler = LangfuseCallbackHandler()
             lf_handler.run_inline = True
             config["callbacks"] = [lf_handler]
@@ -275,86 +416,15 @@ async def run_agent_turn(
             await compiled.aupdate_state(config, {"messages": synthetic_tools})
             snapshot = await compiled.aget_state(config)
 
-        # Case B: Resume interrupted worker OOM mid-node vs Case C: normal start.
-        async def _run_graph() -> int:
-            with ExitStack() as stack:
-                if lf is not None:
-                    stack.enter_context(
-                        lf.start_as_current_observation(
-                            name="leta.agent_turn",
-                            as_type="agent",
-                            metadata={
-                                "run_id": str(run_id),
-                                "agent_id": str(agent_id),
-                                "handle": handle,
-                                "is_root": is_root,
-                                "model_id": model_spec.model_id,
-                                "prompt_hash": prompt_version_hash(is_root),
-                            },
-                        )
-                    )
-                    stack.enter_context(
-                        propagate_attributes(
-                            session_id=str(leta_id),
-                            user_id=str(workspace_id),
-                            trace_name=f"leta.{'root' if is_root else 'subagent'}.turn",
-                            tags=[
-                                "leta",
-                                "root" if is_root else "subagent",
-                                model_spec.model_id,
-                            ],
-                            metadata={
-                                "agent_id": str(agent_id),
-                                "leta_id": str(leta_id),
-                                "workspace_id": str(workspace_id),
-                                "run_id": str(run_id),
-                                "prompt_hash": prompt_version_hash(is_root),
-                            },
-                        )
-                    )
-                outcome_label = "completed"
-                try:
-                    if snapshot.next and not orphans:
-                        out: object = await compiled.ainvoke(None, config, context=rt)  # pyright: ignore[reportUnknownMemberType]
-                    else:
-                        initial_state: AgentState = {
-                            "messages": [],
-                            "inbox_cursor": final_cursor,
-                        }
-                        out = await compiled.ainvoke(initial_state, config, context=rt)  # pyright: ignore[reportUnknownMemberType]
-                    if is_str_mapping(out):
-                        raw_out_cursor = out.get("inbox_cursor")
-                        if isinstance(raw_out_cursor, int):
-                            return raw_out_cursor
-                    return final_cursor
-                except asyncio.CancelledError:
-                    outcome_label = "cancelled"
-                    raise
-                except Exception:
-                    outcome_label = "failed"
-                    raise
-                finally:
-                    if lf is not None:
-                        try:
-                            lf.score_current_trace(
-                                name="run_outcome",
-                                value=outcome_label,
-                                data_type="CATEGORICAL",
-                            )
-                            lf.score_current_trace(
-                                name="llm_calls",
-                                value=float(rt.usage.llm_calls),
-                                data_type="NUMERIC",
-                            )
-                            lf.score_current_trace(
-                                name="cost_usd",
-                                value=round(rt.usage.cost_usd, 6),
-                                data_type="NUMERIC",
-                            )
-                        except Exception:
-                            logger.debug("langfuse score emit failed", exc_info=True)
-
-        graph_task = asyncio.create_task(_run_graph())
+        graph_task = asyncio.create_task(
+            _invoke_graph_with_tracing(
+                compiled,
+                config,
+                rt,
+                resume_existing=bool(snapshot.next and not orphans),
+                final_cursor=final_cursor,
+            )
+        )
 
         try:
             final_cursor = await graph_task
@@ -366,7 +436,6 @@ async def run_agent_turn(
         reported_cursor, latest_wake_seq = await services.inbox.compute_wake_cursors(
             agent_id, final_cursor
         )
-
         return RunOutcome(
             inbox_cursor=reported_cursor,
             latest_wake_seq=latest_wake_seq,
@@ -374,30 +443,15 @@ async def run_agent_turn(
     finally:
         for bg_task in (hb_task, lease_task):
             bg_task.cancel()
-            try:
+            with suppress(asyncio.CancelledError, Exception):
                 await bg_task
-            except asyncio.CancelledError, Exception:
-                pass
 
-        if rt.precomputed is not None and rt.precomputed.task is not None:
-            if not rt.precomputed.task.done():
-                rt.precomputed.task.cancel()
-                try:
-                    await rt.precomputed.task
-                except asyncio.CancelledError, Exception:
-                    pass
+        if rt.precomputed is not None:
+            await _cancel_and_await(rt.precomputed.task)
 
-        caller = CallerContext(
-            workspace_id=workspace_id,
-            leta_id=leta_id,
-            agent_id=agent_id,
-            handle=handle,
-            name=rt.agent_name,
-            is_root=is_root,
-        )
         for addr in list(rt.active_typing):
             rt.active_typing.discard(addr)
-            await router.set_typing(caller, addr, False)
+            await rt.router.set_typing(caller, addr, active=False)
 
-        await fs.close()
+        await rt.fs.close()
         await release_lease(services.db, agent_id, lease_token)

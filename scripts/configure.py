@@ -7,60 +7,363 @@ import json
 import math
 import os
 import re
-from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import NotRequired, TypedDict, cast
+from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict
 from urllib.parse import quote, urlparse
 
 import yaml
 from openlet_sdk.config import Config, TelemetrySettings, load, load_path, secret
-from openlet_sdk.types import is_str_mapping
+from openlet_sdk.types import JSON, MutableJsonObject, is_str_mapping
+from pydantic import ConfigDict, TypeAdapter, with_config
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable, Mapping
 
 ROOT = Path(__file__).resolve().parents[1]
 
+_JSON_OBJECT_ADAPTER = TypeAdapter(dict[str, JSON])
 
+
+class EnvoyGoogleRe2(TypedDict):
+    pass
+
+
+class EnvoySafeRegex(TypedDict):
+    google_re2: NotRequired[EnvoyGoogleRe2]
+    regex: str
+
+
+class EnvoyRouteMatch(TypedDict, total=False):
+    path: str
+    prefix: str
+    safe_regex: EnvoySafeRegex
+
+
+class EnvoyRouteAction(TypedDict, total=False):
+    cluster: str
+    timeout: str
+    idle_timeout: str
+    upgrade_configs: list[dict[str, str]]
+
+
+EnvoyGrpcJsonTranscoder = TypedDict(
+    "EnvoyGrpcJsonTranscoder",
+    {
+        "@type": str,
+        "proto_descriptor": str,
+        "services": list[str],
+    },
+)
+
+
+@with_config(ConfigDict(extra="allow"))
+class EnvoyRoute(TypedDict):
+    name: str
+    match: EnvoyRouteMatch
+    route: EnvoyRouteAction
+    typed_per_filter_config: NotRequired[dict[str, EnvoyGrpcJsonTranscoder]]
+
+
+@with_config(ConfigDict(extra="allow"))
 class VirtualHost(TypedDict):
-    routes: list[dict[str, object]]
+    routes: list[EnvoyRoute]
 
 
+@with_config(ConfigDict(extra="allow"))
 class RouteConfig(TypedDict):
     virtual_hosts: list[VirtualHost]
 
 
+class EnvoyGrpcServiceTarget(TypedDict):
+    cluster_name: str
+
+
+class EnvoyGrpcService(TypedDict):
+    envoy_grpc: EnvoyGrpcServiceTarget
+    timeout: str
+
+
+EnvoyStaticResourceDetectorConfig = TypedDict(
+    "EnvoyStaticResourceDetectorConfig",
+    {
+        "@type": str,
+        "attributes": dict[str, str],
+    },
+)
+
+EnvoyEnvironmentResourceDetectorConfig = TypedDict(
+    "EnvoyEnvironmentResourceDetectorConfig",
+    {
+        "@type": str,
+    },
+)
+
+
+class EnvoyResourceDetector(TypedDict):
+    name: str
+    typed_config: (
+        EnvoyStaticResourceDetectorConfig | EnvoyEnvironmentResourceDetectorConfig
+    )
+
+
+class EnvoySamplingPercentage(TypedDict):
+    numerator: int
+    denominator: Literal["MILLION"]
+
+
+EnvoyTraceIdRatioSamplerConfig = TypedDict(
+    "EnvoyTraceIdRatioSamplerConfig",
+    {
+        "@type": str,
+        "sampling_percentage": EnvoySamplingPercentage,
+    },
+)
+
+
+class EnvoyWrappedSampler(TypedDict):
+    name: str
+    typed_config: EnvoyTraceIdRatioSamplerConfig
+
+
+EnvoyParentBasedSamplerConfig = TypedDict(
+    "EnvoyParentBasedSamplerConfig",
+    {
+        "@type": str,
+        "wrapped_sampler": EnvoyWrappedSampler,
+    },
+)
+
+
+class EnvoyTracingSampler(TypedDict):
+    name: str
+    typed_config: EnvoyParentBasedSamplerConfig
+
+
+EnvoyOpenTelemetryConfig = TypedDict(
+    "EnvoyOpenTelemetryConfig",
+    {
+        "@type": str,
+        "service_name": str,
+        "grpc_service": EnvoyGrpcService,
+        "resource_detectors": list[EnvoyResourceDetector],
+        "sampler": EnvoyTracingSampler,
+    },
+)
+
+
+class EnvoyTracingProvider(TypedDict):
+    name: str
+    typed_config: EnvoyOpenTelemetryConfig
+
+
+class EnvoyTracing(TypedDict):
+    max_path_tag_length: int
+    provider: EnvoyTracingProvider
+
+
+@with_config(ConfigDict(extra="allow"))
 class HttpConnectionManager(TypedDict):
     route_config: RouteConfig
-    tracing: NotRequired[dict[str, object]]
+    tracing: NotRequired[EnvoyTracing]
 
 
+@with_config(ConfigDict(extra="allow"))
 class ListenerFilter(TypedDict):
     typed_config: HttpConnectionManager
 
 
+@with_config(ConfigDict(extra="allow"))
 class FilterChain(TypedDict):
     filters: list[ListenerFilter]
 
 
+@with_config(ConfigDict(extra="allow"))
 class Listener(TypedDict):
     filter_chains: list[FilterChain]
 
 
+class EnvoySocketAddress(TypedDict):
+    address: str
+    port_value: int
+
+
+class EnvoyAddress(TypedDict):
+    socket_address: EnvoySocketAddress
+
+
+class EnvoyEndpoint(TypedDict):
+    address: EnvoyAddress
+
+
+class EnvoyLbEndpoint(TypedDict):
+    endpoint: EnvoyEndpoint
+
+
+class EnvoyLocalityLbEndpoints(TypedDict):
+    lb_endpoints: list[EnvoyLbEndpoint]
+
+
+class EnvoyLoadAssignment(TypedDict):
+    cluster_name: str
+    endpoints: list[EnvoyLocalityLbEndpoints]
+
+
+class EnvoyTrustedCa(TypedDict):
+    filename: str
+
+
+class EnvoySanMatcher(TypedDict):
+    exact: str
+
+
+class EnvoySubjectAltNameMatcher(TypedDict):
+    san_type: Literal["DNS"]
+    matcher: EnvoySanMatcher
+
+
+class EnvoyValidationContext(TypedDict):
+    trusted_ca: EnvoyTrustedCa
+    match_typed_subject_alt_names: list[EnvoySubjectAltNameMatcher]
+
+
+class EnvoyCommonTlsContext(TypedDict):
+    validation_context: EnvoyValidationContext
+
+
+EnvoyUpstreamTlsContext = TypedDict(
+    "EnvoyUpstreamTlsContext",
+    {
+        "@type": str,
+        "sni": str,
+        "common_tls_context": EnvoyCommonTlsContext,
+    },
+)
+
+
+class EnvoyTransportSocket(TypedDict):
+    name: str
+    typed_config: EnvoyUpstreamTlsContext
+
+
+@with_config(ConfigDict(extra="allow"))
+class EnvoyCluster(TypedDict):
+    name: str
+    type: str
+    connect_timeout: str
+    load_assignment: EnvoyLoadAssignment
+    dns_lookup_family: NotRequired[str]
+    http2_protocol_options: NotRequired[dict[str, JSON]]
+    transport_socket: NotRequired[EnvoyTransportSocket]
+
+
+@with_config(ConfigDict(extra="allow"))
 class StaticResources(TypedDict):
     listeners: list[Listener]
-    clusters: list[dict[str, object]]
+    clusters: list[EnvoyCluster]
 
 
+@with_config(ConfigDict(extra="allow"))
 class EnvoyConfig(TypedDict):
     static_resources: StaticResources
 
 
-def render(name: str, values: Mapping[str, object]) -> dict[str, object]:
+_ENVOY_CONFIG_ADAPTER = TypeAdapter(EnvoyConfig)
+
+
+class ComposeRuntimeHealthcheck(TypedDict):
+    test: list[str]
+
+
+class ComposeDependsOn(TypedDict):
+    condition: Literal["service_healthy"]
+
+
+class ComposeRuntimeService(TypedDict, total=False):
+    environment: dict[str, str]
+    healthcheck: ComposeRuntimeHealthcheck
+    ports: list[str]
+    depends_on: dict[str, ComposeDependsOn]
+
+
+class ComposeRuntimeOverlay(TypedDict):
+    services: dict[str, ComposeRuntimeService]
+
+
+class CentrifugoTokenConfig(TypedDict):
+    hmac_secret_key: str
+
+
+class CentrifugoClientConfig(TypedDict):
+    allowed_origins: list[str]
+    token: CentrifugoTokenConfig
+
+
+class CentrifugoHttpApiConfig(TypedDict):
+    key: str
+
+
+class CentrifugoHealthConfig(TypedDict):
+    enabled: bool
+
+
+class CentrifugoRedisConfig(TypedDict):
+    address: str
+    password: str
+    db: int
+
+
+class CentrifugoEngineConfig(TypedDict):
+    type: Literal["redis"]
+    redis: CentrifugoRedisConfig
+
+
+class CentrifugoNamespaceConfig(TypedDict):
+    name: str
+    allow_user_limited_channels: NotRequired[bool]
+    allow_subscribe_for_client: bool
+    history_size: int
+    history_ttl: str
+    force_recovery: bool
+
+
+class CentrifugoChannelConfig(TypedDict):
+    namespaces: list[CentrifugoNamespaceConfig]
+
+
+class CentrifugoConfig(TypedDict):
+    client: CentrifugoClientConfig
+    http_api: CentrifugoHttpApiConfig
+    health: CentrifugoHealthConfig
+    engine: CentrifugoEngineConfig
+    channel: CentrifugoChannelConfig
+
+
+def render(name: str, values: Mapping[str, JSON]) -> MutableJsonObject:
     text = (ROOT / "infra/config" / f"{name}.template.yaml").read_text()
     for key, value in values.items():
         text = text.replace(f"@{key}@", json.dumps(value))
     loaded: object = yaml.safe_load(text)
     if not is_str_mapping(loaded):
         raise ValueError(f"rendered template {name} must be a YAML mapping")
-    return dict(loaded)
+    return _JSON_OBJECT_ADAPTER.validate_python(loaded)
+
+
+def _tls_transport_socket(hostname: str) -> EnvoyTransportSocket:
+    return {
+        "name": "envoy.transport_sockets.tls",
+        "typed_config": {
+            "@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
+            "sni": hostname,
+            "common_tls_context": {
+                "validation_context": {
+                    "trusted_ca": {"filename": "/etc/ssl/certs/ca-certificates.crt"},
+                    "match_typed_subject_alt_names": [
+                        {"san_type": "DNS", "matcher": {"exact": hostname}}
+                    ],
+                }
+            },
+        },
+    }
 
 
 def _load_config(config_path: Path | None) -> Config:
@@ -145,7 +448,7 @@ def configure_tracing(
             },
         },
     }
-    cluster: dict[str, object] = {
+    cluster: EnvoyCluster = {
         "name": "otel",
         "type": "STRICT_DNS",
         "connect_timeout": "3s",
@@ -172,50 +475,18 @@ def configure_tracing(
         },
     }
     if url.scheme == "https":
-        cluster["transport_socket"] = {
-            "name": "envoy.transport_sockets.tls",
-            "typed_config": {
-                "@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
-                "sni": url.hostname,
-                "common_tls_context": {
-                    "validation_context": {
-                        "trusted_ca": {
-                            "filename": "/etc/ssl/certs/ca-certificates.crt"
-                        },
-                        "match_typed_subject_alt_names": [
-                            {"san_type": "DNS", "matcher": {"exact": url.hostname}}
-                        ],
-                    }
-                },
-            },
-        }
+        cluster["transport_socket"] = _tls_transport_socket(url.hostname)
     envoy["static_resources"]["clusters"].append(cluster)
 
 
-def configure(
-    output: Path,
+def _build_envoy_config(
+    c: Config,
     *,
-    config_path: Path | None = None,
-    env: Mapping[str, str] | None = None,
-    dynamic_gateway_port: bool = False,
-) -> None:
-    environ = os.environ if env is None else env
-    c = _load_config(config_path)
-
-    def resolve(value: str) -> str:
-        return secret(value) if env is None else _resolve_secret(value, environ)
-
-    profiles = {
-        item.strip()
-        for item in environ.get("COMPOSE_PROFILES", "").split(",")
-        if item.strip()
-    }
-
-    dep, svc, deploy = c["dependencies"], c["services"], c["deployment"]
-    pg, temporal = dep["postgres"], deploy["temporal"]
-    if pg["sslmode"] != "disable":
-        raise ValueError("Compose PostgreSQL uses private-network plaintext")
-    host, port = svc["gateway"]["http_listen"].rsplit(":", 1)
+    host: str,
+    port: str,
+    leta_enabled: bool,
+) -> EnvoyConfig:
+    svc, dep = c["services"], c["dependencies"]
     ph, pp = svc["platform"]["grpc_target"].rsplit(":", 1)
     fh, fp = svc["letfs"]["grpc_target"].rsplit(":", 1)
     chat_cfg = svc.get("chat")
@@ -241,29 +512,28 @@ def configure(
     jwks = urlparse(auth["jwks_url"])
     if jwks.scheme not in ("http", "https") or not jwks.hostname:
         raise ValueError("JWKS URL must be HTTP(S)")
-    envoy = cast(
-        "EnvoyConfig",
+    envoy = _ENVOY_CONFIG_ADAPTER.validate_python(
         render(
             "envoy",
-            dict(
-                LISTEN_HOST=host,
-                LISTEN_PORT=int(port),
-                PLATFORM_HOST=ph,
-                PLATFORM_PORT=int(pp),
-                LETFS_HOST=fh,
-                LETFS_PORT=int(fp),
-                CHAT_HOST=ch,
-                CHAT_PORT=int(cp),
-                CENTRIFUGO_HOST=cen_h,
-                CENTRIFUGO_PORT=int(cen_p),
-                ISSUER=auth["issuer"],
-                USER_ID_CLAIM="public_metadata." + user_id_key,
-                AUDIENCE=auth["audience"],
-                JWKS_URL=auth["jwks_url"],
-                JWKS_HOST=jwks.hostname,
-                JWKS_PORT=jwks.port or (443 if jwks.scheme == "https" else 80),
-            ),
-        ),
+            {
+                "LISTEN_HOST": host,
+                "LISTEN_PORT": int(port),
+                "PLATFORM_HOST": ph,
+                "PLATFORM_PORT": int(pp),
+                "LETFS_HOST": fh,
+                "LETFS_PORT": int(fp),
+                "CHAT_HOST": ch,
+                "CHAT_PORT": int(cp),
+                "CENTRIFUGO_HOST": cen_h,
+                "CENTRIFUGO_PORT": int(cen_p),
+                "ISSUER": auth["issuer"],
+                "USER_ID_CLAIM": "public_metadata." + user_id_key,
+                "AUDIENCE": auth["audience"],
+                "JWKS_URL": auth["jwks_url"],
+                "JWKS_HOST": jwks.hostname,
+                "JWKS_PORT": jwks.port or (443 if jwks.scheme == "https" else 80),
+            },
+        )
     )
     if jwks.scheme == "https":
         jwks_cluster = next(
@@ -271,24 +541,7 @@ def configure(
             for cl in envoy["static_resources"]["clusters"]
             if cl["name"] == "clerk_jwks"
         )
-        jwks_cluster["transport_socket"] = {
-            "name": "envoy.transport_sockets.tls",
-            "typed_config": {
-                "@type": "type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext",
-                "sni": jwks.hostname,
-                "common_tls_context": {
-                    "validation_context": {
-                        "trusted_ca": {
-                            "filename": "/etc/ssl/certs/ca-certificates.crt"
-                        },
-                        "match_typed_subject_alt_names": [
-                            {"san_type": "DNS", "matcher": {"exact": jwks.hostname}}
-                        ],
-                    }
-                },
-            },
-        }
-    leta_enabled = "leta" in profiles
+        jwks_cluster["transport_socket"] = _tls_transport_socket(jwks.hostname)
     if leta_enabled:
         lh, lp = svc["leta"]["http_target"].rsplit(":", 1)
         envoy["static_resources"]["clusters"].append(
@@ -342,17 +595,25 @@ def configure(
             },
         )
     configure_tracing(envoy, c["telemetry"], c["runtime"]["environment"])
-    native = render(
-        "temporal",
-        dict(
-            POSTGRES=f"{pg['host']}:{pg['port']}",
-            DATABASE=temporal["database"]["name"],
-            VISIBILITY_DATABASE=temporal["visibility_database"],
-            USER=temporal["database"]["user"],
-            PASSWORD=resolve(temporal["database"]["password"]),
-        ),
-    )
+    return envoy
+
+
+def _build_runtime_overlay(
+    c: Config,
+    environ: Mapping[str, str],
+    profiles: set[str],
+    resolve: Callable[[str], str],
+    *,
+    port: str,
+    dynamic_gateway_port: bool,
+) -> ComposeRuntimeOverlay:
+    dep, svc, deploy = c["dependencies"], c["services"], c["deployment"]
+    pg, temporal = dep["postgres"], deploy["temporal"]
+    chat_cfg = svc.get("chat")
+    centrifugo_cfg = dep.get("centrifugo")
+    auth = c["auth"]["clerk"]
     db = deploy["spicedb"]["database"]
+    leta_enabled = "leta" in profiles
     uri = f"postgres://{quote(db['user'], safe='')}:{quote(resolve(db['password']), safe='')}@{pg['host']}:{pg['port']}/{db['name']}?sslmode={pg['sslmode']}"
     graph_env = {
         "SPICEDB_DATASTORE_CONN_URI": uri,
@@ -365,7 +626,7 @@ def configure(
         "SQL_PASSWORD": resolve(temporal["database"]["password"]),
         "SQL_PLUGIN": "postgres12",
     }
-    runtime: dict[str, dict[str, dict[str, object]]] = {
+    runtime: ComposeRuntimeOverlay = {
         "services": {
             "postgres": {
                 "environment": {
@@ -386,6 +647,9 @@ def configure(
                 "environment": {
                     "QDRANT__SERVICE__API_KEY": resolve(dep["qdrant"]["api_key"])
                 }
+            },
+            "redis": {
+                "environment": {"REDIS_PASSWORD": resolve(dep["redis"]["password"])}
             },
         }
     }
@@ -446,9 +710,6 @@ def configure(
             dep["s3"]["access_key_id"],
             dep["s3"]["secret_access_key"],
         ],
-    }
-    runtime["services"]["redis"] = {
-        "environment": {"REDIS_PASSWORD": resolve(dep["redis"]["password"])}
     }
     if chat_cfg is not None:
         refs["databases"].append(chat_cfg["database"]["password"])
@@ -565,7 +826,7 @@ def configure(
                 f"-addr=127.0.0.1:{listen.rsplit(':', 1)[1]}",
             ]
         }
-    envoy_runtime: dict[str, object] = {
+    envoy_runtime: ComposeRuntimeService = {
         "ports": [f"127.0.0.1:{'' if dynamic_gateway_port else port}:{port}"],
         "environment": {
             "OTEL_RESOURCE_ATTRIBUTES": environ.get("OTEL_RESOURCE_ATTRIBUTES", "")
@@ -579,16 +840,15 @@ def configure(
             "leta-api": {"condition": "service_healthy"},
         }
     runtime["services"]["envoy"] = envoy_runtime
-    os.umask(0o077)
-    output.mkdir(parents=True, exist_ok=True)
-    output.chmod(0o700)
-    alloy = (ROOT / "infra/config/observability/alloy.alloy").read_text()
-    alloy = alloy.replace(
-        "targets = [] // Redis targets are enabled by configure.py with the Leta profile.",
-        "targets = prometheus.exporter.redis.cache.targets",
-    )
-    (output / "alloy.alloy").write_text(alloy)
-    centrifugo_config: dict[str, object] = {
+    return runtime
+
+
+def _build_centrifugo_config(
+    c: Config, resolve: Callable[[str], str]
+) -> CentrifugoConfig:
+    dep = c["dependencies"]
+    centrifugo_cfg = dep.get("centrifugo")
+    return {
         "client": {
             "allowed_origins": ["*"],
             "token": {
@@ -639,10 +899,69 @@ def configure(
             ]
         },
     }
+
+
+def configure(
+    output: Path,
+    *,
+    config_path: Path | None = None,
+    env: Mapping[str, str] | None = None,
+    dynamic_gateway_port: bool = False,
+) -> None:
+    environ = os.environ if env is None else env
+    c = _load_config(config_path)
+
+    def resolve(value: str) -> str:
+        return secret(value) if env is None else _resolve_secret(value, environ)
+
+    profiles = {
+        item.strip()
+        for item in environ.get("COMPOSE_PROFILES", "").split(",")
+        if item.strip()
+    }
+    dep, svc, deploy = c["dependencies"], c["services"], c["deployment"]
+    pg, temporal = dep["postgres"], deploy["temporal"]
+    if pg["sslmode"] != "disable":
+        raise ValueError("Compose PostgreSQL uses private-network plaintext")
+    host, port = svc["gateway"]["http_listen"].rsplit(":", 1)
+    leta_enabled = "leta" in profiles
+
+    envoy = _build_envoy_config(c, host=host, port=port, leta_enabled=leta_enabled)
+    native = render(
+        "temporal",
+        {
+            "POSTGRES": f"{pg['host']}:{pg['port']}",
+            "DATABASE": temporal["database"]["name"],
+            "VISIBILITY_DATABASE": temporal["visibility_database"],
+            "USER": temporal["database"]["user"],
+            "PASSWORD": resolve(temporal["database"]["password"]),
+        },
+    )
+    runtime = _build_runtime_overlay(
+        c,
+        environ,
+        profiles,
+        resolve,
+        port=port,
+        dynamic_gateway_port=dynamic_gateway_port,
+    )
+
+    os.umask(0o077)
+    output.mkdir(parents=True, exist_ok=True)
+    output.chmod(0o700)
+    alloy = (ROOT / "infra/config/observability/alloy.alloy").read_text()
+    alloy = alloy.replace(
+        "targets = [] // Redis targets are enabled by configure.py with the Leta profile.",
+        "targets = prometheus.exporter.redis.cache.targets",
+    )
+    (output / "alloy.alloy").write_text(alloy)
+    centrifugo_config = _build_centrifugo_config(c, resolve)
     cen_target = output / "centrifugo.json"
     cen_target.write_text(json.dumps(centrifugo_config, indent=2) + "\n")
     cen_target.chmod(0o644)
-    outputs: list[tuple[str, object]] = [
+    outputs: list[
+        tuple[str, EnvoyConfig | MutableJsonObject | ComposeRuntimeOverlay]
+    ] = [
         ("envoy", envoy),
         ("temporal", native),
         ("compose.runtime", runtime),

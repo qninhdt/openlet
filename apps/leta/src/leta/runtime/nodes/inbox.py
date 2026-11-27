@@ -1,23 +1,30 @@
+"""LangGraph inbox-drain node and XML <inbox> message formatting."""
+
 from __future__ import annotations
 
+import contextlib
 import xml.sax.saxutils as sax
-from collections.abc import Mapping
-from datetime import datetime
 from time import monotonic
-from typing import Literal
+from typing import TYPE_CHECKING
 
 from langchain_core.messages import HumanMessage, ToolMessage
-from langgraph.runtime import Runtime
-from openlet_sdk.config import JSON
 
-from ...channels.base import CallerContext
-from ...inbox import InboxMetadata, InboxRecord, InboxSender
-from ..formatting import (
+from leta.channels.base import CallerContext
+from leta.runtime.formatting import (
     format_hitl_outcome,
     format_hitl_outcome_attr,
     format_hitl_response,
 )
-from ..state import AgentState, AgentStateUpdate, RuntimeContext
+
+if TYPE_CHECKING:
+    from datetime import datetime
+    from typing import Literal
+
+    from langgraph.runtime import Runtime
+    from openlet_sdk.config import JSON
+
+    from leta.inbox import InboxMetadata, InboxRecord, InboxSender
+    from leta.runtime.state import AgentState, AgentStateUpdate, RuntimeContext
 
 
 def _iso(val: datetime) -> str:
@@ -53,32 +60,18 @@ def _inbox_display_content(kind: str, content: str, meta: InboxMetadata) -> str:
     return ""
 
 
-def _coerce_record(row: InboxRecord | Mapping[str, object]) -> InboxRecord:
-    if isinstance(row, InboxRecord):
-        return row
-    return InboxRecord.model_validate(row)
-
-
-def _coerce_sender(sender: InboxSender | Mapping[str, object]) -> InboxSender:
-    if isinstance(sender, InboxSender):
-        return sender
-    return InboxSender.model_validate(sender)
-
-
 def format_inbox_item_full(
-    row: InboxRecord | Mapping[str, object],
+    rec: InboxRecord,
     *,
-    sender_override: InboxSender | Mapping[str, object] | None = None,
+    sender_override: InboxSender | None = None,
     chat_storage: str | None = None,
 ) -> str:
-    rec = _coerce_record(row)
+    """Format a single inbox record as full XML for the agent's <inbox> prompt."""
     seq = rec.seq
     kind = rec.kind
     channel = rec.channel or ""
     reply_to = rec.reply_address or ""
-    sender = (
-        _coerce_sender(sender_override) if sender_override is not None else rec.sender
-    )
+    sender = sender_override if sender_override is not None else rec.sender
     meta = rec.metadata
     content = rec.content
     created_at = _iso(rec.created_at)
@@ -135,9 +128,11 @@ def format_inbox_item_full(
         f" chat_storage={sax.quoteattr(chat_storage)}" if chat_storage else ""
     )
     lines = [
-        f'  <message seq="{seq}" id={sax.quoteattr(meta.message_id)} channel={sax.quoteattr(channel)} '
-        f"reply_address={sax.quoteattr(reply_to)}{storage_attr} from={sax.quoteattr(from_str)} "
-        f"at={sax.quoteattr(created_at)}>"
+        (
+            f'  <message seq="{seq}" id={sax.quoteattr(meta.message_id)} channel={sax.quoteattr(channel)} '
+            f"reply_address={sax.quoteattr(reply_to)}{storage_attr} from={sax.quoteattr(from_str)} "
+            f"at={sax.quoteattr(created_at)}>"
+        )
     ]
     if meta.reply_to_message_id:
         lines.append(f"    <reply-to id={sax.quoteattr(meta.reply_to_message_id)} />")
@@ -160,12 +155,12 @@ def format_inbox_item_full(
 
 
 def format_inbox_notification_preview(
-    row: InboxRecord | Mapping[str, object],
+    rec: InboxRecord,
     *,
     preview_chars: int = 120,
     unread_in_channel: int = 1,
 ) -> str:
-    rec = _coerce_record(row)
+    """Format a mid-run cross-channel message as a compact <notification> preview."""
     channel = rec.channel or rec.kind
     reply_to = rec.reply_address or ""
     msg_id = rec.metadata.message_id or rec.metadata.schedule_id
@@ -235,10 +230,8 @@ async def inbox_node(
             channel_counts[addr] = channel_counts.get(addr, 0) + 1
 
     if any((r.reply_address or "").startswith("chat:") for r in rows):
-        try:
+        with contextlib.suppress(Exception):
             await rt.fs.discover()
-        except Exception:
-            pass
 
     for r in rows:
         reply_addr = r.reply_address or ""
@@ -309,7 +302,7 @@ async def inbox_node(
         await rt.router.mark_read(caller, addr, msg_seq)
     for addr in typing_targets:
         rt.active_typing.add(addr)
-        await rt.router.set_typing(caller, addr, True)
+        await rt.router.set_typing(caller, addr, active=True)
 
     await rt.emitter.emit(
         leta_id=rt.leta_id,
@@ -322,7 +315,7 @@ async def inbox_node(
     xml_payload = "<inbox>\n" + "\n".join(xml_entries) + "\n</inbox>"
     new_cursor = state.get("inbox_cursor", 0)
     if delivered_seqs:
-        new_cursor = max(new_cursor, max(delivered_seqs))
+        new_cursor = max(new_cursor, *delivered_seqs)
 
     rt.drained_this_step = True
     return {
@@ -334,6 +327,7 @@ async def inbox_node(
 def after_inbox_router(
     state: AgentState, runtime: Runtime[RuntimeContext]
 ) -> Literal["compact", "__end__"]:
+    """Route to compaction if inbox items or pending tool results exist; otherwise end."""
     rt = runtime.context
     if rt.drained_this_step:
         return "compact"

@@ -1,26 +1,37 @@
+"""Workspace filesystem, search, edit, and sandboxed bash tools."""
+
 from __future__ import annotations
 
 import asyncio
 import bisect
+import contextlib
 import difflib
 import errno
 import posixpath
 import re
 import unicodedata
 from contextlib import ExitStack
+from typing import TYPE_CHECKING
 
-from langchain_core.tools import BaseTool, ToolException
-from langgraph.prebuilt import ToolRuntime
-from openlet_sdk.config import JSON
+import grpc
+from langchain_core.tools import ToolException
+from langgraph.prebuilt import ToolRuntime  # noqa: TC002  # Evaluated at runtime by LangGraph ToolNode.get_type_hints.
 from pydantic import Field
 
-from ...filesystem.types import GlobHit, GrepHit, SemanticHit
-from ...filesystem.workspace import canonical_path
-from ...observability import build_rag_baggage
-from ...truncation import clip_line
-from ..media import detect_media_type, optimize_image_bytes
-from ..state import AgentState, RuntimeContext
-from .base import ToolArgs, ToolResult, make_tool
+from leta.filesystem.types import parse_stat_extra
+from leta.filesystem.workspace import canonical_path
+from leta.observability import build_rag_baggage
+from leta.runtime.media import detect_media_type, optimize_image_bytes
+from leta.runtime.state import AgentState, RuntimeContext  # noqa: TC001  # Evaluated at runtime by LangGraph ToolNode.get_type_hints.
+from leta.runtime.tools.base import ToolArgs, ToolResult, make_tool
+from leta.truncation import clip_line
+
+if TYPE_CHECKING:
+    from langchain_core.tools import BaseTool
+    from openlet_sdk.config import JSON
+
+    from leta.filesystem.types import GlobHit, GrepHit, NodeStatExtra, SemanticHit
+    from leta.filesystem.workspace import Session
 
 _KNOWN_MOUNT_ROOTS = frozenset({"shared", "chat", "user", "letfs", "home"})
 _LINE_PREFIX_RE = re.compile(r"^(\d+): (.*)$")
@@ -136,69 +147,71 @@ def _with_region_endings(region: str, replacement_lf: str, fallback: str) -> str
     return "".join(out)
 
 
+def _find_all_substring_spans(
+    haystack: str, needle: str, *, max_spans: int | None = None
+) -> list[tuple[int, int]]:
+    spans: list[tuple[int, int]] = []
+    start = 0
+    while True:
+        idx = haystack.find(needle, start)
+        if idx < 0:
+            break
+        spans.append((idx, idx + len(needle)))
+        start = idx + max(1, len(needle))
+        if max_spans is not None and len(spans) > max_spans:
+            break
+    return spans
+
+
+def _match_line_trimmed_spans(
+    view: str, search: str, *, replace_all: bool
+) -> list[tuple[int, int]]:
+    c_lines = view.splitlines(keepends=True)
+    o_lines = [_normalize_unicode_text(ln.rstrip()) for ln in search.splitlines()]
+    if not o_lines or len(o_lines) > len(c_lines):
+        return []
+    offsets: list[int] = []
+    pos = 0
+    for ln in c_lines:
+        offsets.append(pos)
+        pos += len(ln)
+    offsets.append(pos)
+    spans: list[tuple[int, int]] = []
+    for i in range(len(c_lines) - len(o_lines) + 1):
+        window = [
+            _normalize_unicode_text(c_lines[i + k].rstrip())
+            for k in range(len(o_lines))
+        ]
+        if window == o_lines:
+            end_pos = offsets[i + len(o_lines)]
+            if not search.endswith("\n") and c_lines[i + len(o_lines) - 1].endswith(
+                "\n"
+            ):
+                end_pos -= 1
+            spans.append((offsets[i], end_pos))
+            if not replace_all and len(spans) > 10:
+                break
+    return spans
+
+
 def _match_edit_spans(
     view: str, search: str, *, replace_all: bool
 ) -> tuple[list[tuple[int, int]], int]:
     """3-tier deterministic matcher on LF view: exact -> unicode normalized -> trailing-ws lines."""
-    # Tier 1: Exact substring
+    limit = None if replace_all else 10
     if search in view:
-        spans: list[tuple[int, int]] = []
-        start = 0
-        while True:
-            idx = view.find(search, start)
-            if idx < 0:
-                break
-            spans.append((idx, idx + len(search)))
-            start = idx + max(1, len(search))
-            if not replace_all and len(spans) > 10:
-                break
-        return spans, 1
+        return _find_all_substring_spans(view, search, max_spans=limit), 1
 
-    # Tier 2: Unicode quote/dash/space normalized
     norm_view = _normalize_unicode_text(view)
     norm_search = _normalize_unicode_text(search)
     if norm_search and norm_search in norm_view and len(norm_view) == len(view):
-        spans = []
-        start = 0
-        while True:
-            idx = norm_view.find(norm_search, start)
-            if idx < 0:
-                break
-            spans.append((idx, idx + len(norm_search)))
-            start = idx + max(1, len(norm_search))
-            if not replace_all and len(spans) > 10:
-                break
+        spans = _find_all_substring_spans(norm_view, norm_search, max_spans=limit)
         if spans:
             return spans, 2
 
-    # Tier 3: Line trailing-whitespace + unicode normalized match
-    c_lines = view.splitlines(keepends=True)
-    o_lines = [_normalize_unicode_text(ln.rstrip()) for ln in search.splitlines()]
-    if o_lines and len(o_lines) <= len(c_lines):
-        offsets: list[int] = []
-        pos = 0
-        for ln in c_lines:
-            offsets.append(pos)
-            pos += len(ln)
-        offsets.append(pos)
-        spans = []
-        for i in range(len(c_lines) - len(o_lines) + 1):
-            window = [
-                _normalize_unicode_text(c_lines[i + k].rstrip())
-                for k in range(len(o_lines))
-            ]
-            if window == o_lines:
-                end_pos = offsets[i + len(o_lines)]
-                if not search.endswith("\n"):
-                    last_ln = c_lines[i + len(o_lines) - 1]
-                    if last_ln.endswith("\n"):
-                        end_pos -= 1
-                spans.append((offsets[i], end_pos))
-                if not replace_all and len(spans) > 10:
-                    break
-        if spans:
-            return spans, 3
-
+    spans = _match_line_trimmed_spans(view, search, replace_all=replace_all)
+    if spans:
+        return spans, 3
     return [], 0
 
 
@@ -453,6 +466,8 @@ def apply_file_edit(
 
 
 class FileReadArgs(ToolArgs):
+    """Input schema for ``file_read``."""
+
     path: str = Field(min_length=1)
     offset: int | None = Field(
         default=None,
@@ -466,6 +481,8 @@ class FileReadArgs(ToolArgs):
 
 
 class FileEditArgs(ToolArgs):
+    """Input schema for ``file_edit``."""
+
     path: str = Field(min_length=1)
     old_string: str = Field(min_length=1, description="Exact text to replace.")
     new_string: str = Field(description="Replacement text (empty string deletes).")
@@ -476,11 +493,15 @@ class FileEditArgs(ToolArgs):
 
 
 class FileWriteArgs(ToolArgs):
+    """Input schema for ``file_write``."""
+
     path: str = Field(min_length=1)
     content: str
 
 
 class GlobArgs(ToolArgs):
+    """Input schema for ``glob``."""
+
     pattern: str = Field(min_length=1)
     path: str = Field(
         default="/shared",
@@ -495,6 +516,8 @@ class GlobArgs(ToolArgs):
 
 
 class GrepArgs(ToolArgs):
+    """Input schema for ``grep``."""
+
     pattern: str = Field(min_length=1)
     path: str = Field(
         default="/shared",
@@ -514,6 +537,8 @@ class GrepArgs(ToolArgs):
 
 
 class SemanticSearchArgs(ToolArgs):
+    """Input schema for ``semantic_search``."""
+
     query: str = Field(min_length=1)
     paths: list[str] = Field(
         default_factory=lambda: ["/shared", "/home"],
@@ -528,6 +553,8 @@ class SemanticSearchArgs(ToolArgs):
 
 
 class BashArgs(ToolArgs):
+    """Input schema for ``bash``."""
+
     command: str = Field(min_length=1)
     workdir: str | None = Field(
         default=None,
@@ -567,12 +594,15 @@ async def missing_path_recovery(
             try:
                 await session.vfs.stat(cand)
                 reroot_suggestions.append(cand)
-            except Exception:
+            except OSError, grpc.aio.AioRpcError:
                 continue
 
     # Layer 1: Check parent dir for unique unicode-normalized sibling or similar names.
     try:
         names = [n for n in await session.vfs.readdir(parent) if n]
+    except FileNotFoundError:
+        names = None
+    if names is not None:
         if allow_alternate and target_name:
             norm_target = _normalize_unicode_text(target_name).strip()
             alt_matches = [
@@ -598,27 +628,27 @@ async def missing_path_recovery(
             None,
             f"Path not found: {abs_path}\nEntries in {parent}: {sample or '(empty)'}{extra_mounts}",
         )
-    except FileNotFoundError:
-        pass
 
     # Layer 2: Walk up to nearest existing parent folder.
     cur = parent
     while cur and cur != "/":
         cur = posixpath.dirname(cur)
         try:
-            names = sorted(n for n in await session.vfs.readdir(cur) if n)[:15]
-            hint = ""
-            if reroot_suggestions:
-                hint = "\nDid you mean:\n" + "\n".join(
-                    f"  - {s}" for s in reroot_suggestions[:3]
-                )
-            return (
-                None,
-                f"Path not found: {abs_path}. Nearest existing folder is {cur} "
-                f"(contains: {', '.join(names) or '(empty)'}).{hint}",
-            )
-        except Exception:
+            dir_names = sorted(n for n in await session.vfs.readdir(cur) if n)[:15]
+        except OSError, grpc.aio.AioRpcError:
             continue
+        hint = ""
+        if reroot_suggestions:
+            hint = "\nDid you mean:\n" + "\n".join(
+                f"  - {s}" for s in reroot_suggestions[:3]
+            )
+        return (
+            None,
+            (
+                f"Path not found: {abs_path}. Nearest existing folder is {cur} "
+                f"(contains: {', '.join(dir_names) or '(empty)'}).{hint}"
+            ),
+        )
 
     mounts = ", ".join(rt.fs.all_mounts())
     hint = (
@@ -672,141 +702,140 @@ async def _expand_search_roots(rt: RuntimeContext, abs_path: str) -> list[str]:
 # --- Tool Handlers ---
 
 
-async def handle_file_read(
-    path: str,
-    offset: int | None = None,
-    limit: int | None = None,
+async def _read_directory_listing(
+    session: Session,
+    abs_path: str,
     *,
-    runtime: ToolRuntime[RuntimeContext, AgentState],
+    storage_id: str,
+    node_id: str,
+    offset: int | None,
+    eff_limit: int,
 ) -> ToolResult:
-    rt = runtime.context
-    to_cfg = rt.services.settings.tool_output
-    ft_cfg = rt.services.settings.file_tools
+    raw_names = [n for n in await session.vfs.readdir(abs_path) if n]
+    dirs: list[str] = []
+    files: list[str] = []
+    for name in raw_names:
+        child_path = posixpath.join(abs_path, name)
+        try:
+            is_dir = await session.vfs.is_dir(child_path)
+        except OSError, grpc.aio.AioRpcError:
+            is_dir = False
+        if is_dir:
+            dirs.append(name + "/")
+        else:
+            files.append(name)
+    ordered = sorted(dirs) + sorted(files)
+    total = len(ordered)
+    start_idx = (
+        max(0, (offset or 1) - 1)
+        if (offset or 1) >= 1
+        else max(0, total + (offset or 0))
+    )
+    page = ordered[start_idx : start_idx + eff_limit]
+    end_idx = start_idx + len(page)
+    header = f"Read directory {abs_path}, entries {start_idx + 1 if page else 0}-{end_idx} of {total}"
+    body = "\n".join(page) if page else "(empty directory)"
+    truncated = end_idx < total
+    footer = (
+        f"\n[Output truncated. Continue reading with offset: {end_idx + 1}]"
+        if truncated
+        else ""
+    )
+    return (
+        f"{header}\n{body}{footer}",
+        {
+            "path": abs_path,
+            "storage_id": storage_id,
+            "node_id": node_id,
+            "kind": "directory",
+            "truncated": truncated,
+            "next_offset": end_idx + 1 if truncated else None,
+            "_pre_truncated": True,
+        },
+    )
+
+
+async def _read_blob_entry(
+    rt: RuntimeContext,
+    session: Session,
+    abs_path: str,
+    extra: NodeStatExtra,
+    *,
+    storage_id: str,
+    node_id: str,
+) -> ToolResult:
     media_cfg = rt.services.settings.media
-    eff_limit = min(limit or to_cfg.max_lines, to_cfg.max_lines)
-
-    session = await rt.fs.open()
-    abs_path = normalize_workspace_path(path)
-    try:
-        st = await session.vfs.stat(abs_path)
-    except FileNotFoundError:
-        alt, err_msg = await missing_path_recovery(rt, abs_path, allow_alternate=True)
-        if alt is None:
-            raise ToolException(err_msg) from None
-        abs_path = alt
-        st = await session.vfs.stat(abs_path)
-
-    extra = st.extra or {}
-    storage_id = str(extra.get("storage_id", ""))
-    node_id = str(extra.get("node_id", ""))
-
-    # Directory listing mode
-    if st.type.value == "directory":
-        raw_names = [n for n in await session.vfs.readdir(abs_path) if n]
-        dirs: list[str] = []
-        files: list[str] = []
-        for name in raw_names:
-            child_path = posixpath.join(abs_path, name)
-            try:
-                is_dir = await session.vfs.is_dir(child_path)
-            except Exception:
-                is_dir = False
-            if is_dir:
-                dirs.append(name + "/")
-            else:
-                files.append(name)
-        ordered = sorted(dirs) + sorted(files)
-        total = len(ordered)
-        start_idx = (
-            max(0, (offset or 1) - 1)
-            if (offset or 1) >= 1
-            else max(0, total + (offset or 0))
+    media_type = extra.media_type
+    if media_type.startswith("image/"):
+        raw_bytes = await rt.fs.read_raw_bytes(
+            abs_path, max_bytes=media_cfg.max_ingest_bytes
         )
-        page = ordered[start_idx : start_idx + eff_limit]
-        end_idx = start_idx + len(page)
-        header = f"Read directory {abs_path}, entries {start_idx + 1 if page else 0}-{end_idx} of {total}"
-        body = "\n".join(page) if page else "(empty directory)"
-        truncated = end_idx < total
-        footer = (
-            f"\n[Output truncated. Continue reading with offset: {end_idx + 1}]"
-            if truncated
-            else ""
-        )
-        return (
-            f"{header}\n{body}{footer}",
-            {
-                "path": abs_path,
-                "storage_id": storage_id,
-                "node_id": node_id,
-                "kind": "directory",
-                "truncated": truncated,
-                "next_offset": end_idx + 1 if truncated else None,
-                "_pre_truncated": True,
-            },
-        )
-
-    # Blob / Media detection
-    if extra.get("is_blob"):
-        media_type = str(extra.get("media_type", ""))
-        if media_type.startswith("image/"):
-            raw_bytes = await rt.fs.read_raw_bytes(
-                abs_path, max_bytes=media_cfg.max_ingest_bytes
-            )
-            prepared = optimize_image_bytes(raw_bytes, media_cfg)
-            if isinstance(prepared, str):
-                return (
-                    prepared,
-                    {
-                        "path": abs_path,
-                        "storage_id": storage_id,
-                        "node_id": node_id,
-                        "kind": "image",
-                        "_pre_truncated": True,
-                    },
-                )
+        prepared = optimize_image_bytes(raw_bytes, media_cfg)
+        if isinstance(prepared, str):
             return (
-                [
-                    {
-                        "type": "text",
-                        "text": f"Read image {abs_path} ({prepared.width}x{prepared.height}, {prepared.media_type})",
-                    },
-                    {"type": "image_url", "image_url": {"url": prepared.data_url}},
-                ],
+                prepared,
                 {
                     "path": abs_path,
                     "storage_id": storage_id,
                     "node_id": node_id,
                     "kind": "image",
-                    "width": prepared.width,
-                    "height": prepared.height,
-                    "media_type": prepared.media_type,
                     "_pre_truncated": True,
                 },
             )
-
-        # Non-image blob: list extracted artifact tree automatically if present.
-        try:
-            names = sorted(n for n in await session.vfs.readdir(abs_path) if n)
-            if names:
-                return (
-                    f"{abs_path} is a parsed document ({media_type}). "
-                    "Read its extracted artifacts underneath:\n" + "\n".join(names),
-                    {
-                        "path": abs_path,
-                        "storage_id": storage_id,
-                        "node_id": node_id,
-                        "kind": "blob_directory",
-                        "entries": len(names),
-                        "_pre_truncated": True,
-                    },
-                )
-        except Exception:
-            pass
-        raise ToolException(
-            f"{abs_path} is a binary file ({media_type or 'application/octet-stream'}) with no readable text or extracted artifacts."
+        return (
+            [
+                {
+                    "type": "text",
+                    "text": f"Read image {abs_path} ({prepared.width}x{prepared.height}, {prepared.media_type})",
+                },
+                {"type": "image_url", "image_url": {"url": prepared.data_url}},
+            ],
+            {
+                "path": abs_path,
+                "storage_id": storage_id,
+                "node_id": node_id,
+                "kind": "image",
+                "width": prepared.width,
+                "height": prepared.height,
+                "media_type": prepared.media_type,
+                "_pre_truncated": True,
+            },
         )
 
-    # Text file read
+    # Non-image blob: list extracted artifact tree automatically if present.
+    with contextlib.suppress(OSError, grpc.aio.AioRpcError):
+        names = sorted(n for n in await session.vfs.readdir(abs_path) if n)
+        if names:
+            return (
+                f"{abs_path} is a parsed document ({media_type}). "
+                "Read its extracted artifacts underneath:\n" + "\n".join(names),
+                {
+                    "path": abs_path,
+                    "storage_id": storage_id,
+                    "node_id": node_id,
+                    "kind": "blob_directory",
+                    "entries": len(names),
+                    "_pre_truncated": True,
+                },
+            )
+    raise ToolException(
+        f"{abs_path} is a binary file ({media_type or 'application/octet-stream'}) with no readable text or extracted artifacts."
+    )
+
+
+async def _read_text_file(
+    rt: RuntimeContext,
+    session: Session,
+    abs_path: str,
+    *,
+    storage_id: str,
+    node_id: str,
+    offset: int | None,
+    eff_limit: int,
+) -> ToolResult:
+    to_cfg = rt.services.settings.tool_output
+    ft_cfg = rt.services.settings.file_tools
+    media_cfg = rt.services.settings.media
     raw_data = await session.vfs.read(abs_path)
     if b"\x00" in raw_data:
         detected = detect_media_type(raw_data)
@@ -832,7 +861,7 @@ async def handle_file_read(
         start_idx = 0
     elif offset < 0:
         start_idx = max(0, total + offset)
-    elif offset > total and total > 0:
+    elif offset > total > 0:
         start_idx = max(0, total - ft_cfg.read_tail_lines)
         note = (
             f"[Note: requested offset {offset} exceeds file length ({total} lines); "
@@ -875,14 +904,71 @@ async def handle_file_read(
     )
 
 
+async def handle_file_read(
+    path: str,
+    offset: int | None = None,
+    limit: int | None = None,
+    *,
+    runtime: ToolRuntime[RuntimeContext, AgentState],
+) -> ToolResult:
+    """Read a workspace text file, directory listing, image, or parsed document tree."""
+    rt = runtime.context
+    to_cfg = rt.services.settings.tool_output
+    eff_limit = min(limit or to_cfg.max_lines, to_cfg.max_lines)
+
+    session = await rt.fs.open()
+    abs_path = normalize_workspace_path(path)
+    try:
+        st = await session.vfs.stat(abs_path)
+    except FileNotFoundError:
+        alt, err_msg = await missing_path_recovery(rt, abs_path, allow_alternate=True)
+        if alt is None:
+            raise ToolException(err_msg) from None
+        abs_path = alt
+        st = await session.vfs.stat(abs_path)
+
+    extra = parse_stat_extra(st.extra)
+    storage_id = extra.storage_id
+    node_id = extra.node_id
+
+    if st.type.value == "directory":
+        return await _read_directory_listing(
+            session,
+            abs_path,
+            storage_id=storage_id,
+            node_id=node_id,
+            offset=offset,
+            eff_limit=eff_limit,
+        )
+    if extra.is_blob:
+        return await _read_blob_entry(
+            rt,
+            session,
+            abs_path,
+            extra,
+            storage_id=storage_id,
+            node_id=node_id,
+        )
+    return await _read_text_file(
+        rt,
+        session,
+        abs_path,
+        storage_id=storage_id,
+        node_id=node_id,
+        offset=offset,
+        eff_limit=eff_limit,
+    )
+
+
 async def handle_file_edit(
     path: str,
     old_string: str,
     new_string: str,
-    replace_all: bool = False,
     *,
+    replace_all: bool = False,
     runtime: ToolRuntime[RuntimeContext, AgentState],
 ) -> ToolResult:
+    """Edit an existing workspace text file via optimistic versioned write."""
     rt = runtime.context
     abs_path = normalize_workspace_path(path)
     ft_cfg = rt.services.settings.file_tools
@@ -947,6 +1033,7 @@ async def handle_file_write(
     *,
     runtime: ToolRuntime[RuntimeContext, AgentState],
 ) -> ToolResult:
+    """Create or overwrite a workspace text file while preserving any existing BOM."""
     rt = runtime.context
     abs_path = normalize_workspace_path(path)
     async with rt.fs.path_mutex.lock(abs_path):
@@ -968,7 +1055,7 @@ async def handle_file_write(
             _raise_friendly_mount_error(rt, abs_path, exc, writable_only=True)
             raise
         await rt.fs.notify_changed(abs_path)
-    extra = st.extra or {}
+    extra = parse_stat_extra(st.extra)
     verb = "Wrote" if existed else "Created"
     line_count = len(body.splitlines())
     byte_count = len(body.encode("utf-8"))
@@ -976,8 +1063,8 @@ async def handle_file_write(
         f"{verb} {abs_path} ({line_count} lines, {byte_count} bytes)",
         {
             "path": abs_path,
-            "storage_id": str(extra.get("storage_id", "")),
-            "node_id": str(extra.get("node_id", "")),
+            "storage_id": extra.storage_id,
+            "node_id": extra.node_id,
             "existed": existed,
         },
     )
@@ -986,11 +1073,12 @@ async def handle_file_write(
 async def handle_glob(
     pattern: str,
     path: str = "/shared",
+    *,
     hidden: bool = False,
     limit: int = 100,
-    *,
     runtime: ToolRuntime[RuntimeContext, AgentState],
 ) -> ToolResult:
+    """Find workspace files and directories matching a glob pattern."""
     rt = runtime.context
     abs_path = normalize_workspace_path(path or "/shared")
     roots = await _expand_search_roots(rt, abs_path)
@@ -1046,14 +1134,15 @@ async def handle_glob(
 
 async def handle_grep(
     pattern: str,
+    *,
     path: str = "/shared",
     include: str = "",
     literal: bool = False,
     case_sensitive: bool = True,
     limit: int = 100,
-    *,
     runtime: ToolRuntime[RuntimeContext, AgentState],
 ) -> ToolResult:
+    """Search workspace file contents and extracted artifacts by regex or literal match."""
     rt = runtime.context
     if not literal:
         try:
@@ -1125,6 +1214,31 @@ async def handle_grep(
     return "\n".join(out_lines), {"count": len(all_hits), "truncated": truncated}
 
 
+async def _search_semantic_root(
+    rt: RuntimeContext,
+    abs_p: str,
+    *,
+    query: str,
+    limit: int,
+    baggage: str,
+) -> tuple[str, list[SemanticHit] | None]:
+    try:
+        hits = await rt.fs.semantic_search(
+            abs_p,
+            query=query,
+            limit=limit,
+            baggage=baggage,
+        )
+    except FileNotFoundError:
+        return abs_p, None
+    except OSError as exc:
+        if exc.errno == errno.EOPNOTSUPP:
+            return abs_p, None
+        raise
+    else:
+        return abs_p, hits
+
+
 async def handle_semantic_search(
     query: str,
     paths: list[str] | None = None,
@@ -1132,8 +1246,9 @@ async def handle_semantic_search(
     *,
     runtime: ToolRuntime[RuntimeContext, AgentState],
 ) -> ToolResult:
+    """Run hybrid vector + BM25 search across mounted workspace paths."""
     rt = runtime.context
-    raw_paths = paths if paths else ["/shared", "/home"]
+    raw_paths = paths or ["/shared", "/home"]
 
     expanded: list[str] = []
     for raw_p in raw_paths[:5]:
@@ -1164,25 +1279,15 @@ async def handle_semantic_search(
                 )
             )
 
-        async def _search_one(
-            abs_p: str,
-        ) -> tuple[str, list[SemanticHit] | None]:
-            try:
-                hits = await rt.fs.semantic_search(
-                    abs_p,
-                    query=query,
-                    limit=min(limit, 25),
-                    baggage=baggage,
+        capped_limit = min(limit, 25)
+        results = await asyncio.gather(
+            *(
+                _search_semantic_root(
+                    rt, abs_p, query=query, limit=capped_limit, baggage=baggage
                 )
-                return abs_p, hits
-            except FileNotFoundError:
-                return abs_p, None
-            except OSError as exc:
-                if exc.errno == errno.EOPNOTSUPP:
-                    return abs_p, None
-                raise
-
-        results = await asyncio.gather(*(_search_one(abs_p) for abs_p in expanded))
+                for abs_p in expanded
+            )
+        )
         for abs_p, hits in results:
             if hits is None:
                 missing_paths.append(abs_p)
@@ -1212,10 +1317,11 @@ async def handle_semantic_search(
 async def handle_bash(
     command: str,
     workdir: str | None = None,
-    timeout: int | None = None,
+    timeout: int | None = None,  # noqa: ASYNC109  # Matches BashArgs.timeout field passed by StructuredTool.
     *,
     runtime: ToolRuntime[RuntimeContext, AgentState],
 ) -> ToolResult:
+    """Execute a command in the simulated workspace shell sandbox."""
     rt = runtime.context
     resolved_wd: str | None = None
     if workdir:
@@ -1290,6 +1396,7 @@ _BASH_DESC = (
 def build_file_tools(
     *, enable_bash: bool = True, enable_semantic_search: bool = True
 ) -> list[BaseTool]:
+    """Build file, search, and optional semantic-search/bash tools."""
     tools: list[BaseTool] = [
         make_tool(
             name="file_read",

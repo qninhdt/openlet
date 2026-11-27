@@ -1,3 +1,5 @@
+"""Validated Leta runtime configuration, model catalog cache, and service container."""
+
 from __future__ import annotations
 
 import asyncio
@@ -5,7 +7,6 @@ from pathlib import Path
 from time import monotonic
 from typing import TYPE_CHECKING, Literal
 
-import grpc.aio
 import httpx
 from openlet_sdk.config import Config, ReasoningEffort, load, secret
 from openlet_sdk.rpc import channel as rpc_channel
@@ -15,6 +16,7 @@ from temporalio.contrib.opentelemetry import TracingInterceptor
 from temporalio.contrib.pydantic import pydantic_data_converter
 
 if TYPE_CHECKING:
+    import grpc.aio
     from langfuse import Langfuse
     from openlet_api.chat.v1.chat_pb2_grpc import ChatServiceAsyncStub
     from openlet_api.chat.v1.internal_pb2_grpc import ChatInternalServiceAsyncStub
@@ -25,10 +27,10 @@ if TYPE_CHECKING:
     )
     from openlet_api.platform.v1.platform_pb2_grpc import PlatformServiceAsyncStub
 
-    from .activity import ActivityEmitter, CentrifugoPublisher
-    from .auth import Authorization
-    from .db import Pool
-    from .inbox import InboxGateway
+    from leta.activity import ActivityEmitter, CentrifugoPublisher
+    from leta.auth import Authorization
+    from leta.db import Pool
+    from leta.inbox import InboxGateway
 
 
 class _FrozenConfig(BaseModel):
@@ -36,6 +38,8 @@ class _FrozenConfig(BaseModel):
 
 
 class ToolFlags(_FrozenConfig):
+    """Feature toggles controlling which runtime tool groups are enabled."""
+
     hitl: bool = True
     subagents: bool = True
     schedule: bool = True
@@ -47,6 +51,8 @@ class ToolFlags(_FrozenConfig):
 
 
 class ModelRetryConfig(_FrozenConfig):
+    """Retry and backoff settings for gateway LLM calls."""
+
     max_attempts: int = 10
     initial_interval_seconds: float = 2.0
     max_interval_seconds: float = 10.0
@@ -58,6 +64,8 @@ class ModelRetryConfig(_FrozenConfig):
 
 
 class ModelConfig(_FrozenConfig):
+    """Token budget, continuation, and retry configuration for LLM inference."""
+
     output_token_fallback: int = 32000
     output_token_max: int = 256000
     output_token_min: int = 1024
@@ -72,6 +80,8 @@ class ModelConfig(_FrozenConfig):
 
 
 class CompactionBackgroundConfig(_FrozenConfig):
+    """Background summary precomputation thresholds and cache settings."""
+
     enabled: bool = True
     precompute_lead_tokens: int = 60000
     tail_share: float = 0.4
@@ -81,6 +91,8 @@ class CompactionBackgroundConfig(_FrozenConfig):
 
 
 class CompactionConfig(_FrozenConfig):
+    """Context window compaction parameters and snapshot caps."""
+
     auto: bool = True
     reserve_share: float = 0.15
     reserve_min_tokens: int = 16000
@@ -98,6 +110,8 @@ class CompactionConfig(_FrozenConfig):
 
 
 class ToolOutputConfig(_FrozenConfig):
+    """Truncation and spill-file settings for tool outputs."""
+
     max_lines: int = 2000
     max_bytes: int = 51200
     max_line_length: int = 2000
@@ -108,6 +122,8 @@ class ToolOutputConfig(_FrozenConfig):
 
 
 class FileToolsConfig(_FrozenConfig):
+    """Limits and hints for workspace file read, edit, and search tools."""
+
     read_tail_lines: int = 100
     edit_miss_hint_lines: int = 12
     edit_miss_hint_line_length: int = 200
@@ -116,6 +132,8 @@ class FileToolsConfig(_FrozenConfig):
 
 
 class BashConfig(_FrozenConfig):
+    """Execution limits and network policy for the sandboxed bash tool."""
+
     default_timeout_seconds: int = 120
     max_timeout_seconds: int = 600
     python_max_memory: str = "256MB"
@@ -124,6 +142,8 @@ class BashConfig(_FrozenConfig):
 
 
 class MediaConfig(_FrozenConfig):
+    """Image and media ingestion, resizing, and history budget configuration."""
+
     max_ingest_bytes: int = 20971520
     image_auto_resize: bool = True
     image_max_width: int = 2000
@@ -137,6 +157,8 @@ class MediaConfig(_FrozenConfig):
 
 
 class WebConfig(_FrozenConfig):
+    """Web fetch and search limits and fallback mode configuration."""
+
     fetch_mode: Literal["direct", "tinyfish", "direct_with_fallback"] = (
         "direct_with_fallback"
     )
@@ -148,11 +170,15 @@ class WebConfig(_FrozenConfig):
 
 
 class SubagentsConfig(_FrozenConfig):
+    """Recursion depth and active concurrency limits for subagents."""
+
     max_depth: int = 3
     max_active_per_leta: int = 16
 
 
 class MessagingConfig(_FrozenConfig):
+    """Attachment, source, and notification limits for channel messaging."""
+
     max_attachments: int = 20
     max_sources: int = 64
     active_channel_ttl_seconds: int = 300
@@ -160,6 +186,8 @@ class MessagingConfig(_FrozenConfig):
 
 
 class OrchestrationConfig(_FrozenConfig):
+    """Temporal activity timeouts, lease intervals, and worker concurrency settings."""
+
     run_timeout_seconds: int = 7200
     heartbeat_interval_seconds: int = 3
     heartbeat_timeout_seconds: int = 60
@@ -170,11 +198,15 @@ class OrchestrationConfig(_FrozenConfig):
 
 
 class QueueNames(_FrozenConfig):
+    """Temporal task queue names for orchestration and runtime workers."""
+
     orchestration: str = "openlet-leta-orchestration"
     runtime: str = "openlet-leta-runtime"
 
 
 class LetaRuntimeConfig(_FrozenConfig):
+    """Top-level validated runtime configuration for the Leta service."""
+
     http_listen: str = "0.0.0.0:8000"
     grpc_listen: str = "0.0.0.0:9091"
     tools: ToolFlags = Field(default_factory=ToolFlags)
@@ -193,6 +225,7 @@ class LetaRuntimeConfig(_FrozenConfig):
 
     @classmethod
     def from_openlet_config(cls, cfg: Config) -> LetaRuntimeConfig:
+        """Build LetaRuntimeConfig from the global Openlet configuration."""
         leta: dict[str, object] = {**cfg["services"]["leta"]}
         queues = cfg["dependencies"]["temporal"]["queues"]
         ws_cfg = cfg["services"]["leta"].get("web_search")
@@ -205,6 +238,8 @@ class LetaRuntimeConfig(_FrozenConfig):
 
 
 class ModelInfoPayload(BaseModel):
+    """Gateway /model/info model_info payload schema."""
+
     access_groups: list[str] | None = None
     max_input_tokens: int | None = Field(default=None, gt=0)
     max_output_tokens: int | None = Field(default=None, gt=0)
@@ -215,15 +250,21 @@ class ModelInfoPayload(BaseModel):
 
 
 class ModelDeploymentPayload(BaseModel):
+    """Gateway /model/info deployment entry schema."""
+
     model_name: str
     model_info: ModelInfoPayload
 
 
 class ModelListPayload(BaseModel):
+    """Top-level response payload returned by the gateway /model/info endpoint."""
+
     data: list[ModelDeploymentPayload]
 
 
 class ModelSpec(BaseModel):
+    """Resolved capabilities and pricing for a Leta-accessible model."""
+
     model_id: str
     reasoning_efforts: list[ReasoningEffort]
     context_window_tokens: int
@@ -234,6 +275,8 @@ class ModelSpec(BaseModel):
 
 
 class ModelCatalog:
+    """Cached async client for resolving available models from the LiteLLM gateway."""
+
     def __init__(self, client: httpx.AsyncClient, fallback_output: int = 32000) -> None:
         self.client = client
         self.fallback_output = fallback_output
@@ -242,6 +285,7 @@ class ModelCatalog:
         self._lock = asyncio.Lock()
 
     async def catalog(self) -> dict[str, ModelSpec]:
+        """Return cached Leta-enabled models, refreshing from gateway when expired."""
         if monotonic() < self._expires:
             return self._items
         async with self._lock:
@@ -285,6 +329,7 @@ class ModelCatalog:
             return groups
 
     async def get(self, model_id: str | None, effort: ReasoningEffort) -> ModelSpec:
+        """Resolve a model spec and validate that reasoning effort is supported."""
         if not model_id:
             item = await self.default_model()
         else:
@@ -298,6 +343,7 @@ class ModelCatalog:
         return item
 
     async def default_model(self) -> ModelSpec:
+        """Return the first configured Leta model in the gateway catalog."""
         cat = await self.catalog()
         if not cat:
             raise ValueError("no leta models configured in gateway")
@@ -305,6 +351,7 @@ class ModelCatalog:
 
 
 def prompts_dir() -> Path:
+    """Locate the directory containing Jinja2 system and compaction prompts."""
     candidates = [
         Path("/app/prompts"),
         Path(__file__).resolve().parents[2] / "prompts",
@@ -365,23 +412,26 @@ class Services:
 
     @property
     def queues(self) -> QueueNames:
+        """Return the configured Temporal orchestration and runtime queue names."""
         return self.settings.queues
 
     @classmethod
     async def create(
         cls, config: Config | None = None, *, langfuse: Langfuse | None = None
     ) -> Services:
-        from openlet_api.chat.v1 import chat_pb2_grpc
-        from openlet_api.chat.v1 import internal_pb2_grpc as chat_int
-        from openlet_api.letfs.v1 import internal_pb2_grpc as letfs_int
-        from openlet_api.letfs.v1 import letfs_pb2_grpc
-        from openlet_api.platform.v1 import internal_pb2_grpc as plat_int
-        from openlet_api.platform.v1 import platform_pb2_grpc
+        """Initialize database, Temporal, gRPC, HTTP, and publisher clients."""
+        # Deferred so config schemas can be imported cleanly inside workflow sandboxes.
+        from openlet_api.chat.v1 import chat_pb2_grpc  # noqa: PLC0415
+        from openlet_api.chat.v1 import internal_pb2_grpc as chat_int  # noqa: PLC0415
+        from openlet_api.letfs.v1 import internal_pb2_grpc as letfs_int  # noqa: PLC0415
+        from openlet_api.letfs.v1 import letfs_pb2_grpc  # noqa: PLC0415
+        from openlet_api.platform.v1 import internal_pb2_grpc as plat_int  # noqa: PLC0415
+        from openlet_api.platform.v1 import platform_pb2_grpc  # noqa: PLC0415
 
-        from .activity import ActivityEmitter, CentrifugoPublisher
-        from .auth import Authorization
-        from .db import open_pool
-        from .inbox import InboxGateway
+        from leta.activity import ActivityEmitter, CentrifugoPublisher  # noqa: PLC0415
+        from leta.auth import Authorization  # noqa: PLC0415
+        from leta.db import open_pool  # noqa: PLC0415
+        from leta.inbox import InboxGateway  # noqa: PLC0415
 
         cfg = config or load()
         settings = LetaRuntimeConfig.from_openlet_config(cfg)
@@ -471,6 +521,7 @@ class Services:
         )
 
     async def close(self) -> None:
+        """Close all managed HTTP, gRPC, SpiceDB, and database connections."""
         await self.centrifugo.close()
         await self.gateway_http.aclose()
         for ch in self._channels:

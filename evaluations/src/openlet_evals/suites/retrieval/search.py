@@ -8,13 +8,15 @@ from typing import Literal
 
 from qdrant_client import QdrantClient, models
 
-from .corpus import COLLECTION
+from openlet_evals.suites.retrieval.corpus import COLLECTION
 
 type SearchMode = Literal["hybrid", "dense", "bm25"]
 
 
 @dataclass(frozen=True, slots=True)
 class SearchHit:
+    """Deduplicated Qdrant retrieval hit with resolved virtual path."""
+
     file: str
     score: float
     text: str

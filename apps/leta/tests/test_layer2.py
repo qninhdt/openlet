@@ -1,21 +1,37 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from io import BytesIO
-from types import SimpleNamespace
-from typing import Self, cast
+from typing import TYPE_CHECKING, Self, cast
 from uuid import uuid4
 
 import pytest
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
+from langchain_core.tools import ToolException
+from langchain_core.utils.function_calling import convert_to_openai_tool
+from langgraph.graph import (  # pyright: ignore[reportMissingTypeStubs]
+    END,
+    START,
+    StateGraph,
+)
 from langgraph.prebuilt import ToolRuntime
+from leta.channels.router import ChannelRouter
 from leta.config import (
     CompactionConfig,
+    LetaRuntimeConfig,
     MediaConfig,
     ModelConfig,
     ModelRetryConfig,
     ModelSpec,
+    Services,
+    ToolFlags,
+    ToolOutputConfig,
+    WebConfig,
 )
 from leta.filesystem.letfs import parse_letfs_by_id_path
+from leta.hitl.models import AskPayload, AskResponse, HitlOutcome
+from leta.hitl.service import Question
+from leta.inbox import InboxRecord
 from leta.runtime.compaction import (
     assemble_checkpoint_xml,
     compaction_ceiling,
@@ -23,6 +39,11 @@ from leta.runtime.compaction import (
     flatten_and_drop_oldest,
     is_checkpoint_message,
     serialize_recent_context,
+)
+from leta.runtime.formatting import (
+    format_hitl_outcome,
+    format_hitl_outcome_attr,
+    format_hitl_response,
 )
 from leta.runtime.media import (
     PreparedImage,
@@ -34,7 +55,7 @@ from leta.runtime.nodes.inbox import (
     format_inbox_item_full,
     format_inbox_notification_preview,
 )
-from leta.runtime.nodes.tools import after_tools_router
+from leta.runtime.nodes.tools import after_tools_router, build_tools_node
 from leta.runtime.prompts import render_system_prompt
 from leta.runtime.retry import (
     ContextOverflowError,
@@ -46,16 +67,42 @@ from leta.runtime.runner import find_orphaned_tool_calls
 from leta.runtime.state import AgentState, RuntimeContext, reasoning_kwargs_for_model
 from leta.runtime.tool_repair import (
     format_input_issues,
+    format_tool_error,
     repair_tool_args,
+    repair_tool_args_with_notes,
     resolve_tool_alias,
 )
+from leta.runtime.tools import web as web_tools
 from leta.runtime.tools.base import ToolArgs, ToolResult, make_tool
-from leta.runtime.tools.files import apply_file_edit
-from leta.runtime.tools.messaging import validate_citations
+from leta.runtime.tools.files import (
+    FileEditArgs,
+    apply_file_edit,
+    apply_file_edit_detailed,
+    build_file_tools,
+    normalize_workspace_path,
+)
+from leta.runtime.tools.messaging import (
+    RootSendMessageArgs,
+    build_messaging_tools,
+    validate_citations,
+)
+from leta.runtime.tools.web import build_web_tools, normalize_public_url
+from leta.runtime.tools.workspace_tools import (
+    HitlAskArgs,
+    ScheduleCreateArgs,
+    build_domain_tools,
+    format_activity_event_summary,
+    parse_schedule_timing,
+)
 from leta.truncation import truncate_head, truncate_tail
 from openlet_sdk.types import is_str_mapping
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from tinyfish import FetchResponse, SDKError, SearchQueryResponse
+
+if TYPE_CHECKING:
+    from leta.activity import ActivityEmitter
+    from leta.filesystem.workspace import Filesystem
 
 # --- 1. ToolInputRepair ---
 
@@ -75,10 +122,12 @@ def test_tool_alias_and_recursive_coercion() -> None:
         "execute", {"bash": object(), "file_read": object()}
     )
     assert target == "bash"
-    assert note is not None and "<tool-repair>" in note
+    assert note is not None
+    assert "<tool-repair>" in note
 
     target2, note2 = resolve_tool_alias("bash", {"bash": object()})
-    assert target2 == "bash" and note2 is None
+    assert target2 == "bash"
+    assert note2 is None
 
     repaired = repair_tool_args(
         {
@@ -136,13 +185,19 @@ def test_head_and_tail_truncation() -> None:
 
     head = truncate_head(text, max_lines=10, max_bytes=10000, max_line_length=200)
     assert head.truncated is True
-    assert head.start_line == 1 and head.end_line == 10 and head.total_lines == 50
-    assert head.text.startswith("line-1\n") and head.text.endswith("line-10")
+    assert head.start_line == 1
+    assert head.end_line == 10
+    assert head.total_lines == 50
+    assert head.text.startswith("line-1\n")
+    assert head.text.endswith("line-10")
 
     tail = truncate_tail(text, max_lines=10, max_bytes=10000)
     assert tail.truncated is True
-    assert tail.start_line == 41 and tail.end_line == 50 and tail.total_lines == 50
-    assert tail.text.startswith("line-41\n") and tail.text.endswith("line-50")
+    assert tail.start_line == 41
+    assert tail.end_line == 50
+    assert tail.total_lines == 50
+    assert tail.text.startswith("line-41\n")
+    assert tail.text.endswith("line-50")
 
     # Line clipping
     long_line = "x" * 3000
@@ -175,12 +230,14 @@ def test_image_optimization_and_hysteresis() -> None:
     res = optimize_image_bytes(small_png, cfg)
     assert isinstance(res, PreparedImage)
     assert res.media_type == "image/png"
-    assert res.width == 64 and res.height == 64
+    assert res.width == 64
+    assert res.height == 64
 
     oversized_opaque = _make_png(2400, 1200, alpha=255)
     res2 = optimize_image_bytes(oversized_opaque, cfg)
     assert isinstance(res2, PreparedImage)
-    assert res2.width <= 2000 and res2.height <= 2000
+    assert res2.width <= 2000
+    assert res2.height <= 2000
     assert res2.base64_bytes <= cfg.image_max_base64_bytes
 
     transparent_large = _make_png(2400, 1200, alpha=100)
@@ -250,12 +307,14 @@ def test_file_edit_3_tier_crlf_bom_and_miss_hint() -> None:
     # Tier 2 unicode curly quote normalization
     curly = "He said \u201chello\u201d to Bob."
     u2, c2, _ = apply_file_edit(curly, 'He said "hello"', 'He said "hi"')
-    assert c2 == 1 and u2 == 'He said "hi" to Bob.'
+    assert c2 == 1
+    assert u2 == 'He said "hi" to Bob.'
 
     # Tier 3 trailing whitespace line match
     ws_src = "alpha   \nbeta  \ngamma\n"
     u3, c3, _ = apply_file_edit(ws_src, "alpha\nbeta", "ALPHA\nBETA")
-    assert c3 == 1 and u3.startswith("ALPHA\nBETA\ngamma")
+    assert c3 == 1
+    assert u3.startswith("ALPHA\nBETA\ngamma")
 
     # missHint when newString already applied
     with pytest.raises(ValueError, match="already present"):
@@ -309,7 +368,8 @@ async def test_model_retry_and_output_limit() -> None:
         return "ok"
 
     res = await invoke_with_retry(flaky, cfg=ModelRetryConfig(), sleep=fake_sleep)
-    assert res == "ok" and attempts == 2
+    assert res == "ok"
+    assert attempts == 2
     assert sleeps[0] >= 12.0
 
     # x-should-retry: false stops immediately
@@ -443,7 +503,7 @@ def test_letfs_by_id_parsing_and_root_blocking() -> None:
     assert parsed == (sid, nid, "sheet/summary.md")
     with pytest.raises(PermissionError):
         parse_letfs_by_id_path("/")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="badly formed hexadecimal UUID string"):
         parse_letfs_by_id_path("/not-a-uuid/123")
 
 
@@ -457,44 +517,58 @@ def test_citations_inbox_xml_orphans_and_end_turn_router() -> None:
         validate_citations("See [1].", ["/shared/a.pdf", "/shared/b.pdf"])
 
     full_xml = format_inbox_item_full(
-        {
-            "seq": 7,
-            "kind": "channel",
-            "channel": "chat",
-            "reply_address": "chat:11111111-1111-1111-1111-111111111111",
-            "sender": {"type": "user", "id": "u1", "name": "Alice", "handle": "alice"},
-            "content": "Check <Q3> & totals",
-            "attachments": [
-                {
-                    "storage_id": "s1",
-                    "node_id": "n1",
-                    "name": "q3.xlsx",
-                    "media_type": "application/vnd.ms-excel",
-                }
-            ],
-            "metadata": {"message_id": "m1", "reply_to_message_id": "m0"},
-            "created_at": "2026-11-26T10:00:00Z",
-        }
+        InboxRecord.model_validate(
+            {
+                "seq": 7,
+                "kind": "channel",
+                "channel": "chat",
+                "reply_address": "chat:11111111-1111-1111-1111-111111111111",
+                "sender": {
+                    "type": "user",
+                    "id": "u1",
+                    "name": "Alice",
+                    "handle": "alice",
+                },
+                "content": "Check <Q3> & totals",
+                "attachments": [
+                    {
+                        "storage_id": "s1",
+                        "node_id": "n1",
+                        "name": "q3.xlsx",
+                        "media_type": "application/vnd.ms-excel",
+                    }
+                ],
+                "metadata": {"message_id": "m1", "reply_to_message_id": "m0"},
+                "created_at": "2026-11-26T10:00:00Z",
+            }
+        )
     )
     assert "&lt;Q3&gt; &amp; totals" in full_xml
     assert "/letfs/s1/n1" in full_xml
     assert '<reply-to id="m0" />' in full_xml
 
     react_xml = format_inbox_item_full(
-        {
-            "seq": 9,
-            "kind": "reaction",
-            "channel": "chat",
-            "reply_address": "chat:11111111-1111-1111-1111-111111111111",
-            "sender": {"type": "user", "id": "u1", "name": "Alice", "handle": "alice"},
-            "content": "",
-            "metadata": {
-                "target_message_id": "m1",
-                "emoji": "👍",
-                "action": "added",
-            },
-            "created_at": "2026-11-26T10:02:00Z",
-        }
+        InboxRecord.model_validate(
+            {
+                "seq": 9,
+                "kind": "reaction",
+                "channel": "chat",
+                "reply_address": "chat:11111111-1111-1111-1111-111111111111",
+                "sender": {
+                    "type": "user",
+                    "id": "u1",
+                    "name": "Alice",
+                    "handle": "alice",
+                },
+                "content": "",
+                "metadata": {
+                    "target_message_id": "m1",
+                    "emoji": "👍",
+                    "action": "added",
+                },
+                "created_at": "2026-11-26T10:02:00Z",
+            }
+        )
     )
     assert '<reaction seq="9"' in react_xml
     assert 'target_message_id="m1"' in react_xml
@@ -502,16 +576,18 @@ def test_citations_inbox_xml_orphans_and_end_turn_router() -> None:
     assert 'action="added"' in react_xml
 
     preview_xml = format_inbox_notification_preview(
-        {
-            "seq": 8,
-            "kind": "channel",
-            "channel": "chat",
-            "reply_address": "chat:22222222-2222-2222-2222-222222222222",
-            "sender": {"type": "user", "id": "u2", "name": "Bob", "handle": "bob"},
-            "content": "Hey, quick question about Q4",
-            "metadata": {"message_id": "m2"},
-            "created_at": "2026-11-26T10:01:00Z",
-        },
+        InboxRecord.model_validate(
+            {
+                "seq": 8,
+                "kind": "channel",
+                "channel": "chat",
+                "reply_address": "chat:22222222-2222-2222-2222-222222222222",
+                "sender": {"type": "user", "id": "u2", "name": "Bob", "handle": "bob"},
+                "content": "Hey, quick question about Q4",
+                "metadata": {"message_id": "m2"},
+                "created_at": "2026-11-26T10:01:00Z",
+            }
+        ),
         unread_in_channel=2,
     )
     assert "<notification " in preview_xml
@@ -568,32 +644,44 @@ def test_citations_inbox_xml_orphans_and_end_turn_router() -> None:
     assert after_tools_router(err_state) == "inbox"
 
 
+@dataclass(slots=True)
+class _FakePromptSettings:
+    tools: ToolFlags = field(default_factory=ToolFlags)
+
+
+@dataclass(slots=True)
+class _FakePromptServices:
+    settings: _FakePromptSettings = field(default_factory=_FakePromptSettings)
+
+
+@dataclass(slots=True)
+class _FakePromptContext:
+    is_root: bool = True
+    agent_name: str = "Luna"
+    agent_title: str = "Analyst"
+    handle: str = "luna"
+    agent_description: str = "Financial analyst"
+    custom_instructions: str = "Always double check math."
+    parent_handle: str = ""
+    services: _FakePromptServices = field(default_factory=_FakePromptServices)
+
+
 def test_prompt_rendering_and_reasoning_mapping() -> None:
-    fake_rt = cast(
-        "RuntimeContext",
-        SimpleNamespace(
-            is_root=True,
-            agent_name="Luna",
-            agent_title="Analyst",
-            handle="luna",
-            agent_description="Financial analyst",
-            custom_instructions="Always double check math.",
-            parent_handle="",
-            services=SimpleNamespace(
-                settings=SimpleNamespace(
-                    tools=SimpleNamespace(
-                        hitl=True,
-                        subagents=True,
-                        schedule=True,
-                        web=True,
-                        bash=True,
-                        semantic_search=True,
-                        todo=False,
-                        react=True,
-                    )
+    fake_rt = _FakePromptContext(
+        services=_FakePromptServices(
+            settings=_FakePromptSettings(
+                tools=ToolFlags(
+                    hitl=True,
+                    subagents=True,
+                    schedule=True,
+                    web=True,
+                    bash=True,
+                    semantic_search=True,
+                    todo=False,
+                    react=True,
                 )
-            ),
-        ),
+            )
+        )
     )
     rendered = render_system_prompt(fake_rt)
     assert "Luna" in rendered
@@ -609,14 +697,6 @@ def test_prompt_rendering_and_reasoning_mapping() -> None:
 
 
 def test_schedule_timing_parser_and_simplified_tool_schemas() -> None:
-    from leta.runtime.tools.files import FileEditArgs
-    from leta.runtime.tools.messaging import RootSendMessageArgs
-    from leta.runtime.tools.workspace_tools import (
-        HitlAskArgs,
-        ScheduleCreateArgs,
-        parse_schedule_timing,
-    )
-
     # 1. One-shot relative & ISO
     t_rel = parse_schedule_timing(run_at="+30m", repeat=None)
     assert t_rel.after_seconds == 1800
@@ -627,7 +707,8 @@ def test_schedule_timing_parser_and_simplified_tool_schemas() -> None:
     t_iso = parse_schedule_timing(
         run_at="2026-12-01T09:00:00", repeat=None, timezone="Asia/Ho_Chi_Minh"
     )
-    assert t_iso.at is not None and t_iso.at.tzinfo is not None
+    assert t_iso.at is not None
+    assert t_iso.at.tzinfo is not None
 
     # 2. Recurring interval & 5-field cron
     t_every = parse_schedule_timing(run_at=None, repeat="every 15m")
@@ -673,20 +754,6 @@ def test_schedule_timing_parser_and_simplified_tool_schemas() -> None:
 
 
 def test_native_structured_tools_and_ergonomics() -> None:
-    from langchain_core.utils.function_calling import convert_to_openai_tool
-    from leta.hitl.service import Question
-    from leta.runtime.tool_repair import format_tool_error, repair_tool_args_with_notes
-    from leta.runtime.tools.files import (
-        apply_file_edit_detailed,
-        build_file_tools,
-        normalize_workspace_path,
-    )
-    from leta.runtime.tools.web import build_web_tools, normalize_public_url
-    from leta.runtime.tools.workspace_tools import (
-        build_domain_tools,
-        parse_schedule_timing,
-    )
-
     # 1. Native LangChain OpenAI schema projection: no $defs, no $ref, no title, no runtime
     all_tools = [
         *build_file_tools(),
@@ -704,22 +771,24 @@ def test_native_structured_tools_and_ergonomics() -> None:
 
     # 2. No '@' prefix in inbox XML
     xml_out = format_inbox_item_full(
-        {
-            "seq": 1,
-            "kind": "channel",
-            "channel": "chat",
-            "reply_address": "chat:11111111-1111-1111-1111-111111111111",
-            "sender": {
-                "type": "user",
-                "id": "u1",
-                "name": "Ethan Brooks",
-                "handle": "ethan",
-            },
-            "content": "hi",
-            "attachments": [],
-            "metadata": {"message_id": "m1"},
-            "created_at": "2026-11-27T00:00:00Z",
-        }
+        InboxRecord.model_validate(
+            {
+                "seq": 1,
+                "kind": "channel",
+                "channel": "chat",
+                "reply_address": "chat:11111111-1111-1111-1111-111111111111",
+                "sender": {
+                    "type": "user",
+                    "id": "u1",
+                    "name": "Ethan Brooks",
+                    "handle": "ethan",
+                },
+                "content": "hi",
+                "attachments": [],
+                "metadata": {"message_id": "m1"},
+                "created_at": "2026-11-27T00:00:00Z",
+            }
+        )
     )
     assert 'from="Ethan Brooks (ethan)"' in xml_out
     assert "@ethan" not in xml_out
@@ -767,7 +836,9 @@ def test_native_structured_tools_and_ergonomics() -> None:
     updated, count, _, lines, note = apply_file_edit_detailed(
         crlf_doc, "1: alpha\n2: beta", "ALPHA\nBETA"
     )
-    assert count == 1 and lines == [1] and note is not None
+    assert count == 1
+    assert lines == [1]
+    assert note is not None
     assert updated == "ALPHA\r\nBETA\r\ngamma\r\n"
 
     with pytest.raises(ValueError, match=r"lines 1, 3"):
@@ -800,20 +871,64 @@ def test_native_structured_tools_and_ergonomics() -> None:
     )
 
 
+@dataclass(slots=True)
+class _FakeEmitter:
+    emitted: list[dict[str, object]]
+
+    async def emit(self, **kwargs: object) -> None:
+        self.emitted.append(kwargs)
+
+
+@dataclass(slots=True)
+class _FakeFS:
+    async def write_spill(self, prefix: str, full_text: str) -> str:
+        _ = full_text
+        return f"/home/.tool-output/{prefix}-test.txt"
+
+
+@dataclass(slots=True)
+class _FakeServices:
+    settings: LetaRuntimeConfig
+
+
+def _make_test_runtime_context(
+    *,
+    settings: LetaRuntimeConfig | None = None,
+    emitter: _FakeEmitter | None = None,
+    fs: _FakeFS | None = None,
+) -> RuntimeContext:
+    return RuntimeContext(
+        agent_id=uuid4(),
+        leta_id=uuid4(),
+        workspace_id=uuid4(),
+        storage_id=uuid4(),
+        is_root=True,
+        handle="nora",
+        agent_name="Nora",
+        agent_title="Analyst",
+        agent_description="",
+        custom_instructions="",
+        parent_handle="",
+        model_spec=ModelSpec(
+            model_id="gpt-6-luna",
+            reasoning_efforts=[None],
+            context_window_tokens=128000,
+            max_output_tokens=16000,
+        ),
+        reasoning_effort=None,
+        run_id=uuid4(),
+        services=cast(
+            "Services", _FakeServices(settings=settings or LetaRuntimeConfig())
+        ),
+        emitter=cast("ActivityEmitter", emitter or _FakeEmitter(emitted=[])),
+        fs=cast("Filesystem", fs or _FakeFS()),
+        router=ChannelRouter([]),
+        tools={},
+    )
+
+
 @pytest.mark.asyncio
 async def test_native_langgraph_tool_node_pipeline() -> None:
-    from langgraph.graph import (  # pyright: ignore[reportMissingTypeStubs]
-        END,
-        START,
-        StateGraph,
-    )
-    from leta.config import ToolOutputConfig
-    from leta.runtime.nodes.tools import build_tools_node
-    from leta.runtime.tools.files import build_file_tools
-    from leta.runtime.tools.messaging import build_messaging_tools
-    from leta.runtime.tools.web import build_web_tools
-    from leta.runtime.tools.workspace_tools import build_domain_tools
-
     # Smoke-check ToolNode initialization across every production tool (verifies get_type_hints & ToolRuntime)
     all_prod_tools = [
         *build_file_tools(),
@@ -825,14 +940,6 @@ async def test_native_langgraph_tool_node_pipeline() -> None:
     build_tools_node(all_prod_tools)
 
     emitted: list[dict[str, object]] = []
-
-    class _FakeEmitter:
-        async def emit(self, **kwargs: object) -> None:
-            emitted.append(kwargs)
-
-    class _FakeFS:
-        async def write_spill(self, prefix: str, full_text: str) -> str:
-            return f"/home/.tool-output/{prefix}-test.txt"
 
     class _EchoArgs(ToolArgs):
         path: str = Field(min_length=1)
@@ -850,19 +957,10 @@ async def test_native_langgraph_tool_node_pipeline() -> None:
         coroutine=_echo,
     )
 
-    rt = cast(
-        "RuntimeContext",
-        SimpleNamespace(
-            agent_id=uuid4(),
-            leta_id=uuid4(),
-            run_id=uuid4(),
-            handle="nora",
-            emitter=_FakeEmitter(),
-            fs=_FakeFS(),
-            services=SimpleNamespace(
-                settings=SimpleNamespace(tool_output=ToolOutputConfig())
-            ),
-        ),
+    rt = _make_test_runtime_context(
+        settings=LetaRuntimeConfig(tool_output=ToolOutputConfig()),
+        emitter=_FakeEmitter(emitted=emitted),
+        fs=_FakeFS(),
     )
 
     g: StateGraph[AgentState, RuntimeContext, AgentState, AgentState] = StateGraph(
@@ -947,14 +1045,6 @@ async def test_native_langgraph_tool_node_pipeline() -> None:
 
 
 def test_clean_utf8_formatting_for_hitl_schedule_and_agent_status() -> None:
-    from leta.hitl.models import AskPayload, AskResponse, HitlOutcome
-    from leta.runtime.formatting import (
-        format_hitl_outcome,
-        format_hitl_outcome_attr,
-        format_hitl_response,
-    )
-    from leta.runtime.tools.workspace_tools import format_activity_event_summary
-
     payload = AskPayload.model_validate(
         {
             "questions": [
@@ -995,21 +1085,28 @@ def test_clean_utf8_formatting_for_hitl_schedule_and_agent_status() -> None:
     )
 
     hitl_xml = format_inbox_item_full(
-        {
-            "seq": 10,
-            "kind": "hitl",
-            "channel": "hitl",
-            "reply_address": None,
-            "sender": {"type": "user", "id": "u1", "name": "Minh", "handle": "minh"},
-            "content": f"HITL resolved.\n{rendered}",
-            "metadata": {
-                "request_id": "req-1",
-                "type": "ask",
-                "status": "answered",
-                "outcome": "applied (viewer)",
-            },
-            "created_at": "2026-11-27T03:00:00Z",
-        }
+        InboxRecord.model_validate(
+            {
+                "seq": 10,
+                "kind": "hitl",
+                "channel": "hitl",
+                "reply_address": None,
+                "sender": {
+                    "type": "user",
+                    "id": "u1",
+                    "name": "Minh",
+                    "handle": "minh",
+                },
+                "content": f"HITL resolved.\n{rendered}",
+                "metadata": {
+                    "request_id": "req-1",
+                    "type": "ask",
+                    "status": "answered",
+                    "outcome": "applied (viewer)",
+                },
+                "created_at": "2026-11-27T03:00:00Z",
+            }
+        )
     )
     assert 'request_id="req-1"' in hitl_xml
     assert 'type="ask"' in hitl_xml
@@ -1019,20 +1116,22 @@ def test_clean_utf8_formatting_for_hitl_schedule_and_agent_status() -> None:
     assert "\\n" not in hitl_xml
 
     sched_xml = format_inbox_item_full(
-        {
-            "seq": 11,
-            "kind": "schedule",
-            "channel": "schedule",
-            "reply_address": None,
-            "sender": {"type": "system", "id": "s1", "name": "schedule"},
-            "content": "Báo cáo sáng ☀️\nGửi cho ethan",
-            "metadata": {
-                "schedule_id": "sc-1",
-                "title": "Báo cáo sáng",
-                "scheduled_for": "2026-11-27T09:00:00+07:00",
-            },
-            "created_at": "2026-11-27T09:00:01+07:00",
-        }
+        InboxRecord.model_validate(
+            {
+                "seq": 11,
+                "kind": "schedule",
+                "channel": "schedule",
+                "reply_address": None,
+                "sender": {"type": "system", "id": "s1", "name": "schedule"},
+                "content": "Báo cáo sáng ☀️\nGửi cho ethan",
+                "metadata": {
+                    "schedule_id": "sc-1",
+                    "title": "Báo cáo sáng",
+                    "scheduled_for": "2026-11-27T09:00:00+07:00",
+                },
+                "created_at": "2026-11-27T09:00:01+07:00",
+            }
+        )
     )
     assert 'scheduled_for="2026-11-27T09:00:00+07:00"' in sched_xml
     assert "Báo cáo sáng ☀️\nGửi cho ethan" in sched_xml
@@ -1047,7 +1146,7 @@ def test_clean_utf8_formatting_for_hitl_schedule_and_agent_status() -> None:
         "activity.tool_call",
         {"name": "send_message", "args": {"to": "ethan", "content": "Xin chào 👋"}},
     )
-    assert 'send_message({"to": "ethan", "content": "Xin chào 👋"})' == ev_tool
+    assert ev_tool == 'send_message({"to": "ethan", "content": "Xin chào 👋"})'
     assert "\\u" not in ev_tool
 
 
@@ -1055,11 +1154,6 @@ def test_clean_utf8_formatting_for_hitl_schedule_and_agent_status() -> None:
 async def test_tinyfish_fetch_and_search_use_fetch_and_search_apis(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from langchain_core.tools import ToolException
-    from leta.config import WebConfig
-    from leta.runtime.tools import web as web_tools
-    from tinyfish import FetchResponse, SDKError, SearchQueryResponse
-
     calls: list[tuple[str, dict[str, object]]] = []
     next_fetch: list[FetchResponse | Exception] = []
     next_search: list[SearchQueryResponse | Exception] = []
@@ -1069,7 +1163,7 @@ async def test_tinyfish_fetch_and_search_use_fetch_and_search_apis(
             self,
             urls: list[str],
             *,
-            format: str | None = None,
+            format: str | None = None,  # noqa: A002  # Matches tinyfish SDK get_contents kwarg
             per_url_timeout_ms: int | None = None,
         ) -> FetchResponse:
             calls.append(
@@ -1114,18 +1208,19 @@ async def test_tinyfish_fetch_and_search_use_fetch_and_search_apis(
     monkeypatch.setattr(web_tools, "AsyncTinyFish", _FakeTinyFish)
     monkeypatch.setattr(web_tools, "assert_public_url", _allow_public)
 
-    rt = cast(
-        "ToolRuntime[RuntimeContext, AgentState]",
-        SimpleNamespace(
-            context=SimpleNamespace(
-                services=SimpleNamespace(
-                    settings=SimpleNamespace(
-                        web=WebConfig(fetch_mode="tinyfish", search_max_results=2),
-                        web_search_api_key="tf-test-key",
-                    )
-                )
+    state: AgentState = {"messages": [], "inbox_cursor": 0}
+    rt = ToolRuntime(
+        state=state,
+        context=_make_test_runtime_context(
+            settings=LetaRuntimeConfig(
+                web=WebConfig(fetch_mode="tinyfish", search_max_results=2),
+                web_search_api_key="tf-test-key",
             )
         ),
+        config={},
+        stream_writer=lambda _chunk: None,
+        tool_call_id="tc-web",
+        store=None,
     )
 
     next_fetch.append(
@@ -1177,7 +1272,9 @@ async def test_tinyfish_fetch_and_search_use_fetch_and_search_apis(
     plain, plain_meta = await web_tools.handle_webfetch(
         "https://example.com/b", format="text", runtime=rt
     )
-    assert "Heading" in plain and "Plain body" in plain and "<h1>" not in plain
+    assert "Heading" in plain
+    assert "Plain body" in plain
+    assert "<h1>" not in plain
     assert plain_meta["content_type"] == "text/plain"
 
     next_fetch.append(
@@ -1228,9 +1325,12 @@ async def test_tinyfish_fetch_and_search_use_fetch_and_search_apis(
         )
     )
     md, search_meta = await web_tools.handle_websearch("openlet", runtime=rt)
-    assert "Doc 1" in md and "2026-10-01" in md and "Doc 3" not in md
+    assert "Doc 1" in md
+    assert "2026-10-01" in md
+    assert "Doc 3" not in md
     assert search_meta["provider"] == "tinyfish"
-    assert isinstance(search_meta["results"], list) and len(search_meta["results"]) == 2
+    assert isinstance(search_meta["results"], list)
+    assert len(search_meta["results"]) == 2
     assert search_meta["results"][0] == {
         "title": "Doc 1",
         "url": "https://example.com/1",

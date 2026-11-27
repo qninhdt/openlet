@@ -1,7 +1,9 @@
+"""Tool name/argument repair and clean model-facing tool error formatting."""
+
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfoNotFoundError
 
 import grpc
@@ -9,9 +11,13 @@ from langchain_core.tools import ToolException
 from langgraph.prebuilt.tool_node import ToolInvocationError
 from openlet_sdk.types import is_object_list, is_str_mapping
 from pydantic import ValidationError
-from pydantic_core import ErrorDetails
 
-from ..channels.base import ChannelError
+from leta.channels.base import ChannelError
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
+    from pydantic_core import ErrorDetails
 
 TOOL_ALIASES: dict[str, str] = {
     "execute": "bash",
@@ -96,6 +102,7 @@ _NULLISH_STRINGS = frozenset({"null", "none", "undefined"})
 def resolve_tool_alias(
     called_name: str, available_tools: Mapping[str, object]
 ) -> tuple[str, str | None]:
+    """Map common hallucinated tool aliases onto an available tool name."""
     if called_name in available_tools:
         return called_name, None
     target = TOOL_ALIASES.get(called_name) or TOOL_ALIASES.get(called_name.lower())
@@ -113,6 +120,165 @@ def _is_nullable(schema: Mapping[str, object]) -> bool:
     if is_object_list(any_of):
         return any(is_str_mapping(b) and b.get("type") == "null" for b in any_of)
     return schema.get("type") == "null"
+
+
+def _coerce_any_of(
+    value: object,
+    any_of: list[object],
+    defs: Mapping[str, object],
+    depth: int,
+    max_depth: int,
+    *,
+    tool_name: str,
+) -> object:
+    branches = [b for b in any_of if is_str_mapping(b)]
+    non_null = [b for b in branches if b.get("type") != "null"]
+    nullable = len(non_null) < len(branches)
+    if value is None:
+        return None
+    if nullable and isinstance(value, str):
+        stripped = value.strip()
+        if not stripped or stripped.lower() in _NULLISH_STRINGS:
+            return None
+    if len(non_null) == 1:
+        return _coerce_value(
+            value,
+            non_null[0],
+            defs,
+            depth + 1,
+            max_depth,
+            tool_name=tool_name,
+        )
+    for branch in non_null:
+        coerced = _coerce_value(
+            value, branch, defs, depth + 1, max_depth, tool_name=tool_name
+        )
+        if coerced is not value:
+            return coerced
+    return value
+
+
+def _should_drop_optional_value(val: object, prop_schema: Mapping[str, object]) -> bool:
+    if val is None or (val == {} and prop_schema.get("type") != "object"):
+        return True
+    if isinstance(val, str):
+        low = val.strip().lower()
+        if low in _NULLISH_STRINGS:
+            return True
+        if val.strip() == "" and _is_nullable(prop_schema):
+            return True
+    return False
+
+
+def _coerce_object(
+    value: object,
+    schema: Mapping[str, object],
+    defs: Mapping[str, object],
+    depth: int,
+    max_depth: int,
+    *,
+    tool_name: str,
+) -> object:
+    if isinstance(value, str):
+        try:
+            parsed: object = json.loads(value)
+        except json.JSONDecodeError:
+            return value
+        if is_str_mapping(parsed):
+            value = dict(parsed)
+    if not is_str_mapping(value):
+        return value
+    props_raw = schema.get("properties")
+    props: Mapping[str, object] = props_raw if is_str_mapping(props_raw) else {}
+    raw_req = schema.get("required")
+    required: set[str] = (
+        {str(item) for item in raw_req} if is_object_list(raw_req) else set()
+    )
+    tool_aliases = TOOL_PARAM_ALIASES.get(tool_name, {}) if depth == 0 else {}
+
+    raw_items = list(value.items())
+    present_keys = {k for k, _ in raw_items}
+    out: dict[str, object] = {}
+    for k, v in raw_items:
+        key = k
+        if key not in props:
+            mapped = tool_aliases.get(key) or (
+                GLOBAL_PARAM_ALIASES.get(key) if depth == 0 else None
+            )
+            if (
+                mapped
+                and mapped in props
+                and mapped not in present_keys
+                and mapped not in out
+            ):
+                key = mapped
+            else:
+                # Preserve unknown keys so Pydantic surfaces a clear error listing valid params.
+                out[key] = v
+                continue
+        prop_raw = props[key]
+        prop_schema: Mapping[str, object] = prop_raw if is_str_mapping(prop_raw) else {}
+        if key not in required and _should_drop_optional_value(v, prop_schema):
+            continue
+        out[key] = _coerce_value(
+            v, prop_schema, defs, depth + 1, max_depth, tool_name=tool_name
+        )
+    return out
+
+
+def _coerce_array(
+    value: object,
+    schema: Mapping[str, object],
+    defs: Mapping[str, object],
+    depth: int,
+    max_depth: int,
+    *,
+    tool_name: str,
+) -> object:
+    items_list: list[object]
+    if isinstance(value, str):
+        try:
+            parsed_arr: object = json.loads(value)
+        except json.JSONDecodeError:
+            items_list = [value]
+        else:
+            items_list = parsed_arr if is_object_list(parsed_arr) else [value]
+    elif is_object_list(value):
+        items_list = value
+    else:
+        items_list = [value]
+    items_schema = schema.get("items")
+    if is_str_mapping(items_schema):
+        return [
+            _coerce_value(
+                item, items_schema, defs, depth + 1, max_depth, tool_name=tool_name
+            )
+            for item in items_list
+        ]
+    return items_list
+
+
+def _coerce_scalar(value: object, expected: object) -> object:
+    if expected == "integer":
+        if isinstance(value, str):
+            s = value.strip()
+            if s.lstrip("+-").isdigit():
+                return int(s)
+        elif isinstance(value, float) and value.is_integer():
+            return int(value)
+        return value
+    if expected == "number" and isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            return value
+    if expected == "boolean" and isinstance(value, str):
+        low = value.strip().lower()
+        if low == "true":
+            return True
+        if low == "false":
+            return False
+    return value
 
 
 def _coerce_value(
@@ -141,138 +307,18 @@ def _coerce_value(
 
     any_of = schema.get("anyOf")
     if is_object_list(any_of):
-        branches = [b for b in any_of if is_str_mapping(b)]
-        non_null = [b for b in branches if b.get("type") != "null"]
-        nullable = len(non_null) < len(branches)
-        if value is None:
-            return None
-        if nullable and isinstance(value, str):
-            stripped = value.strip()
-            if not stripped or stripped.lower() in _NULLISH_STRINGS:
-                return None
-        if len(non_null) == 1:
-            return _coerce_value(
-                value,
-                non_null[0],
-                defs,
-                depth + 1,
-                max_depth,
-                tool_name=tool_name,
-            )
-        for branch in non_null:
-            coerced = _coerce_value(
-                value, branch, defs, depth + 1, max_depth, tool_name=tool_name
-            )
-            if coerced is not value:
-                return coerced
-        return value
+        return _coerce_any_of(
+            value, any_of, defs, depth, max_depth, tool_name=tool_name
+        )
 
     expected = schema.get("type")
     if expected == "object":
-        if isinstance(value, str):
-            try:
-                parsed: object = json.loads(value)
-                if is_str_mapping(parsed):
-                    value = dict(parsed)
-            except Exception:
-                return value
-        if not is_str_mapping(value):
-            return value
-        props_raw = schema.get("properties")
-        props: Mapping[str, object] = props_raw if is_str_mapping(props_raw) else {}
-        raw_req = schema.get("required")
-        required: set[str] = (
-            {str(item) for item in raw_req} if is_object_list(raw_req) else set()
+        return _coerce_object(
+            value, schema, defs, depth, max_depth, tool_name=tool_name
         )
-        tool_aliases = TOOL_PARAM_ALIASES.get(tool_name, {}) if depth == 0 else {}
-
-        raw_items = list(value.items())
-        present_keys = {k for k, _ in raw_items}
-        out: dict[str, object] = {}
-        for k, v in raw_items:
-            key = k
-            if key not in props:
-                mapped = tool_aliases.get(key) or (
-                    GLOBAL_PARAM_ALIASES.get(key) if depth == 0 else None
-                )
-                if (
-                    mapped
-                    and mapped in props
-                    and mapped not in present_keys
-                    and mapped not in out
-                ):
-                    key = mapped
-                else:
-                    # Preserve unknown keys so Pydantic surfaces a clear error listing valid params.
-                    out[key] = v
-                    continue
-            prop_raw = props[key]
-            prop_schema: Mapping[str, object] = (
-                prop_raw if is_str_mapping(prop_raw) else {}
-            )
-            if key not in required:
-                if v is None or (v == {} and prop_schema.get("type") != "object"):
-                    continue
-                if isinstance(v, str):
-                    low = v.strip().lower()
-                    if low in _NULLISH_STRINGS:
-                        continue
-                    if v.strip() == "" and _is_nullable(prop_schema):
-                        continue
-            out[key] = _coerce_value(
-                v, prop_schema, defs, depth + 1, max_depth, tool_name=tool_name
-            )
-        return out
-
     if expected == "array":
-        items_list: list[object]
-        if isinstance(value, str):
-            try:
-                parsed_arr: object = json.loads(value)
-                items_list = parsed_arr if is_object_list(parsed_arr) else [value]
-            except Exception:
-                items_list = [value]
-        elif is_object_list(value):
-            items_list = value
-        else:
-            items_list = [value]
-        items_schema = schema.get("items")
-        if is_str_mapping(items_schema):
-            return [
-                _coerce_value(
-                    item, items_schema, defs, depth + 1, max_depth, tool_name=tool_name
-                )
-                for item in items_list
-            ]
-        return items_list
-
-    if expected == "integer":
-        if isinstance(value, str):
-            s = value.strip()
-            if s.lstrip("+-").isdigit():
-                return int(s)
-        elif isinstance(value, float) and value.is_integer():
-            return int(value)
-        return value
-
-    if expected == "number":
-        if isinstance(value, str):
-            try:
-                return float(value.strip())
-            except ValueError:
-                return value
-        return value
-
-    if expected == "boolean":
-        if isinstance(value, str):
-            low = value.strip().lower()
-            if low == "true":
-                return True
-            if low == "false":
-                return False
-        return value
-
-    return value
+        return _coerce_array(value, schema, defs, depth, max_depth, tool_name=tool_name)
+    return _coerce_scalar(value, expected)
 
 
 def _apply_domain_auto_heals(
@@ -287,7 +333,7 @@ def _apply_domain_auto_heals(
         max_secs = 600 if tool_name == "bash" else 120
         raw_t = out.get("timeout")
         if (
-            isinstance(raw_t, (int, float))
+            isinstance(raw_t, int | float)
             and not isinstance(raw_t, bool)
             and raw_t > max_secs
         ):
@@ -339,6 +385,7 @@ def repair_tool_args(
     tool_name: str = "",
     max_depth: int = 6,
 ) -> dict[str, object]:
+    """Repair raw tool arguments against a JSON Schema and return the coerced dict."""
     repaired, _ = repair_tool_args_with_notes(
         args, json_schema, tool_name=tool_name, max_depth=max_depth
     )
@@ -352,11 +399,12 @@ def repair_tool_args_with_notes(
     tool_name: str = "",
     max_depth: int = 6,
 ) -> tuple[dict[str, object], list[str]]:
+    """Repair raw tool arguments against a JSON Schema and return ``(args, notes)``."""
     raw: object = args
     if isinstance(raw, str):
         try:
             raw = json.loads(raw)
-        except Exception:
+        except json.JSONDecodeError:
             return {}, []
     if not is_str_mapping(raw):
         return {}, []
@@ -374,6 +422,7 @@ def format_input_issues(
     valid_params: Sequence[str] | None = None,
     excerpt_limit: int = 2048,
 ) -> str:
+    """Format Pydantic validation errors into a concise model-facing hint."""
     errors = exc.errors() if isinstance(exc, ValidationError) else list(exc)
     issues: list[str] = []
     has_extra = False
@@ -454,7 +503,7 @@ def format_tool_error(
             return f"Service error ({code.name}): {details or 'operation failed'}"
         case FileNotFoundError():
             msg = exc.strerror or str(exc)
-            return msg if msg else "File or directory not found."
+            return msg or "File or directory not found."
         case PermissionError():
             msg = exc.strerror or str(exc)
             return (

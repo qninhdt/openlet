@@ -8,15 +8,18 @@ import re
 import secrets
 import shutil
 import socket
-from collections.abc import Mapping
 from pathlib import Path
+from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict
 
 import yaml
 from dotenv import dotenv_values
 from openlet_sdk.config import Config, parse_config
 from openlet_sdk.types import is_str_mapping
 
-from .models import EnvMode
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from openlet_env.models import EnvMode
 
 RUSTFS_IMAGE = "rustfs/rustfs:1.0.6"
 WIREMOCK_IMAGE = "wiremock/wiremock:3.13.2@sha256:0d4ecb3e4dc8213fd7a4d37d6a78f6e6b553a6d2e15bd51b0999781282ac61b3"
@@ -43,8 +46,35 @@ INTERNAL_SECRET_KEYS: tuple[str, ...] = (
 )
 
 
-class _ComposeOverride(list[object]):
+class _ComposeOverride(list[str]):
     """Marker list serialized with Docker Compose's `!override` YAML tag."""
+
+
+class _ComposeHealthcheck(TypedDict):
+    test: NotRequired[list[str]]
+    interval: str
+    timeout: str
+    retries: int
+
+
+class _ComposeServiceCondition(TypedDict):
+    condition: Literal["service_healthy"]
+
+
+class _ComposeService(TypedDict, total=False):
+    image: str
+    command: list[str]
+    ports: list[str] | _ComposeOverride
+    volumes: list[str] | _ComposeOverride
+    environment: dict[str, str]
+    depends_on: dict[str, _ComposeServiceCondition]
+    healthcheck: _ComposeHealthcheck
+    stop_grace_period: str
+
+
+class _ComposeOverlay(TypedDict):
+    services: dict[str, _ComposeService]
+    volumes: dict[str, dict[str, str]]
 
 
 class _ComposeDumper(yaml.SafeDumper):
@@ -77,6 +107,7 @@ def find_repo_root(start: Path | None = None) -> Path:
 
 
 def validate_project_name(project: str) -> str:
+    """Validate and return a Docker Compose project name."""
     if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", project):
         raise ValueError(f"invalid Compose project name: {project!r}")
     return project
@@ -131,9 +162,10 @@ def pick_free_port(preferred: int | None = None) -> int:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 sock.bind(("127.0.0.1", preferred))
-                return preferred
             except OSError:
                 pass
+            else:
+                return preferred
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
@@ -167,7 +199,7 @@ def build_runtime_env(
         env["OPENAI_API_KEY"] = "sk-mock-openlet"
         env["OPENAI_BASE_URL"] = "http://wiremock:8080/v1"
         env["LANGFUSE_PUBLIC_KEY"] = "pk-lf-mock"
-        env["LANGFUSE_SECRET_KEY"] = "sk-lf-mock"
+        env["LANGFUSE_SECRET_KEY"] = "sk-lf-mock"  # noqa: S105  # Non-production WireMock stub key.
         env["DATALAB_API_KEY"] = "datalab-test-only"
         env["DATALAB_HOST"] = "http://wiremock:8080"
         return env
@@ -185,7 +217,7 @@ def build_runtime_env(
             env["LANGFUSE_BASE_URL"] = lf_base
     else:
         env["LANGFUSE_PUBLIC_KEY"] = "pk-lf-mock"
-        env["LANGFUSE_SECRET_KEY"] = "sk-lf-mock"
+        env["LANGFUSE_SECRET_KEY"] = "sk-lf-mock"  # noqa: S105  # Non-production WireMock stub key.
     if datalab_key := user_env.get("DATALAB_API_KEY", "").strip():
         env["DATALAB_API_KEY"] = datalab_key
     if tinyfish_key := user_env.get("TINYFISH_API_KEY", "").strip():
@@ -194,6 +226,7 @@ def build_runtime_env(
 
 
 def uses_mock_langfuse(mode: EnvMode, user_env: Mapping[str, str]) -> bool:
+    """Return whether the environment should route Langfuse traffic to WireMock."""
     if mode == "mock":
         return True
     return not (
@@ -306,25 +339,27 @@ def render_compose_overlay(
 ) -> str:
     """Render compose.env.yaml as YAML text (with Compose `!override` tags)."""
     shared_uv_cache.mkdir(parents=True, exist_ok=True)
-    services: dict[str, dict[str, object]] = {
+    spicedb_service: _ComposeService = {"ports": ["127.0.0.1::50051"]}
+    if mode == "mock":
+        spicedb_service["command"] = [
+            "serve",
+            "--datastore-engine",
+            "postgres",
+            "--http-enabled=false",
+            "--skip-release-check",
+            "--datastore-revision-quantization-interval=100ms",
+        ]
+    litellm_service: _ComposeService = {
+        "healthcheck": {"interval": "2s", "timeout": "5s", "retries": 45},
+    }
+    if mode == "mock":
+        litellm_service["depends_on"] = {"wiremock": {"condition": "service_healthy"}}
+        litellm_service["volumes"] = _ComposeOverride(
+            [f"{STUBS_PACKAGE_DIR / 'litellm.yaml'}:/etc/litellm/config.yaml:ro"]
+        )
+    services: dict[str, _ComposeService] = {
         "postgres": {"ports": ["127.0.0.1::5432"]},
-        "spicedb": {
-            "ports": ["127.0.0.1::50051"],
-            **(
-                {
-                    "command": [
-                        "serve",
-                        "--datastore-engine",
-                        "postgres",
-                        "--http-enabled=false",
-                        "--skip-release-check",
-                        "--datastore-revision-quantization-interval=100ms",
-                    ]
-                }
-                if mode == "mock"
-                else {}
-            ),
-        },
+        "spicedb": spicedb_service,
         "qdrant": {"ports": ["127.0.0.1::6334"]},
         "temporal": {"ports": ["127.0.0.1::7233"]},
         "wiremock": {
@@ -370,21 +405,7 @@ def render_compose_overlay(
         "platform": {
             "depends_on": {"wiremock": {"condition": "service_healthy"}},
         },
-        "litellm": {
-            "healthcheck": {"interval": "2s", "timeout": "5s", "retries": 45},
-            **(
-                {
-                    "depends_on": {"wiremock": {"condition": "service_healthy"}},
-                    "volumes": _ComposeOverride(
-                        [
-                            f"{STUBS_PACKAGE_DIR / 'litellm.yaml'}:/etc/litellm/config.yaml:ro"
-                        ]
-                    ),
-                }
-                if mode == "mock"
-                else {}
-            ),
-        },
+        "litellm": litellm_service,
         "envoy": {
             "ports": _ComposeOverride([f"127.0.0.1:{gateway_port}:8080"]),
         },
@@ -404,7 +425,7 @@ def render_compose_overlay(
             services["leta-api"] = {"stop_grace_period": "5s"}
             services["leta-worker"] = {"stop_grace_period": "5s"}
 
-    overlay: dict[str, object] = {
+    overlay: _ComposeOverlay = {
         "services": services,
         "volumes": {"rustfs-data": {}},
     }

@@ -1,17 +1,23 @@
+"""OpenTelemetry and Langfuse observability setup and trace data masking."""
+
 from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 from urllib.parse import quote
 
-from fastapi import FastAPI
-from langfuse import Langfuse
-from openlet_sdk.config import Config
 from openlet_sdk.telemetry import initialize, initialize_langfuse
 from openlet_sdk.types import is_mapping, is_object_list
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.psycopg import PsycopgInstrumentor
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from fastapi import FastAPI
+    from langfuse import Langfuse
+    from openlet_sdk.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +63,7 @@ def setup_observability(
             try:
                 lf.flush()
                 lf.shutdown()
-            except Exception:
+            except Exception:  # Best-effort telemetry flush/shutdown must not fail exit
                 logger.warning("langfuse shutdown failed", exc_info=True)
         otel_shutdown()
 
@@ -65,4 +71,5 @@ def setup_observability(
 
 
 def instrument_fastapi(app: FastAPI) -> None:
+    """Attach OpenTelemetry instrumentation to the FastAPI application."""
     FastAPIInstrumentor.instrument_app(app, excluded_urls="ready,health")

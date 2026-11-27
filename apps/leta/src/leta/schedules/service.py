@@ -1,7 +1,9 @@
+"""Schedule validation, Temporal Schedule synchronization, and firing delivery."""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Literal
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
@@ -29,9 +31,11 @@ from temporalio.client import (
 )
 from temporalio.service import RPCError, RPCStatusCode
 
-from ..activity import ActivityEmitter
-from ..db import Pool, get_receipt, hash_request, hydrate, save_receipt
-from ..inbox import InboxGateway, InboxItem, InboxSender
+from leta.db import Pool, get_receipt, hash_request, hydrate, save_receipt
+from leta.inbox import InboxGateway, InboxItem, InboxMetadata, InboxSender
+
+if TYPE_CHECKING:
+    from leta.activity import ActivityEmitter
 
 type ScheduleType = Literal["at", "interval", "cron", "calendar"]
 type CalendarField = Literal[
@@ -46,10 +50,14 @@ type CalendarValues = Annotated[
 
 
 class AtSpec(BaseModel):
+    """Normalized specification for a one-shot timestamp schedule."""
+
     at: datetime
 
 
 class IntervalSpec(BaseModel):
+    """Normalized specification for a fixed-interval recurring schedule."""
+
     every_seconds: int
     anchor_at: datetime
     timezone: str = "UTC"
@@ -58,6 +66,8 @@ class IntervalSpec(BaseModel):
 
 
 class CronSpec(BaseModel):
+    """Normalized specification for a 5-field cron schedule."""
+
     cron: str
     timezone: str = "UTC"
     starts_at: datetime | None = None
@@ -65,6 +75,8 @@ class CronSpec(BaseModel):
 
 
 class CalendarSpec(BaseModel):
+    """Normalized specification for a structured calendar schedule."""
+
     calendar: dict[CalendarField, list[int]]
     timezone: str = "UTC"
     starts_at: datetime | None = None
@@ -75,6 +87,8 @@ type NormalizedScheduleSpec = AtSpec | IntervalSpec | CronSpec | CalendarSpec
 
 
 class ScheduleRecord(BaseModel):
+    """Hydrated schedule row persisted in PostgreSQL with optional upcoming times."""
+
     id: UUID
     leta_id: UUID
     creator_agent_id: UUID
@@ -92,6 +106,7 @@ class ScheduleRecord(BaseModel):
 def parse_schedule_spec(
     sched_type: ScheduleType, raw_spec: dict[str, JSON]
 ) -> NormalizedScheduleSpec:
+    """Validate a raw schedule spec dictionary into its typed spec model."""
     if sched_type == "at":
         return AtSpec.model_validate(raw_spec)
     if sched_type == "interval":
@@ -102,6 +117,8 @@ def parse_schedule_spec(
 
 
 class Timing(BaseModel):
+    """User or agent timing selector input for creating or updating a schedule."""
+
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     at: datetime | None = None
@@ -115,6 +132,7 @@ class Timing(BaseModel):
 
     @model_validator(mode="after")
     def validate_timing(self) -> Timing:
+        """Validate selector exclusivity, cron syntax, timezone, and calendar bounds."""
         selectors = [
             self.at,
             self.after_seconds,
@@ -153,6 +171,7 @@ class Timing(BaseModel):
 def normalize_timing(
     timing: Timing, now: datetime
 ) -> tuple[ScheduleType, dict[str, JSON]] | None:
+    """Convert a Timing input into a (schedule_type, serialized_spec) tuple."""
     if timing.at is not None or timing.after_seconds is not None:
         at = (
             timing.at
@@ -179,6 +198,7 @@ def normalize_timing(
 
 
 def temporal_schedule_id(schedule_id: UUID | str) -> str:
+    """Return the Temporal Schedule ID corresponding to schedule_id."""
     return f"sched/{schedule_id}"
 
 
@@ -190,6 +210,7 @@ def build_temporal_schedule(
     paused: bool,
     orchestration_queue: str,
 ) -> Schedule:
+    """Construct a Temporal Schedule definition from persisted schedule parameters."""
     parsed = parse_schedule_spec(sched_type, spec)
     if isinstance(parsed, AtSpec):
         at = parsed.at.astimezone(UTC)
@@ -270,6 +291,7 @@ def build_temporal_schedule(
 async def upcoming_times(
     temporal: TemporalClient | None, schedule_id: UUID, count: int = 5
 ) -> list[str]:
+    """Query Temporal for the next scheduled execution timestamps of schedule_id."""
     if temporal is None:
         return []
     try:
@@ -293,6 +315,7 @@ async def calendar_occurrences(
     end: datetime,
     max_occurrences: int = 1000,
 ) -> list[str]:
+    """List matching execution timestamps for a schedule within [start, end]."""
     if start.tzinfo is None or end.tzinfo is None:
         raise ValueError("start and end must include a timezone")
     if end <= start:
@@ -336,6 +359,7 @@ async def create_schedule(
     paused: bool = False,
     request_id: UUID | None = None,
 ) -> ScheduleRecord:
+    """Create a persistent schedule in Postgres and register it in Temporal."""
     now = datetime.now(UTC)
     normalized = normalize_timing(timing, now)
     if normalized is None:
@@ -395,7 +419,8 @@ async def create_schedule(
                 ),
             )
         ).fetchone()
-    assert row is not None
+    if row is None:
+        raise RuntimeError(f"Schedule insert returned no row for {schedule_id}")
 
     if temporal is not None:
         t_sched = build_temporal_schedule(
@@ -414,22 +439,29 @@ async def create_schedule(
             )
         # Immediate backfill if a one-shot 'at' schedule is at or in the past.
         if sched_type == "at" and not paused:
-            at = datetime.fromisoformat(str(spec["at"])).astimezone(UTC)
-            if at <= datetime.now(UTC):
-                await temporal.get_schedule_handle(sid).backfill(
-                    ScheduleBackfill(
-                        start_at=at - timedelta(seconds=1),
-                        end_at=at + timedelta(seconds=1),
-                        overlap=ScheduleOverlapPolicy.ALLOW_ALL,
+            parsed = parse_schedule_spec(sched_type, spec)
+            if isinstance(parsed, AtSpec):
+                at = parsed.at.astimezone(UTC)
+                if at <= datetime.now(UTC):
+                    await temporal.get_schedule_handle(sid).backfill(
+                        ScheduleBackfill(
+                            start_at=at - timedelta(seconds=1),
+                            end_at=at + timedelta(seconds=1),
+                            overlap=ScheduleOverlapPolicy.ALLOW_ALL,
+                        )
                     )
-                )
 
     record = hydrate(row, ScheduleRecord)
     record.upcoming = await upcoming_times(temporal, schedule_id)
     serialized = record.model_dump(mode="json")
     if request_id is not None:
         await save_receipt(
-            db, f"leta:{leta_id}", "schedule.create", request_id, req_hash, serialized
+            db,
+            f"leta:{leta_id}",
+            "schedule.create",
+            request_id,
+            request_hash=req_hash,
+            response=serialized,
         )
     if activity is not None:
         await activity.emit(
@@ -455,6 +487,7 @@ async def update_schedule(
     timing: Timing | None = None,
     paused: bool | None = None,
 ) -> ScheduleRecord:
+    """Update a schedule's configuration, target, or pause state in Postgres and Temporal."""
     now = datetime.now(UTC)
     async with db.connection() as conn, conn.transaction():
         current_row = await (
@@ -509,7 +542,8 @@ async def update_schedule(
                 ),
             )
         ).fetchone()
-    assert row is not None
+    if row is None:
+        raise RuntimeError(f"Schedule update returned no row for {schedule_id}")
 
     if temporal is not None:
         t_sched = build_temporal_schedule(
@@ -550,6 +584,7 @@ async def delete_schedule(
     leta_id: UUID,
     schedule_id: UUID,
 ) -> None:
+    """Soft-delete a schedule in Postgres and remove its Temporal Schedule."""
     async with db.connection() as conn:
         row = await (
             await conn.execute(
@@ -585,6 +620,7 @@ async def delete_schedule(
 async def list_schedules(
     db: Pool, leta_id: UUID, *, target_agent_id: UUID | None = None
 ) -> list[ScheduleRecord]:
+    """List active schedules for a Leta instance, optionally filtered by target agent."""
     async with db.connection() as conn:
         rows = await (
             await conn.execute(
@@ -603,6 +639,7 @@ async def list_schedules(
 async def get_schedule(
     db: Pool, temporal: TemporalClient | None, leta_id: UUID, schedule_id: UUID
 ) -> ScheduleRecord:
+    """Fetch a single active schedule along with its upcoming fire times."""
     async with db.connection() as conn:
         row = await (
             await conn.execute(
@@ -620,6 +657,7 @@ async def get_schedule(
 async def fire_schedule(
     *, db: Pool, inbox: InboxGateway, schedule_id: UUID, nominal_time: datetime
 ) -> None:
+    """Deliver a scheduled prompt payload into the target agent's inbox."""
     async with db.connection() as conn:
         row = await (
             await conn.execute("SELECT * FROM schedules WHERE id = %s", (schedule_id,))
@@ -636,10 +674,10 @@ async def fire_schedule(
             reply_address=None,
             sender=InboxSender(type="system", id=str(schedule_id), name="schedule"),
             content=record.content,
-            metadata={
-                "schedule_id": str(schedule_id),
-                "title": record.title,
-                "scheduled_for": nominal_time.astimezone(UTC).isoformat(),
-            },
+            metadata=InboxMetadata(
+                schedule_id=str(schedule_id),
+                title=record.title,
+                scheduled_for=nominal_time.astimezone(UTC).isoformat(),
+            ),
         )
     )
