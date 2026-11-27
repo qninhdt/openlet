@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import socket
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
 from urllib.parse import urljoin, urlparse
 
@@ -147,11 +148,15 @@ class WebSearchArgs(ToolArgs):
     query: str = Field(min_length=1, max_length=500)
 
 
-_CONTENT_TYPES: dict[Literal["markdown", "text", "html"], str] = {
-    "markdown": "text/markdown",
-    "text": "text/plain",
-    "html": "text/html",
-}
+_CONTENT_TYPES: MappingProxyType[Literal["markdown", "text", "html"], str] = (
+    MappingProxyType(
+        {
+            "markdown": "text/markdown",
+            "text": "text/plain",
+            "html": "text/html",
+        }
+    )
+)
 
 
 async def _tinyfish_fetch(

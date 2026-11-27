@@ -339,7 +339,7 @@ class CentrifugoConfig(TypedDict):
 
 
 def render(name: str, values: Mapping[str, JSON]) -> MutableJsonObject:
-    text = (ROOT / "infra/config" / f"{name}.template.yaml").read_text()
+    text = (ROOT / "infra/config" / f"{name}.template.yaml").read_text(encoding="utf-8")
     for key, value in values.items():
         text = text.replace(f"@{key}@", json.dumps(value))
     loaded: object = yaml.safe_load(text)
@@ -949,15 +949,19 @@ def configure(
     os.umask(0o077)
     output.mkdir(parents=True, exist_ok=True)
     output.chmod(0o700)
-    alloy = (ROOT / "infra/config/observability/alloy.alloy").read_text()
+    alloy = (ROOT / "infra/config/observability/alloy.alloy").read_text(
+        encoding="utf-8"
+    )
     alloy = alloy.replace(
         "targets = [] // Redis targets are enabled by configure.py with the Leta profile.",
         "targets = prometheus.exporter.redis.cache.targets",
     )
-    (output / "alloy.alloy").write_text(alloy)
+    (output / "alloy.alloy").write_text(alloy, encoding="utf-8")
     centrifugo_config = _build_centrifugo_config(c, resolve)
     cen_target = output / "centrifugo.json"
-    cen_target.write_text(json.dumps(centrifugo_config, indent=2) + "\n")
+    cen_target.write_text(
+        json.dumps(centrifugo_config, indent=2) + "\n", encoding="utf-8"
+    )
     cen_target.chmod(0o644)
     outputs: list[
         tuple[str, EnvoyConfig | MutableJsonObject | ComposeRuntimeOverlay]
@@ -971,7 +975,7 @@ def configure(
         if name.startswith("compose."):
             content = content.replace("$", "$$")
         target = output / f"{name}.yaml"
-        target.write_text(content)
+        target.write_text(content, encoding="utf-8")
         target.chmod(0o600 if name.startswith("compose.") else 0o644)
 
 

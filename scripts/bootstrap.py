@@ -119,7 +119,9 @@ async def resources(c: Config) -> None:
         await asyncio.to_thread(
             SchemaServiceStub(channel).WriteSchema,
             WriteSchemaRequest(
-                schema=(ROOT / "packages/contracts/authz/schema.zed").read_text()
+                schema=(ROOT / "packages/contracts/authz/schema.zed").read_text(
+                    encoding="utf-8"
+                )
             ),
             metadata=(("authorization", "Bearer " + secret(graph["key"])),),
             timeout=30,

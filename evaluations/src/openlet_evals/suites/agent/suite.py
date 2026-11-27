@@ -7,6 +7,7 @@ import math
 import time
 from collections import Counter, defaultdict
 from datetime import UTC, datetime
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
 
 from deepeval import evaluate  # pyright: ignore[reportUnknownVariableType]
@@ -45,16 +46,18 @@ if TYPE_CHECKING:
 
     from deepeval.evaluate.types import TestResult
 
-DEFAULT_TOOLS: dict[str, bool] = {
-    "hitl": False,
-    "subagents": False,
-    "schedule": False,
-    "web": False,
-    "bash": True,
-    "semantic_search": True,
-    "todo": False,
-    "react": False,
-}
+DEFAULT_TOOLS: MappingProxyType[str, bool] = MappingProxyType(
+    {
+        "hitl": False,
+        "subagents": False,
+        "schedule": False,
+        "web": False,
+        "bash": True,
+        "semantic_search": True,
+        "todo": False,
+        "react": False,
+    }
+)
 
 
 type ToneKind = Literal["informal", "semi-formal", "formal"]

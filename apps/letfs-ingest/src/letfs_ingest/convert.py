@@ -54,7 +54,7 @@ DOCX_MEDIA = "application/vnd.openxmlformats-officedocument.wordprocessingml.doc
 PPTX_MEDIA = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 XLSX_MEDIA = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
-OFFICE_MEDIA = {DOCX_MEDIA, PPTX_MEDIA, XLSX_MEDIA}
+OFFICE_MEDIA = frozenset({DOCX_MEDIA, PPTX_MEDIA, XLSX_MEDIA})
 
 
 class InvalidDocumentError(ValueError):

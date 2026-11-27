@@ -7,6 +7,7 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -826,68 +827,74 @@ _DURATION_PART_RE = re.compile(
     r"(\d+)\s*(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|wks?|w)(?![a-zA-Z])",
     re.IGNORECASE,
 )
-_DURATION_UNITS: dict[str, int] = {
-    "s": 1,
-    "sec": 1,
-    "secs": 1,
-    "second": 1,
-    "seconds": 1,
-    "m": 60,
-    "min": 60,
-    "mins": 60,
-    "minute": 60,
-    "minutes": 60,
-    "h": 3600,
-    "hr": 3600,
-    "hrs": 3600,
-    "hour": 3600,
-    "hours": 3600,
-    "d": 86400,
-    "day": 86400,
-    "days": 86400,
-    "w": 604800,
-    "wk": 604800,
-    "wks": 604800,
-    "week": 604800,
-    "weeks": 604800,
-}
-_REPEAT_SHORTHANDS: dict[str, str] = {
-    "@hourly": "0 * * * *",
-    "hourly": "0 * * * *",
-    "@daily": "0 9 * * *",
-    "daily": "0 9 * * *",
-    "@weekly": "0 9 * * 1",
-    "weekly": "0 9 * * 1",
-    "@monthly": "0 9 1 * *",
-    "monthly": "0 9 1 * *",
-    "weekdays": "0 9 * * 1-5",
-}
-_TIMEZONE_ALIASES: dict[str, str] = {
-    "gmt": "UTC",
-    "utc+0": "UTC",
-    "z": "UTC",
-    "utc+7": "Asia/Ho_Chi_Minh",
-    "gmt+7": "Asia/Ho_Chi_Minh",
-    "ict": "Asia/Ho_Chi_Minh",
-    "est": "America/New_York",
-    "edt": "America/New_York",
-    "et": "America/New_York",
-    "cst": "America/Chicago",
-    "cdt": "America/Chicago",
-    "ct": "America/Chicago",
-    "mst": "America/Denver",
-    "mdt": "America/Denver",
-    "mt": "America/Denver",
-    "pst": "America/Los_Angeles",
-    "pdt": "America/Los_Angeles",
-    "pt": "America/Los_Angeles",
-    "cet": "Europe/Paris",
-    "cest": "Europe/Paris",
-    "bst": "Europe/London",
-    "jst": "Asia/Tokyo",
-    "kst": "Asia/Seoul",
-    "sgt": "Asia/Singapore",
-}
+_DURATION_UNITS: MappingProxyType[str, int] = MappingProxyType(
+    {
+        "s": 1,
+        "sec": 1,
+        "secs": 1,
+        "second": 1,
+        "seconds": 1,
+        "m": 60,
+        "min": 60,
+        "mins": 60,
+        "minute": 60,
+        "minutes": 60,
+        "h": 3600,
+        "hr": 3600,
+        "hrs": 3600,
+        "hour": 3600,
+        "hours": 3600,
+        "d": 86400,
+        "day": 86400,
+        "days": 86400,
+        "w": 604800,
+        "wk": 604800,
+        "wks": 604800,
+        "week": 604800,
+        "weeks": 604800,
+    }
+)
+_REPEAT_SHORTHANDS: MappingProxyType[str, str] = MappingProxyType(
+    {
+        "@hourly": "0 * * * *",
+        "hourly": "0 * * * *",
+        "@daily": "0 9 * * *",
+        "daily": "0 9 * * *",
+        "@weekly": "0 9 * * 1",
+        "weekly": "0 9 * * 1",
+        "@monthly": "0 9 1 * *",
+        "monthly": "0 9 1 * *",
+        "weekdays": "0 9 * * 1-5",
+    }
+)
+_TIMEZONE_ALIASES: MappingProxyType[str, str] = MappingProxyType(
+    {
+        "gmt": "UTC",
+        "utc+0": "UTC",
+        "z": "UTC",
+        "utc+7": "Asia/Ho_Chi_Minh",
+        "gmt+7": "Asia/Ho_Chi_Minh",
+        "ict": "Asia/Ho_Chi_Minh",
+        "est": "America/New_York",
+        "edt": "America/New_York",
+        "et": "America/New_York",
+        "cst": "America/Chicago",
+        "cdt": "America/Chicago",
+        "ct": "America/Chicago",
+        "mst": "America/Denver",
+        "mdt": "America/Denver",
+        "mt": "America/Denver",
+        "pst": "America/Los_Angeles",
+        "pdt": "America/Los_Angeles",
+        "pt": "America/Los_Angeles",
+        "cet": "Europe/Paris",
+        "cest": "Europe/Paris",
+        "bst": "Europe/London",
+        "jst": "Asia/Tokyo",
+        "kst": "Asia/Seoul",
+        "sgt": "Asia/Singapore",
+    }
+)
 
 
 def normalize_timezone(tz: str) -> str:

@@ -14,9 +14,9 @@ _BULLET_LINK_RE = re.compile(
 )
 _DIM_SUFFIX_RE = re.compile(r" \(\d+x\d+\)")
 _HEADER_PREFIX_RE = re.compile(r"^# [^\n]+\n\n> [^\n]+\n\n")
-_SECTION_HEADINGS = {"## Tables", "## Images", "## Files"}
-_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
-_TABLE_EXTS = {".csv", ".html"}
+_SECTION_HEADINGS = frozenset({"## Tables", "## Images", "## Files"})
+_IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif"})
+_TABLE_EXTS = frozenset({".csv", ".html"})
 
 
 def _single_line(text: str) -> str:

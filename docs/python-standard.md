@@ -25,6 +25,12 @@ Organize modules vertically by **business domain / feature**, never horizontally
 
 - **`__init__.py`:** Curate explicit public exports via `__all__`.
 - **`types.py` vs `_types.py`:** `types.py` defines public, SemVer-supported types and type guards (`openlet_sdk.types`); internal typing helpers not meant for external consumers belong in `_types.py` or private `_`-prefixed symbols.
+- **PEP 561 & reproducible dependencies:** Every reusable library package under `packages/*` must include an empty `py.typed` marker alongside `"Typing :: Typed"` in `pyproject.toml`. CI and tooling invoke `uv sync --locked` / `uv run --locked` against the checked-in `uv.lock`.
+
+### Module & Import Hygiene
+
+- **Absolute, grouped, explicit imports:** Never use wildcard imports (`from module import *`, `F403`) or relative imports (`TID252`, except `tests/e2e`); group imports as `stdlib` → `third-party` → `first-party` (`I001`).
+- **Zero import-time side effects & entrypoints:** Modules must be safe to import without opening DB pools, HTTP clients, reading network config, or parsing CLI flags at top level; guard executable script and CLI runners behind `if __name__ == "__main__":`.
 
 ---
 
@@ -65,7 +71,8 @@ Every external or dynamic source is untrusted until parsed **once at the system 
 | **`pydantic.BaseModel`** | All boundary contracts, DB/event JSONB payloads, external API schemas, and validated runtime configs. Use `ConfigDict(extra="forbid")` for strict input schemas; use `extra="ignore"` or `extra="allow"` deliberately only when tolerating extra DB columns (`hydrate`) or forward-compatible wire payloads. |
 | **`@dataclass(frozen=True, slots=True)`** | Internal **Value Objects**, DTOs, search hits, outcomes, and read-only result bundles constructed in trusted Python code (prefer `kw_only=True` when fields are numerous). Avoid shallow "fake frozen" containers by using immutable collection types (`tuple[T, ...]`, `frozenset[T]`, `Sequence[T]`, `Mapping[K, V]`) on frozen fields. |
 | **`@dataclass(slots=True)`** | Mutable **runtime state containers**, accumulators, caches, and lifecycle builders mutated in-place (e.g., `RuntimeContext`, `UsageTotals`, `_ColdBlob`, `WorkspaceContext`). Never force `frozen=True` onto genuinely mutable state, and never omit `slots=True`. |
-| **`TypedDict`** | Only when the runtime value must remain a plain `dict` (e.g., LangGraph `AgentState`, shared YAML `Config`, Compose/Envoy/WireMock JSON dicts). Prefer `NotRequired[T]` over `T | None` when key omission has distinct meaning. |
+| **`enum.StrEnum` / `enum.Enum`** | Closed domain states, status codes, and serialized string enums—preferred over repeating raw `Literal[...]` unions or magic string constants across modules. |
+| **`TypedDict`** | Only when the runtime value must remain a plain `dict` (e.g., LangGraph `AgentState`, shared YAML `Config`, Compose/Envoy/WireMock JSON dicts). Prefer `NotRequired[T]` over `T | None` when key omission has distinct meaning, and `typing.ReadOnly[T]` (PEP 705) for immutable keys. |
 | **`NamedTuple`** | Restricted strictly to positional tuple wire rows (e.g., `psycopg` `copy().write_row(row)` bulk loaders) or tuple-unpacking APIs—use `@dataclass(frozen=True, slots=True)` everywhere else. |
 | **`Protocol`** | Service/adapter interfaces, dependency-inversion ports, and thin wrappers around poorly typed or dynamic third-party clients (preferred over `abc.ABC`). |
 | **`type X = ...`** | PEP 695 type aliases (e.g., `type JSON = ...` in `openlet_sdk.types`). |
@@ -124,21 +131,24 @@ When a dependency triggers `reportMissingTypeStubs` or `reportUnknownMemberType`
 
 ---
 
-## 10. Runtime Narrowing, `isinstance`, & Attribute Access
+## 10. Runtime Narrowing, `isinstance`, `None` Checks, & Attribute Access
 
 - **`isinstance` narrowing:** Use modern union syntax `isinstance(x, A | B)` (never `isinstance(x, (A, B))`) to narrow known static unions (e.g., `AIMessage | ToolMessage`, `AtSpec | CronSpec`, `str | list[str]`) or inside dedicated boundary parsers / `TypeIs` guards. Never repeat `isinstance(x, dict | list)` in internal domain logic as a substitute for boundary parsing or `Protocol` polymorphism. When narrowing numeric JSON/wire values, exclude `bool` (`isinstance(v, int | float) and not isinstance(v, bool)`) because `bool` subclasses `int`. Pyright strict mode enforces `reportUnnecessaryIsInstance`.
+- **`is None` vs truthiness:** Rely on implicit truthiness (`if seq:`, `if not flag:`) for container emptiness and booleans, but **always** write `if x is None:` / `if x is not None:` for optional values so valid falsy inputs (`0`, `""`, `False`) are never misread as `None`.
 - **Shared `TypeIs[T]` (PEP 742) helpers** live in [`openlet_sdk.types`](../packages/sdk-python/src/openlet_sdk/types.py) (`is_mapping`, `is_str_mapping`, `is_object_list`, `is_object_sequence`). Use them **only** at raw wire/LLM boundaries (LangChain heterogeneous message content, tool-call repair against JSON Schema, YAML/JSON parsing).
 - Prefer direct attribute access or `getattr(obj, name, default)` only for genuinely dynamic/optional attributes; never use `getattr(obj, "constant")` when the attribute exists statically (`B009`).
 
 ---
 
-## 11. Modern Python 3.14 Syntax
+## 11. Modern Python 3.14 Syntax & Typing Hygiene
 
 - Use `X | Y` and `T | None` (never `Union`, `Optional`, `List`, `Dict`, or tuple types in `isinstance`).
 - Use PEP 695 type parameters (`def retry[T](...)`, `class Cache[T]:`) instead of `TypeVar` / `Generic`.
 - Use `typing.Self` for `__enter__` / `__aenter__` / fluent methods returning `self`.
 - Decorate overridden methods with `@typing.override`.
-- Annotate mutable class variables with `typing.ClassVar`.
+- Annotate mutable class variables with `typing.ClassVar` and non-rebindable constants or attributes with `typing.Final` (PEP 591).
+- Mark retiring internal or SDK APIs with `@warnings.deprecated("...")` (PEP 702), enforced for callers via `reportDeprecated = "error"`.
+- Isolate type-only imports inside `if TYPE_CHECKING:` (`TC001`–`TC003`) outside runtime-evaluated boundaries (Pydantic models and FastAPI route signatures); new modules targeting Python `>=3.14` may omit `from __future__ import annotations` thanks to native deferred evaluation (PEP 649).
 
 ---
 
@@ -158,6 +168,8 @@ When a dependency triggers `reportMissingTypeStubs` or `reportUnknownMemberType`
 - **Structured concurrency & task ownership:** Prefer `asyncio.TaskGroup` for bounded request-scoped fan-out. When spawning background tasks with `asyncio.create_task(...)`, retain strong references and handle cancellation/exceptions cleanly (`RUF006`).
 - **Cancellation safety:** Never catch `BaseException` or swallow `asyncio.CancelledError`; run essential async cleanup under `try...finally` (using `asyncio.shield(...)` only when finalization must complete on cancellation).
 - **Explicit deadlines:** Bound outbound network/RPC/activity waits with explicit timeouts (`asyncio.wait_for` / Temporal `start_to_close_timeout`).
+- **FastAPI `lifespan` & DI:** Manage app startup/shutdown pools and clients inside an `@asynccontextmanager` `lifespan` function (never deprecated `@app.on_event`), inject dependencies via `Annotated[..., Depends(...)]` (`FAST002`), and keep route handlers thin (`router.py` delegating to `service.py` with explicit `response_model` / status codes).
+- **Thread & `ContextVar` safety:** Do not rely on built-in `dict`/`list` mutation atomicity across threads; coordinate shared state with `queue.Queue` or explicit `threading.Lock` / `Condition`. (`asyncio.to_thread` propagates `ContextVar` automatically; manual thread-pool executors must use `contextvars.copy_context()`.)
 - **Temporal workflow determinism:** Code inside `@workflow.defn` must remain deterministic—never perform raw network/disk IO, `random`, or wall-clock `datetime.now()` outside Temporal workflow APIs.
 
 ---
@@ -173,16 +185,16 @@ When a dependency triggers `reportMissingTypeStubs` or `reportUnknownMemberType`
 ## 15. Security, Persistence, & Global State Hygiene
 
 - **No f-string SQL:** Construct dynamic SQL clauses with `psycopg.sql.SQL` / `psycopg.sql.Identifier` / `psycopg.sql.Composed`, never Python f-strings (`S608`).
-- **Safe deserialization & templates:** Always use `yaml.safe_load`, `np.load(..., allow_pickle=False)`, and `subprocess.run(..., shell=False)` with explicit argument lists. Keep Jinja2 `autoescape=False` **only** for non-HTML LLM prompt templates (explicitly documented/annotated).
+- **Safe deserialization, paths, & templates:** Always use `yaml.safe_load`, `np.load(..., allow_pickle=False)`, and `subprocess.run(..., shell=False)` with explicit argument lists. Prefer `pathlib.Path` over `os.path` (`PTH`) and pass `encoding="utf-8"` explicitly on text file reads/writes (`PLW1514`). Keep Jinja2 `autoescape=False` **only** for non-HTML LLM prompt templates (explicitly documented/annotated).
 - **Timezone-aware timestamps:** Always construct UTC timestamps with `datetime.now(UTC)` (never naive `datetime.now()` or deprecated `datetime.utcnow()`, `DTZ`).
-- **No mutable module globals:** Top-level module constants use `UPPER_SNAKE_CASE` with immutable types (`tuple`, `frozenset`, `MappingProxyType`). Never share mutable module-level `dict`/`list` state across calls without explicit encapsulation/locking.
+- **No mutable defaults or module globals:** Never pass mutable defaults (`[]`, `{}`, `set()`) in function signatures (`B006`); use `None` sentinels or `field(default_factory=...)`. Top-level module constants use `UPPER_SNAKE_CASE` with immutable types (`tuple`, `frozenset`, `MappingProxyType`)—never share mutable module-level `dict`/`list` state across calls without explicit encapsulation/locking.
 
 ---
 
 ## 16. Public API Surface, Docstrings, & Comments
 
 - **Explicit package exports:** Public package `__init__.py` files (`packages/sdk-python`, `packages/env`) must define sorted `__all__` (`RUF022`).
-- **Google-style docstrings:** Use `"""..."""` with a concise one-line summary for public SDK/package APIs, classes, domain exceptions, and complex service entrypoints (`Args:`, `Returns:`, `Raises:` where non-obvious—do not duplicate static type annotations). Do not add boilerplate docstrings to trivial private helpers or self-explanatory HTTP handlers.
+- **Google-style docstrings:** Use `"""..."""` with a concise one-line summary for public modules, classes, methods, functions, and route handlers (`D100`–`D104`), adding `Args:`, `Returns:`, or `Raises:` sections only where semantics are non-obvious (never duplicate static type annotations). Private `_`-prefixed helpers, constructors (`D107`, documented on the class), and standard dunder methods (`D105`) are exempt from boilerplate docstrings.
 - **Comment the why, not the what:** Keep inline comments focused on non-obvious invariants, edge cases, protocol assumptions, or upstream workarounds; never leave dead commented-out code (`ERA`).
 
 ---
@@ -206,3 +218,39 @@ Before approving any Python change:
 - [ ] Zero new `Any`, `SimpleNamespace`, internal `# pyright: ignore`, or unquoted `cast(...)`, and no silent `except Exception: pass`.
 - [ ] Async functions avoid blocking filesystem/sync IO (`asyncio.to_thread`), SQL avoids f-strings (`psycopg.sql`), and timestamps use `UTC`.
 - [ ] Any unavoidable 3rd-party `cast` / `# pyright: ignore[...]` is isolated in a single adapter boundary with a clear reason.
+
+---
+
+## 19. References
+
+### Language Standards & PEPs
+- [PEP 8 — Style Guide for Python Code](https://peps.python.org/pep-0008/) (`snake_case` modules, `CapWords` classes, import conventions)
+- [PEP 484 — Type Hints](https://peps.python.org/pep-0484/) & [Python Typing Specification](https://typing.python.org/en/latest/) (`Any` vs `object`, gradual typing, `cast`)
+- [PEP 544 — Protocols: Structural subtyping](https://peps.python.org/pep-0544/) (`Protocol`, capability & `Supports...` naming)
+- [PEP 557 — Data Classes](https://peps.python.org/pep-0557/) & [Hynek Schlawack — `attrs` / `dataclasses` best practices](https://www.attrs.org/en/stable/overview.html) (`frozen=True`, `slots=True`)
+- [PEP 561 — Distributing and Packaging Type Information](https://peps.python.org/pep-0561/) (`py.typed` markers, `"Typing :: Typed"`)
+- [PEP 589 — TypedDict](https://peps.python.org/pep-0589/), [PEP 655 — `NotRequired`](https://peps.python.org/pep-0655/), & [PEP 705 — `ReadOnly`](https://peps.python.org/pep-0705/)
+- [PEP 591 — `Final` Qualifier](https://peps.python.org/pep-0591/)
+- [PEP 604 — Union Operators `X | Y`](https://peps.python.org/pep-0604/) (`isinstance(x, A | B)`)
+- [PEP 649 — Deferred Evaluation of Annotations](https://peps.python.org/pep-0649/)
+- [PEP 673 — `Self` Type](https://peps.python.org/pep-0673/)
+- [PEP 695 — Type Parameter Syntax](https://peps.python.org/pep-0695/) (`type X = ...`, generic functions/classes)
+- [PEP 698 — Override Decorator](https://peps.python.org/pep-0698/) (`@typing.override`)
+- [PEP 702 — Marking Deprecations (`warnings.deprecated`)](https://peps.python.org/pep-0702/)
+- [PEP 742 — Narrowing Types with `TypeIs`](https://peps.python.org/pep-0742/)
+
+### Engineering Style Guides & Architecture
+- [Google Python Style Guide](https://google.github.io/styleguide/pyguide.html) (absolute imports, Google docstrings without redundant `__init__` docs, exception chaining, no `assert` validation, comment *why*)
+- [Python Packaging User Guide — `src` layout](https://packaging.python.org/en/latest/discussions/src-layout-vs-flat-layout/)
+- [Alexis King — Parse, don't validate](https://lexi-lambda.github.io/blog/2019/11/05/parse-don-t-validate/) (boundary parsing philosophy)
+- [Netflix Dispatch](https://github.com/Netflix/dispatch) & [FastAPI Best Practices](https://github.com/zhanymkanov/fastapi-best-practices) (Package-by-Feature vertical slicing)
+
+### Tooling & Stack Documentation
+- [Astral Ruff — Rules & Formatter Conflicts](https://docs.astral.sh/ruff/formatter/#conflicting-lint-rules) (`ALL`, `pydocstyle` Google convention, `flake8-type-checking` runtime evaluation)
+- [Astral `uv` — Workspaces & Lockfile](https://docs.astral.sh/uv/concepts/projects/sync/) (`--locked` reproducible builds)
+- [Microsoft Pyright — Configuration & Strict Mode](https://microsoft.github.io/pyright/#/configuration)
+- [FastAPI — Dependencies with `Annotated`](https://fastapi.tiangolo.com/tutorial/dependencies/) (`FAST002`)
+- [Pydantic v2 — Models & Extra Behavior](https://docs.pydantic.dev/latest/concepts/models/)
+- [Python `asyncio` — Coroutines, Tasks & Subprocesses](https://docs.python.org/3/library/asyncio-task.html) (`TaskGroup`, `to_thread`, `CancelledError`)
+- [Temporal Python SDK — Determinism & Workflows](https://docs.temporal.io/develop/python/core-application)
+

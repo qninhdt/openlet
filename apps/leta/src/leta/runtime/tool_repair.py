@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfoNotFoundError
 
@@ -19,82 +20,100 @@ if TYPE_CHECKING:
 
     from pydantic_core import ErrorDetails
 
-TOOL_ALIASES: dict[str, str] = {
-    "execute": "bash",
-    "shell": "bash",
-    "bash": "bash",
-    "run_command": "bash",
-    "read": "file_read",
-    "file_list": "file_read",
-    "ls": "file_read",
-    "list_dir": "file_read",
-    "edit": "file_edit",
-    "str_replace": "file_edit",
-    "write": "file_write",
-    "create_file": "file_write",
-    "glob_files": "glob",
-    "find_files": "glob",
-    "grep_files": "grep",
-    "search_files": "grep",
-    "web_search": "websearch",
-    "web_fetch": "webfetch",
-    "fetch_url": "webfetch",
-    "inbox_send": "send_message",
-    "reply": "send_message",
-    "inbox_react": "react_message",
-}
+TOOL_ALIASES: Mapping[str, str] = MappingProxyType(
+    {
+        "execute": "bash",
+        "shell": "bash",
+        "bash": "bash",
+        "run_command": "bash",
+        "read": "file_read",
+        "file_list": "file_read",
+        "ls": "file_read",
+        "list_dir": "file_read",
+        "edit": "file_edit",
+        "str_replace": "file_edit",
+        "write": "file_write",
+        "create_file": "file_write",
+        "glob_files": "glob",
+        "find_files": "glob",
+        "grep_files": "grep",
+        "search_files": "grep",
+        "web_search": "websearch",
+        "web_fetch": "webfetch",
+        "fetch_url": "webfetch",
+        "inbox_send": "send_message",
+        "reply": "send_message",
+        "inbox_react": "react_message",
+    }
+)
 
-GLOBAL_PARAM_ALIASES: dict[str, str] = {
-    "file_path": "path",
-    "filepath": "path",
-    "filePath": "path",
-    "oldString": "old_string",
-    "newString": "new_string",
-    "replaceAll": "replace_all",
-    "caseSensitive": "case_sensitive",
-    "cwd": "workdir",
-    "working_dir": "workdir",
-    "working_directory": "workdir",
-    "max_results": "limit",
-    "maxResults": "limit",
-    "reply_to": "reply_to_message_id",
-    "replyTo": "reply_to_message_id",
-    "replyToMessageId": "reply_to_message_id",
-    "endTurn": "end_turn",
-    "include_hidden": "hidden",
-}
+GLOBAL_PARAM_ALIASES: Mapping[str, str] = MappingProxyType(
+    {
+        "file_path": "path",
+        "filepath": "path",
+        "filePath": "path",
+        "oldString": "old_string",
+        "newString": "new_string",
+        "replaceAll": "replace_all",
+        "caseSensitive": "case_sensitive",
+        "cwd": "workdir",
+        "working_dir": "workdir",
+        "working_directory": "workdir",
+        "max_results": "limit",
+        "maxResults": "limit",
+        "reply_to": "reply_to_message_id",
+        "replyTo": "reply_to_message_id",
+        "replyToMessageId": "reply_to_message_id",
+        "endTurn": "end_turn",
+        "include_hidden": "hidden",
+    }
+)
 
-TOOL_PARAM_ALIASES: dict[str, dict[str, str]] = {
-    "agent_status": {"handle": "agent", "agent_id": "agent", "id": "agent"},
-    "stop_agent": {"handle": "agent", "agent_id": "agent", "id": "agent"},
-    "hitl_ask": {
-        "user": "recipient",
-        "user_id": "recipient",
-        "user_handle": "recipient",
-        "to": "recipient",
-    },
-    "hitl_request_access": {
-        "user": "recipient",
-        "user_id": "recipient",
-        "user_handle": "recipient",
-        "to": "recipient",
-    },
-    "hitl_cancel": {"id": "request_id"},
-    "hitl_list": {"id": "request_id"},
-    "schedule_create": {
-        "target": "target_agent",
-        "target_agent_id": "target_agent",
-        "agent": "target_agent",
-    },
-    "schedule_update": {
-        "id": "schedule_id",
-        "target": "target_agent",
-        "target_agent_id": "target_agent",
-        "agent": "target_agent",
-    },
-    "schedule_delete": {"id": "schedule_id"},
-    "schedule_list": {"id": "schedule_id"},
-}
+TOOL_PARAM_ALIASES: Mapping[str, Mapping[str, str]] = MappingProxyType(
+    {
+        "agent_status": MappingProxyType(
+            {"handle": "agent", "agent_id": "agent", "id": "agent"}
+        ),
+        "stop_agent": MappingProxyType(
+            {"handle": "agent", "agent_id": "agent", "id": "agent"}
+        ),
+        "hitl_ask": MappingProxyType(
+            {
+                "user": "recipient",
+                "user_id": "recipient",
+                "user_handle": "recipient",
+                "to": "recipient",
+            }
+        ),
+        "hitl_request_access": MappingProxyType(
+            {
+                "user": "recipient",
+                "user_id": "recipient",
+                "user_handle": "recipient",
+                "to": "recipient",
+            }
+        ),
+        "hitl_cancel": MappingProxyType({"id": "request_id"}),
+        "hitl_list": MappingProxyType({"id": "request_id"}),
+        "schedule_create": MappingProxyType(
+            {
+                "target": "target_agent",
+                "target_agent_id": "target_agent",
+                "agent": "target_agent",
+            }
+        ),
+        "schedule_update": MappingProxyType(
+            {
+                "id": "schedule_id",
+                "target": "target_agent",
+                "target_agent_id": "target_agent",
+                "agent": "target_agent",
+            }
+        ),
+        "schedule_delete": MappingProxyType({"id": "schedule_id"}),
+        "schedule_list": MappingProxyType({"id": "schedule_id"}),
+    }
+)
 
 _NULLISH_STRINGS = frozenset({"null", "none", "undefined"})
 
@@ -194,7 +213,9 @@ def _coerce_object(
     required: set[str] = (
         {str(item) for item in raw_req} if is_object_list(raw_req) else set()
     )
-    tool_aliases = TOOL_PARAM_ALIASES.get(tool_name, {}) if depth == 0 else {}
+    tool_aliases: Mapping[str, str] = (
+        TOOL_PARAM_ALIASES.get(tool_name, {}) if depth == 0 else {}
+    )
 
     raw_items = list(value.items())
     present_keys = {k for k, _ in raw_items}

@@ -60,7 +60,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-PUBLIC_ONLY_DENIED_DOMAINS: list[str] = [
+PUBLIC_ONLY_DENIED_DOMAINS: tuple[str, ...] = (
     "127.0.0.0/8",
     "10.0.0.0/8",
     "172.16.0.0/12",
@@ -73,7 +73,7 @@ PUBLIC_ONLY_DENIED_DOMAINS: list[str] = [
     "localhost",
     "*.local",
     "*.internal",
-]
+)
 
 
 def canonical_path(value: str = "~") -> str:

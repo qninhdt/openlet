@@ -8,6 +8,7 @@ import mimetypes
 import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -55,22 +56,26 @@ if TYPE_CHECKING:
         LetFSParseStub,
     )
 
-REMOTE_MEDIA = {PDF_MEDIA, DOCX_MEDIA}
-MEDIA_SUFFIXES = {
-    PDF_MEDIA: ".pdf",
-    DOCX_MEDIA: ".docx",
-    PPTX_MEDIA: ".pptx",
-    XLSX_MEDIA: ".xlsx",
-}
-MEDIA_TYPES = {
-    ".md": "text/markdown",
-    ".csv": "text/csv",
-    ".html": "text/html",
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".webp": "image/webp",
-}
+REMOTE_MEDIA = frozenset({PDF_MEDIA, DOCX_MEDIA})
+MEDIA_SUFFIXES = MappingProxyType(
+    {
+        PDF_MEDIA: ".pdf",
+        DOCX_MEDIA: ".docx",
+        PPTX_MEDIA: ".pptx",
+        XLSX_MEDIA: ".xlsx",
+    }
+)
+MEDIA_TYPES = MappingProxyType(
+    {
+        ".md": "text/markdown",
+        ".csv": "text/csv",
+        ".html": "text/html",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+    }
+)
 
 _NON_RETRYABLE_DATALAB_ERRORS = (
     DatalabAuthenticationError,
